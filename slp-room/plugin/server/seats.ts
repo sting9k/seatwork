@@ -1,7 +1,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { ROOM_DIR, SEATS_FILE } from "./paths";
-import { loadModels, promptVars, render } from "./models";
+import { loadModels, promptVars, render, type Models } from "./models";
 import type { RoomParams } from "./policy";
 
 export const HARNESSES = ["claude", "codex", "pi", "opencode"] as const;
@@ -65,6 +65,8 @@ export interface PromptContext {
   spec?: string;
   /** Knobs quoted by the prompts; with models.json they fill the {{placeholders}}. */
   params: RoomParams;
+  /** The project's own table when its room.json carries one; default: the room's. */
+  models?: Models;
 }
 
 /**
@@ -80,7 +82,7 @@ export function rolePrompt(role: Role, context: PromptContext): string {
   }
   const spec = specSheet(context.spec);
   const sheet = harnessSheet(context.harness);
-  const vars = promptVars(loadModels(), context.params);
+  const vars = promptVars(context.models ?? loadModels(), context.params);
   const missing: string[] = [];
   const rendered = render(roleText.trim(), vars, (name) => missing.push(name));
   if (missing.length) console.error(`slp-seat: roles/${role}.md uses unknown placeholders: ${missing.join(", ")}`);

@@ -40,6 +40,17 @@ Needs `jq`, `paseo`, `python3` with PyYAML. Then open an agent on the
 `.slp/mission.md`), or **HQ Supervisor** in the `hq-seatwork` project, which
 the plugin creates at `~/.config/slp-room/hq-seatwork` and where alone HQ starts.
 
+To bring a new project in: add it to Paseo, then tell HQ. It drafts the
+mission for your yes, asks whether the project uses the room's model table or
+its own, registers the project, and has the project's Supervisor write the
+law, asking you only what the repository cannot answer. A project's own table
+is the `models` object of `<project>/.slp/room.json`: only the differences
+from `slp-room/room/models.json`, edited by hand afterwards, applied to the
+next seat created and enforced (a seat on a model the table does not list is
+refused). The first
+registration turns the project guard on: project seats then start only inside
+registered projects (`~/.config/slp-room/projects.json`).
+
 ## Change
 
 - Prompts, skills, models: edit `slp-room/room/`, run `./install.sh --no-plugin`.

@@ -3,7 +3,7 @@ name: slp-portfolio-digest
 description: HQ procedure for the cross-project digest Human asks for: one page per project from files first, then issues, then live agents; proposes the three most urgent lines.
 ---
 # Portfolio digest (HQ)
-1. `~/.config/slp-room/projects.json` lists the only projects that exist for you.
+1. `slp_projects` lists the projects; only the registered ones exist for you.
 2. Per project read `.slp/mission.md`, `.slp/status.md` (`## Intent`, `## Room`, `## Health`),
    `.slp/notebook.md` tail, then `gh issue list --state open --limit 30` (or
    `issues/<project>.md` without a remote).

@@ -26,8 +26,9 @@ your `reports/` are SLP bookkeeping, nothing else is written.
 
 ## Facts
 
-- `~/.config/slp-room/projects.json` lists the only projects that exist for
-  you. Anything else: say "not registered" and stop.
+- `slp_projects` lists every project and whether it is registered. Only
+  registered projects exist for you; a project Human names that is not
+  registered, or has no mission or law → `slp-project-onboard` first.
 - `~/.config/slp-room/registry-log.jsonl`: every seat ever created (id,
   parent, role, cwd). Use it to find a project's current Supervisor.
 - Per project: `.slp/mission.md`, `.slp/<project>-law.md` (the Supervisor
@@ -43,9 +44,10 @@ your `reports/` are SLP bookkeeping, nothing else is written.
 2. Per project, find its Supervisor (registry log, `list_agents` with the
    project cwd). Idle → `slp_mail` it the task (`needs: reply`). None →
    `create_agent`: `title` `[Supervisor] <task>`, `provider`
-   `{{supervisor_provider}}` (alternatives: {{supervisor_alternatives}};
-   `.slp/room.json` may name one), `settings.modeId` per harness
-   ({{modes}}), `settings.thinkingOptionId` `{{supervisor_thinking}}`, `workspaceId` = the project's workspace from `list_workspaces`
+   and `settings.thinkingOptionId` as `slp_projects` shows for that project
+   (the room's default is `{{supervisor_provider}}`, thinking
+   `{{supervisor_thinking}}`), `settings.modeId` per harness ({{modes}}),
+   `workspaceId` = the project's workspace from `list_workspaces`
    (none → `create_workspace` with the project root, isolation local),
    `notifyOnFinish: false`, the task as `initialPrompt`. Never pass `cwd`.
    One live Supervisor per project.

@@ -77,13 +77,14 @@ export function findProject(registry: Registry, cwd: string): ProjectMatch | nul
 }
 
 /** Walks up from cwd looking for a .slp/room.json, for open mode (no registry). */
-export function findRoomMarker(cwd: string): { root: string; mission: string | null; law: string | null } | null {
+export function findRoomMarker(cwd: string): { root: string; room: Record<string, unknown>; mission: string | null; law: string | null } | null {
   let dir = realOrSelf(cwd);
   for (let i = 0; i < 64; i += 1) {
     if (existsSync(join(dir, ".slp", "room.json"))) {
       const missionFile = join(dir, ".slp", "mission.md");
       const name = dir.split("/").pop() ?? dir;
-      return { root: dir, mission: existsSync(missionFile) ? readFileSync(missionFile, "utf8").trim() : null, law: readLaw(dir, name) };
+      const room = JSON.parse(readFileSync(join(dir, ".slp", "room.json"), "utf8")) as Record<string, unknown>;
+      return { root: dir, room, mission: existsSync(missionFile) ? readFileSync(missionFile, "utf8").trim() : null, law: readLaw(dir, name) };
     }
     const parent = dirname(dir);
     if (parent === dir) break;

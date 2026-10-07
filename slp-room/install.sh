@@ -61,7 +61,7 @@ if [ ! -f "$ROOM_HOME/projects.json" ]; then
 }
 EOF
   echo "No $ROOM_HOME/projects.json: the room runs in OPEN mode (no project guard)."
-  echo "  Copy projects.json.example to projects.json to switch on the registry."
+  echo "  Ask HQ to onboard a project (or copy projects.json.example to projects.json) to switch on the registry."
 fi
 echo "Room files: $ROOM_HOME/room  policy: $ROOM_HOME/policy.json  seats: $(jq -r '.providers | join(", ")' "$ROOM_HOME/seats.json")"
 

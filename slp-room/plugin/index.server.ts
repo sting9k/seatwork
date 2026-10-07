@@ -7,6 +7,8 @@ import { MailEngine, type Mail, type Priority, type Needs } from "./server/mail"
 import { checkHqPlacement, ensureHqProject } from "./server/hq";
 import { McpHttpServer } from "./server/mcp-http";
 import { PASEO_CONFIG, REGISTRY_LOG, ROOM_HOME, TOKEN_FILE } from "./server/paths";
+import { describeProjects, registerProject } from "./server/onboard";
+import { modelAllowed, projectModels, type Models } from "./server/models";
 import { loadPolicy } from "./server/policy";
 import { findProject, findRoomMarker, loadRegistry, projectBlock } from "./server/registry";
 import { describeIsolation, ensureRuntime, envFor } from "./server/runtimes";
@@ -14,7 +16,7 @@ import { enabledSeats, parseSeat, rolePrompt, specFromTitle, type Role } from ".
 
 type CreateRequest = PluginBeforeRequests["agent.create"];
 
-const VERSION = "0.4.0";
+const VERSION = "0.6.0";
 const MAIL_DIR = join(ROOM_HOME, "mail");
 const MCP_TOKEN_FILE = join(MAIL_DIR, "token");
 const NONCES_FILE = join(MAIL_DIR, "nonces.json");
@@ -138,6 +140,46 @@ export default function contribute(server: PluginServerContext) {
       const mails = engine.takeHeld(me);
       if (mails.length === 0) return "inbox empty";
       return mails.map((m) => formatForInbox(m)).join("\n\n");
+    },
+  );
+
+  // the registry belongs to the seat above the projects; the descriptions stay neutral because every seat can read them
+  const registryOwner = (nonce: string, tool: string) => {
+    const me = resolveCaller(nonce);
+    if (!me || engine?.seat(me)?.role !== "hq") throw new Error(`${tool} refused: your seat does not keep the project registry`);
+  };
+
+  mcp.register(
+    {
+      name: "slp_projects",
+      description: "The project registry, one line per project known to Paseo: registered or not, name, root, whether its mission and law exist, its model table (default or custom) and the Supervisor seat to use. Refused for seats that do not keep the registry.",
+      inputSchema: { type: "object", properties: {}, required: [] },
+    },
+    async (_args, context) => {
+      registryOwner(context.nonce, "slp_projects");
+      return describeProjects();
+    },
+  );
+
+  mcp.register(
+    {
+      name: "slp_register_project",
+      description:
+        "Register a project that Paseo already has: writes its room marker, its mission and its own model table when given, and its registry line. Repeat it with `mission` or `models` to replace them. Refused for seats that do not keep the registry.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          path: { type: "string", description: "The project's root, or its name in Paseo (see slp_projects)." },
+          name: { type: "string", description: "Registry name, letters digits dashes. Default: the Paseo name." },
+          mission: { type: "string", description: "What the project is for and what done looks like, a few lines of markdown." },
+          models: { type: "object", description: "Only the differences from ROOM_DIR/models.json, same shape; objects merge, lists and values replace, null removes a key. Omit to use the room's table." },
+        },
+        required: ["path"],
+      },
+    },
+    async (args, context) => {
+      registryOwner(context.nonce, "slp_register_project");
+      return registerProject({ path: String(args.path ?? ""), name: args.name ? String(args.name) : undefined, mission: args.mission ? String(args.mission) : undefined, models: args.models ?? undefined });
     },
   );
 
@@ -352,7 +394,7 @@ export default function contribute(server: PluginServerContext) {
 
     const registry = loadRegistry();
     const cwd = request.config.cwd;
-    let project: { name: string; root: string; mission: string | null; law: string | null } | null = null;
+    let project: { name: string; root: string; room: Record<string, unknown>; mission: string | null; law: string | null } | null = null;
 
     checkHqPlacement(seat.role, seat.provider, cwd);
     if (registry) {
@@ -362,11 +404,22 @@ export default function contribute(server: PluginServerContext) {
           const names = registry.projects.map((p) => `${p.name} (${p.cwd})`).join(", ") || "none";
           throw new Error(`slp-seat: ${seat.provider} refused: ${cwd} is not a registered SLP project. Registered: ${names}`);
         }
-        project = { name: match.entry.name, root: match.root, mission: match.mission, law: match.law };
+        project = { name: match.entry.name, root: match.root, room: match.room, mission: match.mission, law: match.law };
       }
     } else if (seat.role !== "hq") {
       const marker = findRoomMarker(cwd);
-      if (marker) project = { name: marker.root.split("/").pop() ?? marker.root, root: marker.root, mission: marker.mission, law: marker.law };
+      if (marker) project = { name: marker.root.split("/").pop() ?? marker.root, root: marker.root, room: marker.room, mission: marker.mission, law: marker.law };
+    }
+
+    // a project that carries its own model table gets it in its prompts, and enforced
+    let models: Models | undefined;
+    if (project?.room.models !== undefined) {
+      const where = `${project.root}/.slp/room.json`;
+      models = projectModels(project.room.models, enabledSeats().map((s) => s.provider), `slp-seat: ${where}`);
+      const check = modelAllowed(models, seat.role, seat.provider, request.config.model ?? undefined);
+      if (!check.ok) {
+        throw new Error(`slp-seat: ${seat.provider}/${request.config.model ?? "(default model)"} refused: project ${project.name} lists for ${seat.role} only ${check.listed.join(", ")} (${where})`);
+      }
     }
 
     let dir: string | null = null;
@@ -394,7 +447,7 @@ export default function contribute(server: PluginServerContext) {
     const featureSpec = (request.config.featureValues as { slpSpec?: unknown } | undefined)?.slpSpec;
     const spec = specFromTitle(request.config.title) ?? (typeof featureSpec === "string" ? featureSpec : undefined);
     const parts = [
-      rolePrompt(seat.role, { harness: seat.harness, spec, params: policy.room.params }),
+      rolePrompt(seat.role, { harness: seat.harness, spec, params: policy.room.params, models }),
       project ? projectBlock(project.name, project.root, project.mission, project.law) : null,
       request.config.systemPrompt,
     ];

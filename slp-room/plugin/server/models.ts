@@ -90,3 +90,65 @@ export function render(text: string, vars: Record<string, string>, onMissing?: (
     return whole;
   });
 }
+
+/* ---------- per-project models: the `models` object of <project>/.slp/room.json ---------- */
+
+type Json = Record<string, unknown>;
+const isObject = (v: unknown): v is Json => typeof v === "object" && v !== null && !Array.isArray(v);
+
+/** Objects merge key by key, anything else replaces; `null` removes a key (a Peer tier, say). */
+function merge(base: unknown, over: unknown): unknown {
+  if (!isObject(base) || !isObject(over)) return over;
+  const out: Json = { ...base };
+  for (const [key, value] of Object.entries(over)) {
+    if (value === null) delete out[key];
+    else out[key] = merge(base[key], value);
+  }
+  return out;
+}
+
+/** Every `<harness>-<role>/<model>` a role may run on, as the table names them. */
+function allowed(m: Models): Record<string, string[]> {
+  const seat = (s: SeatModel | undefined) => (s ? [s.provider, ...(s.alternatives ?? [])] : []);
+  return {
+    hq: seat(m.seats?.hq),
+    supervisor: seat(m.seats?.supervisor),
+    lead: seat(m.seats?.lead),
+    peer: Object.values(m.peer?.tiers ?? {}).flatMap((t) => t.providers ?? []),
+    lens: [m.lens?.oracle, ...(m.lens?.pair ?? []), ...(m.lens?.pool ?? [])].filter((p): p is string => typeof p === "string"),
+  };
+}
+
+/**
+ * The room's table with a project's own `models` laid over it. Throws, naming
+ * the entry, when the result names a seat that is not enabled, puts a provider
+ * in another role's slot, or leaves a role without a model: the file is edited
+ * by hand, so the error has to say what to fix.
+ */
+export function projectModels(override: unknown, enabledProviders: string[], where: string): Models {
+  const base = loadModels();
+  if (override === undefined) return base;
+  if (!isObject(override)) throw new Error(`${where}: "models" must be an object shaped like ${MODELS_FILE}`);
+  const merged = merge(base, override) as Models;
+  for (const [role, entries] of Object.entries(allowed(merged))) {
+    if (entries.length === 0) throw new Error(`${where}: "models" leaves the ${role} role without a model`);
+    for (const entry of entries) {
+      const provider = String(entry).split("/")[0];
+      if (!String(entry).includes("/")) throw new Error(`${where}: "${entry}" must be <harness>-<role>/<model>`);
+      if (!provider.endsWith(`-${role}`)) throw new Error(`${where}: "${entry}" is listed for ${role} but is not a ${role} seat`);
+      if (!enabledProviders.includes(provider)) throw new Error(`${where}: "${entry}" names ${provider}, which the room has not enabled (enabled: ${enabledProviders.join(", ")})`);
+    }
+  }
+  if (merged.lens.pair.length < 2 || new Set(merged.lens.pair).size < 2) throw new Error(`${where}: lens.pair must be two different models`);
+  return merged;
+}
+
+/** Whether a seat about to be created runs on a model its project's table lists for its role. */
+export function modelAllowed(m: Models, role: string, provider: string, model: string | undefined): { ok: boolean; listed: string[] } {
+  const listed = allowed(m)[role] ?? [];
+  const ok = listed.some((entry) => {
+    const [p, id] = entry.split("/");
+    return p === provider && (!model || model === id || model.startsWith(`${id}-`));
+  });
+  return { ok, listed };
+}

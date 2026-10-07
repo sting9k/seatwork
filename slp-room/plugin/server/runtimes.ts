@@ -225,11 +225,18 @@ function build(seat: Pick<Seat, "harness" | "role">, dir: string, policy: Runtim
   }
 }
 
-/** Builds the runtime once per RUNTIME_VERSION; later calls only verify the marker. */
+/**
+ * Builds the runtime once per RUNTIME_VERSION; later calls verify the marker
+ * and link any role skill added to the room since (a removed skill leaves a
+ * dead link that no harness lists).
+ */
 export function ensureRuntime(seat: Pick<Seat, "harness" | "role">, policy: RuntimePolicy = loadPolicy()): string {
   const dir = runtimeDir(seat);
   const marker = join(dir, MARKER);
-  if (existsSync(marker) && readJsonObject(marker).version === RUNTIME_VERSION) return dir;
+  if (existsSync(marker) && readJsonObject(marker).version === RUNTIME_VERSION) {
+    installRoleSkills(dir, seat.role);
+    return dir;
+  }
   ensureDir(dir);
   pruneLinks(dir);
   build(seat, dir, policy);

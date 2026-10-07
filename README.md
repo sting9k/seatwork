@@ -29,6 +29,8 @@ never edits; a Supervisor pins intent and routes decisions up but never
 validates. Sources: the video "Giáo án của Quỷ Vương", the Quỷ Vương Codex Room
 toolkit, vhlam.com on SLP and coding-agent anti-patterns.
 
+Full guide: [English](docs/GUIDE.en.md) · [Tiếng Việt](docs/GUIDE.vi.md).
+
 ## Install
 
 ```bash

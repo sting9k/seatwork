@@ -1,5 +1,5 @@
 {
-  "$comment": "Every model id the room uses, as <provider>/<model>. Role prompts carry {{placeholders}} the plugin fills from this file when a seat is created, so a model change needs no prompt edit. Every provider named here must be enabled in paseo/seats.yml (install.sh checks). Add pi-* or opencode-* providers here after enabling those seats.",
+  "$comment": "Every model id the room uses, as <provider>/<model>, where provider is <harness>-<role>. Role prompts carry {{placeholders}} the plugin fills from this file when a seat is created, so a model change needs no prompt edit. Any harness can hold any role: a Codex Supervisor is seats.supervisor.provider = \"codex-supervisor/<model>\", a Claude-only Peer tier lists claude-peer models. Every provider named here must be enabled in paseo/seats.yml (install.sh checks). The values below are one author's setup, not a default of the room.",
   "seats": {
     "hq": {
       "provider": "claude-hq/claude-opus-5-5",

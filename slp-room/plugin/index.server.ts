@@ -84,7 +84,6 @@ export default function contribute(server: PluginServerContext) {
       if (!engine) throw new Error("mail engine not ready (no room seat has been created on this daemon yet)");
       const from = resolveCaller(context.nonce);
       if (!from) throw new Error("slp_mail: this session is not a registered room seat (unknown caller)");
-      const sender0 = engine.seat(from);
       const replyTo = String(args.reply_to ?? "").trim().replace(/^#/, "");
       let to: string;
       let viaReply = false;
@@ -97,7 +96,7 @@ export default function contribute(server: PluginServerContext) {
         viaReply = true;
       } else {
         const rawTo = String(args.to ?? "").trim().replace(/^(hq|supervisor|lead|peer):/i, "");
-        to = /^(owner|parent|human)$/i.test(rawTo) ? sender0?.parentAgentId ?? "" : rawTo;
+        to = /^(owner|parent|human)$/i.test(rawTo) ? engine.parentOf(from) ?? "" : rawTo;
         if (!to) throw new Error(`slp_mail: ${rawTo === "" ? "give `to` (owner, or a seat you launched) or reply_to" : "you have no parent seat; the Owner reads your final message, no mail is needed"}`);
       }
       const check = engine.canWrite(from, to, viaReply);
@@ -137,6 +136,42 @@ export default function contribute(server: PluginServerContext) {
       const mails = engine.takeHeld(me);
       if (mails.length === 0) return "inbox empty";
       return mails.map((m) => formatForInbox(m)).join("\n\n");
+    },
+  );
+
+  mcp.register(
+    {
+      name: "slp_adopt",
+      description:
+        "Take over a seat handed to you (a handoff): from now on it reports to you, its `to: owner` reaches you, and you may mail it. Allowed only for a role you may create, and only when its current owner is archived or sits in your own chain. Then mail it its brief and your disposition of its last signal.",
+      inputSchema: {
+        type: "object",
+        properties: { agent_id: { type: "string", description: "Id of the seat to adopt (from the handoff)." } },
+        required: ["agent_id"],
+      },
+    },
+    async (args, context) => {
+      if (!engine) throw new Error("mail engine not ready");
+      const me = resolveCaller(context.nonce);
+      if (!me) throw new Error("slp_adopt: unknown caller");
+      const child = String(args.agent_id ?? "").trim().replace(/^(hq|supervisor|lead|peer|lens):/i, "");
+      if (!child) throw new Error("slp_adopt: give agent_id");
+      const result = await engine.adopt(me, child);
+      if (!result.ok) throw new Error(`slp_adopt refused: ${result.reason}`);
+      const seat = engine.seat(child)!;
+      if (result.previous !== me) {
+        await engine.post({
+          from: { agentId: "room", role: "system" },
+          fromLabel: "room",
+          to: child,
+          priority: "fyi",
+          subject: "OWNER CHANGED: you were handed over",
+          body: "Your Owner seat changed. Mail addressed `to: owner`, your final messages and your permission requests now reach the new Owner; answer its mail with reply_to as usual. Your brief stands until the new Owner writes; continue your current work.",
+          needs: "nothing",
+          whyNow: "a handoff moved you under a new Owner",
+        });
+      }
+      return `adopted ${seat.role} ${child} (${seat.title ?? ""}); it now reports to you. Mail it its brief and your disposition of its last signal.`;
     },
   );
 
@@ -229,7 +264,7 @@ export default function contribute(server: PluginServerContext) {
     const seat = parseSeat(event.agent.provider);
     // whoever finished a turn may now take held mail
     await eng.deliver(event.agent.id);
-    const parentId = event.agent.parentAgentId;
+    const parentId = eng.parentOf(event.agent.id) ?? event.agent.parentAgentId;
     if (!seat || !parentId || event.outcome.kind === "canceled") return;
     const parent = eng.seat(parentId);
     if (!parent) return;
@@ -267,7 +302,7 @@ export default function contribute(server: PluginServerContext) {
   server.on("agent.permission_requested", async (event, { paseo }) => {
     const eng = getEngine(paseo);
     const seat = parseSeat(event.agent.provider);
-    const parentId = event.agent.parentAgentId;
+    const parentId = eng.parentOf(event.agent.id) ?? event.agent.parentAgentId;
     if (!seat || !parentId || !eng.seat(parentId)) return;
     await eng.post({
       from: { agentId: event.agent.id, role: seat.role },

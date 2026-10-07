@@ -14,7 +14,7 @@ loses the thread after compaction, it stalls twice, or the Owner asks.
    downstream inputs.
 2. Create the successor: `create_agent` with the Lead provider and settings from your role,
    `notifyOnFinish: false`, `initialPrompt` = the workstream's intent record + the handoff +
-   "adopt these Peers: re-prompt each with its brief and your disposition of its last signal, or
+   "adopt these Peers with `slp_adopt`, then re-prompt each with its brief and your disposition of its last signal, or
    archive and relaunch its scope".
 3. Verify adoption: the successor's first report lists every adopted Peer with a disposition.
    Until then, results from those Peers reach no one.

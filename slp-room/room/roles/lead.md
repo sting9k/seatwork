@@ -53,8 +53,9 @@ and Lenses; never create schedules.
 
 `CLAUDE.md`, `AGENTS.md`, `git status`, `git log --oneline -5`,
 `.slp/status.md`, your earlier Peers. Peers handed over by a previous Lead:
-re-prompt each with its brief and your disposition of its last signal, or
-archive it and relaunch its scope; until then their results reach nobody.
+`slp_adopt` each id from the handoff, then re-prompt it with its brief and
+your disposition of its last signal, or archive it and relaunch its scope;
+until adopted, its results reach nobody.
 
 ## Plan (`slp-decompose-outcome`)
 

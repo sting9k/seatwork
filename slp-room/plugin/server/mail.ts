@@ -1,6 +1,7 @@
 import { appendFileSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { PaseoApi } from "@getpaseo/client";
+import { paseoCli } from "./cli";
 import { REGISTRY_LOG, ROOM_HOME } from "./paths";
 import { parseSeat, type Role } from "./seats";
 import type { MailPolicy, RoomPolicy } from "./policy";
@@ -49,6 +50,8 @@ export interface SeatRecord {
 const MAIL_DIR = join(ROOM_HOME, "mail");
 const QUEUE_DIR = join(MAIL_DIR, "queue");
 const LOG_FILE = join(MAIL_DIR, "log.jsonl");
+/** child agent id → the seat that adopted it (overrides the Paseo parent for routing). */
+const ADOPTIONS_FILE = join(MAIL_DIR, "adoptions.json");
 
 const HANDLING: Record<Priority, string> = {
   blocking: "BLOCKING — someone is stopped until you act. Handle this first in this turn: reason, reply with slp_mail (or respond_to_permission), then resume your own plan where you left it.",
@@ -126,6 +129,8 @@ export class MailEngine {
   private readonly seats = new Map<string, SeatRecord>();
   /** id → sender/recipient of every mail ever posted (for reply_to), loaded from the log. */
   private readonly posted = new Map<string, { from: string; to: string }>();
+  /** Adoptions: child → new parent. A handoff re-parents the old Lead's Peers to the successor. */
+  private readonly adoptions = new Map<string, string>();
   private delivering = new Set<string>();
 
   constructor(
@@ -137,6 +142,64 @@ export class MailEngine {
     ensureDirs();
     this.loadSeats();
     this.loadPosted();
+    this.loadAdoptions();
+  }
+
+  private loadAdoptions(): void {
+    if (!existsSync(ADOPTIONS_FILE)) return;
+    try {
+      for (const [child, parent] of Object.entries(JSON.parse(readFileSync(ADOPTIONS_FILE, "utf8")) as Record<string, string>)) {
+        this.adoptions.set(child, parent);
+      }
+    } catch {
+      // start empty
+    }
+  }
+
+  private saveAdoptions(): void {
+    writeFileSync(ADOPTIONS_FILE, `${JSON.stringify(Object.fromEntries(this.adoptions), null, 2)}\n`);
+  }
+
+  /** The seat a seat reports to: its adopter when adopted, else the Paseo parent. */
+  parentOf(agentId: string): string | null {
+    return this.adoptions.get(agentId) ?? this.seats.get(agentId)?.parentAgentId ?? null;
+  }
+
+  /**
+   * `adopter` takes over `child` (a handoff). Allowed when the adopter's role may
+   * create the child's role, and either the child's current parent is archived or
+   * gone, or the adopter sits under the same ancestor as the child (a successor
+   * Lead launched by the same Supervisor). From then on the child's "owner" is
+   * the adopter: mail, turn reports and permission requests go there.
+   */
+  async adopt(adopter: string, child: string): Promise<{ ok: true; previous: string | null } | { ok: false; reason: string }> {
+    const a = this.seats.get(adopter);
+    const c = this.seats.get(child);
+    if (!a) return { ok: false, reason: `adopter ${adopter} is not a room seat` };
+    if (!c) return { ok: false, reason: `${child} is not a room seat` };
+    if (adopter === child) return { ok: false, reason: "a seat does not adopt itself" };
+    if (this.isAncestor(child, adopter)) return { ok: false, reason: `${child} is above you` };
+    if (!(this.room.spawn[a.role] ?? []).includes(c.role)) return { ok: false, reason: `a ${a.role} may own only ${(this.room.spawn[a.role] ?? []).join(", ") || "nothing"}, not a ${c.role}` };
+    const previous = this.parentOf(child);
+    if (previous === adopter) return { ok: true, previous };
+    if ((await this.status(child)) === "gone") return { ok: false, reason: `${child} is archived or gone` };
+    const previousGone = !previous || (await this.status(previous)) === "gone";
+    const adopterParent = this.parentOf(adopter);
+    const sameChain = this.isAncestor(adopter, child) || (adopterParent !== null && this.isAncestor(adopterParent, child));
+    if (!previousGone && !sameChain) {
+      return { ok: false, reason: `${child} still reports to a live seat that is not in your chain; only its chain may hand it over` };
+    }
+    this.adoptions.set(child, adopter);
+    this.saveAdoptions();
+    // Paseo's own parent link is a label; moving it keeps its tree in step (its
+    // archive cascade follows the label, so the old owner's archive no longer takes the child).
+    try {
+      await paseoCli(["agent", "update", child, "--label", `paseo.parent-agent-id=${adopter}`]);
+    } catch (error) {
+      this.log(`adopt: could not move the Paseo parent label of ${child}: ${error instanceof Error ? error.message : String(error)}`);
+    }
+    appendFileSync(LOG_FILE, `${JSON.stringify({ at: new Date().toISOString(), kind: "adopted", child, adopter, previous })}\n`);
+    return { ok: true, previous };
   }
 
   private loadPosted(): void {
@@ -187,10 +250,10 @@ export class MailEngine {
 
   /** True when `ancestor` is the parent, grandparent, ... of `agentId`. */
   isAncestor(ancestor: string, agentId: string): boolean {
-    let cursor = this.seats.get(agentId)?.parentAgentId ?? null;
+    let cursor = this.parentOf(agentId);
     for (let i = 0; cursor && i < 16; i += 1) {
       if (cursor === ancestor) return true;
-      cursor = this.seats.get(cursor)?.parentAgentId ?? null;
+      cursor = this.parentOf(cursor);
     }
     return false;
   }
@@ -199,7 +262,8 @@ export class MailEngine {
    * Two gates, both must pass: the role route table in policy.json
    * (`room.routes`), and the tree relation — parent, child, an ancestor
    * writing down (direct intervention), or, with `viaReply`, a reply back up
-   * to an ancestor that wrote first.
+   * to an ancestor that wrote first. The tree uses effective parents, so an
+   * adopted seat belongs to its adopter.
    */
   canWrite(from: string, to: string, viaReply = false): { ok: true } | { ok: false; reason: string } {
     const sender = this.seats.get(from);
@@ -211,7 +275,7 @@ export class MailEngine {
     if (this.room.routes[route] !== true) {
       return { ok: false, reason: `route ${route} is off in the room policy (room.routes)` };
     }
-    if (sender.parentAgentId === to || recipient.parentAgentId === from) return { ok: true };
+    if (this.parentOf(from) === to || this.parentOf(to) === from) return { ok: true };
     if (this.isAncestor(from, to)) return { ok: true }; // writing down the chain (direct intervention)
     if (viaReply && this.isAncestor(to, from)) return { ok: true }; // answering someone above who wrote first
     return {

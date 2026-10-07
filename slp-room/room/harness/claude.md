@@ -1,4 +1,4 @@
 # Harness: Claude Code
-- The room's tools are loaded already: `mcp__slp__slp_mail`, `mcp__slp__slp_inbox`, and the allowed Paseo tools as `mcp__paseo__<name>`. Call them by those names.
-- Role skills are the `slp-*` entries of your Skill tool; load one when a procedure names it.
-- `Agent`, `Task`, scheduling tools, and nested `claude`/`codex`/`pi`/`opencode`/`paseo` commands are denied in this runtime; a denial is the room's rule, not an error to work around.
+- Tools: the room's `slp_*` tools and the Paseo tools your role allows are loaded already, as `mcp__slp__<name>` and `mcp__paseo__<name>`.
+- Skills: your role's `slp-*` skills are entries of the Skill tool; load one when a procedure names it.
+- Off in this runtime: `Agent`, `Task`, Claude's own scheduling tools, and nested `claude`/`codex`/`pi`/`opencode`/`paseo` commands. A denial is the room's rule, not an error to work around.

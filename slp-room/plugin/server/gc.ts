@@ -1,7 +1,7 @@
-import { execFile } from "node:child_process";
-import { accessSync, appendFileSync, constants, existsSync, readdirSync, readFileSync } from "node:fs";
-import { delimiter, join } from "node:path";
+import { appendFileSync, existsSync, readdirSync, readFileSync } from "node:fs";
+import { join } from "node:path";
 import type { PaseoApi } from "@getpaseo/client";
+import { paseoCli as cli } from "./cli";
 import type { MailEngine } from "./mail";
 import { PASEO_SCHEDULES, ROOM_HOME } from "./paths";
 import type { GcPolicy } from "./policy";
@@ -59,30 +59,6 @@ function storedSchedules(): Schedule[] {
 
 function logLine(kind: string, detail: Record<string, unknown>): void {
   appendFileSync(GC_LOG, `${JSON.stringify({ at: new Date().toISOString(), kind, ...detail })}\n`);
-}
-
-/** The paseo CLI the daemon's own PATH offers; SLP_PASEO_BIN overrides it. */
-function paseoBin(): string {
-  const fromPath = (process.env.PATH ?? "").split(delimiter).map((dir) => join(dir, "paseo"));
-  for (const candidate of [process.env.SLP_PASEO_BIN, ...fromPath, "/opt/homebrew/bin/paseo", "/usr/local/bin/paseo"]) {
-    if (!candidate) continue;
-    try {
-      accessSync(candidate, constants.X_OK);
-      return candidate;
-    } catch {
-      // next
-    }
-  }
-  throw new Error("paseo CLI not found on PATH; set SLP_PASEO_BIN");
-}
-
-function cli(args: string[]): Promise<string> {
-  return new Promise((resolve, reject) => {
-    execFile(paseoBin(), args, { env: process.env, timeout: 20_000, maxBuffer: 8 * 1024 * 1024 }, (error, stdout, stderr) => {
-      if (error) reject(new Error(`paseo ${args.join(" ")}: ${stderr.trim() || error.message}`));
-      else resolve(stdout);
-    });
-  });
 }
 
 export class Collector {
@@ -172,11 +148,12 @@ export class Collector {
       live.delete(seat.agentId);
       logLine("archived-idle", { agentId: seat.agentId, role: seat.role, title: seat.title, idleHours });
       this.log(`gc: archived ${seat.role} ${seat.agentId} (${seat.title ?? ""}) idle ${idleHours}h`);
-      if (this.policy.tellParent && seat.parentAgentId && live.has(seat.parentAgentId)) {
+      const parent = this.engine.parentOf(seat.agentId);
+      if (this.policy.tellParent && parent && live.has(parent)) {
         await this.engine.post({
           from: { agentId: "room", role: "system" },
           fromLabel: "room",
-          to: seat.parentAgentId,
+          to: parent,
           priority: "fyi",
           subject: `GC: archived ${seat.role} ${seat.title ?? seat.agentId} after ${idleHours}h idle`,
           body: `The room archived ${seat.role} ${seat.agentId} ("${seat.title ?? ""}"): idle for ${idleHours} hours with nothing alive below it. Nothing was waiting on it. If its work still matters, launch a new seat with the brief and what was tried.`,

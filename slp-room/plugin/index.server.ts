@@ -4,6 +4,7 @@ import { join } from "node:path";
 import type { PluginBeforeRequests, PluginServerContext } from "@getpaseo/plugin/server";
 import { Collector } from "./server/gc";
 import { MailEngine, type Mail, type Priority, type Needs } from "./server/mail";
+import { checkHqPlacement, ensureHqProject } from "./server/hq";
 import { McpHttpServer } from "./server/mcp-http";
 import { PASEO_CONFIG, REGISTRY_LOG, ROOM_HOME, TOKEN_FILE } from "./server/paths";
 import { loadPolicy } from "./server/policy";
@@ -13,7 +14,7 @@ import { enabledSeats, parseSeat, rolePrompt, specFromTitle, type Role } from ".
 
 type CreateRequest = PluginBeforeRequests["agent.create"];
 
-const VERSION = "0.3.0";
+const VERSION = "0.4.0";
 const MAIL_DIR = join(ROOM_HOME, "mail");
 const MCP_TOKEN_FILE = join(MAIL_DIR, "token");
 const NONCES_FILE = join(MAIL_DIR, "nonces.json");
@@ -31,6 +32,7 @@ const NONCES_FILE = join(MAIL_DIR, "nonces.json");
  *                             become mail to the parent; the engine delivers it when the
  *                             parent is idle, never by interrupting.
  *  on agent.archived          bounces held mail, forgets the nonce, deletes heartbeats.
+ *  at load                   makes sure the default project hq-seatwork exists (hq.ts).
  *  every gc.everyMinutes      archives idle seats and orphan heartbeats (gc.ts).
  */
 export default function contribute(server: PluginServerContext) {
@@ -315,6 +317,15 @@ export default function contribute(server: PluginServerContext) {
     });
   });
 
+  // the default project: retried because the daemon may not answer the CLI while it loads plugins
+  const hqRetry = (left: number) => {
+    ensureHqProject(log).catch((error) => {
+      if (left > 0) setTimeout(() => hqRetry(left - 1), 15_000).unref();
+      else console.error("slp-seat: the hq-seatwork project could not be created", error);
+    });
+  };
+  hqRetry(4);
+
   // safety net: anything still held gets another delivery attempt every minute
   const sweep = setInterval(() => {
     void engine?.sweep();
@@ -343,12 +354,9 @@ export default function contribute(server: PluginServerContext) {
     const cwd = request.config.cwd;
     let project: { name: string; root: string; mission: string | null; law: string | null } | null = null;
 
+    checkHqPlacement(seat.role, seat.provider, cwd);
     if (registry) {
-      if (seat.role === "hq") {
-        if (registry.hq && !isInside(cwd, registry.hq)) {
-          throw new Error(`slp-seat: an hq seat may only be created in ${registry.hq}, not in ${cwd}`);
-        }
-      } else {
+      if (seat.role !== "hq") {
         const match = findProject(registry, cwd);
         if (!match) {
           const names = registry.projects.map((p) => `${p.name} (${p.cwd})`).join(", ") || "none";
@@ -483,9 +491,6 @@ function saveNonces(nonces: Record<string, string>): void {
   writeFileSync(NONCES_FILE, `${JSON.stringify(nonces, null, 2)}\n`, { mode: 0o600 });
 }
 
-function isInside(child: string, parent: string): boolean {
-  return child === parent || child.startsWith(parent.endsWith("/") ? parent : `${parent}/`);
-}
 
 let tokenCache: { value: string | null; at: number } | null = null;
 

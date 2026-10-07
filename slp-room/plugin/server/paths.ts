@@ -17,6 +17,10 @@ export const SEATS_FILE = join(ROOM_HOME, "seats.json");
 /** Registry of SLP projects the room may work in (see registry.ts). */
 export const REGISTRY_FILE = join(ROOM_HOME, "projects.json");
 
+/** The default project every install has: the home of the HQ Supervisor (see hq.ts). */
+export const HQ_PROJECT = "hq-seatwork";
+export const HQ_DIR = join(ROOM_HOME, HQ_PROJECT);
+
 /** Append-only log of seats created, read by the HQ Supervisor. */
 export const REGISTRY_LOG = join(ROOM_HOME, "registry-log.jsonl");
 

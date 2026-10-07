@@ -8,7 +8,7 @@ export interface ProjectEntry {
 }
 
 export interface Registry {
-  /** Workspace of the HQ Supervisor. Only `*-hq` seats may be created there. */
+  /** Overrides where the hq-seatwork project lives (default: paths.HQ_DIR). */
   hq?: string;
   projects: ProjectEntry[];
 }
@@ -33,7 +33,7 @@ export function readLaw(root: string, name: string): string | null {
   return null;
 }
 
-function realOrSelf(path: string): string {
+export function realOrSelf(path: string): string {
   try {
     return realpathSync(path);
   } catch {
@@ -45,7 +45,7 @@ function realOrSelf(path: string): string {
  * projects.json is optional. When it is missing the room runs in open mode:
  * seats may be created in any directory and no project context is injected.
  * When it exists, project seats (supervisor, lead, peer) must be created inside
- * a registered project, and `*-hq` seats only inside `hq`.
+ * a registered project. HQ seats live in the hq-seatwork project either way (hq.ts).
  */
 export function loadRegistry(): Registry | null {
   if (!existsSync(REGISTRY_FILE)) return null;
@@ -59,7 +59,7 @@ export function loadRegistry(): Registry | null {
   };
 }
 
-function isInside(child: string, parent: string): boolean {
+export function isInside(child: string, parent: string): boolean {
   return child === parent || child.startsWith(parent.endsWith("/") ? parent : `${parent}/`);
 }
 

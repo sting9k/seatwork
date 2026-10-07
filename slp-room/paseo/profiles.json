@@ -7,7 +7,7 @@
     "model": "claude-opus-5-5",
     "modeId": "bypassPermissions",
     "thinkingOptionId": "high",
-    "notes": "The seat above every project. Sees only registered SLP projects, opens work through each project's Supervisor, owns issues, reports to the user. Never creates Leads or Peers. Open it in the slp-hq workspace."
+    "notes": "The seat above every project. Sees only registered SLP projects, opens work through each project's Supervisor, owns issues, reports to the user. Never creates Leads or Peers. Open it in the hq-seatwork project, the only place it starts."
   },
   {
     "id": "agent_profile_slp_supervisor",

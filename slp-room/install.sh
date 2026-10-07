@@ -11,6 +11,7 @@
 #          ~/.paseo/config.json: providers + profiles from paseo/config.snippet.json (generated from
 #          paseo/seats.yml + paseo/policy.json + paseo/profiles.json + room/models.json), plus the
 #          daemon switches in policy.json (backup kept). Only the seats in seats.yml exist.
+#          Paseo project hq-seatwork ($SLP_ROOM_HOME/hq-seatwork): created by the plugin when it loads.
 # Never writes to ~/.claude, ~/.codex, ~/.pi or ~/.config/opencode. Runtimes are built by the
 # plugin under $SLP_ROOM_HOME/runtimes/<harness>/<role>; they are rebuilt when policy changes
 # (bump RUNTIME_VERSION in plugin/server/runtimes.ts or delete the runtime directory).
@@ -54,7 +55,6 @@ fi
 if [ ! -f "$ROOM_HOME/projects.json" ]; then
   cat > "$ROOM_HOME/projects.json.example" <<'EOF'
 {
-  "hq": "/Users/you/learn/paseo-setup-slp/slp-hq",
   "projects": [
     { "name": "example", "cwd": "/Users/you/code/example" }
   ]
@@ -123,4 +123,4 @@ fi
 if [ "$DO_RELOAD" = 1 ]; then
   paseo daemon reload </dev/null || echo "WARNING: 'paseo daemon reload' failed; restart Paseo yourself." >&2
 fi
-echo "Done. Open an agent on the 'Supervisor' profile inside a project, or 'HQ Supervisor' in the hq workspace."
+echo "Done. Open an agent on the 'Supervisor' profile inside a project, or 'HQ Supervisor' in the hq-seatwork project."

@@ -37,7 +37,8 @@ cd slp-room && ./install.sh
 
 Needs `jq`, `paseo`, `python3` with PyYAML. Then open an agent on the
 **Supervisor** profile inside a project (give it `.slp/room.json` and
-`.slp/mission.md`), or **HQ Supervisor** in the HQ workspace.
+`.slp/mission.md`), or **HQ Supervisor** in the `hq-seatwork` project, which
+the plugin creates at `~/.config/slp-room/hq-seatwork` and where alone HQ starts.
 
 ## Change
 

@@ -42,10 +42,10 @@ export function enabledSeats(): Seat[] {
   return (parsed.providers ?? []).map(parseSeat).filter((s): s is Seat => s !== null);
 }
 
-/** `harness/<harness>.md`: how this harness exposes the room's tools (tool names, tool search, what is denied). */
+/** `harness/<harness>-harness.md`: how this harness exposes the room's tools (tool names, tool search, what is denied). Named so nobody mistakes `claude.md` for a CLAUDE.md. */
 export function harnessSheet(harness: Harness | undefined): string | null {
   if (!harness) return null;
-  return readIfExists(join(ROOM_DIR, "harness", `${harness}.md`));
+  return readIfExists(join(ROOM_DIR, "harness", `${harness}-harness.md`));
 }
 
 /** `specs/<name>.md`, when the seat asked for a specialization. */

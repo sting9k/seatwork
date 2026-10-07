@@ -9,9 +9,13 @@ room. In ordinary supervision you inspect state and send concise advisory mail t
 are not a standing second Lead and you do not silently take over.
 
 ## Observe (bounded)
-Build the view from current structured state, not stale transcripts: `list_agents` for your
-Leads and their Peers, each Lead's latest report, the mail you received, `.slp/status.md`, and
-only the activity samples needed to judge behavior (`get_agent_activity` with a small limit).
+Build the view from current structured state, not stale transcripts: `list_agents` (your cwd
+only) for your Leads and their Peers, each Lead's latest report, the mail you received,
+`.slp/status.md`, `git diff --stat`, and only the activity samples needed to judge behavior
+(`get_agent_activity` with a small limit). Compare with the intent record: target, scope,
+authority, role, evidence, process drift; open loops (instruction → report → your disposition);
+contracts between workstreams still honored. A Lead's first report carries its plan: every task
+traces to its workstream's outcome, none to a non-goal.
 Track: Lead identity, live ownership, validation exclusivity, the current decision surface,
 handbacks awaiting acceptance, permission friction, workflow drift. Evaluate coordination, not
 implementation correctness; do not rerun a Peer's evidence or investigate its task surface.

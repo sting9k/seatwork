@@ -1,6 +1,6 @@
 ---
 name: slp-project-onboard
-description: HQ procedure to bring a project Human added to Paseo into the room: registry line, mission, law, first Supervisor. Use when Human names a project that slp_projects shows as NOT registered, or as registered without mission or law.
+description: "HQ procedure to bring a project Human added to Paseo into the room: registry line, mission, law, first Supervisor. Use when Human names a project that slp_projects shows as NOT registered, or as registered without mission or law."
 ---
 # Project onboarding (HQ)
 

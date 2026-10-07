@@ -1,6 +1,6 @@
 ---
 name: slp-observe-and-advise
-description: Supervisor procedure on every wake: build a bounded evidence-backed view of the room, watch for the known coordination failures, advise the Lead with the smallest correction, intervene directly only in the cases the protocol allows, and record what you learned.
+description: "Supervisor procedure on every wake: build a bounded evidence-backed view of the room, watch for the known coordination failures, advise the Lead with the smallest correction, intervene directly only in the cases the protocol allows, and record what you learned."
 ---
 # Observe and advise (Supervisor)
 

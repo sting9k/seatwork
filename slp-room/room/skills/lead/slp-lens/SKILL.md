@@ -1,6 +1,6 @@
 ---
 name: slp-lens
-description: Lead procedure for any decision that needs independent read-only opinions — a hard technical question, a stuck approach, a review that matters, a plan phase, a contested design, an incident, a formal verdict the Owner asked for. The Lead chairs; opens 1..N lenses on a neutral brief (one = second brain, two of different families = settle an answer, more = angles), seals them, settles overlap and conflict with at most one cross-examination, verifies disputed facts with verifier lenses, audits a high-stakes draft with an audit lens, and issues one binding decision. Never inside a lens.
+description: "Lead procedure for any decision that needs independent read-only opinions — a hard technical question, a stuck approach, a review that matters, a plan phase, a contested design, an incident, a formal verdict the Owner asked for. The Lead chairs; opens 1..N lenses on a neutral brief (one = second brain, two of different families = settle an answer, more = angles), seals them, settles overlap and conflict with at most one cross-examination, verifies disputed facts with verifier lenses, audits a high-stakes draft with an audit lens, and issues one binding decision. Never inside a lens."
 ---
 # Lenses (the Lead chairs)
 

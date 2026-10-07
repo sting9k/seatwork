@@ -1,6 +1,6 @@
 ---
 name: slp-evidence-report
-description: Peer procedure to report findings so the Owner can decide: verified, untested, failed, unknown kept apart, each with its proof; the shape of REVIEW and research results.
+description: "Peer procedure to report findings so the Owner can decide: verified, untested, failed, unknown kept apart, each with its proof; the shape of REVIEW and research results."
 ---
 # Evidence report (Peer)
 1. Four lists, never merged: **verified** (file:line, command, or document that proves it) ·

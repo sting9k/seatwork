@@ -1,6 +1,6 @@
 ---
 name: slp-project-law
-description: Supervisor procedure to create or revise the project's law (.slp/<project>-law.md) from the room template, by interviewing the Owner only for what the template leaves open: strictness, review lane, gates, compatibility policy, external actions, local rules. Per project, not global.
+description: "Supervisor procedure to create or revise the project's law (.slp/<project>-law.md) from the room template, by interviewing the Owner only for what the template leaves open: strictness, review lane, gates, compatibility policy, external actions, local rules. Per project, not global."
 ---
 # Project law (Supervisor)
 

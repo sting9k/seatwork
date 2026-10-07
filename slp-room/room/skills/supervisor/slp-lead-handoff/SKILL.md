@@ -1,6 +1,6 @@
 ---
 name: slp-lead-handoff
-description: Supervisor procedure to replace a Lead whose context is long or whose behavior degraded: successor Lead with an experience handoff, old Lead finishes its current step and is archived after acceptance. Also the self-improvement loop between consecutive Leads.
+description: "Supervisor procedure to replace a Lead whose context is long or whose behavior degraded: successor Lead with an experience handoff, old Lead finishes its current step and is archived after acceptance. Also the self-improvement loop between consecutive Leads."
 ---
 # Lead handoff (Supervisor)
 

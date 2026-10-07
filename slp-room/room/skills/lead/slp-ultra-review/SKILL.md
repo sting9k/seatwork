@@ -1,6 +1,6 @@
 ---
 name: slp-ultra-review
-description: Lead-only maximum-recall bug hunt on a stable candidate or plan closure: several sealed read-only [Peer:review] scouts with overlapping concerns, every candidate preserved in one durable report, then a verification queue. Use at plan closure, before a hard-to-reverse boundary (wire, storage, migration, ownership, security, process), or when the Owner asks. Not after every slice.
+description: "Lead-only maximum-recall bug hunt on a stable candidate or plan closure: several sealed read-only [Peer:review] scouts with overlapping concerns, every candidate preserved in one durable report, then a verification queue. Use at plan closure, before a hard-to-reverse boundary (wire, storage, migration, ownership, security, process), or when the Owner asks. Not after every slice."
 ---
 
 # Ultra review — instructions for the Lead

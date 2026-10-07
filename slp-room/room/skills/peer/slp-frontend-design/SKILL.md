@@ -1,6 +1,6 @@
 ---
 name: slp-frontend-design
-description: Implement a UI change whose rendered hierarchy, interaction flow, responsive behavior, or domain-fit visual design is a material part of acceptance. Do not use for copy-only edits, isolated design-token changes, headless UI logic, or minor component maintenance. Peer skill for a writable UI scope.
+description: "Implement a UI change whose rendered hierarchy, interaction flow, responsive behavior, or domain-fit visual design is a material part of acceptance. Do not use for copy-only edits, isolated design-token changes, headless UI logic, or minor component maintenance. Peer skill for a writable UI scope."
 ---
 
 # Frontend Design

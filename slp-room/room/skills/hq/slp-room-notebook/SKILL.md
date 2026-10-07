@@ -1,6 +1,6 @@
 ---
 name: slp-room-notebook
-description: HQ procedure for the cross-workspace learning record: aggregate every project Supervisor's notebook, turn failures into patterns, and propose the narrowest protocol or skill correction. Every failure must become experience.
+description: "HQ procedure for the cross-workspace learning record: aggregate every project Supervisor's notebook, turn failures into patterns, and propose the narrowest protocol or skill correction. Every failure must become experience."
 ---
 # Room notebook (HQ)
 

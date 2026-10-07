@@ -1,6 +1,6 @@
 ---
 name: slp-write-brief
-description: Lead procedure to write a Peer or Lens brief that locks the contract and leaves the implementation to its owner: the template, the contract checklist, the read-only suffix, the create_agent call. Use before every launch. The template and a filled example are in references/brief-template.md.
+description: "Lead procedure to write a Peer or Lens brief that locks the contract and leaves the implementation to its owner: the template, the contract checklist, the read-only suffix, the create_agent call. Use before every launch. The template and a filled example are in references/brief-template.md."
 ---
 # Write the brief (Lead)
 1. Fill the template in [references/brief-template.md](references/brief-template.md): Project,

@@ -1,6 +1,6 @@
 ---
 name: slp-architecture-premise-audit
-description: Audit a whole project for a possibly wrong system archetype by deriving expected product capabilities before trusting repository vocabulary. Use only for an explicitly requested broad premise audit, not ordinary architecture review or one named design concern. Peer skill (read-only, usually a [Peer:review] or [Peer:research] launched by the Owner).
+description: "Audit a whole project for a possibly wrong system archetype by deriving expected product capabilities before trusting repository vocabulary. Use only for an explicitly requested broad premise audit, not ordinary architecture review or one named design concern. Peer skill (read-only, usually a [Peer:review] or [Peer:research] launched by the Owner)."
 ---
 
 # Architecture Premise Audit

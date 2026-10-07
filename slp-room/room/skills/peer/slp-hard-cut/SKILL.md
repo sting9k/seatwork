@@ -1,6 +1,6 @@
 ---
 name: slp-hard-cut
-description: Peer discipline for contract or schema changes in a project whose law declares hard-cut policy (no backward compatibility, one live contract). Also the test discipline that goes with it.
+description: "Peer discipline for contract or schema changes in a project whose law declares hard-cut policy (no backward compatibility, one live contract). Also the test discipline that goes with it."
 ---
 # Hard cut and test discipline (Peer)
 

@@ -1,6 +1,6 @@
 ---
 name: slp-portfolio-digest
-description: HQ procedure for the cross-project digest Human asks for: one page per project from files first, then issues, then live agents; proposes the three most urgent lines.
+description: "HQ procedure for the cross-project digest Human asks for: one page per project from files first, then issues, then live agents; proposes the three most urgent lines."
 ---
 # Portfolio digest (HQ)
 1. `slp_projects` lists the projects; only the registered ones exist for you.

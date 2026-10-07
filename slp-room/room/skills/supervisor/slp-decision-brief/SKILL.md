@@ -1,6 +1,6 @@
 ---
 name: slp-decision-brief
-description: Supervisor procedure to present a DECISION_NEEDED to the Owner: options, recommendation, consequence, in under 15 lines; never decide it yourself.
+description: "Supervisor procedure to present a DECISION_NEEDED to the Owner: options, recommendation, consequence, in under 15 lines; never decide it yourself."
 ---
 # Decision brief (Supervisor)
 Use when a Lead reports `DECISION_NEEDED`, when a dispute is about product scope, material cost,

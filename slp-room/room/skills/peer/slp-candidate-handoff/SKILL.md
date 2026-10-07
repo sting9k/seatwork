@@ -1,6 +1,6 @@
 ---
 name: slp-candidate-handoff
-description: Peer procedure to hand over writable work as an immutable CANDIDATE with base, paths, verification, evidence, residual risk, and ownership.
+description: "Peer procedure to hand over writable work as an immutable CANDIDATE with base, paths, verification, evidence, residual risk, and ownership."
 ---
 # Candidate handoff (Peer)
 1. Freeze it: commit if the brief allows; otherwise `git diff --binary <base> -- <paths> >

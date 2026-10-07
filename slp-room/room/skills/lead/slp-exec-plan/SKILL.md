@@ -1,6 +1,6 @@
 ---
 name: slp-exec-plan
-description: Lead procedure to write a checked-in Execution Plan (ExecPlan) for work with material risk, irreversibility, uncertainty, broad contract impact, external side effects, or restart/handoff. Preserves decisions and acceptance; never implementation in prose.
+description: "Lead procedure to write a checked-in Execution Plan (ExecPlan) for work with material risk, irreversibility, uncertainty, broad contract impact, external side effects, or restart/handoff. Preserves decisions and acceptance; never implementation in prose."
 ---
 # Execution plan (Lead)
 

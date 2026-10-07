@@ -1,6 +1,6 @@
 ---
 name: slp-dispose-challenge
-description: Lead procedure for a Peer's REOPEN_REQUEST or BLOCKED. Demands run evidence, questions the redesign, gives exactly one disposition (HOLD: reproduce it, REVISED BRIEF, HOLD: candidate stands, NOTED, or DECISION_NEEDED), re-briefs the owners a change touches, records the dissent. Use on every challenge; never debate without it.
+description: "Lead procedure for a Peer's REOPEN_REQUEST or BLOCKED. Demands run evidence, questions the redesign, gives exactly one disposition (HOLD: reproduce it, REVISED BRIEF, HOLD: candidate stands, NOTED, or DECISION_NEEDED), re-briefs the owners a change touches, records the dissent. Use on every challenge; never debate without it."
 ---
 # Dispose of a challenge (Lead)
 

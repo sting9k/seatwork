@@ -1,6 +1,6 @@
 ---
 name: slp-feature-intake
-description: Intake lane decision for any requested work: tiny | normal | high-risk, with the hard gates that force high-risk and the design gate before implementation. A Supervisor uses it when building the intent record; a Lead re-checks it at decomposition.
+description: "Intake lane decision for any requested work: tiny | normal | high-risk, with the hard gates that force high-risk and the design gate before implementation. A Supervisor uses it when building the intent record; a Lead re-checks it at decomposition."
 ---
 # Feature intake
 

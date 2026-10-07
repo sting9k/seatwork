@@ -1,6 +1,6 @@
 ---
 name: slp-accept-candidate
-description: Lead procedure on every CANDIDATE: identify the artifact, check scope and evidence, get the independent cross-family review, close the loop with an explicit disposition.
+description: "Lead procedure on every CANDIDATE: identify the artifact, check scope and evidence, get the independent cross-family review, close the loop with an explicit disposition."
 ---
 # Accept or reject a candidate (Lead)
 1. Identity: commit sha or snapshot patch + sha, base, changed paths; anything else → `REJECT`

@@ -1,6 +1,6 @@
 ---
 name: hq-law
-description: The laws HQ holds every project to, and its own anti-patterns. Read once per session and whenever a Supervisor's report looks wrong.
+description: "The laws HQ holds every project to, and its own anti-patterns. Read once per session and whenever a Supervisor's report looks wrong."
 ---
 # HQ law
 

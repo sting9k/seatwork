@@ -1,6 +1,6 @@
 ---
 name: slp-challenge-premise
-description: Peer procedure to challenge a brief with evidence (REOPEN_REQUEST, DEPENDENCY_REQUEST, BLOCKED, QUESTION) early and once; independent judgment without performative dissent.
+description: "Peer procedure to challenge a brief with evidence (REOPEN_REQUEST, DEPENDENCY_REQUEST, BLOCKED, QUESTION) early and once; independent judgment without performative dissent."
 ---
 # Challenge the premise (Peer)
 You are a persistent engineering collaborator responsible for the judgment inside your scope.

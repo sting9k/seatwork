@@ -1,6 +1,6 @@
 ---
 name: slp-test-proof-debt-audit
-description: Audit one named behavioral claim and the test, validator, benchmark, or gate cited as proof. Do not use for ordinary implementation, failing tests, weak coverage, or the presence of mocks. Peer skill: run it when your brief names a claim and its proof, or inside a `[Peer:review]`.
+description: "Audit one named behavioral claim and the test, validator, benchmark, or gate cited as proof. Do not use for ordinary implementation, failing tests, weak coverage, or the presence of mocks. Peer skill: run it when your brief names a claim and its proof, or inside a `[Peer:review]`."
 ---
 
 # Test Proof Debt Audit

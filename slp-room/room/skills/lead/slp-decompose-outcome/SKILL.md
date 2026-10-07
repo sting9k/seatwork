@@ -1,6 +1,6 @@
 ---
 name: slp-decompose-outcome
-description: Lead procedure to split an outcome into Peer tasks along real seams with one owner per write scope and the fewest intermediate states; decides the plan shape (task, ExecPlan, lenses, ultra review) from the intake lane.
+description: "Lead procedure to split an outcome into Peer tasks along real seams with one owner per write scope and the fewest intermediate states; decides the plan shape (task, ExecPlan, lenses, ultra review) from the intake lane."
 ---
 # Decompose the outcome (Lead)
 1. Restate outcome, constraints, and current candidate from your instruction; if you cannot tell

@@ -1,6 +1,6 @@
 ---
 name: slp-intent-record
-description: Supervisor procedure to turn the Owner's request into the intent record, which is also the instruction every Lead receives: project, outcome, non-goals, verified constraints, open assumptions, decisions made vs questionable, authority, acceptance evidence, inputs, current candidate, reopen conditions, lane.
+description: "Supervisor procedure to turn the Owner's request into the intent record, which is also the instruction every Lead receives: project, outcome, non-goals, verified constraints, open assumptions, decisions made vs questionable, authority, acceptance evidence, inputs, current candidate, reopen conditions, lane."
 ---
 # Intent record (Supervisor)
 

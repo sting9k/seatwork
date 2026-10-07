@@ -1,6 +1,6 @@
 ---
 name: slp-repo-refresh
-description: Refresh an explicitly named repository by removing stale documentation, plans, issues, tests, proof machinery, scripts, and generated debris. Use only when the Owner's brief names the repository and the mode. Peer skill: run only when the Owner's brief names the repository and the mode (audit | apply | verify).
+description: "Refresh an explicitly named repository by removing stale documentation, plans, issues, tests, proof machinery, scripts, and generated debris. Use only when the Owner's brief names the repository and the mode. Peer skill: run only when the Owner's brief names the repository and the mode (audit | apply | verify)."
 ---
 
 # Repository Refresh

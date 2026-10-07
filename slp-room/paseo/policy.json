@@ -1,0 +1,367 @@
+{
+  "$comment": "Single source of truth for what each seat may touch. tools/gen-snippet.py turns the paseo part into config.snippet.json; install.sh copies the whole file to ~/.config/slp-room/policy.json where the plugin reads the harness part when it builds runtimes.",
+  "paseoTools": {
+    "all": [
+      "speak",
+      "create_workspace",
+      "list_workspaces",
+      "archive_workspace",
+      "rename_workspace",
+      "list_workspace_scripts",
+      "start_workspace_script",
+      "stop_workspace_script",
+      "list_terminals",
+      "create_terminal",
+      "kill_terminal",
+      "capture_terminal",
+      "send_terminal_keys",
+      "create_agent",
+      "send_agent_prompt",
+      "get_agent_status",
+      "get_agent_activity",
+      "list_agents",
+      "cancel_agent",
+      "archive_agent",
+      "kill_agent",
+      "update_agent",
+      "set_agent_mode",
+      "list_pending_permissions",
+      "respond_to_permission",
+      "create_schedule",
+      "create_heartbeat",
+      "delete_heartbeat",
+      "list_schedules",
+      "inspect_schedule",
+      "pause_schedule",
+      "resume_schedule",
+      "delete_schedule",
+      "update_schedule",
+      "schedule_logs",
+      "run_schedule_once",
+      "list_providers",
+      "list_models",
+      "list_profiles",
+      "inspect_provider"
+    ],
+    "allow": {
+      "hq": [
+        "create_agent",
+        "get_agent_status",
+        "get_agent_activity",
+        "list_agents",
+        "cancel_agent",
+        "archive_agent",
+        "list_providers",
+        "list_models",
+        "create_workspace",
+        "list_workspaces",
+        "list_schedules",
+        "inspect_schedule"
+      ],
+      "supervisor": [
+        "create_agent",
+        "get_agent_status",
+        "get_agent_activity",
+        "list_agents",
+        "cancel_agent",
+        "archive_agent",
+        "update_agent",
+        "set_agent_mode",
+        "list_models",
+        "list_providers",
+        "create_heartbeat",
+        "delete_heartbeat",
+        "list_schedules",
+        "inspect_schedule",
+        "list_pending_permissions",
+        "respond_to_permission"
+      ],
+      "lead": [
+        "create_agent",
+        "get_agent_status",
+        "get_agent_activity",
+        "list_agents",
+        "cancel_agent",
+        "archive_agent",
+        "list_models",
+        "create_workspace",
+        "list_workspaces",
+        "list_pending_permissions",
+        "respond_to_permission"
+      ],
+      "peer": [
+        "get_agent_status",
+        "get_agent_activity",
+        "list_agents"
+      ],
+      "lens": []
+    }
+  },
+  "claude": {
+    "$comment": "disallowedTools uses Claude Code's permission syntax. Agent/Task/ListAgents/SendMessage are Claude's own sub-agent and messaging tools; ScheduleWakeup/Cron*/Workflow are its own scheduling and orchestration; the Bash rules stop a seat from starting a nested harness or driving Paseo from the shell.",
+    "disallowedTools": {
+      "hq": [
+        "Agent",
+        "Task",
+        "Bash(claude:*)",
+        "Bash(codex:*)",
+        "Bash(pi:*)",
+        "Bash(opencode:*)",
+        "Bash(paseo run:*)",
+        "Bash(paseo send:*)",
+        "Bash(paseo import:*)",
+        "Bash(paseo agent:*)",
+        "Bash(paseo schedule:*)",
+        "ScheduleWakeup",
+        "CronCreate",
+        "CronDelete",
+        "CronList",
+        "Workflow",
+        "SendMessage",
+        "ListAgents"
+      ],
+      "supervisor": [
+        "Agent",
+        "Task",
+        "Bash(claude:*)",
+        "Bash(codex:*)",
+        "Bash(pi:*)",
+        "Bash(opencode:*)",
+        "Bash(paseo run:*)",
+        "Bash(paseo send:*)",
+        "Bash(paseo import:*)",
+        "Bash(paseo agent:*)",
+        "Bash(paseo schedule:*)",
+        "ScheduleWakeup",
+        "CronCreate",
+        "CronDelete",
+        "CronList",
+        "Workflow",
+        "SendMessage",
+        "ListAgents"
+      ],
+      "lead": [
+        "Agent",
+        "Task",
+        "Bash(claude:*)",
+        "Bash(codex:*)",
+        "Bash(pi:*)",
+        "Bash(opencode:*)",
+        "Bash(paseo:*)",
+        "ScheduleWakeup",
+        "CronCreate",
+        "CronDelete",
+        "CronList",
+        "Workflow",
+        "SendMessage",
+        "ListAgents"
+      ],
+      "peer": [
+        "Agent",
+        "Task",
+        "Bash(claude:*)",
+        "Bash(codex:*)",
+        "Bash(pi:*)",
+        "Bash(opencode:*)",
+        "Bash(paseo:*)",
+        "ScheduleWakeup",
+        "CronCreate",
+        "CronDelete",
+        "CronList",
+        "Workflow",
+        "SendMessage",
+        "ListAgents"
+      ],
+      "lens": [
+        "Agent",
+        "Task",
+        "Bash(claude:*)",
+        "Bash(codex:*)",
+        "Bash(pi:*)",
+        "Bash(opencode:*)",
+        "Bash(paseo:*)",
+        "ScheduleWakeup",
+        "CronCreate",
+        "CronDelete",
+        "CronList",
+        "Workflow",
+        "SendMessage",
+        "ListAgents",
+        "Edit",
+        "Write",
+        "MultiEdit",
+        "NotebookEdit"
+      ]
+    },
+    "runtime": {
+      "shareFiles": [
+        "CLAUDE.md"
+      ],
+      "shareSkills": [],
+      "sharePlugins": false,
+      "keepHooks": false,
+      "keepEnabledPlugins": false
+    },
+    "deniedSkills": [
+      "loop",
+      "schedule",
+      "workflow-authoring",
+      "plugin-authoring",
+      "update-config",
+      "keybindings-help",
+      "fewer-permission-prompts",
+      "init",
+      "code-review",
+      "simplify",
+      "security-review",
+      "review",
+      "batch",
+      "debug"
+    ],
+    "$comment_deniedSkills": "Claude Code bundled skills that overlap the room (scheduling, orchestration, config editing, sub-agent reviews). Applied as Skill(skill:<name>) deny rules: in the provider's disallowedTools and in the runtime's settings.json permissions.deny."
+  },
+  "codex": {
+    "runtime": {
+      "shareFiles": [
+        "auth.json",
+        "AGENTS.md",
+        "rules",
+        "version.json"
+      ],
+      "shareSkills": [],
+      "sharePlugins": false,
+      "shareHooks": false,
+      "stripTables": [
+        "mcp_servers",
+        "plugins",
+        "hooks"
+      ],
+      "stripKeys": [
+        "notify"
+      ],
+      "featuresOff": [
+        "multi_agent",
+        "agent_message_board",
+        "browser_use",
+        "browser_use_external",
+        "browser_use_full_cdp_access",
+        "in_app_browser",
+        "computer_use",
+        "apps",
+        "memories"
+      ],
+      "multiAgentV2Off": true,
+      "agentsOff": true
+    }
+  },
+  "pi": {
+    "runtime": {
+      "$comment": "Pi only receives Paseo tools when the pi-mcp-adapter extension is installed (pi install npm:pi-mcp-adapter). keepPackages lists substrings of user packages to carry into the seat; everything else is dropped.",
+      "shareFiles": [
+        "auth.json",
+        "models.json",
+        "models-store.json",
+        "AGENTS.md"
+      ],
+      "shareDirs": [],
+      "keepPackages": [
+        "pi-mcp-adapter"
+      ],
+      "settings": {
+        "extensions": []
+      }
+    }
+  },
+  "opencode": {
+    "runtime": {
+      "shareEntries": [],
+      "config": {
+        "$schema": "https://opencode.ai/config.json",
+        "permission": {
+          "task": "deny"
+        },
+        "agent": {
+          "general": {
+            "disable": true
+          },
+          "explore": {
+            "disable": true
+          },
+          "scout": {
+            "disable": true
+          }
+        }
+      }
+    }
+  },
+  "daemon": {
+    "$comment": "Daemon-wide switches install.sh applies to ~/.paseo/config.json. These affect every agent on the host, not only seats.",
+    "browserTools": false,
+    "enableTerminalAgentHooks": false,
+    "dictation": false,
+    "voiceMode": false,
+    "bundledSkills": "none"
+  },
+  "mail": {
+    "$comment": "The room's MCP server (slp_mail, slp_inbox) and delivery rules. Agents never use send_agent_prompt; every message is an envelope the plugin delivers without interrupting anyone.",
+    "port": 47611,
+    "maxBodyChars": 4000,
+    "holdFyiWhileRunning": true,
+    "midTurn": {
+      "claude": "hold",
+      "codex": "hold",
+      "pi": "hold",
+      "opencode": "hold"
+    },
+    "$comment_midTurn": "Mail to a RUNNING seat. 'steer' hands it to Paseo's steer; observed on 2026-10-07: Claude cancels the running tool ('[Request interrupted by user for tool use]') and Pi aborts it ('Command aborted'), so every harness is 'hold': mail is delivered the moment the recipient's turn ends. Keep 'hold' unless you verify a harness applies steer after the tool call."
+  },
+  "room": {
+    "$comment": "Who may mail whom and who may create whom; both enforced by the plugin. A mail off the route table or outside the tree is refused; a seat created outside spawn is archived at once and its parent told. params are quoted by the role prompts through {{placeholders}}.",
+    "routes": {
+      "hq>supervisor": true,
+      "supervisor>hq": true,
+      "supervisor>lead": true,
+      "lead>supervisor": true,
+      "lead>peer": true,
+      "peer>lead": true,
+      "supervisor>peer": true,
+      "peer>supervisor": true,
+      "hq>lead": false,
+      "hq>peer": false,
+      "lead>lead": false,
+      "peer>peer": false,
+      "supervisor>supervisor": false,
+      "hq>hq": false,
+      "lead>lens": true,
+      "lens>lead": true,
+      "supervisor>lens": false,
+      "lens>supervisor": false,
+      "hq>lens": false,
+      "peer>lens": false,
+      "lens>peer": false,
+      "lens>lens": false
+    },
+    "spawn": {
+      "hq": [
+        "supervisor"
+      ],
+      "supervisor": [
+        "lead"
+      ],
+      "lead": [
+        "peer",
+        "lens"
+      ],
+      "peer": [],
+      "lens": []
+    },
+    "params": {
+      "heartbeatCron": "*/15 * * * *",
+      "peerStallMinutes": 6,
+      "reviewStallMinutes": 30,
+      "leadStallMinutes": 30,
+      "readBudgetTokens": 80000,
+      "cheapReadBudgetTokens": 40000
+    }
+  }
+}

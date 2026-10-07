@@ -1,0 +1,75 @@
+{
+  "$comment": "Every model id the room uses, as <provider>/<model>. Role prompts carry {{placeholders}} the plugin fills from this file when a seat is created, so a model change needs no prompt edit. Every provider named here must be enabled in paseo/seats.yml (install.sh checks). Add pi-* or opencode-* providers here after enabling those seats.",
+  "seats": {
+    "hq": {
+      "provider": "claude-hq/claude-opus-5-5",
+      "thinking": "high"
+    },
+    "supervisor": {
+      "provider": "claude-supervisor/claude-opus-5-5",
+      "thinking": "xhigh",
+      "alternatives": []
+    },
+    "lead": {
+      "provider": "claude-lead/claude-opus-5-5",
+      "thinking": "high",
+      "alternatives": []
+    }
+  },
+  "peer": {
+    "reviewThinking": "high",
+    "tiers": {
+      "cheap": {
+        "providers": [
+          "claude-peer/claude-haiku-4-5"
+        ],
+        "thinking": "medium",
+        "use": "mechanical, fully specified: extraction, renames, formatting, log triage, doc edits, test scaffolds",
+        "never": "anything needing judgement about behavior"
+      },
+      "default": {
+        "providers": [
+          "claude-peer/claude-sonnet-5-5"
+        ],
+        "thinking": "medium",
+        "use": "implementation, debugging, multi-file changes with invariants, research with judgement",
+        "never": "reasoning-risk work"
+      },
+      "expensive": {
+        "providers": [
+          "claude-peer/claude-opus-5-5"
+        ],
+        "thinking": "medium",
+        "use": "architecture decisions, cross-module invariants, subtle concurrency or data bugs, a task that failed at default",
+        "never": "first attempts on gut feeling"
+      },
+      "cross-family": {
+        "providers": [
+          "codex-peer/gpt-6.1-sol"
+        ],
+        "thinking": "high",
+        "use": "the reviewer of a Claude-written candidate, a tie-break, a retry after a Claude Peer failed",
+        "never": "a rung on the ladder"
+      }
+    }
+  },
+  "lens": {
+    "$comment": "Lenses are not Peers: strong models that think independently for the Lead, from a neutral brief, without the Lead's judgement or context. One lens = the oracle. Two = the pair, which must be two different models. More = add from pool, never the same model twice.",
+    "oracle": "codex-lens/gpt-6-astra",
+    "pair": [
+      "codex-lens/gpt-6-astra",
+      "claude-lens/claude-opus-5-5"
+    ],
+    "pool": [
+      "codex-lens/gpt-6.1-sol",
+      "claude-lens/claude-sonnet-5-5"
+    ],
+    "thinking": "high"
+  },
+  "modes": {
+    "claude": "bypassPermissions",
+    "codex": "full-access",
+    "pi": "default",
+    "opencode": "default"
+  }
+}

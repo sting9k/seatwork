@@ -1,0 +1,42 @@
+[
+  {
+    "id": "agent_profile_slp_hq",
+    "name": "HQ Supervisor",
+    "icon": "compass",
+    "provider": "claude-hq",
+    "model": "claude-opus-5-5",
+    "modeId": "bypassPermissions",
+    "thinkingOptionId": "high",
+    "notes": "The seat above every project. Sees only registered SLP projects, opens work through each project's Supervisor, owns issues, reports to the user. Never creates Leads or Peers. Open it in the slp-hq workspace."
+  },
+  {
+    "id": "agent_profile_slp_supervisor",
+    "name": "Supervisor",
+    "icon": "compass",
+    "provider": "claude-supervisor",
+    "model": "claude-opus-5-5",
+    "modeId": "bypassPermissions",
+    "thinkingOptionId": "xhigh",
+    "notes": "One project's Supervisor: the HQ of that project. Opened by HQ or by the user inside a registered project. Pins the intent, runs one Lead per workstream, watches for drift, routes decisions up. Never implements, validates or accepts. Models: room/models.json."
+  },
+  {
+    "id": "agent_profile_slp_lead",
+    "name": "Lead",
+    "icon": "compass",
+    "provider": "claude-lead",
+    "model": "claude-opus-5-5",
+    "modeId": "bypassPermissions",
+    "thinkingOptionId": "high",
+    "notes": "Launched by a Supervisor, one per workstream. Owns the technical outcome: plans, dispatches Peers by tier (room/models.json), opens Lenses for hard questions, answers challenges, accepts or rejects candidates. Never implements."
+  },
+  {
+    "id": "agent_profile_slp_peer",
+    "name": "Peer",
+    "icon": "hammer",
+    "provider": "claude-peer",
+    "model": "claude-sonnet-5-5",
+    "modeId": "bypassPermissions",
+    "thinkingOptionId": "medium",
+    "notes": "Launched by a Lead. The full-stack default seat: one bounded outcome, one write scope. The Lead picks the model per task (haiku cheap, sonnet default, opus expensive, codex-peer/pi-peer/opencode-peer for another family). Title [Peer:<spec>] adds a specialization sheet (research, review)."
+  }
+]

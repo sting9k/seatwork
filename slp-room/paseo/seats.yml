@@ -1,0 +1,14 @@
+# Which seats the room installs. Only these <harness>-<role> providers are written
+# into Paseo and only their runtimes are built; everything else does not exist.
+# Harnesses: claude, codex, pi, opencode. Roles: hq, supervisor, lead, peer, lens.
+# Every provider named in room/models.json must be enabled here. Edit, then ./install.sh.
+seats:
+  hq: [claude]
+  supervisor: [claude]
+  lead: [claude]
+  peer: [claude, codex]
+  lens: [codex, claude]
+
+# true: each provider lists only the models room/models.json assigns to it (read from the
+# harness's live catalog at install time). false: the harness's full model list.
+restrict_models: true

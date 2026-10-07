@@ -2,6 +2,7 @@ import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } fr
 import { randomBytes } from "node:crypto";
 import { join } from "node:path";
 import type { PluginBeforeRequests, PluginServerContext } from "@getpaseo/plugin/server";
+import { Collector } from "./server/gc";
 import { MailEngine, type Mail, type Priority, type Needs } from "./server/mail";
 import { McpHttpServer } from "./server/mcp-http";
 import { PASEO_CONFIG, REGISTRY_LOG, ROOM_HOME, TOKEN_FILE } from "./server/paths";
@@ -29,6 +30,8 @@ const NONCES_FILE = join(MAIL_DIR, "nonces.json");
  *  on agent.turn_ended / permission_requested
  *                             become mail to the parent; the engine delivers it when the
  *                             parent is idle, never by interrupting.
+ *  on agent.archived          bounces held mail, forgets the nonce, deletes heartbeats.
+ *  every gc.everyMinutes      archives idle seats and orphan heartbeats (gc.ts).
  */
 export default function contribute(server: PluginServerContext) {
   mkdirSync(MAIL_DIR, { recursive: true });
@@ -52,6 +55,11 @@ export default function contribute(server: PluginServerContext) {
   const getEngine = (paseo: Parameters<Parameters<typeof server.on>[1]>[1]["paseo"]) => {
     if (!engine) engine = new MailEngine(paseo, policy.mail, policy.room, log);
     return engine;
+  };
+  let gc: Collector | null = null;
+  const getGc = (paseo: Parameters<typeof getEngine>[0]) => {
+    if (!gc) gc = new Collector(paseo, getEngine(paseo), policy.gc, log, forgetAgent);
+    return gc;
   };
 
   mcp.register(
@@ -206,10 +214,14 @@ export default function contribute(server: PluginServerContext) {
     }
   });
 
-  // Any turn start wakes the engine, so slp_mail works right after a plugin reload
-  // (the API hands us the Paseo client only inside hook contexts).
+  // Any turn start wakes the engine and the collector, so both work right after a
+  // plugin reload (the API hands us the Paseo client only inside hook contexts).
   server.on("agent.turn_started", (_event, { paseo }) => {
-    getEngine(paseo);
+    getGc(paseo);
+  });
+
+  server.on("agent.archived", async (event, { paseo }) => {
+    await getGc(paseo).onArchived(event.agent.id);
   });
 
   server.on("agent.turn_ended", async (event, { paseo }) => {
@@ -272,9 +284,14 @@ export default function contribute(server: PluginServerContext) {
   const sweep = setInterval(() => {
     void engine?.sweep();
   }, 60_000);
+  // garbage collection: idle seats and orphan heartbeats
+  const collect = setInterval(() => {
+    void gc?.run();
+  }, Math.max(1, policy.gc.everyMinutes) * 60_000);
 
   return async () => {
     clearInterval(sweep);
+    clearInterval(collect);
     await mcp.close();
   };
 
@@ -344,6 +361,14 @@ export default function contribute(server: PluginServerContext) {
 
   function resolveCaller(nonce: string): string | null {
     return nonces[nonce] ?? null;
+  }
+
+  /** An archived seat can never call slp_mail again: drop its nonce. */
+  function forgetAgent(agentId: string): void {
+    const stale = Object.keys(nonces).filter((nonce) => nonces[nonce] === agentId);
+    if (stale.length === 0) return;
+    for (const nonce of stale) delete nonces[nonce];
+    saveNonces(nonces);
   }
 }
 

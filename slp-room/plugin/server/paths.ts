@@ -23,8 +23,10 @@ export const REGISTRY_LOG = join(ROOM_HOME, "registry-log.jsonl");
 /** Optional `claude setup-token` token shared by the Claude seats (mode 600). */
 export const TOKEN_FILE = join(ROOM_HOME, "oauth-token");
 
-/** Paseo daemon config, read only as a fallback for the Claude token. */
-export const PASEO_CONFIG = join(process.env.PASEO_HOME?.trim() || join(USER_HOME, ".paseo"), "config.json");
+/** The daemon's home: config.json (fallback for the Claude token) and the schedule store GC reads. */
+export const PASEO_HOME = process.env.PASEO_HOME?.trim() || join(USER_HOME, ".paseo");
+export const PASEO_CONFIG = join(PASEO_HOME, "config.json");
+export const PASEO_SCHEDULES = join(PASEO_HOME, "schedules");
 
 /** The user's own harness homes. Runtimes share credentials and skills from these by symlink. */
 export const CLAUDE_HOME = process.env.CLAUDE_CONFIG_DIR?.trim() || join(USER_HOME, ".claude");

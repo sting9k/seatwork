@@ -24,7 +24,7 @@ Everything lives under `slp-room/`.
 | Path | What it is |
 |---|---|
 | `slp-room/paseo/seats.yml` | Which seats exist: `<role>: [harness, ...]`. Only these providers and runtimes are created. |
-| `slp-room/paseo/policy.json` | What each role may touch: Paseo tool allowlist, Claude denied tools and skills, what each harness runtime shares from the user's home, mail delivery, mail routes, spawn rules, the knobs the prompts quote (`room.params`). |
+| `slp-room/paseo/policy.json` | What each role may touch: Paseo tool allowlist, Claude denied tools and skills, what each harness runtime shares from the user's home, mail delivery, garbage collection, mail routes, spawn rules, the knobs the prompts quote (`room.params`). |
 | `slp-room/paseo/profiles.json` | The four Paseo profiles: HQ Supervisor, Supervisor, Lead, Peer. |
 | `slp-room/room/models.json` | Every model id the room uses. Rendered into the role prompts as `{{placeholders}}` when a seat is created. |
 | `slp-room/room/roles/` | One self-contained prompt per role: `hq`, `supervisor`, `lead`, `peer`, `lens`. |
@@ -99,6 +99,17 @@ on a neutral brief that carries none of the Lead's reasoning: one lens is the
 oracle, two are the pair (two different models, always), more come from the
 pool, never the same model twice. Procedure: `slp-room/room/skills/lead/slp-lens`.
 
+## Garbage collection
+
+The plugin runs a pass every `gc.everyMinutes` and a short one whenever a
+seat is archived. A room seat idle longer than its role's limit
+(`gc.idleHoursBeforeArchive`, 0 means never) is archived unless something it
+launched is still alive, and its parent gets an FYI mail. Heartbeats whose
+seat is archived or gone are deleted (through the paseo CLI, the plugin SDK
+has no schedule API). Mail still held for an archived seat bounces to its
+sender. GC never kills a process and never touches an agent that is not a
+room seat; every action is a line in `~/.config/slp-room/gc.log`.
+
 ## Install
 
 ```bash
@@ -137,6 +148,5 @@ ls ~/.config/slp-room/runtimes/*/
 
 ## Not here yet
 
-- Garbage collection of old seats and orphan heartbeats.
 - A full end-to-end run on real work; the mechanics were verified with cheap
   seats only.

@@ -315,6 +315,19 @@
     },
     "$comment_midTurn": "Mail to a RUNNING seat. 'steer' hands it to Paseo's steer; observed on 2026-10-07: Claude cancels the running tool ('[Request interrupted by user for tool use]') and Pi aborts it ('Command aborted'), so every harness is 'hold': mail is delivered the moment the recipient's turn ends. Keep 'hold' unless you verify a harness applies steer after the tool call."
   },
+  "gc": {
+    "$comment": "Room garbage collection, run by the plugin every everyMinutes and on agent.archived. A seat idle longer than its role's hours (0 = never) is archived unless one of its descendants is still alive; heartbeats whose seat is archived or gone are deleted; mail still held for an archived seat is bounced to its sender. It never kills processes and never touches agents that are not room seats.",
+    "everyMinutes": 10,
+    "idleHoursBeforeArchive": {
+      "hq": 0,
+      "supervisor": 168,
+      "lead": 48,
+      "peer": 48,
+      "lens": 12
+    },
+    "deleteOrphanHeartbeats": true,
+    "tellParent": true
+  },
   "room": {
     "$comment": "Who may mail whom and who may create whom; both enforced by the plugin. A mail off the route table or outside the tree is refused; a seat created outside spawn is archived at once and its parent told. params are quoted by the role prompts through {{placeholders}}.",
     "routes": {

@@ -77,9 +77,19 @@ export interface RoomPolicy {
   params: RoomParams;
 }
 
+/** Garbage collection, see gc.ts. Hours of 0 mean "never archive that role". */
+export interface GcPolicy {
+  everyMinutes: number;
+  idleHoursBeforeArchive: Record<RoleName, number>;
+  deleteOrphanHeartbeats: boolean;
+  /** FYI mail to the parent when one of its seats is archived by GC. */
+  tellParent: boolean;
+}
+
 export interface RuntimePolicy {
   room: RoomPolicy;
   mail: MailPolicy;
+  gc: GcPolicy;
   claude: ClaudeRuntimePolicy;
   codex: CodexRuntimePolicy;
   pi: PiRuntimePolicy;
@@ -105,6 +115,7 @@ export function loadPolicy(): RuntimePolicy {
       params: need(room.params, "room.params"),
     },
     mail: need(parsed.mail, "mail"),
+    gc: need(parsed.gc, "gc"),
     claude: { ...need(claude.runtime, "claude.runtime"), deniedSkills: claude.deniedSkills ?? [] },
     codex: need(parsed.codex?.runtime, "codex.runtime"),
     pi: need(parsed.pi?.runtime, "pi.runtime"),

@@ -30,15 +30,19 @@ the law.
 
    ```text
    Outcome: this project's law exists and is agreed.
-   Do: slp-project-law. Fill what the repository answers; send every line you
-   cannot fill as ONE DECISION_NEEDED listing the questions with your
-   recommendation for each. Launch nobody. No code change.
+   Do: slp-project-law. Fill what the repository answers; end your turn with
+   DECISION_NEEDED and every line you cannot fill as ONE numbered list of
+   questions with your recommendation for each, in your final message and in
+   .slp/status.md under WAITING ON YOU. Launch nobody. No code change.
    Acceptance evidence: .slp/<project>-law.md exists, every Policy line filled.
    ```
 
-6. Its `DECISION_NEEDED` → put the questions to Human with the
-   recommendations, send the answers back with `reply_to`. Its `DONE` →
-   `slp_projects` again; report to Human: registered, mission, law, the
+6. Tell Human the Supervisor is writing the law and end your turn. On
+   Human's next message look once (`get_agent_status`, then
+   `get_agent_activity` for the last report): still running → say so;
+   `DECISION_NEEDED` → put its questions to Human with the recommendations,
+   then send the answers down with `slp_mail(to: <Supervisor id>)`; `DONE` →
+   `slp_projects` again and report: registered, mission, law, the
    Supervisor's id, and that the project is ready for its first task.
 
 The first registration turns the room's project guard on: from then on project

@@ -9,9 +9,11 @@ Do, in this order:
 2. Read the whole production surface the change touches (callers, callees, config, tests),
    not only the diff. Grep, then read by range.
 3. Run the narrowest check that tests the claim, once. Never the whole suite unless asked.
-4. Ask four questions: does it keep the contract and invariants? does the evidence prove the
+4. Ask five questions: does it keep the contract and invariants? does the evidence prove the
    outcome, not only the tests? what changed outside the write scope? what is temporary, and
-   is it labelled?
+   is it labelled? does it leave two ways to do the same thing (an old and a new path both
+   live, an adapter between them)? A simpler implementation than the plan that holds the
+   contract, the invariants and the outcome is an improvement, not a finding.
 
 Do not: edit anything; restyle; compare the code to the plan line by line; say what you would
 have done instead; report taste as a finding; pass a test change without its stated reason.

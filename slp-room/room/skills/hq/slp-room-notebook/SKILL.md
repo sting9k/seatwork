@@ -12,7 +12,10 @@ with the weekly digest.
 
 1. Read every registered project's `.slp/notebook.md` since the last aggregation (keep the date
    in the HQ notebook header).
-2. Aggregate by **pattern**, not by episode: tool calls that failed repeatedly, env or
+2. `slp_room_stats` first, then the notebooks: many candidates and no reopen requests → the
+   Peers obey, open the room for challenge; many reopen requests and no revised brief → the
+   Peers perform dissent or the Leads defend plans, tie challenge to run evidence; reviews that
+   never reject → the reviewer must justify its cost or go. Aggregate by **pattern**, not by episode: tool calls that failed repeatedly, env or
    permission friction, quota exhaustion while a Lead waited, reviews that found nothing, the same
    escalation class recurring, lens runs that always agreed, Peers stopping to offer option menus,
    Leads pre-solving, Supervisors acting as dispatchers.

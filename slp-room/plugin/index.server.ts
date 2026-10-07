@@ -12,11 +12,12 @@ import { modelAllowed, projectModels, type Models } from "./server/models";
 import { loadPolicy } from "./server/policy";
 import { findProject, findRoomMarker, loadRegistry, projectBlock } from "./server/registry";
 import { describeIsolation, ensureRuntime, envFor } from "./server/runtimes";
-import { enabledSeats, parseSeat, rolePrompt, specFromTitle, type Role } from "./server/seats";
+import { enabledSeats, maySpawn, parseSeat, rolePrompt, specFromTitle, type Role } from "./server/seats";
+import { roomStats } from "./server/stats";
 
 type CreateRequest = PluginBeforeRequests["agent.create"];
 
-const VERSION = "0.6.0";
+const VERSION = "0.7.0";
 const MAIL_DIR = join(ROOM_HOME, "mail");
 const MCP_TOKEN_FILE = join(MAIL_DIR, "token");
 const NONCES_FILE = join(MAIL_DIR, "nonces.json");
@@ -185,6 +186,18 @@ export default function contribute(server: PluginServerContext) {
 
   mcp.register(
     {
+      name: "slp_room_stats",
+      description: "What the mail log says happened in the last N days, per project and per signal (candidates accepted or rejected, reopen requests conceded or held, decisions escalated, questions). Refused for seats that do not keep the registry.",
+      inputSchema: { type: "object", properties: { days: { type: "number", description: "Window in days, default 14." } }, required: [] },
+    },
+    async (args, context) => {
+      registryOwner(context.nonce, "slp_room_stats");
+      return roomStats(Number(args.days) > 0 ? Number(args.days) : 14);
+    },
+  );
+
+  mcp.register(
+    {
       name: "slp_adopt",
       description:
         "Take over a seat handed to you (a handoff): from now on it reports to you, its `to: owner` reaches you, and you may mail it. Allowed only for a role you may create, and only when its current owner is archived or sits in your own chain. Then mail it its brief and your disposition of its last signal.",
@@ -254,7 +267,7 @@ export default function contribute(server: PluginServerContext) {
     if (parent) {
       const allowed = policy.room.spawn[parent.role] ?? [];
       const childRole = seat?.role;
-      if (!childRole || !allowed.includes(childRole)) {
+      if (!childRole || !maySpawn(policy.room.spawn, parent.role, childRole, event.agent.title)) {
         const what = seat ? `a ${seat.role} seat` : `a non-room agent (provider ${event.agent.provider})`;
         log(`spawn refused: ${parent.role} ${parentId} created ${what} ${event.agent.id}; archiving it`);
         try {
@@ -311,7 +324,8 @@ export default function contribute(server: PluginServerContext) {
     const parentId = eng.parentOf(event.agent.id) ?? event.agent.parentAgentId;
     if (!seat || !parentId || event.outcome.kind === "canceled") return;
     const parent = eng.seat(parentId);
-    if (!parent) return;
+    // nothing travels up to hq: it reads the Supervisor's final message and .slp/status.md when it looks
+    if (!parent || parent.role === "hq") return;
     const text = lastAssistantText(event.timeline);
     const signal = signalOf(text);
     let priority: Priority;
@@ -330,8 +344,6 @@ export default function contribute(server: PluginServerContext) {
       subject = `${signal ?? "turn ended"}: ${seat.role} ${event.agent.title ?? event.agent.id}`;
       needs = "nothing";
     }
-    // HQ hears only from a Supervisor, and only when there is something to act on.
-    if (parent.role === "hq" && (seat.role !== "supervisor" || priority === "fyi")) return;
     await eng.post({
       from: { agentId: event.agent.id, role: seat.role },
       to: parentId,
@@ -347,7 +359,7 @@ export default function contribute(server: PluginServerContext) {
     const eng = getEngine(paseo);
     const seat = parseSeat(event.agent.provider);
     const parentId = eng.parentOf(event.agent.id) ?? event.agent.parentAgentId;
-    if (!seat || !parentId || !eng.seat(parentId)) return;
+    if (!seat || !parentId || !eng.seat(parentId) || eng.seat(parentId)?.role === "hq") return;
     await eng.post({
       from: { agentId: event.agent.id, role: seat.role },
       to: parentId,

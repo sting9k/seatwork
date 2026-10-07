@@ -65,6 +65,8 @@ export function promptVars(m: Models, params: RoomParams): Record<string, string
   return {
     peer_table: peerTable(m),
     review_thinking: m.peer.reviewThinking,
+    // read-only research never runs on the cheap tier
+    research_providers: Object.entries(m.peer.tiers).filter(([tier]) => tier !== "cheap").flatMap(([, t]) => t.providers).map((p) => `\`${p}\``).join(", ") || "none",
     lens_table: lensTable(m),
     modes,
     lead_provider: m.seats.lead.provider,

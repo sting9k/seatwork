@@ -26,10 +26,13 @@ project.
 
 ```text
                           You
-                           │  chat
+                           │  chat with HQ (every project)
+                           │  or with one Supervisor (one project)
                            ▼
                  ┌───────────────────┐
                  │        HQ         │   project: hq-seatwork
+                 │  looks down,      │   nothing travels up to HQ
+                 │  sends down       │
                  └─────────┬─────────┘
             ┌──────────────┴──────────────┐
             ▼                             ▼
@@ -49,9 +52,9 @@ project.
 
 | Role | Does | Never does |
 |---|---|---|
-| **HQ** | Takes your request, splits it per project, asks you when a decision is yours | Create a Lead or a Peer, edit code |
-| **Supervisor** | Pins one project's goal, splits it into workstreams, keeps the Leads on course | Edit code, accept work |
-| **Lead** | Plans one workstream, hands tasks to Peers, inspects and accepts results | Edit code |
+| **HQ** | Takes your request, splits it per project, sends instructions down to Supervisors, looks at the projects when you ask | Take part in the work, create a Lead or a Peer, edit code |
+| **Supervisor** | Pins one project's goal, splits it into workstreams, keeps the Leads on course; what needs your decision goes in its end-of-turn report | Edit code, accept work, mail upward |
+| **Lead** | Plans one workstream, hands tasks to Peers, inspects and accepts results; does tiny work and the first scaffold itself | Edit a Peer's scope, do large work alone |
 | **Peer** | Does one concrete task inside the files it was given | Edit outside its scope |
 | **Lens** | Answers one hard question or reviews, independently of the Lead | Edit anything |
 
@@ -60,6 +63,10 @@ Two rules to keep in mind:
 - **Each level sees only the level directly above and below.** Agents
   inside a project know one "Owner" above them; they do not know HQ or you
   exist.
+- **Reports go up only as far as the Supervisor.** A Supervisor cannot send
+  anything to HQ; HQ looks down (the Supervisor's end-of-turn report,
+  `.slp/status.md`) when you ask, then sends instructions down. Talk to HQ
+  to manage every project; talk to a project's Supervisor to manage one.
 - **Each role is a responsibility.** A Lead decides but does not edit code;
   a Peer edits code but does not widen its own scope.
 
@@ -126,14 +133,22 @@ You do two things: add the directory to Paseo, then tell HQ.
   ├─────────────────────▶│ registers the project            │
   │                      │ 5. opens the Supervisor ────────▶│ writes the law
   │                      │                                  │
-  │ 6. law questions     │◀────────── what it cannot fill ──┤
+  │                      │                                  │ leaves its open
+  │ 6. you write again   │                                  │ questions in its
+  ├─────────────────────▶│ looks down: reads the report ···▶│ report
+  │    law questions     │                                  │
   │◀─────────────────────┤                                  │
   │ 7. answers           │                                  │
   ├─────────────────────▶├─────────────────────────────────▶│ settles the law
   │                      │                                  │
-  │ 8. "project ready"   │◀────────────────────────── DONE ─┤
+  │ 8. you write again   │ looks down: reads DONE ·········▶│
+  ├─────────────────────▶│                                  │
+  │   "project ready"    │                                  │
   │◀─────────────────────┤                                  │
 ```
+
+Dotted arrows are HQ reading; the Supervisor sends nothing up. So after
+step 5, write HQ anything ("how is it going") to make it look.
 
 What gets created:
 
@@ -171,7 +186,8 @@ HQ asks for whichever part is missing. Then:
                                          │
                                       result
                                          ▼
- You ◀── HQ ◀── Supervisor ◀── Lead ◀── Lens/review   reports go up
+          HQ ···▶ Supervisor ◀── Lead ◀── Lens/review   reports go up
+ You ◀────┘ looks down when you ask                     to the Supervisor
 ```
 
 1. HQ passes the work to the project's Supervisor.
@@ -180,16 +196,35 @@ HQ asks for whichever part is missing. Then:
    file scope.
 4. A Peer hands in its result; the Lead has a reviewer from another model
    family check it, then accepts it or sends it back.
-5. When everything is done, the report travels back up to you.
+5. When everything is done, the Supervisor writes the result in its
+   end-of-turn report and `.slp/status.md`.
 
-You do not have to wait around. When something is yours to decide (cost,
-product scope, an outside action such as push or deploy), HQ asks, with a
-recommendation and its consequence. HQ never decides for you.
+Tiny work (a quick fix, a few files, directly verifiable) and the first
+scaffold are done by the Lead itself, without a Peer.
 
-Ask for status at any time: "how are the projects doing".
+A Supervisor's report always carries two sections that keep you in control:
+**decided by the room** (what it chose on its own, and whether you may
+revisit it) and **overruled** (objections a Peer raised with evidence that
+were not followed). Both also live in `.slp/status.md` and are never
+summarised away.
 
-**Working without HQ:** you can open the **Supervisor** profile directly
-inside a project and give it the work. You are then its "Owner".
+When something is yours to decide (cost, product scope, an outside action
+such as push or deploy), the Supervisor puts it in the `WAITING ON YOU:` row
+at the end of its report. HQ receives nothing by itself; it looks down when
+you write, then asks you with a recommendation and its consequence. HQ never
+decides for you.
+
+Ask for status at any time: "how are the projects doing". HQ can also count
+from the mail log (`slp_room_stats`): how many results were accepted or sent
+back, how often a Peer challenged a brief and was conceded.
+
+**Working without HQ:** open the **Supervisor** profile directly inside a
+project and give it the work. You are then its "Owner" and read its reports
+yourself.
+
+**Steering a Peer:** go through the Supervisor or the Lead. If you chat with
+a Peer directly it obeys, and its next report opens with `DIRECT:` so the
+Lead learns that someone instructed it outside the mail.
 
 ---
 
@@ -218,6 +253,8 @@ The first line of every report is a signal:
 | `DEPENDENCY_REQUEST` | Peer | Something outside its scope is needed |
 | `BLOCKED` | any role | Nothing safe is left to do |
 | `ACCEPT` / `REJECT` | Lead | Accepted, or sent back with the repair |
+| `REVISED BRIEF` | Lead | The Peer's challenge held; the brief changed |
+| `HOLD` / `NOTED` | Lead | The current route stands; the Peer's objection is on record, no further debate |
 | `DECISION_NEEDED` | Lead, Supervisor | The level above has to decide |
 | `DONE` | any role | Finished, nothing is running |
 
@@ -236,7 +273,7 @@ Every project has its own `.slp/` directory:
 ├── room.json            marks the project + its own model table (optional)
 ├── mission.md           what the project is for
 ├── <name>-law.md        the project's own rules
-├── status.md            progress, kept by the Supervisor and Leads
+├── status.md            progress, decisions the room made on its own, overruled objections
 └── notebook.md          lessons learned
 ```
 

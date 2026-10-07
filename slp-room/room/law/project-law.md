@@ -16,5 +16,7 @@ additionally. Nothing here changes who owns what.
 
 ## Local rules
 - <files or boundaries that need one owner>
+- <shared machine, if any: who may run heavy jobs or benchmarks, and how a free machine is
+  verified before a measurement (a message is not evidence)>
 - <the commands that define acceptance here, e.g. `make check`>
 - <anything the Owner decided that every seat must know>

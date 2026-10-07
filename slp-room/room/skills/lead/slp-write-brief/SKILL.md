@@ -4,12 +4,16 @@ description: Lead procedure to write a Peer brief that locks the contract and le
 ---
 # Write the brief (Lead)
 1. Fill the template from your role file: Project, Outcome, Context (paths and `RECAP` lines,
-   never contents), Write scope, Contract / invariants, Constraints, Output, Acceptance
+   never contents), Write scope, Contract / invariants, Yours to decide, Constraints, Output, Acceptance
    evidence, Reopen when, What was tried (on any retry), and the last line
    `Reply with slp_mail to: owner`.
-2. Lock only what other components depend on. No helpers, files to create, or call order inside
-   the Peer's scope: a plan that names symbols before anyone opened the code is implementing in
-   markdown. If you cannot write acceptance evidence, split or research first.
+2. Lock only what other components depend on: what the API promises, valid inputs, what success
+   means, state and data ownership, how errors show, the test that proves it. Enough when two
+   Peers reading it would build parts that fit: where words could be read two ways, give one
+   example input → output or the test's name. Too much when it names anything inside one scope:
+   a line that says create, call, or use a variable inside the Peer's scope goes; a plan that
+   names symbols before anyone opened the code is implementing in markdown. If you cannot write
+   acceptance evidence, split or research first.
 3. State the real need and the current candidate separately so the Peer may come back with
    evidence: "ensure the browser gets call state with these latency/order/reconnect semantics;
    WebSocket is the candidate".

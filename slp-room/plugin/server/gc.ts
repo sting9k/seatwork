@@ -149,7 +149,8 @@ export class Collector {
       logLine("archived-idle", { agentId: seat.agentId, role: seat.role, title: seat.title, idleHours });
       this.log(`gc: archived ${seat.role} ${seat.agentId} (${seat.title ?? ""}) idle ${idleHours}h`);
       const parent = this.engine.parentOf(seat.agentId);
-      if (this.policy.tellParent && parent && live.has(parent)) {
+      // nothing travels up to hq: it looks at the room instead of being told
+      if (this.policy.tellParent && parent && live.has(parent) && this.engine.seat(parent)?.role !== "hq") {
         await this.engine.post({
           from: { agentId: "room", role: "system" },
           fromLabel: "room",

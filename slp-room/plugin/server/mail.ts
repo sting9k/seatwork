@@ -1,4 +1,5 @@
 import { appendFileSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, writeFileSync } from "node:fs";
+import { maySpawn } from "./seats";
 import { join } from "node:path";
 import type { PaseoApi } from "@getpaseo/client";
 import { paseoCli } from "./cli";
@@ -179,7 +180,7 @@ export class MailEngine {
     if (!c) return { ok: false, reason: `${child} is not a room seat` };
     if (adopter === child) return { ok: false, reason: "a seat does not adopt itself" };
     if (this.isAncestor(child, adopter)) return { ok: false, reason: `${child} is above you` };
-    if (!(this.room.spawn[a.role] ?? []).includes(c.role)) return { ok: false, reason: `a ${a.role} may own only ${(this.room.spawn[a.role] ?? []).join(", ") || "nothing"}, not a ${c.role}` };
+    if (!maySpawn(this.room.spawn, a.role, c.role, c.title)) return { ok: false, reason: `a ${a.role} may own only ${(this.room.spawn[a.role] ?? []).join(", ") || "nothing"}, not this ${c.role}` };
     const previous = this.parentOf(child);
     if (previous === adopter) return { ok: true, previous };
     if ((await this.status(child)) === "gone") return { ok: false, reason: `${child} is archived or gone` };
@@ -273,6 +274,7 @@ export class MailEngine {
     if (from === to) return { ok: false, reason: "a seat does not mail itself" };
     const route = `${sender.role}>${recipient.role}`;
     if (this.room.routes[route] !== true) {
+      if (route === "supervisor>hq") return { ok: false, reason: "nothing travels up from a Supervisor: the Owner reads your final message and .slp/status.md (WAITING ON YOU rows); write there" };
       return { ok: false, reason: `route ${route} is off in the room policy (room.routes)` };
     }
     if (this.parentOf(from) === to || this.parentOf(to) === from) return { ok: true };

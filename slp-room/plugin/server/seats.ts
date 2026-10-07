@@ -55,6 +55,17 @@ export function specSheet(name: string | undefined): string | null {
 }
 
 /** `[Peer:research] task` → "research"; otherwise undefined. */
+/**
+ * Whether `parent` may create `childRole` with this title. A spawn entry is a
+ * role (`lead`) or a role with the one specialization it allows (`peer:research`).
+ */
+export function maySpawn(spawn: Record<string, string[]>, parent: string, childRole: string, title: string | null | undefined): boolean {
+  const allowed = spawn[parent] ?? [];
+  if (allowed.includes(childRole)) return true;
+  const spec = specFromTitle(title);
+  return spec !== undefined && allowed.includes(`${childRole}:${spec}`);
+}
+
 export function specFromTitle(title: string | null | undefined): string | undefined {
   const m = /^\s*\[(?:peer|lead|supervisor|hq):([a-z0-9-]+)\]/i.exec(title ?? "");
   return m?.[1]?.toLowerCase();

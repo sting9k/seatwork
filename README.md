@@ -13,8 +13,9 @@ Human
                   ├─ Peer
                   └─ Lens   reads, answers one question
 
-   up:   reports, questions, candidates
+   up:   reports, questions, candidates — as far as the Supervisor
    down: briefs, answers, decisions
+   HQ sends down and looks; nothing travels up to it
    each seat sees only its Owner above and the seats below
 ```
 
@@ -24,9 +25,11 @@ exist is `slp-room/paseo/seats.yml`; which models they use is
 `slp-room/paseo/policy.json`. The committed values are one setup, not a default.
 
 Roles are responsibilities, not personalities. A Peer may challenge a brief
-with evidence but never edit outside its scope; a Lead decides and accepts but
-never edits; a Supervisor pins intent and routes decisions up but never
-validates. Sources: the video "Giáo án của Quỷ Vương", the Quỷ Vương Codex Room
+with evidence but never edit outside its scope; a Lead decides and accepts,
+and edits only tiny work itself; a Supervisor pins intent and leaves decisions
+for its Owner to read but never validates; HQ watches from above and sends
+instructions down. Talk to HQ to run every project, or to a project's
+Supervisor to run that one. Sources: the video "Giáo án của Quỷ Vương", the Quỷ Vương Codex Room
 toolkit, vhlam.com on SLP and coding-agent anti-patterns.
 
 Full guide: [English](docs/GUIDE.en.md) · [Tiếng Việt](docs/GUIDE.vi.md).

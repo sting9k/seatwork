@@ -26,10 +26,13 @@ bên dưới làm việc trên từng project.
 
 ```text
                           Bạn
-                           │  chat
+                           │  chat với HQ (mọi project)
+                           │  hoặc với một Supervisor (một project)
                            ▼
                  ┌───────────────────┐
                  │        HQ         │   project: hq-seatwork
+                 │  nhìn xuống, ra   │   không có gì đi lên tới HQ
+                 │  lệnh xuống       │
                  └─────────┬─────────┘
             ┌──────────────┴──────────────┐
             ▼                             ▼
@@ -49,9 +52,9 @@ bên dưới làm việc trên từng project.
 
 | Vai | Làm gì | Không bao giờ làm |
 |---|---|---|
-| **HQ** | Nhận yêu cầu của bạn, chia theo project, hỏi bạn khi cần quyết định | Tạo Lead hay Peer, sửa code |
-| **Supervisor** | Chốt mục tiêu của một project, chia thành luồng việc, giữ các Lead đi đúng hướng | Sửa code, nghiệm thu |
-| **Lead** | Lập kế hoạch một luồng việc, giao cho Peer, kiểm tra và nghiệm thu kết quả | Sửa code |
+| **HQ** | Nhận yêu cầu của bạn, chia theo project, ra lệnh xuống Supervisor, nhìn tình hình khi bạn hỏi | Tham gia làm việc, tạo Lead hay Peer, sửa code |
+| **Supervisor** | Chốt mục tiêu của một project, chia thành luồng việc, giữ các Lead đi đúng hướng; việc cần bạn quyết thì ghi vào báo cáo cuối lượt | Sửa code, nghiệm thu, gửi thư lên trên |
+| **Lead** | Lập kế hoạch một luồng việc, giao cho Peer, kiểm tra và nghiệm thu kết quả; tự làm việc nhỏ và dựng khung ban đầu | Sửa phạm vi của Peer, làm việc lớn một mình |
 | **Peer** | Làm một việc cụ thể trong một phạm vi file được giao | Sửa ngoài phạm vi |
 | **Lens** | Trả lời một câu hỏi khó hoặc review, độc lập với Lead | Sửa bất cứ thứ gì |
 
@@ -59,6 +62,10 @@ Hai nguyên tắc cần nhớ:
 
 - **Mỗi tầng chỉ thấy tầng ngay trên và ngay dưới.** Agent trong project
   chỉ biết có một "Owner" phía trên, không biết HQ hay bạn tồn tại.
+- **Báo cáo đi lên chỉ tới Supervisor.** Supervisor không gửi được gì lên
+  HQ; HQ tự nhìn xuống (báo cáo cuối lượt của Supervisor, `.slp/status.md`)
+  khi bạn hỏi, rồi ra lệnh xuống. Muốn quản lý mọi project thì chat với HQ;
+  một project thì chat thẳng với Supervisor của nó.
 - **Mỗi vai là một trách nhiệm.** Lead quyết định nhưng không sửa code;
   Peer sửa code nhưng không tự mở rộng phạm vi.
 
@@ -125,14 +132,22 @@ Bạn chỉ làm hai việc: thêm thư mục vào Paseo, rồi nói với HQ.
   ├─────────────────────▶│ đăng ký project                  │
   │                      │ 5. mở Supervisor ───────────────▶│ viết law
   │                      │                                  │
-  │ 6. câu hỏi về law    │◀──────────── câu hỏi còn thiếu ──┤
+  │                      │                                  │ ghi câu hỏi còn
+  │ 6. bạn hỏi tiếp      │                                  │ thiếu vào báo cáo
+  ├─────────────────────▶│ nhìn xuống: đọc báo cáo ········▶│
+  │    câu hỏi về law    │                                  │
   │◀─────────────────────┤                                  │
   │ 7. trả lời           │                                  │
   ├─────────────────────▶├─────────────────────────────────▶│ chốt law
   │                      │                                  │
-  │ 8. "project sẵn sàng"│◀────────────────────────── DONE ─┤
+  │ 8. bạn hỏi tiếp      │ nhìn xuống: đọc DONE ···········▶│
+  ├─────────────────────▶│                                  │
+  │   "project sẵn sàng" │                                  │
   │◀─────────────────────┤                                  │
 ```
+
+Mũi tên chấm là HQ tự đọc; Supervisor không gửi gì lên. Vì vậy sau bước 5
+bạn nhắn HQ một câu bất kỳ ("sao rồi") để nó nhìn xuống.
 
 Giải thích từng thứ được tạo ra:
 
@@ -168,7 +183,8 @@ Thiếu thứ nào HQ sẽ hỏi lại. Sau đó:
                                          │
                                      kết quả
                                          ▼
- Bạn ◀── HQ ◀── Supervisor ◀── Lead ◀── Lens/review   báo cáo đi lên
+          HQ ···▶ Supervisor ◀── Lead ◀── Lens/review   báo cáo đi lên
+ Bạn ◀────┘ nhìn xuống khi bạn hỏi                      tới Supervisor
 ```
 
 1. HQ chuyển việc cho Supervisor của project.
@@ -176,16 +192,33 @@ Thiếu thứ nào HQ sẽ hỏi lại. Sau đó:
 3. Lead chia thành task, mỗi task một Peer với phạm vi file rõ ràng.
 4. Peer làm xong gửi kết quả; Lead cho một reviewer khác dòng model kiểm
    tra, rồi chấp nhận hoặc trả về sửa.
-5. Xong hết thì báo cáo đi ngược lên tới bạn.
+5. Xong hết thì Supervisor ghi kết quả vào báo cáo cuối lượt và
+   `.slp/status.md`.
 
-Bạn không cần ngồi chờ. Khi có việc cần bạn quyết (chi phí, phạm vi sản
-phẩm, hành động ra bên ngoài như push hay deploy), HQ sẽ hỏi kèm đề xuất và
-hệ quả. HQ không bao giờ quyết thay bạn.
+Việc nhỏ (sửa nhanh, vài file, kiểm tra được ngay) và việc dựng khung ban
+đầu thì Lead tự làm, không mở Peer.
 
-Hỏi tình hình bất cứ lúc nào: "tình hình các project thế nào".
+Báo cáo của Supervisor luôn có hai mục để bạn giữ quyền kiểm soát: **phòng
+đã tự quyết gì** (và bạn có thể lật lại không) và **ý kiến nào bị bác** (Peer
+phản đối kèm bằng chứng nhưng không được theo). Hai mục này cũng nằm trong
+`.slp/status.md`, không bao giờ bị tóm tắt mất.
 
-**Làm việc không qua HQ:** bạn có thể mở thẳng profile **Supervisor** trong
-một project và giao việc cho nó. Khi đó bạn chính là "Owner" của nó.
+Khi có việc cần bạn quyết (chi phí, phạm vi sản phẩm, hành động ra bên ngoài
+như push hay deploy), Supervisor ghi vào dòng `WAITING ON YOU:` cuối báo
+cáo. HQ không tự nhận được gì; nó nhìn xuống khi bạn nhắn, rồi hỏi bạn kèm
+đề xuất và hệ quả. HQ không bao giờ quyết thay bạn.
+
+Hỏi tình hình bất cứ lúc nào: "tình hình các project thế nào". HQ cũng có
+thể đếm từ nhật ký thư (`slp_room_stats`): bao nhiêu kết quả được nhận hay
+trả về, bao nhiêu lần Peer chất vấn và được chấp nhận.
+
+**Làm việc không qua HQ:** mở thẳng profile **Supervisor** trong một project
+và giao việc cho nó. Khi đó bạn chính là "Owner" của nó, đọc báo cáo của nó
+trực tiếp.
+
+**Can thiệp vào Peer:** nên đi qua Supervisor hoặc Lead. Nếu bạn chat thẳng
+với một Peer, nó làm theo, và báo cáo kế tiếp của nó mở bằng `DIRECT:` để
+Lead biết có người đã chỉ đạo ngoài thư.
 
 ---
 
@@ -214,6 +247,8 @@ Dòng đầu của mỗi báo cáo là một tín hiệu:
 | `DEPENDENCY_REQUEST` | Peer | Cần một thứ nằm ngoài phạm vi |
 | `BLOCKED` | mọi vai | Không thể làm tiếp một cách an toàn |
 | `ACCEPT` / `REJECT` | Lead | Chấp nhận, hoặc trả về kèm việc cần sửa |
+| `REVISED BRIEF` | Lead | Peer chất vấn đúng, đề bài được sửa |
+| `HOLD` / `NOTED` | Lead | Giữ hướng hiện tại; ý kiến của Peer được ghi lại, không tranh luận thêm |
 | `DECISION_NEEDED` | Lead, Supervisor | Cần cấp trên quyết |
 | `DONE` | mọi vai | Xong, không còn gì đang chạy |
 
@@ -232,7 +267,7 @@ Mỗi project có thư mục `.slp/` riêng:
 ├── room.json            đánh dấu project + bảng model riêng (nếu có)
 ├── mission.md           project để làm gì
 ├── <tên>-law.md         luật riêng của project
-├── status.md            Supervisor và Lead ghi tiến độ
+├── status.md            tiến độ, quyết định phòng tự đưa ra, ý kiến bị bác
 └── notebook.md          bài học rút ra
 ```
 

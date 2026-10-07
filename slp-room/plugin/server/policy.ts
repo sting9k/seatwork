@@ -73,7 +73,8 @@ export interface RoomPolicy {
   /** "<senderRole>><recipientRole>": may that role write to that role. The tree relation is still required. A missing pair is refused. */
   routes: Record<string, boolean>;
   /** Roles each role may create. Anything else a seat creates is archived at once and its parent told. */
-  spawn: Record<RoleName, RoleName[]>;
+  /** Per role: the roles it may create, as `role` or `role:spec` (only that specialization). */
+  spawn: Record<RoleName, string[]>;
   params: RoomParams;
 }
 

@@ -12,6 +12,9 @@ description: The laws HQ holds every project to, and its own anti-patterns. Read
   Your mail reaches a Supervisor as `from owner`; write it as the Owner would.
 - One live Supervisor per project, inside a registered project, on its own
   workspace; one task at a time through it. Never a Lead or Peer from here.
+- Nothing comes up: a Supervisor cannot mail you and its reports stay in
+  its project. You look (`get_agent_activity`, `.slp/status.md`) when Human
+  writes or before you send the next instruction, and you send down.
 - Every project carries `.slp/<project>-law.md`, written by its Supervisor on
   its first run from `ROOM_DIR/law/project-law.md`.
 - Issues are yours alone; project seats only comment on the issue they were

@@ -3,16 +3,17 @@
 Bản tiếng Anh: [GUIDE.en.md](GUIDE.en.md)
 
 seatwork biến Paseo thành một "phòng làm việc" của các agent, chia theo
-tầng: bạn nói chuyện với một agent duy nhất (HQ), nó điều phối các agent
-bên dưới làm việc trên từng project.
+tầng. Bạn có hai người để nói chuyện: **Supervisor** của từng project cho
+công việc hằng ngày, và **HQ** cho việc quản lý nhiều project. Các project
+không biết HQ tồn tại và không gửi gì lên HQ.
 
 ## Mục lục
 
 1. [Mô hình](#1-mô-hình)
 2. [Cài đặt](#2-cài-đặt)
-3. [Bắt đầu: mở HQ](#3-bắt-đầu-mở-hq)
+3. [Bắt đầu: ai để chat](#3-bắt-đầu-ai-để-chat)
 4. [Thêm một project mới](#4-thêm-một-project-mới)
-5. [Giao việc](#5-giao-việc)
+5. [Giao việc hằng ngày: chat với Supervisor](#5-giao-việc-hằng-ngày-chat-với-supervisor)
 6. [Các agent nói chuyện với nhau thế nào](#6-các-agent-nói-chuyện-với-nhau-thế-nào)
 7. [Cấu hình theo project](#7-cấu-hình-theo-project)
 8. [Cấu hình toàn phòng](#8-cấu-hình-toàn-phòng)
@@ -26,20 +27,22 @@ bên dưới làm việc trên từng project.
 
 ```text
                           Bạn
-                           │  chat với HQ (mọi project)
-                           │  hoặc với một Supervisor (một project)
-                           ▼
-                 ┌───────────────────┐
-                 │        HQ         │   project: hq-seatwork
-                 │  nhìn xuống, ra   │   không có gì đi lên tới HQ
-                 │  lệnh xuống       │
-                 └─────────┬─────────┘
-            ┌──────────────┴──────────────┐
-            ▼                             ▼
-   ┌─────────────────┐           ┌─────────────────┐
-   │   Supervisor    │           │   Supervisor    │   mỗi project một cái
-   │   project A     │           │   project B     │
-   └────────┬────────┘           └─────────────────┘
+            ┌──────────────┴──────────────────────────┐
+            │ quản lý: tình hình chung,                │ việc hằng ngày
+            │ thêm project, lệnh đưa xuống             │ của một project
+            ▼                                          │
+  ┌───────────────────┐                                │
+  │        HQ         │   project: hq-seatwork         │
+  │  nhìn xuống, ra   │   project không biết HQ,       │
+  │  lệnh xuống       │   không gửi gì lên HQ          │
+  └─────────┬─────────┘                                │
+            ┆ lệnh xuống (hiếm)                        │
+            ├──────────────────────────────┐           │
+            ▼                              ▼           ▼
+   ┌─────────────────┐           ┌─────────────────────┐
+   │   Supervisor    │           │   Supervisor        │   mỗi project một cái
+   │   project A     │           │   project B         │
+   └────────┬────────┘           └─────────────────────┘
        ┌────┴─────┐
        ▼          ▼
    ┌───────┐  ┌───────┐
@@ -52,7 +55,7 @@ bên dưới làm việc trên từng project.
 
 | Vai | Làm gì | Không bao giờ làm |
 |---|---|---|
-| **HQ** | Nhận yêu cầu của bạn, chia theo project, ra lệnh xuống Supervisor, nhìn tình hình khi bạn hỏi | Tham gia làm việc, tạo Lead hay Peer, sửa code |
+| **HQ** | Quản lý: trả lời tình hình chung các project, thêm project mới, chuyển lệnh của bạn xuống Supervisor khi cần | Nhận việc hằng ngày, tham gia làm việc, tạo Lead hay Peer, sửa code |
 | **Supervisor** | Chốt mục tiêu của một project, chia thành luồng việc, giữ các Lead đi đúng hướng; việc cần bạn quyết thì ghi vào báo cáo cuối lượt | Sửa code, nghiệm thu, gửi thư lên trên |
 | **Lead** | Lập kế hoạch một luồng việc, giao cho Peer, kiểm tra và nghiệm thu kết quả; tự làm việc nhỏ và dựng khung ban đầu | Sửa phạm vi của Peer, làm việc lớn một mình |
 | **Peer** | Làm một việc cụ thể trong một phạm vi file được giao | Sửa ngoài phạm vi |
@@ -60,12 +63,15 @@ bên dưới làm việc trên từng project.
 
 Hai nguyên tắc cần nhớ:
 
-- **Mỗi tầng chỉ thấy tầng ngay trên và ngay dưới.** Agent trong project
-  chỉ biết có một "Owner" phía trên, không biết HQ hay bạn tồn tại.
-- **Báo cáo đi lên chỉ tới Supervisor.** Supervisor không gửi được gì lên
-  HQ; HQ tự nhìn xuống (báo cáo cuối lượt của Supervisor, `.slp/status.md`)
-  khi bạn hỏi, rồi ra lệnh xuống. Muốn quản lý mọi project thì chat với HQ;
-  một project thì chat thẳng với Supervisor của nó.
+- **Việc hằng ngày đi thẳng vào Supervisor.** Mỗi project có một
+  Supervisor; bạn chat với nó để giao việc, trả lời câu hỏi, nhận báo cáo.
+- **HQ chỉ để quản lý.** Bạn chat với HQ khi cần tình hình chung của nhiều
+  project, khi thêm project mới, hoặc khi có lệnh muốn đưa xuống một
+  project. HQ tự nhìn xuống (báo cáo cuối lượt của Supervisor,
+  `.slp/status.md`) khi bạn hỏi; không có gì tự chạy lên HQ.
+- **Project không biết HQ.** Agent trong project chỉ biết có một "Owner"
+  phía trên; chúng không biết HQ hay bạn tồn tại, không thể gửi thư lên HQ,
+  và báo cáo của chúng dừng ở Supervisor.
 - **Mỗi vai là một trách nhiệm.** Lead quyết định nhưng không sửa code;
   Peer sửa code nhưng không tự mở rộng phạm vi.
 
@@ -101,14 +107,21 @@ Chạy lại `./install.sh` bao nhiêu lần cũng được; nó không tạo tr
 
 ---
 
-## 3. Bắt đầu: mở HQ
+## 3. Bắt đầu: ai để chat
 
-1. Mở Paseo, chọn project **hq-seatwork**.
-2. Tạo agent mới với profile **HQ Supervisor**.
-3. Chat với nó như chat với một người quản lý.
+| Bạn muốn | Chat với | Ở đâu |
+|---|---|---|
+| Giao việc, hỏi tiến độ, trả lời câu hỏi của một project | **Supervisor** của project đó | profile **Supervisor**, trong workspace của project |
+| Tình hình chung của nhiều project | **HQ** | profile **HQ Supervisor**, trong project `hq-seatwork` |
+| Thêm project mới vào phòng | **HQ** | như trên |
+| Đưa một lệnh xuống một hoặc nhiều project (đổi ưu tiên, dừng, đổi hướng) | **HQ** | như trên |
+
+Lần đầu bạn cần HQ một lần để thêm project ([mục 4](#4-thêm-một-project-mới)).
+Sau đó công việc hằng ngày không đi qua HQ nữa.
 
 HQ chỉ mở được trong `hq-seatwork`, và trong `hq-seatwork` chỉ mở được HQ.
-Mở sai chỗ thì Paseo báo lỗi kèm lý do.
+Supervisor chỉ mở được trong project đã đăng ký. Mở sai chỗ thì Paseo báo
+lỗi kèm lý do.
 
 ---
 
@@ -166,9 +179,11 @@ Giải thích từng thứ được tạo ra:
 
 ---
 
-## 5. Giao việc
+## 5. Giao việc hằng ngày: chat với Supervisor
 
-Nói với HQ điều bạn muốn, bằng lời thường. Một yêu cầu tốt có ba thứ:
+Mở (hoặc mở lại) agent profile **Supervisor** trong workspace của project và
+nói điều bạn muốn, bằng lời thường. Bạn chính là "Owner" của nó: nó đọc lời
+bạn, bạn đọc báo cáo của nó. Một yêu cầu tốt có ba thứ:
 
 | Thành phần | Ví dụ |
 |---|---|
@@ -176,19 +191,18 @@ Nói với HQ điều bạn muốn, bằng lời thường. Một yêu cầu t�
 | Bằng chứng nghiệm thu | "Có test, `python3 -m unittest` pass" |
 | Quyền hạn | "Được commit local, không push" |
 
-Thiếu thứ nào HQ sẽ hỏi lại. Sau đó:
+Thiếu thứ nào Supervisor sẽ hỏi lại. Sau đó:
 
 ```text
- Bạn ──▶ HQ ──▶ Supervisor ──▶ Lead ──▶ Peer      việc đi xuống
-                                         │
-                                     kết quả
-                                         ▼
-          HQ ···▶ Supervisor ◀── Lead ◀── Lens/review   báo cáo đi lên
- Bạn ◀────┘ nhìn xuống khi bạn hỏi                      tới Supervisor
+ Bạn ──▶ Supervisor ──▶ Lead ──▶ Peer      việc đi xuống
+                                  │
+                              kết quả
+                                  ▼
+ Bạn ◀── Supervisor ◀── Lead ◀── Lens/review   báo cáo đi lên, dừng ở Supervisor
 ```
 
-1. HQ chuyển việc cho Supervisor của project.
-2. Supervisor chia thành luồng việc, mỗi luồng một Lead.
+1. Supervisor chốt mục tiêu với bạn và chia thành luồng việc, mỗi luồng
+   một Lead.
 3. Lead chia thành task, mỗi task một Peer với phạm vi file rõ ràng.
 4. Peer làm xong gửi kết quả; Lead cho một reviewer khác dòng model kiểm
    tra, rồi chấp nhận hoặc trả về sửa.
@@ -205,16 +219,25 @@ phản đối kèm bằng chứng nhưng không được theo). Hai mục này c
 
 Khi có việc cần bạn quyết (chi phí, phạm vi sản phẩm, hành động ra bên ngoài
 như push hay deploy), Supervisor ghi vào dòng `WAITING ON YOU:` cuối báo
-cáo. HQ không tự nhận được gì; nó nhìn xuống khi bạn nhắn, rồi hỏi bạn kèm
-đề xuất và hệ quả. HQ không bao giờ quyết thay bạn.
+cáo, kèm đề xuất và hệ quả, và chờ bạn trả lời trong chính cuộc chat đó.
+Nó không bao giờ quyết thay bạn.
 
-Hỏi tình hình bất cứ lúc nào: "tình hình các project thế nào". HQ cũng có
-thể đếm từ nhật ký thư (`slp_room_stats`): bao nhiêu kết quả được nhận hay
-trả về, bao nhiêu lần Peer chất vấn và được chấp nhận.
+Hỏi tiến độ của project bất cứ lúc nào, cũng trong cuộc chat đó: "sao rồi".
 
-**Làm việc không qua HQ:** mở thẳng profile **Supervisor** trong một project
-và giao việc cho nó. Khi đó bạn chính là "Owner" của nó, đọc báo cáo của nó
-trực tiếp.
+### Khi nào mới cần HQ
+
+- **Tình hình chung:** "các project thế nào". HQ đọc báo cáo cuối lượt và
+  `.slp/status.md` của từng Supervisor rồi tổng hợp, kể cả mục *phòng đã tự
+  quyết gì* và *ý kiến bị bác* của mỗi project. HQ cũng đếm được từ nhật ký
+  thư (`slp_room_stats`): bao nhiêu kết quả được nhận hay trả về, bao nhiêu
+  lần Peer chất vấn và được chấp nhận.
+- **Thêm project** ([mục 4](#4-thêm-một-project-mới)).
+- **Lệnh đưa xuống:** đổi ưu tiên, dừng một việc, đổi hướng cho một hay
+  nhiều project. HQ gửi thành thư cho Supervisor liên quan; với Supervisor
+  đó là lệnh "từ Owner", không có dấu vết của HQ hay của bạn.
+
+HQ không nhận việc hằng ngày và không chuyển kết quả lên cho bạn: project
+không gửi gì lên HQ, HQ chỉ nhìn xuống khi bạn hỏi.
 
 **Can thiệp vào Peer:** nên đi qua Supervisor hoặc Lead. Nếu bạn chat thẳng
 với một Peer, nó làm theo, và báo cáo kế tiếp của nó mở bằng `DIRECT:` để

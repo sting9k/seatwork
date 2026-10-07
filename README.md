@@ -28,8 +28,9 @@ Roles are responsibilities, not personalities. A Peer may challenge a brief
 with evidence but never edit outside its scope; a Lead decides and accepts,
 and edits only tiny work itself; a Supervisor pins intent and leaves decisions
 for its Owner to read but never validates; HQ watches from above and sends
-instructions down. Talk to HQ to run every project, or to a project's
-Supervisor to run that one. Sources: the video "Giáo án của Quỷ Vương", the Quỷ Vương Codex Room
+instructions down. Daily work goes straight to a project's Supervisor; HQ is
+for management only: the state of every project, adding one, an instruction
+sent down. Projects do not know HQ exists and send nothing up to it. Sources: the video "Giáo án của Quỷ Vương", the Quỷ Vương Codex Room
 toolkit, vhlam.com on SLP and coding-agent anti-patterns.
 
 Full guide: [English](docs/GUIDE.en.md) · [Tiếng Việt](docs/GUIDE.vi.md).
@@ -40,10 +41,11 @@ Full guide: [English](docs/GUIDE.en.md) · [Tiếng Việt](docs/GUIDE.vi.md).
 cd slp-room && ./install.sh
 ```
 
-Needs `jq`, `paseo`, `python3` with PyYAML. Then open an agent on the
-**Supervisor** profile inside a project (give it `.slp/room.json` and
-`.slp/mission.md`), or **HQ Supervisor** in the `hq-seatwork` project, which
-the plugin creates at `~/.config/slp-room/hq-seatwork` and where alone HQ starts.
+Needs `jq`, `paseo`, `python3` with PyYAML. Then open **HQ Supervisor** in
+the `hq-seatwork` project (the plugin creates it at
+`~/.config/slp-room/hq-seatwork`; HQ starts nowhere else) once, to add your
+project; from then on open the **Supervisor** profile inside that project
+for the work itself.
 
 To bring a new project in: add it to Paseo, then tell HQ. It drafts the
 mission for your yes, asks whether the project uses the room's model table or

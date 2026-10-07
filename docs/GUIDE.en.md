@@ -2,17 +2,18 @@
 
 Vietnamese version: [GUIDE.vi.md](GUIDE.vi.md)
 
-seatwork turns Paseo into a "room" of agents arranged in levels: you talk
-to one agent (HQ), and it coordinates the agents below it, project by
-project.
+seatwork turns Paseo into a "room" of agents arranged in levels. You have
+two counterparts: each project's **Supervisor** for daily work, and **HQ**
+for managing several projects. Projects do not know HQ exists and send
+nothing up to it.
 
 ## Contents
 
 1. [The model](#1-the-model)
 2. [Install](#2-install)
-3. [Start: open HQ](#3-start-open-hq)
+3. [Start: whom to talk to](#3-start-whom-to-talk-to)
 4. [Add a new project](#4-add-a-new-project)
-5. [Give work](#5-give-work)
+5. [Daily work: talk to the Supervisor](#5-daily-work-talk-to-the-supervisor)
 6. [How agents talk to each other](#6-how-agents-talk-to-each-other)
 7. [Per-project configuration](#7-per-project-configuration)
 8. [Room-wide configuration](#8-room-wide-configuration)
@@ -26,20 +27,22 @@ project.
 
 ```text
                           You
-                           │  chat with HQ (every project)
-                           │  or with one Supervisor (one project)
-                           ▼
-                 ┌───────────────────┐
-                 │        HQ         │   project: hq-seatwork
-                 │  looks down,      │   nothing travels up to HQ
-                 │  sends down       │
-                 └─────────┬─────────┘
-            ┌──────────────┴──────────────┐
-            ▼                             ▼
-   ┌─────────────────┐           ┌─────────────────┐
-   │   Supervisor    │           │   Supervisor    │   one per project
-   │   project A     │           │   project B     │
-   └────────┬────────┘           └─────────────────┘
+            ┌──────────────┴──────────────────────────┐
+            │ management: overall status,              │ daily work
+            │ new projects, instructions down          │ of one project
+            ▼                                          │
+  ┌───────────────────┐                                │
+  │        HQ         │   project: hq-seatwork         │
+  │  looks down,      │   projects do not know HQ      │
+  │  sends down       │   and send nothing up to it    │
+  └─────────┬─────────┘                                │
+            ┆ instructions down (rare)                 │
+            ├──────────────────────────────┐           │
+            ▼                              ▼           ▼
+   ┌─────────────────┐           ┌─────────────────────┐
+   │   Supervisor    │           │   Supervisor        │   one per project
+   │   project A     │           │   project B         │
+   └────────┬────────┘           └─────────────────────┘
        ┌────┴─────┐
        ▼          ▼
    ┌───────┐  ┌───────┐
@@ -52,7 +55,7 @@ project.
 
 | Role | Does | Never does |
 |---|---|---|
-| **HQ** | Takes your request, splits it per project, sends instructions down to Supervisors, looks at the projects when you ask | Take part in the work, create a Lead or a Peer, edit code |
+| **HQ** | Management: answers for the overall state of the projects, adds new projects, passes your instructions down to a Supervisor when needed | Take daily work, take part in the work, create a Lead or a Peer, edit code |
 | **Supervisor** | Pins one project's goal, splits it into workstreams, keeps the Leads on course; what needs your decision goes in its end-of-turn report | Edit code, accept work, mail upward |
 | **Lead** | Plans one workstream, hands tasks to Peers, inspects and accepts results; does tiny work and the first scaffold itself | Edit a Peer's scope, do large work alone |
 | **Peer** | Does one concrete task inside the files it was given | Edit outside its scope |
@@ -60,13 +63,15 @@ project.
 
 Two rules to keep in mind:
 
-- **Each level sees only the level directly above and below.** Agents
-  inside a project know one "Owner" above them; they do not know HQ or you
-  exist.
-- **Reports go up only as far as the Supervisor.** A Supervisor cannot send
-  anything to HQ; HQ looks down (the Supervisor's end-of-turn report,
-  `.slp/status.md`) when you ask, then sends instructions down. Talk to HQ
-  to manage every project; talk to a project's Supervisor to manage one.
+- **Daily work goes straight to the Supervisor.** Each project has one;
+  you talk to it to give work, answer its questions and read its reports.
+- **HQ is for management only.** Talk to HQ for the overall state of
+  several projects, to add a project, or to send an instruction down to a
+  project. HQ looks down (the Supervisor's end-of-turn report,
+  `.slp/status.md`) when you ask; nothing travels up to HQ by itself.
+- **Projects do not know HQ.** Agents inside a project know one "Owner"
+  above them; they do not know HQ or you exist, cannot mail HQ, and their
+  reports stop at the Supervisor.
 - **Each role is a responsibility.** A Lead decides but does not edit code;
   a Peer edits code but does not widen its own scope.
 
@@ -102,14 +107,21 @@ Running `./install.sh` again is safe; nothing is duplicated.
 
 ---
 
-## 3. Start: open HQ
+## 3. Start: whom to talk to
 
-1. Open Paseo and pick the **hq-seatwork** project.
-2. Create an agent with the **HQ Supervisor** profile.
-3. Talk to it the way you would talk to a manager.
+| You want | Talk to | Where |
+|---|---|---|
+| Give work, ask for progress, answer a project's questions | that project's **Supervisor** | profile **Supervisor**, in the project's workspace |
+| The overall state of several projects | **HQ** | profile **HQ Supervisor**, in the `hq-seatwork` project |
+| Add a new project to the room | **HQ** | same |
+| Send an instruction down to one or more projects (priority, stop, change of direction) | **HQ** | same |
 
-HQ starts only in `hq-seatwork`, and only HQ starts in `hq-seatwork`. In
-the wrong place Paseo shows an error that says why.
+You need HQ once at the start, to add a project ([section 4](#4-add-a-new-project)).
+After that, daily work no longer goes through HQ.
+
+HQ starts only in `hq-seatwork`, and only HQ starts in `hq-seatwork`. A
+Supervisor starts only inside a registered project. In the wrong place
+Paseo shows an error that says why.
 
 ---
 
@@ -169,9 +181,11 @@ What gets created:
 
 ---
 
-## 5. Give work
+## 5. Daily work: talk to the Supervisor
 
-Tell HQ what you want in plain words. A good request has three parts:
+Open (or reopen) an agent with the **Supervisor** profile in the project's
+workspace and say what you want in plain words. You are its "Owner": it
+reads your words, you read its reports. A good request has three parts:
 
 | Part | Example |
 |---|---|
@@ -179,19 +193,18 @@ Tell HQ what you want in plain words. A good request has three parts:
 | Acceptance evidence | "With tests, `python3 -m unittest` passes" |
 | Authority | "Local commits are fine, do not push" |
 
-HQ asks for whichever part is missing. Then:
+The Supervisor asks for whichever part is missing. Then:
 
 ```text
- You ──▶ HQ ──▶ Supervisor ──▶ Lead ──▶ Peer      work goes down
-                                         │
-                                      result
-                                         ▼
-          HQ ···▶ Supervisor ◀── Lead ◀── Lens/review   reports go up
- You ◀────┘ looks down when you ask                     to the Supervisor
+ You ──▶ Supervisor ──▶ Lead ──▶ Peer      work goes down
+                                  │
+                               result
+                                  ▼
+ You ◀── Supervisor ◀── Lead ◀── Lens/review   reports go up, and stop at the Supervisor
 ```
 
-1. HQ passes the work to the project's Supervisor.
-2. The Supervisor splits it into workstreams, one Lead each.
+1. The Supervisor pins the goal with you and splits it into workstreams,
+   one Lead each.
 3. The Lead splits a workstream into tasks, one Peer each, with a clear
    file scope.
 4. A Peer hands in its result; the Lead has a reviewer from another model
@@ -210,17 +223,28 @@ summarised away.
 
 When something is yours to decide (cost, product scope, an outside action
 such as push or deploy), the Supervisor puts it in the `WAITING ON YOU:` row
-at the end of its report. HQ receives nothing by itself; it looks down when
-you write, then asks you with a recommendation and its consequence. HQ never
-decides for you.
+at the end of its report, with a recommendation and its consequence, and
+waits for your answer in that same chat. It never decides for you.
 
-Ask for status at any time: "how are the projects doing". HQ can also count
-from the mail log (`slp_room_stats`): how many results were accepted or sent
-back, how often a Peer challenged a brief and was conceded.
+Ask for the project's progress at any time, in that same chat: "how is it
+going".
 
-**Working without HQ:** open the **Supervisor** profile directly inside a
-project and give it the work. You are then its "Owner" and read its reports
-yourself.
+### When you need HQ
+
+- **Overall state:** "how are the projects doing". HQ reads each
+  Supervisor's end-of-turn report and `.slp/status.md` and sums them up,
+  including every project's *decided by the room* and *overruled* rows. HQ
+  can also count from the mail log (`slp_room_stats`): how many results were
+  accepted or sent back, how often a Peer challenged a brief and was
+  conceded.
+- **Adding a project** ([section 4](#4-add-a-new-project)).
+- **An instruction down:** a change of priority, stopping a piece of work,
+  a change of direction for one or more projects. HQ mails the Supervisor
+  concerned; to that Supervisor it is an instruction "from the Owner", with
+  no trace of HQ or of you.
+
+HQ does not take daily work and does not relay results up to you: projects
+send nothing to HQ, and HQ only looks down when you ask.
 
 **Steering a Peer:** go through the Supervisor or the Lead. If you chat with
 a Peer directly it obeys, and its next report opens with `DIRECT:` so the

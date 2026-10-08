@@ -1,24 +1,15 @@
 import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { CLAUDE_HOME, CODEX_HOME, OPENCODE_CONFIG_HOME, PI_HOME, ROOM_DIR, RUNTIMES_DIR } from "./paths";
+import { CLAUDE_HOME, CODEX_HOME, OPENCODE_CONFIG_HOME, PI_HOME, ROLE_SKILLS_DIR, ROOM_DIR, RUNTIMES_DIR } from "./paths";
 import { loadPolicy, type RuntimePolicy } from "./policy";
 import type { Harness, Role, Seat } from "./seats";
 
 /**
- * Isolated runtimes, the "Codex Room" idea applied to every harness.
- *
- * Each seat gets its own home directory that the harness treats as its user
- * home: own sessions, history, databases and settings. Only what policy.json
- * lists is shared from the user's real home by symlink, so a seat does not
- * inherit the user's skills, plugins, MCP servers, hooks or extensions unless
- * the policy says so. Harness-native features that overlap with the room
- * (sub-agents, browser, computer use, apps) are switched off in the copy.
- *
- * Role prompts are NOT written into the runtime. They go through Paseo's
- * provider-agnostic `systemPrompt`, so every harness gets the same text once.
+ * Keeps a seat apart from the user's own setup: Codex, Pi and OpenCode get a home under runtimes/,
+ * Claude runs on ~/.claude with launch flags. Role prompts go through Paseo's systemPrompt, not here.
  */
 
-const RUNTIME_VERSION = 10;
+const RUNTIME_VERSION = 11;
 const MARKER = ".slp-runtime.json";
 
 function ensureDir(path: string): void {
@@ -65,26 +56,6 @@ function writeJson(path: string, value: unknown): void {
   writeFileSync(path, `${JSON.stringify(value, null, 2)}\n`);
 }
 
-/* ---------- Claude Code: CLAUDE_CONFIG_DIR ---------- */
-
-function buildClaude(runtime: string, policy: RuntimePolicy["claude"]): void {
-  const settings = readJsonObject(join(CLAUDE_HOME, "settings.json"));
-  if (!policy.keepHooks) delete settings.hooks;
-  if (!policy.keepEnabledPlugins) {
-    delete settings.enabledPlugins;
-    delete settings.extraKnownMarketplaces;
-  }
-  // Deny the bundled skills that overlap the room; Skill(skill:x) matches a skill under any of its names.
-  const permissions = (settings.permissions && typeof settings.permissions === "object" ? settings.permissions : {}) as Record<string, unknown>;
-  const deny = Array.isArray(permissions.deny) ? (permissions.deny as unknown[]).filter((r): r is string => typeof r === "string") : [];
-  const skillRules = policy.deniedSkills.map((name) => `Skill(skill:${name})`);
-  settings.permissions = { ...permissions, deny: [...deny.filter((r) => !skillRules.includes(r)), ...skillRules] };
-  writeJson(join(runtime, "settings.json"), settings);
-  for (const name of policy.shareFiles) share(runtime, CLAUDE_HOME, name);
-  if (policy.sharePlugins) share(runtime, CLAUDE_HOME, "plugins");
-  ensureDir(join(runtime, "skills"));
-  for (const name of policy.shareSkills) share(join(runtime, "skills"), join(CLAUDE_HOME, "skills"), name);
-}
 
 /* ---------- Codex: CODEX_HOME ---------- */
 
@@ -192,14 +163,11 @@ function buildOpenCode(runtime: string, policy: RuntimePolicy["opencode"]): void
   for (const name of policy.shareEntries) share(runtime, OPENCODE_CONFIG_HOME, name);
 }
 
-/**
- * Role skills: room/skills/<role>/<skill>/SKILL.md symlinked into the runtime's
- * skills directory, which every harness reads (Claude, Codex, Pi: <home>/skills;
- * OpenCode: <config dir>/skills). A seat sees its role's skills and nothing else.
- */
-function installRoleSkills(runtime: string, role: Role): void {
+/** Links a role's skills where its harness reads them: the seat's runtime, or claudeRoleDir(role) for Claude. */
+function installRoleSkills(runtime: string, seat: Pick<Seat, "harness" | "role">): void {
+  const role = seat.role;
   const source = join(ROOM_DIR, "skills", role);
-  const target = join(runtime, "skills");
+  const target = seat.harness === "claude" ? join(claudeRoleDir(role), ".claude", "skills") : join(runtime, "skills");
   ensureDir(target);
   if (!existsSync(source)) return;
   for (const name of readdirSync(source)) {
@@ -208,14 +176,20 @@ function installRoleSkills(runtime: string, role: Role): void {
   }
 }
 
+/** The home of a Codex, Pi or OpenCode seat. Claude seats have none. */
 export function runtimeDir(seat: Pick<Seat, "harness" | "role">): string {
   return join(RUNTIMES_DIR, seat.harness, seat.role);
+}
+
+/** The directory a Claude seat of this role gets as an additional directory: it holds only `.claude/skills`. */
+export function claudeRoleDir(role: Role): string {
+  return join(ROLE_SKILLS_DIR, "claude", role);
 }
 
 function build(seat: Pick<Seat, "harness" | "role">, dir: string, policy: RuntimePolicy): void {
   switch (seat.harness) {
     case "claude":
-      return buildClaude(dir, policy.claude);
+      return; // no home to build
     case "codex":
       return buildCodex(dir, policy.codex);
     case "pi":
@@ -225,31 +199,40 @@ function build(seat: Pick<Seat, "harness" | "role">, dir: string, policy: Runtim
   }
 }
 
-/**
- * Builds the runtime once per RUNTIME_VERSION; later calls verify the marker
- * and link any role skill added to the room since (a removed skill leaves a
- * dead link that no harness lists).
- */
-export function ensureRuntime(seat: Pick<Seat, "harness" | "role">, policy: RuntimePolicy = loadPolicy()): string {
+/** Links the seat's role skills and returns its home, built once per RUNTIME_VERSION; null for Claude. */
+export function ensureRuntime(seat: Pick<Seat, "harness" | "role">, policy: RuntimePolicy = loadPolicy()): string | null {
+  if (seat.harness === "claude") {
+    installRoleSkills("", seat);
+    return null;
+  }
   const dir = runtimeDir(seat);
   const marker = join(dir, MARKER);
   if (existsSync(marker) && readJsonObject(marker).version === RUNTIME_VERSION) {
-    installRoleSkills(dir, seat.role);
+    installRoleSkills(dir, seat);
     return dir;
   }
   ensureDir(dir);
   pruneLinks(dir);
   build(seat, dir, policy);
-  installRoleSkills(dir, seat.role);
+  installRoleSkills(dir, seat);
   writeJson(marker, { version: RUNTIME_VERSION, harness: seat.harness, role: seat.role, builtAt: new Date().toISOString() });
   return dir;
 }
 
-/** The environment that points a harness at its isolated runtime. */
-export function envFor(harness: Harness, dir: string): Record<string, string> {
+/** Flags of every Claude seat: from ~/.claude it takes the sign-in only, no user settings and no personal MCP server. */
+export const CLAUDE_ARGS: Record<string, string | null> = { "setting-sources": "project,local", "strict-mcp-config": null };
+
+/** The files of ~/.claude the policy shares (CLAUDE.md), as text for the seat's prompt. */
+export function sharedClaudeFiles(policy: RuntimePolicy = loadPolicy()): string | null {
+  const texts = policy.claude.shareFiles.map((name) => join(CLAUDE_HOME, name)).filter((file) => existsSync(file)).map((file) => readFileSync(file, "utf8").trim());
+  return texts.filter(Boolean).join("\n\n") || null;
+}
+
+/** The environment a seat starts with: its isolated home, or for Claude the switch that keeps it from writing auto-memory into ~/.claude. */
+export function envFor(harness: Harness, dir: string | null): Record<string, string> {
+  if (harness === "claude") return { CLAUDE_CODE_DISABLE_AUTO_MEMORY: "1" };
+  if (!dir) return {};
   switch (harness) {
-    case "claude":
-      return { CLAUDE_CONFIG_DIR: dir };
     case "codex":
       return { CODEX_HOME: dir };
     case "pi":
@@ -262,9 +245,8 @@ export function envFor(harness: Harness, dir: string): Record<string, string> {
 
 /** Everything in the shared homes that a runtime deliberately does not see; for `slp-seat` logs. */
 export function describeIsolation(policy: RuntimePolicy = loadPolicy()): string {
-  const claudeSkills = existsSync(join(CLAUDE_HOME, "skills")) ? readdirSync(join(CLAUDE_HOME, "skills")).length : 0;
   return [
-    `claude: shares ${policy.claude.shareFiles.join(",") || "nothing"}; skills ${policy.claude.shareSkills.length}/${claudeSkills}; plugins ${policy.claude.sharePlugins}; denied skills ${policy.claude.deniedSkills.length}`,
+    `claude: user home, personal settings off; shares ${policy.claude.shareFiles.join(",") || "nothing"}; denied skills ${policy.claude.deniedSkills.length}`,
     `codex: strips [${policy.codex.stripTables.join(",")}], features off ${policy.codex.featuresOff.length}`,
     `pi: shares ${policy.pi.shareFiles.join(",")}; packages kept only if matching [${policy.pi.keepPackages.join(",")}]`,
     `opencode: task denied, built-in subagents disabled`,

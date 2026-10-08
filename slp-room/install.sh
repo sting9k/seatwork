@@ -1,20 +1,6 @@
 #!/usr/bin/env bash
-# slp-room installer: room prompts + policy + Paseo providers/profiles + the slp-seat plugin.
-#
-#   ./install.sh                 everything
-#   ./install.sh --no-plugin     skip npm install / paseo plugin install|reload
-#   ./install.sh --no-reload     skip `paseo daemon reload`
-#   ./install.sh --no-daemon-policy   do not touch daemon-wide switches (browser tools, voice, skills)
-#   ./install.sh --no-pi-adapter      do not install npm:pi-mcp-adapter into ~/.pi/agent
-#
-# Writes:  $SLP_ROOM_HOME (default ~/.config/slp-room): room/, policy.json, seats.json, projects.json.example
-#          ~/.paseo/config.json: providers + profiles from paseo/config.snippet.json (generated from
-#          paseo/seats.yml + paseo/policy.json + paseo/profiles.json + room/models.json), plus the
-#          daemon switches in policy.json (backup kept). Only the seats in seats.yml exist.
-#          Paseo project hq-seatwork ($SLP_ROOM_HOME/hq-seatwork): created by the plugin when it loads.
-# Never writes to ~/.claude, ~/.codex, ~/.pi or ~/.config/opencode. Runtimes are built by the
-# plugin under $SLP_ROOM_HOME/runtimes/<harness>/<role>; they are rebuilt when policy changes
-# (bump RUNTIME_VERSION in plugin/server/runtimes.ts or delete the runtime directory).
+# slp-room installer: room files, policy, Paseo providers and profiles, the slp-seat plugin.
+# Flags: --no-plugin  --no-reload  --no-daemon-policy  --no-pi-adapter
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -49,7 +35,8 @@ if [ -d "$ROOM_HOME/runtimes" ]; then
   for dir in "$ROOM_HOME"/runtimes/*/*/; do
     [ -d "$dir" ] || continue
     h="$(basename "$(dirname "$dir")")"; r="$(basename "$dir")"
-    if ! jq -e --arg p "$h-$r" '.providers | index($p)' "$ROOM_HOME/seats.json" >/dev/null; then rm -rf "$dir"; fi
+    # Claude seats run on the user's ~/.claude and have no runtime; a leftover one is removed too
+    if [ "$h" = "claude" ] || ! jq -e --arg p "$h-$r" '.providers | index($p)' "$ROOM_HOME/seats.json" >/dev/null; then rm -rf "$dir"; fi
   done
 fi
 if [ ! -f "$ROOM_HOME/projects.json" ]; then

@@ -6,37 +6,25 @@ import { Collector } from "./server/gc";
 import { MailEngine, type Mail, type Priority, type Needs } from "./server/mail";
 import { checkHqPlacement, ensureHqProject } from "./server/hq";
 import { McpHttpServer } from "./server/mcp-http";
-import { PASEO_CONFIG, REGISTRY_LOG, ROOM_HOME, TOKEN_FILE } from "./server/paths";
+import { REGISTRY_LOG, ROOM_HOME } from "./server/paths";
 import { describeProjects, registerProject } from "./server/onboard";
 import { modelAllowed, projectModels, type Models } from "./server/models";
 import { loadPolicy } from "./server/policy";
 import { findProject, findRoomMarker, loadRegistry, projectBlock } from "./server/registry";
-import { describeIsolation, ensureRuntime, envFor } from "./server/runtimes";
+import { CLAUDE_ARGS, claudeRoleDir, describeIsolation, ensureRuntime, envFor, sharedClaudeFiles } from "./server/runtimes";
 import { enabledSeats, maySpawn, parseSeat, rolePrompt, specFromTitle, type Role } from "./server/seats";
 import { roomStats } from "./server/stats";
 
 type CreateRequest = PluginBeforeRequests["agent.create"];
 
-const VERSION = "0.7.0";
+const VERSION = "0.8.0";
 const MAIL_DIR = join(ROOM_HOME, "mail");
 const MCP_TOKEN_FILE = join(MAIL_DIR, "token");
 const NONCES_FILE = join(MAIL_DIR, "nonces.json");
 
 /**
- * slp-seat: the room's hooks into Paseo.
- *
- *  before agent.create        a seat (`<harness>-<role>` provider) gets its isolated
- *                             runtime, the rendered role prompt, the project block and
- *                             the room's MCP server (slp_mail, slp_inbox). Refused when
- *                             the seat is not enabled or the cwd is not a registered project.
- *  before agent.session_open  binds the seat's MCP nonce to its agent id.
- *  on agent.created           enforces room.spawn and records the seat in the registry log.
- *  on agent.turn_ended / permission_requested
- *                             become mail to the parent; the engine delivers it when the
- *                             parent is idle, never by interrupting.
- *  on agent.archived          bounces held mail, forgets the nonce, deletes heartbeats.
- *  at load                   makes sure the default project hq-seatwork exists (hq.ts).
- *  every gc.everyMinutes      archives idle seats and orphan heartbeats (gc.ts).
+ * slp-seat: the room's hooks into Paseo. A seat gets its prompt, project block and mail server at
+ * agent.create; turn ends and permission requests become mail; archives and GC clean up after it.
  */
 export default function contribute(server: PluginServerContext) {
   mkdirSync(MAIL_DIR, { recursive: true });
@@ -438,15 +426,10 @@ export default function contribute(server: PluginServerContext) {
     try {
       dir = ensureRuntime(seat);
     } catch (error) {
-      console.error(`slp-seat: runtime for ${seat.provider} unavailable, launching on the shared home`, error);
+      console.error(`slp-seat: runtime for ${seat.provider} unavailable, launching on the user's home`, error);
     }
 
-    const env: Record<string, string> = { ...(request.env ?? {}), ...(dir ? envFor(seat.harness, dir) : {}) };
-    if (seat.harness === "claude" && dir) {
-      const tok = claudeToken();
-      if (tok) env.CLAUDE_CODE_OAUTH_TOKEN = tok;
-      else console.error("slp-seat: no Claude token found (~/.config/slp-room/oauth-token or the claude provider env); the seat may fail to authenticate");
-    }
+    const env: Record<string, string> = { ...(request.env ?? {}), ...envFor(seat.harness, dir) };
 
     // the room's MCP server; agent.session_open ties this nonce to the agent id
     const nonce = randomBytes(9).toString("base64url");
@@ -461,10 +444,18 @@ export default function contribute(server: PluginServerContext) {
     const parts = [
       rolePrompt(seat.role, { harness: seat.harness, spec, params: policy.room.params, models }),
       project ? projectBlock(project.name, project.root, project.mission, project.law) : null,
+      seat.harness === "claude" ? sharedClaudeFiles(policy) : null,
       request.config.systemPrompt,
     ];
     const systemPrompt = parts.filter((p): p is string => typeof p === "string" && p.trim().length > 0).join("\n\n");
-    return { ...request, env, config: { ...request.config, systemPrompt, mcpServers } };
+    // a Claude seat runs on the user's ~/.claude: personal customizations off by flags, its role's skills as an additional directory
+    let providerOptions = request.config.providerOptions;
+    if (seat.harness === "claude") {
+      const current = (providerOptions ?? {}) as { additionalDirectories?: unknown; extraArgs?: Record<string, string | null> };
+      const dirs = Array.isArray(current.additionalDirectories) ? current.additionalDirectories.filter((d): d is string => typeof d === "string") : [];
+      providerOptions = { ...current, additionalDirectories: [...new Set([...dirs, claudeRoleDir(seat.role)])], extraArgs: { ...(current.extraArgs ?? {}), ...CLAUDE_ARGS } };
+    }
+    return { ...request, env, config: { ...request.config, systemPrompt, mcpServers, ...(providerOptions ? { providerOptions } : {}) } };
   }
 
   function resolveCaller(nonce: string): string | null {
@@ -556,26 +547,3 @@ function saveNonces(nonces: Record<string, string>): void {
   writeFileSync(NONCES_FILE, `${JSON.stringify(nonces, null, 2)}\n`, { mode: 0o600 });
 }
 
-
-let tokenCache: { value: string | null; at: number } | null = null;
-
-/** The shared Claude token: the room's token file first, else the base claude provider's env. */
-function claudeToken(): string | null {
-  if (tokenCache && Date.now() - tokenCache.at < 60_000) return tokenCache.value;
-  let value: string | null = null;
-  if (existsSync(TOKEN_FILE)) {
-    value = readFileSync(TOKEN_FILE, "utf8").trim() || null;
-  }
-  if (!value && existsSync(PASEO_CONFIG)) {
-    try {
-      const config = JSON.parse(readFileSync(PASEO_CONFIG, "utf8")) as {
-        agents?: { providers?: Record<string, { env?: Record<string, string> }> };
-      };
-      value = config.agents?.providers?.claude?.env?.CLAUDE_CODE_OAUTH_TOKEN?.trim() || null;
-    } catch {
-      value = null;
-    }
-  }
-  tokenCache = { value, at: Date.now() };
-  return value;
-}

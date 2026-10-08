@@ -193,15 +193,10 @@
         "NotebookEdit"
       ]
     },
-    "runtime": {
-      "shareFiles": [
-        "CLAUDE.md"
-      ],
-      "shareSkills": [],
-      "sharePlugins": false,
-      "keepHooks": false,
-      "keepEnabledPlugins": false
-    },
+    "shareFiles": [
+      "CLAUDE.md"
+    ],
+    "$comment_shareFiles": "Claude seats run on ~/.claude with personal settings off; these files of it are appended to the seat's prompt.",
     "deniedSkills": [
       "loop",
       "schedule",
@@ -218,7 +213,7 @@
       "batch",
       "debug"
     ],
-    "$comment_deniedSkills": "Claude Code bundled skills that overlap the room (scheduling, orchestration, config editing, sub-agent reviews). Applied as Skill(skill:<name>) deny rules: in the provider's disallowedTools and in the runtime's settings.json permissions.deny."
+    "$comment_deniedSkills": "Claude Code bundled skills that overlap the room (scheduling, orchestration, config editing, sub-agent reviews). Applied as Skill(skill:<name>) deny rules in the provider's disallowedTools."
   },
   "codex": {
     "runtime": {

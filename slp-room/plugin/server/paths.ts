@@ -11,6 +11,9 @@ export const ROOM_DIR = join(ROOM_HOME, "room");
 /** Isolated runtimes, one per harness and role: runtimes/<harness>/<role>. */
 export const RUNTIMES_DIR = join(ROOM_HOME, "runtimes");
 
+/** Claude role skills, one directory per role, handed to a seat as an additional directory (runtimes.ts). */
+export const ROLE_SKILLS_DIR = join(ROOM_HOME, "role-skills");
+
 /** Seats enabled in paseo/seats.yml, as generated seats.json: { seats, providers }. */
 export const SEATS_FILE = join(ROOM_HOME, "seats.json");
 
@@ -24,12 +27,8 @@ export const HQ_DIR = join(ROOM_HOME, HQ_PROJECT);
 /** Append-only log of seats created, read by the HQ Supervisor. */
 export const REGISTRY_LOG = join(ROOM_HOME, "registry-log.jsonl");
 
-/** Optional `claude setup-token` token shared by the Claude seats (mode 600). */
-export const TOKEN_FILE = join(ROOM_HOME, "oauth-token");
-
-/** The daemon's home: config.json (fallback for the Claude token) and the schedule store GC reads. */
+/** The daemon's home, for the schedule store GC reads. */
 export const PASEO_HOME = process.env.PASEO_HOME?.trim() || join(USER_HOME, ".paseo");
-export const PASEO_CONFIG = join(PASEO_HOME, "config.json");
 export const PASEO_SCHEDULES = join(PASEO_HOME, "schedules");
 
 /** The user's own harness homes. Runtimes share credentials and skills from these by symlink. */

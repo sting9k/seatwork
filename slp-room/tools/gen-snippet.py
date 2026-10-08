@@ -1,13 +1,6 @@
 #!/usr/bin/env python3
-"""Generate paseo/config.snippet.json (Paseo providers + profiles) and ~/.config/slp-room/seats.json
-(the enabled seats, for the plugin). Both are derived files; paseo/seats.yml is the source.
-
-Inputs: paseo/seats.yml (which <harness>-<role> seats exist), paseo/policy.json (tool
-policy per role), paseo/profiles.json, room/models.json (which models each provider uses).
-Each enabled provider gets `paseoTools.disabledTools` = every Paseo tool minus the role's
-allowlist; Claude seats get `disallowedTools`; with restrict_models the provider lists only
-the models models.json assigns to it. Run by install.sh; safe to run by hand.
-"""
+"""Generate paseo/config.snippet.json and $SLP_ROOM_HOME/seats.json from seats.yml, policy.json,
+profiles.json and models.json. Run by install.sh; safe to run by hand."""
 from __future__ import annotations
 
 import json
@@ -31,7 +24,13 @@ HARNESSES = ["claude", "codex", "pi", "opencode"]
 ROLES = ["hq", "supervisor", "lead", "peer", "lens"]
 LABEL = {"claude": "Claude", "codex": "Codex", "pi": "Pi", "opencode": "OpenCode"}
 ROLE_LABEL = {"hq": "HQ Supervisor", "supervisor": "Supervisor", "lead": "Lead", "peer": "Peer", "lens": "Lens"}
-ENV_VAR = {"claude": "CLAUDE_CONFIG_DIR", "codex": "CODEX_HOME", "pi": "PI_CODING_AGENT_DIR", "opencode": "OPENCODE_CONFIG_DIR"}
+# How each harness is kept apart from the user's own setup (shown in the provider description).
+ISOLATION = {
+    "claude": "on the user's Claude sign-in with personal settings switched off",
+    "codex": "on an isolated Codex runtime (CODEX_HOME per role)",
+    "pi": "on an isolated Pi runtime (PI_CODING_AGENT_DIR per role)",
+    "opencode": "on an isolated OpenCode runtime (OPENCODE_CONFIG_DIR per role)",
+}
 
 
 def providers_in_models(models: dict) -> dict[str, set[str]]:
@@ -118,7 +117,7 @@ def main() -> int:
         entry: dict = {
             "extends": harness,
             "label": f"{LABEL[harness]} {ROLE_LABEL[role]}",
-            "description": f"{ROLE_LABEL[role]} seat on an isolated {LABEL[harness]} runtime ({ENV_VAR[harness]} per role); Paseo tools: {', '.join(allow[role]) or 'none'}",
+            "description": f"{ROLE_LABEL[role]} seat {ISOLATION[harness]}; Paseo tools: {', '.join(allow[role]) or 'none'}",
             "paseoTools": {"enabled": True, "disabledTools": disabled},
         }
         if harness == "claude":

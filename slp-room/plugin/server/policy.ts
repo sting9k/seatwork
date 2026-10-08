@@ -2,21 +2,13 @@ import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { ROOM_HOME } from "./paths";
 
-/**
- * Types and loader for policy.json. The file itself (paseo/policy.json in the
- * repo, copied to ~/.config/slp-room/policy.json by install.sh) is the single
- * source of truth: there are no defaults here. A missing or broken file stops
- * the plugin with a clear error instead of silently running on guesses.
- */
+/** Types and loader for policy.json, the single source of truth: no defaults here, a broken file stops the plugin. */
 
 export interface ClaudeRuntimePolicy {
-  /** Bundled or shared skills denied in the runtime's settings.json as Skill(skill:<name>). */
+  /** Bundled skills denied through the provider's disallowedTools as Skill(skill:<name>). */
   deniedSkills: string[];
+  /** Files of the user's ~/.claude appended to a seat's prompt (the seat loads no user settings). */
   shareFiles: string[];
-  shareSkills: string[];
-  sharePlugins: boolean;
-  keepHooks: boolean;
-  keepEnabledPlugins: boolean;
 }
 
 export interface CodexRuntimePolicy {
@@ -117,7 +109,7 @@ export function loadPolicy(): RuntimePolicy {
     },
     mail: need(parsed.mail, "mail"),
     gc: need(parsed.gc, "gc"),
-    claude: { ...need(claude.runtime, "claude.runtime"), deniedSkills: claude.deniedSkills ?? [] },
+    claude: { shareFiles: need(claude.shareFiles, "claude.shareFiles"), deniedSkills: claude.deniedSkills ?? [] },
     codex: need(parsed.codex?.runtime, "codex.runtime"),
     pi: need(parsed.pi?.runtime, "pi.runtime"),
     opencode: need(parsed.opencode?.runtime, "opencode.runtime"),

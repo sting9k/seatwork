@@ -1,7 +1,7 @@
 # seatwork
 
 A Supervisor → Lead → Peer room on Paseo. A seat is a Paseo provider named
-`<harness>-<role>`; one plugin gives it an isolated runtime, a self-contained
+`<harness>-<role>`; one plugin keeps it apart from your personal setup, gives it a self-contained
 role prompt, the project's law, and mail that never interrupts anyone.
 
 ```text
@@ -41,7 +41,8 @@ Full guide: [English](docs/GUIDE.en.md) · [Tiếng Việt](docs/GUIDE.vi.md).
 cd slp-room && ./install.sh
 ```
 
-Needs `jq`, `paseo`, `python3` with PyYAML. Then open **HQ Supervisor** in
+Needs `jq`, `paseo`, `python3` with PyYAML. Claude seats use the sign-in of `claude` in your
+terminal (`claude auth login`), shared by every role; no token. Then open **HQ Supervisor** in
 the `hq-seatwork` project (the plugin creates it at
 `~/.config/slp-room/hq-seatwork`; HQ starts nowhere else) once, to add your
 project; from then on open the **Supervisor** profile inside that project

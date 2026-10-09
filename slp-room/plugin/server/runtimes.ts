@@ -1,15 +1,18 @@
+import { createHash } from "node:crypto";
 import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { CLAUDE_HOME, CODEX_HOME, OPENCODE_CONFIG_HOME, PI_HOME, ROLE_SKILLS_DIR, ROOM_DIR, RUNTIMES_DIR } from "./paths";
 import { loadPolicy, type RuntimePolicy } from "./policy";
 import type { Harness, Role, Seat } from "./seats";
+import { formatToml, parseToml, type TomlTable } from "./toml";
 
 /**
  * Keeps a seat apart from the user's own setup: Codex, Pi and OpenCode get a home under runtimes/,
  * Claude runs on ~/.claude with launch flags. Role prompts go through Paseo's systemPrompt, not here.
  */
 
-const RUNTIME_VERSION = 11;
+/** Bump when the way a runtime is built changes. Policy and user config changes rebuild on their own. */
+const RUNTIME_VERSION = 12;
 const MARKER = ".slp-runtime.json";
 
 function ensureDir(path: string): void {
@@ -59,70 +62,34 @@ function writeJson(path: string, value: unknown): void {
 
 /* ---------- Codex: CODEX_HOME ---------- */
 
-/** Sets `key = value` under `[table]` in a TOML string, adding the table when missing. */
-function setTomlScalar(toml: string, table: string, key: string, value: string): string {
-  const header = new RegExp(`^\\[${table.replace(/\./g, "\\.")}\\]\\s*$`, "m");
-  const match = header.exec(toml);
-  if (!match) {
-    const sep = toml.endsWith("\n") || toml.length === 0 ? "" : "\n";
-    return `${toml}${sep}\n[${table}]\n${key} = ${value}\n`;
-  }
-  const start = match.index + match[0].length;
-  const rest = toml.slice(start);
-  const next = /^\[[^\]]+\]\s*$/m.exec(rest);
-  const sectionEnd = next ? start + next.index : toml.length;
-  const section = toml.slice(start, sectionEnd);
-  const keyLine = new RegExp(`^\\s*${key}\\s*=.*$`, "m");
-  const updated = keyLine.test(section)
-    ? section.replace(keyLine, `${key} = ${value}`)
-    : `${section.replace(/\s*$/, "")}\n${key} = ${value}\n`;
-  return toml.slice(0, start) + updated + toml.slice(sectionEnd);
-}
-
-/** Removes every `[table]` and `[table.sub]` section (header through the next header). */
-function stripTomlTables(toml: string, tables: string[]): string {
-  if (tables.length === 0) return toml;
-  const lines = toml.split("\n");
-  const out: string[] = [];
-  let skipping = false;
-  for (const line of lines) {
-    const header = /^\s*\[([^\]]+)\]\s*$/.exec(line);
-    if (header) {
-      const name = header[1].replace(/^"|"$/g, "");
-      skipping = tables.some((t) => name === t || name.startsWith(`${t}.`));
-    }
-    if (!skipping) out.push(line);
-  }
-  return out.join("\n");
-}
-
-/** Removes top-level `key = ...` lines (including multi-line arrays) before the first table. */
-function stripTomlTopKeys(toml: string, keys: string[]): string {
-  if (keys.length === 0) return toml;
-  const firstTable = /^\s*\[[^\]]+\]\s*$/m.exec(toml);
-  const headEnd = firstTable ? firstTable.index : toml.length;
-  let head = toml.slice(0, headEnd);
-  for (const key of keys) {
-    head = head.replace(new RegExp(`^\\s*${key}\\s*=\\s*\\[[\\s\\S]*?\\]\\s*$`, "m"), "");
-    head = head.replace(new RegExp(`^\\s*${key}\\s*=.*$`, "m"), "");
-  }
-  return head + toml.slice(headEnd);
-}
-
 function buildCodex(runtime: string, policy: RuntimePolicy["codex"]): void {
   // Start from the user's config so model providers and trust settings carry
   // over; drop MCP servers, plugins and hooks (Paseo supplies the seat's MCP);
   // switch off Codex's own multi-agent, browser, computer-use and apps features.
-  const base = existsSync(join(CODEX_HOME, "config.toml")) ? readFileSync(join(CODEX_HOME, "config.toml"), "utf8") : "";
-  let merged = stripTomlTopKeys(stripTomlTables(base, policy.stripTables), policy.stripKeys);
-  if (policy.agentsOff) merged = setTomlScalar(merged, "agents", "enabled", "false");
-  for (const feature of policy.featuresOff) merged = setTomlScalar(merged, "features", feature, "false");
-  if (policy.multiAgentV2Off) {
-    merged = /^\[features\.multi_agent_v2\]\s*$/m.test(merged)
-      ? setTomlScalar(merged, "features.multi_agent_v2", "enabled", "false")
-      : setTomlScalar(merged, "features", "multi_agent_v2", "false");
+  const file = join(CODEX_HOME, "config.toml");
+  let config: TomlTable;
+  try {
+    config = parseToml(existsSync(file) ? readFileSync(file, "utf8") : "");
+  } catch (error) {
+    throw new Error(`${file} is not TOML the room can read (${error instanceof Error ? error.message : String(error)})`);
   }
-  writeFileSync(join(runtime, "config.toml"), merged);
+  for (const name of [...policy.stripTables, ...policy.stripKeys]) config.delete(name);
+  /** The top-level table `name`, replacing anything there that is not a table. */
+  const table = (name: string): TomlTable => {
+    const found = config.get(name);
+    if (found instanceof Map) return found;
+    const made: TomlTable = new Map();
+    config.set(name, made);
+    return made;
+  };
+  if (policy.agentsOff) table("agents").set("enabled", "false");
+  for (const feature of policy.featuresOff) table("features").set(feature, "false");
+  if (policy.multiAgentV2Off) {
+    const v2 = table("features").get("multi_agent_v2");
+    if (v2 instanceof Map) v2.set("enabled", "false");
+    else table("features").set("multi_agent_v2", "false");
+  }
+  writeFileSync(join(runtime, "config.toml"), formatToml(config));
   for (const name of policy.shareFiles) share(runtime, CODEX_HOME, name);
   if (policy.sharePlugins) share(runtime, CODEX_HOME, "plugins");
   if (policy.shareHooks) share(runtime, CODEX_HOME, "hooks.json");
@@ -199,7 +166,14 @@ function build(seat: Pick<Seat, "harness" | "role">, dir: string, policy: Runtim
   }
 }
 
-/** Links the seat's role skills and returns its home, built once per RUNTIME_VERSION; null for Claude. */
+/** What a build is made from: the build logic, the harness's policy and the user file it copies. */
+function fingerprint(harness: Exclude<Harness, "claude">, policy: RuntimePolicy): string {
+  const copied = harness === "codex" ? join(CODEX_HOME, "config.toml") : harness === "pi" ? join(PI_HOME, "settings.json") : null;
+  const text = copied && existsSync(copied) ? readFileSync(copied, "utf8") : "";
+  return createHash("sha256").update(JSON.stringify([RUNTIME_VERSION, policy[harness], text])).digest("hex");
+}
+
+/** Links the seat's role skills and returns its home, rebuilt whenever its fingerprint changes; null for Claude. */
 export function ensureRuntime(seat: Pick<Seat, "harness" | "role">, policy: RuntimePolicy = loadPolicy()): string | null {
   if (seat.harness === "claude") {
     installRoleSkills("", seat);
@@ -207,15 +181,14 @@ export function ensureRuntime(seat: Pick<Seat, "harness" | "role">, policy: Runt
   }
   const dir = runtimeDir(seat);
   const marker = join(dir, MARKER);
-  if (existsSync(marker) && readJsonObject(marker).version === RUNTIME_VERSION) {
-    installRoleSkills(dir, seat);
-    return dir;
+  const print = fingerprint(seat.harness, policy);
+  if (readJsonObject(marker).fingerprint !== print) {
+    ensureDir(dir);
+    pruneLinks(dir);
+    build(seat, dir, policy);
+    writeJson(marker, { fingerprint: print, harness: seat.harness, role: seat.role, builtAt: new Date().toISOString() });
   }
-  ensureDir(dir);
-  pruneLinks(dir);
-  build(seat, dir, policy);
   installRoleSkills(dir, seat);
-  writeJson(marker, { version: RUNTIME_VERSION, harness: seat.harness, role: seat.role, builtAt: new Date().toISOString() });
   return dir;
 }
 

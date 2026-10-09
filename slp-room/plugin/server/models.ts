@@ -149,8 +149,9 @@ export function projectModels(override: unknown, enabledProviders: string[], whe
 export function modelAllowed(m: Models, role: string, provider: string, model: string | undefined): { ok: boolean; listed: string[] } {
   const listed = allowed(m)[role] ?? [];
   const ok = listed.some((entry) => {
-    const [p, id] = entry.split("/");
-    return p === provider && (!model || model === id || model.startsWith(`${id}-`));
+    const slash = entry.indexOf("/"); // the model id may hold slashes of its own
+    const id = entry.slice(slash + 1);
+    return entry.slice(0, slash) === provider && (!model || model === id || model.startsWith(`${id}-`));
   });
   return { ok, listed };
 }

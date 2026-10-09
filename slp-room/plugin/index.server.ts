@@ -1,4 +1,4 @@
-import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { appendFileSync, chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { randomBytes } from "node:crypto";
 import { join } from "node:path";
 import type { PluginBeforeRequests, PluginServerContext } from "@getpaseo/plugin/server";
@@ -17,7 +17,7 @@ import { roomStats } from "./server/stats";
 
 type CreateRequest = PluginBeforeRequests["agent.create"];
 
-const VERSION = "0.8.0";
+const VERSION = "0.8.1";
 const MAIL_DIR = join(ROOM_HOME, "mail");
 const MCP_TOKEN_FILE = join(MAIL_DIR, "token");
 const NONCES_FILE = join(MAIL_DIR, "nonces.json");
@@ -27,6 +27,9 @@ const NONCES_FILE = join(MAIL_DIR, "nonces.json");
  * agent.create; turn ends and permission requests become mail; archives and GC clean up after it.
  */
 export default function contribute(server: PluginServerContext) {
+  // the room home holds mail bodies and copies of the user's harness config: its owner only
+  mkdirSync(ROOM_HOME, { recursive: true });
+  chmodSync(ROOM_HOME, 0o700);
   mkdirSync(MAIL_DIR, { recursive: true });
   const policy = loadPolicy();
   try {
@@ -258,10 +261,14 @@ export default function contribute(server: PluginServerContext) {
       if (!childRole || !maySpawn(policy.room.spawn, parent.role, childRole, event.agent.title)) {
         const what = seat ? `a ${seat.role} seat` : `a non-room agent (provider ${event.agent.provider})`;
         log(`spawn refused: ${parent.role} ${parentId} created ${what} ${event.agent.id}; archiving it`);
+        // Paseo sends a new agent its first prompt without waiting for this hook, so the seat may already be at work
+        let outcome = "The room archived it. If you gave it a first prompt, that turn may have started before the archive: check what it changed.";
         try {
           await paseo.agents.ref(event.agent.id).archive();
         } catch (error) {
-          log(`spawn refused: could not archive ${event.agent.id}: ${error instanceof Error ? error.message : String(error)}`);
+          const reason = error instanceof Error ? error.message : String(error);
+          log(`spawn refused: could not archive ${event.agent.id}: ${reason}`);
+          outcome = `The room could not archive it (${reason}), so it is still there: archive ${event.agent.id} yourself, then check what it changed.`;
         }
         await getEngine(paseo).post({
           from: { agentId: "room", role: "system" },
@@ -269,7 +276,7 @@ export default function contribute(server: PluginServerContext) {
           to: parentId!,
           priority: "blocking",
           subject: `SPAWN REFUSED: a ${parent.role} may create only ${allowed.length ? allowed.join(", ") : "nothing"}`,
-          body: `You created ${what} titled "${event.agent.title ?? ""}". The room archived it at once; nothing ran. Create only the roles your role allows (${allowed.length ? allowed.join(", ") : "none"}), on the room's providers, and continue.`,
+          body: `You created ${what} titled "${event.agent.title ?? ""}". ${outcome} Create only the roles your role allows (${allowed.length ? allowed.join(", ") : "none"}), on the room's providers, and continue.`,
           needs: "nothing",
           whyNow: "a seat you created was outside the room's spawn rules",
         });
@@ -422,11 +429,12 @@ export default function contribute(server: PluginServerContext) {
       }
     }
 
-    let dir: string | null = null;
+    // without its own home a seat would start on the user's, with the user's MCP servers and plugins
+    let dir: string | null;
     try {
       dir = ensureRuntime(seat);
     } catch (error) {
-      console.error(`slp-seat: runtime for ${seat.provider} unavailable, launching on the user's home`, error);
+      throw new Error(`slp-seat: ${seat.provider} refused: its runtime could not be built (${error instanceof Error ? error.message : String(error)}). Fix that and create the seat again.`);
     }
 
     const env: Record<string, string> = { ...(request.env ?? {}), ...envFor(seat.harness, dir) };

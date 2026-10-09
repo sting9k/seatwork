@@ -20,17 +20,20 @@ done
 for bin in jq paseo python3; do command -v "$bin" >/dev/null || { echo "$bin is required" >&2; exit 1; }; done
 python3 -c "import yaml" 2>/dev/null || { echo "python3 needs PyYAML (pip3 install pyyaml) to read paseo/seats.yml" >&2; exit 1; }
 
-# --- 0. generate paseo/config.snippet.json and $ROOM_HOME/seats.json from seats.yml + policy + models ----
+# the room home holds mail and copies of your harness config: its owner only, also when it already exists
+umask 077
 mkdir -p "$ROOM_HOME"
+chmod 700 "$ROOM_HOME"
+
+# --- 0. generate paseo/config.snippet.json and $ROOM_HOME/seats.json from seats.yml + policy + models ----
 SLP_ROOM_HOME="$ROOM_HOME" python3 "$HERE/tools/gen-snippet.py"
 
 # --- 1. room files --------------------------------------------------------------
-umask 077
 mkdir -p "$ROOM_HOME/room"
 # the whole room tree: models.json, roles/, harness/, specs/, law/, skills/
 rsync -a --delete "$HERE/room/" "$ROOM_HOME/room/"
 cp "$HERE/paseo/policy.json" "$ROOM_HOME/policy.json"
-# runtimes of seats no longer enabled are removed (the plugin rebuilds enabled ones)
+# runtimes of seats no longer enabled are removed (the plugin rebuilds the others when policy.json changed)
 if [ -d "$ROOM_HOME/runtimes" ]; then
   for dir in "$ROOM_HOME"/runtimes/*/*/; do
     [ -d "$dir" ] || continue

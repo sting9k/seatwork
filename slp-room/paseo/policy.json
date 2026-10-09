@@ -324,7 +324,7 @@
     "tellParent": true
   },
   "room": {
-    "$comment": "Who may mail whom and who may create whom; both enforced by the plugin. Nothing travels up from a Supervisor to hq (turn ends, permissions, GC notices, mail): hq looks at the room and sends down. A spawn entry role:spec allows only that specialization (supervisor: peer:research). A mail off the route table or outside the tree is refused; a seat created outside spawn is archived at once and its parent told. params are quoted by the role prompts through {{placeholders}}.",
+    "$comment": "Who may mail whom and who may create whom; the plugin checks both. They guard against mistakes and are not a security boundary: every seat runs as the same user. Nothing travels up from a Supervisor to hq (turn ends, permissions, GC notices, mail): hq looks at the room and sends down. A spawn entry role:spec allows only that specialization (supervisor: peer:research). A mail off the route table or outside the tree is refused; a seat created outside spawn is archived and its parent told (its first prompt may have started by then). params are quoted by the role prompts through {{placeholders}}.",
     "routes": {
       "hq>supervisor": true,
       "supervisor>hq": false,

@@ -2,7 +2,7 @@ import { appendFileSync, existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { PaseoApi } from "@getpaseo/client";
 import { paseoCli as cli } from "./cli";
-import type { MailEngine } from "./mail";
+import { waitsOnSomeone, type MailEngine } from "./mail";
 import { PASEO_SCHEDULES, ROOM_HOME } from "./paths";
 import type { GcPolicy } from "./policy";
 
@@ -10,9 +10,10 @@ import type { GcPolicy } from "./policy";
  * Garbage collection for the room. One pass every gc.everyMinutes, plus a
  * short pass whenever a seat is archived:
  *
- *  - a room seat idle longer than its role's limit is archived, unless one of
- *    its descendants is still alive (a Lead waits for its Peers, never the
- *    other way round); the parent gets an FYI mail;
+ *  - a room seat at rest longer than its role's limit is archived, unless it
+ *    waits on a permission or an answer, or one of its descendants is still
+ *    alive (a Lead waits for its Peers, never the other way round); the parent
+ *    gets an FYI mail;
  *  - heartbeats of room seats that are archived or gone are deleted. Paseo marks
  *    a heartbeat "completed" when its agent is archived but keeps the file, and
  *    `paseo schedule ls` hides heartbeats, so GC reads the daemon's schedule
@@ -32,6 +33,14 @@ interface LiveAgent {
   status: string;
   updatedAt: string;
   title?: string | null;
+  archivedAt?: string | null;
+  pendingPermissions?: unknown[] | null;
+}
+
+/** How long a seat has been at rest, in ms; 0 while it works, starts, or waits on someone. */
+function restMs(agent: LiveAgent): number {
+  if (agent.status === "running" || agent.status === "initializing" || waitsOnSomeone(agent)) return 0;
+  return Date.now() - Date.parse(agent.updatedAt);
 }
 
 interface Schedule {
@@ -127,20 +136,28 @@ export class Collector {
 
   private async archiveIdleSeats(live: Map<string, LiveAgent>): Promise<void> {
     const seats = this.engine.allSeats();
-    const now = Date.now();
     const hasLiveDescendant = (id: string) => seats.some((s) => s.agentId !== id && live.has(s.agentId) && this.engine.isAncestor(id, s.agentId));
     for (const seat of seats) {
       const agent = live.get(seat.agentId);
       if (!agent) continue;
       const hours = this.policy.idleHoursBeforeArchive[seat.role] ?? 0;
       if (hours <= 0) continue;
-      if (agent.status === "running" || agent.status === "initializing") continue;
-      const idleMs = now - Date.parse(agent.updatedAt);
-      if (!(idleMs > hours * 3_600_000)) continue;
+      if (!(restMs(agent) > hours * 3_600_000)) continue;
       if (hasLiveDescendant(seat.agentId)) continue;
-      const idleHours = Math.round(idleMs / 3_600_000);
+      // the list is old by the time a long pass gets here: the seat is judged again on a fresh read
+      const handle = this.paseo.agents.ref(seat.agentId);
+      let fresh: LiveAgent | null;
       try {
-        await this.paseo.agents.ref(seat.agentId).archive();
+        await handle.refresh();
+        fresh = handle.current() as LiveAgent | null;
+      } catch (error) {
+        this.log(`gc: cannot read ${seat.agentId}, left alone: ${error instanceof Error ? error.message : String(error)}`);
+        continue;
+      }
+      if (!fresh || fresh.archivedAt || !(restMs(fresh) > hours * 3_600_000)) continue;
+      const idleHours = Math.round(restMs(fresh) / 3_600_000);
+      try {
+        await handle.archive();
       } catch (error) {
         this.log(`gc: archive ${seat.agentId} failed: ${error instanceof Error ? error.message : String(error)}`);
         continue;

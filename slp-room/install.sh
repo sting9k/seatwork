@@ -30,7 +30,7 @@ SLP_ROOM_HOME="$ROOM_HOME" python3 "$HERE/tools/gen-snippet.py"
 
 # --- 1. room files --------------------------------------------------------------
 mkdir -p "$ROOM_HOME/room"
-# the whole room tree: models.json, roles/, harness/, specs/, law/, skills/
+# the whole room tree: models.json, roles/, harness/, specs/, skills/
 rsync -a --delete "$HERE/room/" "$ROOM_HOME/room/"
 cp "$HERE/paseo/policy.json" "$ROOM_HOME/policy.json"
 # runtimes of seats no longer enabled are removed (the plugin rebuilds the others when policy.json changed)

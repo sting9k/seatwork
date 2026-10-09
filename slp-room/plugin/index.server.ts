@@ -17,7 +17,7 @@ import { roomStats } from "./server/stats";
 
 type CreateRequest = PluginBeforeRequests["agent.create"];
 
-const VERSION = "0.8.1";
+const VERSION = "0.8.2";
 const MAIL_DIR = join(ROOM_HOME, "mail");
 const MCP_TOKEN_FILE = join(MAIL_DIR, "token");
 const NONCES_FILE = join(MAIL_DIR, "nonces.json");
@@ -52,6 +52,10 @@ export default function contribute(server: PluginServerContext) {
     if (!engine) engine = new MailEngine(paseo, policy.mail, policy.room, log);
     return engine;
   };
+  /** seat → the signals it mailed its parent in the turn it is in; read when that turn ends. */
+  const mailedUp = new Map<string, Set<string>>();
+  /** seat → the signal its last turn ended with. */
+  const lastSignal = new Map<string, string>();
   let gc: Collector | null = null;
   const getGc = (paseo: Parameters<typeof getEngine>[0]) => {
     if (!gc) gc = new Collector(paseo, getEngine(paseo), policy.gc, log, forgetAgent);
@@ -62,7 +66,7 @@ export default function contribute(server: PluginServerContext) {
     {
       name: "slp_mail",
       description:
-        "Write to another seat of your room. To answer a mail you received, pass reply_to: its id (the #id in its header) and no `to`; the answer goes to whoever sent it. To start a new thread, pass `to`: `owner` (the seat that launched you) or the id of a seat you launched. The plugin wraps it in an envelope and delivers it between the recipient's turns; it never interrupts anyone. Mail to an archived seat is refused.",
+        "Write to another seat of your room. To answer a mail you received, pass reply_to: its id (the #id in its header) and no `to`; the answer goes to whoever sent it. To start a new thread, pass `to`: `owner` (the seat that launched you) or the id of a seat you launched. The plugin wraps it in an envelope and delivers it between the recipient's turns; it never interrupts anyone. A CANDIDATE, REVIEW or DONE to your owner is your turn's report: it is delivered when your turn ends, and your final message is not mailed a second time. Mail to an archived seat is refused.",
       inputSchema: {
         type: "object",
         properties: {
@@ -105,17 +109,37 @@ export default function contribute(server: PluginServerContext) {
       const needs = (["reply", "decision", "nothing"].includes(String(args.needs)) ? args.needs : "nothing") as Needs;
       const suggested = (["blocking", "action", "fyi"].includes(String(args.priority)) ? args.priority : undefined) as Priority | undefined;
       const priority = classifyAgentMail({ senderRole: sender.role, recipientRole: recipient.role, subject, needs, suggested });
+      const signal = subjectSignal(subject);
+      if (signal && engine.parentOf(from) === to) {
+        mailedUp.set(from, (mailedUp.get(from) ?? new Set()).add(signal));
+        // "my work is finished" is true only once the turn has ended: until then the parent must not act on this seat
+        if (CLOSES_WORK.has(signal)) {
+          const kept = engine.keepReport({
+            from: { agentId: from, role: sender.role },
+            to,
+            priority,
+            subject,
+            body,
+            needs: needs === "nothing" ? "reply" : needs,
+            whyNow: `the seat ended its turn with ${signal}`,
+          });
+          return `kept #${kept.id} as your report to owner: it is delivered once, when your turn ends. End your turn with ${signal} on the first line; do not send it again.`;
+        }
+      }
+      // an acknowledgement asks nothing of anyone: it never starts a turn
+      const ack = signal === "ACK";
       const mail = await engine.post({
         from: { agentId: from, role: sender.role },
         to,
-        priority,
+        priority: ack ? "fyi" : priority,
         subject,
         body,
         needs,
         whyNow: whyNowFor(engine.isAncestor(from, to) ? "owner" : sender.role, needs),
+        ...(ack ? { quiet: true as const } : {}),
       });
       const held = engine.held(to).some((m) => m.id === mail.id);
-      return `sent #${mail.id} to ${engine.isAncestor(to, from) ? "owner" : `${recipient.role} ${to}`} as ${priority}; ${held ? "held until the recipient can take it" : "delivered"}. Continue your work; do not wait for a reply unless needs=decision blocks you.`;
+      return `sent #${mail.id} to ${engine.isAncestor(to, from) ? "owner" : `${recipient.role} ${to}`} as ${mail.priority}; ${ack ? "it is read with the recipient's next mail" : held ? "held until the recipient can take it" : "delivered"}. Continue your work; do not wait for a reply unless needs=decision blocks you.`;
     },
   );
 
@@ -313,40 +337,64 @@ export default function contribute(server: PluginServerContext) {
 
   server.on("agent.turn_ended", async (event, { paseo }) => {
     const eng = getEngine(paseo);
+    const id = event.agent.id;
     const seat = parseSeat(event.agent.provider);
+    // what this turn was started by and what the seat mailed during it; read before the next delivery starts its next turn
+    const wake = eng.takeWake(id);
+    const kept = eng.takeReport(id);
+    const mailed = mailedUp.get(id) ?? new Set<string>();
+    mailedUp.delete(id);
     // whoever finished a turn may now take held mail
-    await eng.deliver(event.agent.id);
-    const parentId = eng.parentOf(event.agent.id) ?? event.agent.parentAgentId;
-    if (!seat || !parentId || event.outcome.kind === "canceled") return;
+    await eng.deliver(id);
+    const parentId = eng.parentOf(id) ?? event.agent.parentAgentId;
+    if (!seat || !parentId) return;
     const parent = eng.seat(parentId);
     // nothing travels up to hq: it reads the Supervisor's final message and .slp/status.md when it looks
     if (!parent || parent.role === "hq") return;
+    // the report the seat mailed before its turn ended goes out now, however the turn ended
+    if (kept) await eng.post({ ...kept, to: parentId });
+    if (event.outcome.kind === "canceled") return;
     const text = lastAssistantText(event.timeline);
     const signal = signalOf(text);
+    const repeats = signal !== undefined && lastSignal.get(id) === signal;
+    if (signal) lastSignal.set(id, signal);
     let priority: Priority;
     let subject: string;
     let needs: Needs;
+    let quiet = false;
     if (event.outcome.kind === "failed") {
       priority = "blocking";
       subject = `FAILED: ${event.outcome.error.message.slice(0, 120)}`;
       needs = "decision";
-    } else if (signal && signal !== "STATUS") {
+    } else if (signal ? mailed.has(signal) : kept) {
+      // one report per turn: the parent has this signal from the seat's own mail
+      log(`turn end of ${id} not mailed again: the seat mailed ${signal ?? "its report"} to its parent itself`);
+      return;
+    } else if (signal && signal !== "STATUS" && signal !== "ACK") {
       priority = "action";
       subject = `${signal} from ${seat.role} ${event.agent.title ?? event.agent.id}`;
       needs = ["QUESTION", "BLOCKED", "DECISION_NEEDED", "REOPEN_REQUEST", "DEPENDENCY_REQUEST"].includes(signal) ? "decision" : "reply";
+      // DONE again, in a turn started only by mail that asked nothing: the parent has it already
+      if (signal === "DONE" && repeats && askedNothing(wake)) {
+        priority = "fyi";
+        needs = "nothing";
+        quiet = true;
+      }
     } else {
       priority = "fyi";
       subject = `${signal ?? "turn ended"}: ${seat.role} ${event.agent.title ?? event.agent.id}`;
       needs = "nothing";
+      quiet = signal === "ACK";
     }
     await eng.post({
-      from: { agentId: event.agent.id, role: seat.role },
+      from: { agentId: id, role: seat.role },
       to: parentId,
       priority,
       subject,
       body: text || `(no final message; outcome ${event.outcome.kind})`,
       needs,
-      whyNow: event.outcome.kind === "failed" ? "the seat's turn failed; its work is stopped" : `the seat ended its turn with ${signal ?? "a progress message"}`,
+      whyNow: event.outcome.kind === "failed" ? "the seat's turn failed; its work is stopped" : quiet ? `nothing new: the seat ended its turn with ${signal === "ACK" ? "an acknowledgement" : "DONE again, after mail that asked nothing"}` : `the seat ended its turn with ${signal ?? "a progress message"}`,
+      ...(quiet ? { quiet: true as const } : {}),
     });
   });
 
@@ -482,11 +530,26 @@ export default function contribute(server: PluginServerContext) {
 /* ---------- classification ---------- */
 
 const SIGNAL = /\b(DONE|DECISION_NEEDED|BLOCKED|REOPEN_REQUEST|DEPENDENCY_REQUEST|QUESTION|CANDIDATE|REVIEW|STATUS)\b/;
+/** An acknowledgement counts only where a line opens with it: the word turns up inside other reports. */
+const ACK = /^\W*ACK\b/;
+/** Signals that say "my work is finished": the parent acts on the seat (accepts, archives) when it reads one. */
+const CLOSES_WORK = new Set(["CANDIDATE", "REVIEW", "DONE"]);
 
 /** The protocol signal of a final message. The role prompts put it on the first line; the whole text is the fallback. */
 function signalOf(text: string): string | undefined {
   const firstLine = text.split("\n").find((line) => line.trim())?.trim() ?? "";
+  if (ACK.test(firstLine)) return "ACK";
   return SIGNAL.exec(firstLine)?.[1] ?? SIGNAL.exec(text)?.[1];
+}
+
+/** The signal a mail's subject opens with, if any; a signal word further in is part of a sentence. */
+function subjectSignal(subject: string): string | undefined {
+  return ACK.test(subject) ? "ACK" : new RegExp(`^\\W*${SIGNAL.source}`).exec(subject)?.[1];
+}
+
+/** True when a turn was started by mail and none of it asked the seat for anything. */
+function askedNothing(wake: readonly Mail[]): boolean {
+  return wake.length > 0 && wake.every((mail) => mail.needs === "nothing" && (mail.priority === "fyi" || mail.from.role === "system"));
 }
 
 function classifyAgentMail(input: { senderRole: Role; recipientRole: Role; subject: string; needs: Needs; suggested?: Priority }): Priority {

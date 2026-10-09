@@ -1,4 +1,4 @@
-import { appendFileSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { maySpawn } from "./seats";
 import { join } from "node:path";
 import type { PaseoApi } from "@getpaseo/client";
@@ -18,6 +18,13 @@ import type { MailPolicy, RoomPolicy } from "./policy";
  *                                 which cancels the running tool on Claude and Pi)
  *   recipient waiting/unknown   → hold, retry on the next trigger or sweep
  *   recipient archived or gone  → drop it, bounce UNDELIVERABLE to the sender
+ *
+ * Two kinds of mail never start a turn early. Quiet mail (an acknowledgement, a
+ * report that repeats itself, the bounce of a mail nobody waited on) stays in
+ * the queue until other mail starts the recipient's turn, and rides along. A
+ * report a seat mails its parent before its own turn has ended (CANDIDATE,
+ * REVIEW, DONE) is kept aside and posted at that turn's end: a parent that
+ * acts on a child still in its turn cuts the turn off.
  *
  * Queues live on disk (mail/queue/<agentId>.jsonl) and a mail leaves its queue
  * only once the daemon has taken it, so nothing is lost when the plugin reloads
@@ -41,6 +48,8 @@ export interface Mail {
   whyNow: string;
   /** On disk while its delivery is under way. Still set later: that delivery was cut off and may have arrived. */
   sending?: true;
+  /** Never starts a turn by itself: it waits for the recipient's next mail, or its inbox. */
+  quiet?: true;
 }
 
 export interface SeatRecord {
@@ -54,6 +63,8 @@ export interface SeatRecord {
 const MAIL_DIR = join(ROOM_HOME, "mail");
 const QUEUE_DIR = join(MAIL_DIR, "queue");
 const LOG_FILE = join(MAIL_DIR, "log.jsonl");
+/** One file per seat: the report it mailed its parent before its turn ended. */
+const REPORT_DIR = join(MAIL_DIR, "reports");
 /** child agent id → the seat that adopted it (overrides the Paseo parent for routing). */
 const ADOPTIONS_FILE = join(MAIL_DIR, "adoptions.json");
 
@@ -75,6 +86,10 @@ function ensureDirs(): void {
 
 function queueFile(agentId: string): string {
   return join(QUEUE_DIR, `${agentId}.jsonl`);
+}
+
+function reportFile(agentId: string): string {
+  return join(REPORT_DIR, `${agentId}.json`);
 }
 
 function readQueue(agentId: string): Mail[] {
@@ -148,6 +163,8 @@ export class MailEngine {
   /** Adoptions: child → new parent. A handoff re-parents the old Lead's Peers to the successor. */
   private readonly adoptions = new Map<string, string>();
   private delivering = new Set<string>();
+  /** recipient → the mail whose delivery started its current turn. */
+  private readonly woke = new Map<string, Mail[]>();
 
   constructor(
     private readonly paseo: PaseoApi,
@@ -308,10 +325,10 @@ export class MailEngine {
 
   /* ---------- enqueue + deliver ---------- */
 
-  async post(input: Omit<Mail, "id" | "at">): Promise<Mail> {
+  /** `id` is given when the mail was shown to its sender before it is posted (a kept report). */
+  async post(input: Omit<Mail, "id" | "at"> & { id?: string }): Promise<Mail> {
     const fromLabel = input.fromLabel ?? (this.isAncestor(input.from.agentId, input.to) ? "owner" : `${input.from.role}:${input.from.agentId}`);
-    input = { ...input, fromLabel };
-    const mail: Mail = { id: nowId(), at: new Date().toISOString(), ...input };
+    const mail: Mail = { ...input, id: input.id ?? nowId(), at: new Date().toISOString(), fromLabel };
     this.posted.set(mail.id, { from: mail.from.agentId, to: mail.to });
     const queue = readQueue(mail.to);
     queue.push(mail);
@@ -319,6 +336,41 @@ export class MailEngine {
     logLine("queued", mail);
     await this.deliver(mail.to);
     return mail;
+  }
+
+  /**
+   * A report its sender wrote before its own turn ended. It is kept on disk, one
+   * per seat (a later one replaces it), and posted by whoever sees that turn end.
+   */
+  keepReport(input: Omit<Mail, "id" | "at">): Mail {
+    const mail: Mail = { ...input, id: nowId(), at: new Date().toISOString() };
+    mkdirSync(REPORT_DIR, { recursive: true });
+    const replaced = this.takeReport(mail.from.agentId);
+    if (replaced) logLine("report-replaced", replaced);
+    writeFileSync(reportFile(mail.from.agentId), `${JSON.stringify(mail)}\n`);
+    this.posted.set(mail.id, { from: mail.from.agentId, to: mail.to });
+    logLine("report-kept", mail);
+    return mail;
+  }
+
+  /** The report kept for this seat, removed from disk; null when it wrote none. */
+  takeReport(agentId: string): Mail | null {
+    const file = reportFile(agentId);
+    if (!existsSync(file)) return null;
+    try {
+      return JSON.parse(readFileSync(file, "utf8")) as Mail;
+    } catch {
+      return null;
+    } finally {
+      rmSync(file, { force: true });
+    }
+  }
+
+  /** The mail that started this seat's current turn; empty when something else did (a prompt, a heartbeat). Read once. */
+  takeWake(agentId: string): Mail[] {
+    const mails = this.woke.get(agentId) ?? [];
+    this.woke.delete(agentId);
+    return mails;
   }
 
   /** Mail held for an agent, without delivering it (for slp_inbox). */
@@ -349,15 +401,18 @@ export class MailEngine {
           logLine("dropped-recipient-gone", mail);
           if (mail.from.role === "system" || !this.seats.has(mail.from.agentId)) continue;
           const who = this.seats.get(agentId);
+          // a sender that waited for an answer must learn none will come; one that asked nothing reads it later
+          const waited = mail.needs !== "nothing";
           await this.post({
             from: { agentId: "room", role: "system" },
             fromLabel: "room",
             to: mail.from.agentId,
-            priority: "action",
+            priority: waited ? "action" : "fyi",
             subject: `UNDELIVERABLE: #${mail.id} re: ${mail.subject}`,
             body: `Your mail to ${who ? `${who.role} ${agentId}` : agentId} was not delivered: that seat is archived or gone. Nothing is waiting on it. If the work still matters, launch a new seat with the brief and what was tried.`,
             needs: "nothing",
             whyNow: "the recipient of a mail you sent no longer exists",
+            ...(waited ? {} : { quiet: true as const }),
           });
         }
         return;
@@ -367,7 +422,8 @@ export class MailEngine {
       }
       let send: Mail[];
       if (status === "idle") {
-        send = queue;
+        // quiet mail starts no turn; it goes out with the first mail that does
+        send = queue.some((mail) => !mail.quiet) ? queue : [];
       } else {
         // running: only harnesses whose steer waits for the current tool call get mail mid-turn
         const harness = parseSeat(this.seats.get(agentId)?.provider)?.harness;
@@ -378,11 +434,13 @@ export class MailEngine {
       const asRead = new Map(send.map((mail) => [mail.id, mail]));
       // the mail stays on disk, marked, until the daemon has it: a process that dies here loses nothing
       updateQueue(agentId, (mail) => (asRead.has(mail.id) ? { ...mail, sending: true } : mail));
+      if (status === "idle") this.woke.set(agentId, send);
       try {
         // The SDK's default for a running agent is "interrupt"; the room never interrupts.
         await this.paseo.agents.ref(agentId).send(digest(send, this.policy), { activeTurnBehavior: "steer" } as never);
       } catch (error) {
         // refused, so nothing arrived: the mail waits as it was read
+        if (status === "idle") this.woke.delete(agentId);
         updateQueue(agentId, (mail) => asRead.get(mail.id) ?? mail);
         for (const mail of send) logLine("delivery-failed", mail, error instanceof Error ? error.message : String(error));
         this.log(`mail: delivery to ${agentId} failed: ${error instanceof Error ? error.message : String(error)}`);
@@ -401,6 +459,16 @@ export class MailEngine {
     for (const name of readdirSync(QUEUE_DIR)) {
       if (!name.endsWith(".jsonl")) continue;
       await this.deliver(name.slice(0, -".jsonl".length));
+    }
+    // a kept report whose seat is in no turn any more: its turn end never reached us (hooks are best effort)
+    if (!existsSync(REPORT_DIR)) return;
+    for (const name of readdirSync(REPORT_DIR)) {
+      if (!name.endsWith(".json")) continue;
+      const agentId = name.slice(0, -".json".length);
+      const status = await this.status(agentId);
+      if (status !== "idle" && status !== "gone") continue;
+      const report = this.takeReport(agentId);
+      if (report) await this.post(report);
     }
   }
 

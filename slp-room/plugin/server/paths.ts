@@ -5,7 +5,7 @@ import { join } from "node:path";
 export const USER_HOME = homedir();
 export const ROOM_HOME = process.env.SLP_ROOM_HOME?.trim() || join(USER_HOME, ".config", "slp-room");
 
-/** The room files install.sh copies here: models.json, roles/, specs/, harness/, law/, skills/. */
+/** The room files install.sh copies here: models.json, roles/, specs/, harness/, skills/. */
 export const ROOM_DIR = join(ROOM_HOME, "room");
 
 /** Isolated runtimes, one per harness and role: runtimes/<harness>/<role>. */

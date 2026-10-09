@@ -16,7 +16,7 @@
     "provider": "claude-supervisor",
     "model": "claude-opus-5-5",
     "modeId": "bypassPermissions",
-    "thinkingOptionId": "xhigh",
+    "thinkingOptionId": "high",
     "notes": "One project's Supervisor and the user's counterpart for that project's daily work. Opened by the user (or by HQ) inside a registered project. Pins the intent, runs one Lead per workstream, watches for drift, leaves decisions in its report for the Owner. Never implements, validates or accepts; never mails upward. Models: room/models.json."
   },
   {
@@ -36,7 +36,7 @@
     "provider": "claude-peer",
     "model": "claude-sonnet-5-5",
     "modeId": "bypassPermissions",
-    "thinkingOptionId": "medium",
-    "notes": "Launched by a Lead. The full-stack default seat: one bounded outcome, one write scope. The Lead picks the model per task (haiku cheap, sonnet default, opus expensive, codex-peer/pi-peer/opencode-peer for another family). Title [Peer:<spec>] adds a specialization sheet (research, review)."
+    "thinkingOptionId": "high",
+    "notes": "Launched by a Lead. The full-stack default seat: one bounded outcome, one write scope. The Lead picks the provider per task from room/models.json (sonnet by default, a codex-peer for the cross-family review). Title [Peer:<spec>] adds a specialization sheet (research, review)."
   }
 ]

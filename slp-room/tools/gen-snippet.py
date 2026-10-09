@@ -53,7 +53,7 @@ def providers_in_models(models: dict) -> dict[str, set[str]]:
             add(p)
     lens = models["lens"]
     add(lens["oracle"])
-    for p in lens["pair"] + lens.get("pool", []):
+    for p in ([lens["hard"]] if lens.get("hard") else []) + lens["pair"] + lens.get("pool", []):
         add(p)
     return used
 

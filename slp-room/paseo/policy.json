@@ -364,6 +364,7 @@
       "peer": [],
       "lens": []
     },
+    "$comment_params": "Numbers the role prompts quote through {{placeholders}}; change them here, never in a prompt. heartbeatCron: how often the Supervisor's heartbeat wakes it; every Lead report already wakes it, so a quarter hour only catches what slipped between reports. peerStallMinutes: a Peer silent this long with nothing pending gets a status check (a Peer turn is usually minutes). reviewStallMinutes: review, research and lens seats read for a long time before they write, so they get longer. leadStallMinutes: a Lead silent this long with no running Peer and no pending permission. readBudgetTokens: reading per Peer task before the Lead must split it; ~80k tokens is ~320 KB of source, which a default-tier model still reasons over well. cheapReadBudgetTokens: the same for the cheap tier, which loses the thread sooner.",
     "params": {
       "heartbeatCron": "*/15 * * * *",
       "peerStallMinutes": 6,

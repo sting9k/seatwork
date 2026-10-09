@@ -1,14 +1,14 @@
 ---
 name: slp-lens
-description: "Lead procedure for any decision that needs independent read-only opinions — a hard technical question, a stuck approach, a review that matters, a plan phase, a contested design, an incident, a formal verdict the Owner asked for. The Lead chairs; opens 1..N lenses on a neutral brief (one = second brain, two of different families = settle an answer, more = angles), seals them, settles overlap and conflict with at most one cross-examination, verifies disputed facts with verifier lenses, audits a high-stakes draft with an audit lens, and issues one binding decision. Never inside a lens."
+description: "Lead procedure for independent read-only opinions on a hard question, a stuck approach, a review that matters, a plan phase, a contested design or an incident: size, neutral brief, sealed launch, settling conflicts, audit lens, one binding decision."
 ---
 # Lenses (the Lead chairs)
 
 A lens is its own seat, not a Peer: a strong model on a `<harness>-lens` provider, title
-`[Lens] <angle>`, that answers one neutral brief by mail and never sees another lens, your
-reasoning, your plan, or your preference. You are the chair and the final arbiter: lenses analyse,
-you decide. You never do a lens's analysis yourself, never launch a Lead, never run this
-inside a lens.
+`[Lens] <angle>`, that answers one neutral brief by mail and sees neither another lens nor your
+reasoning, plan, or preference. You are the chair and the final arbiter: lenses analyse, you
+decide. The analysis is theirs, the decision is yours, and the chair is always the Lead: a lens
+answers its brief and runs no procedure of its own.
 
 ```text
 size    -> how many lenses, which models, which angles (one sentence)
@@ -76,18 +76,18 @@ Begin every lens prompt with:
 LENS EXECUTION MODE
 Work as a fully autonomous reviewer with independent judgment inside the authorized scope.
 Challenge false premises, choose what evidence to inspect, make ordinary analytical decisions
-without waiting for the chair. This is your own analysis, not orchestration: do NOT use agent
-tools, do NOT discover or contact other agents, do NOT read other lenses' work. Begin
-directly, no preamble.
+without waiting for the chair. This is your own analysis, done alone: the brief and the
+authorized scope are your only inputs, and your final message is your only output. Begin
+directly.
 ```
 
 End every lens prompt with:
 
 ```text
-Read-only. Do NOT edit, create, rename, or delete files. Do NOT write code. Do NOT spawn or
-contact agents. Do NOT optimize for agreement. Distinguish direct observations from
-inference and state what evidence would prove your position wrong. End your turn with REVIEW
-on the first line.
+Read-only: the tree stays as you found it, and you launch and contact nobody. Agreement and
+disagreement are both valid answers; the evidence decides. Keep direct observations and
+inference in separate sentences, and state what evidence would prove your position wrong.
+End your turn with REVIEW on the first line.
 ```
 
 `create_agent` per lens: `title` `[Lens] <angle>`, `provider` from the lens table,

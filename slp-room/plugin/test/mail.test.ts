@@ -26,8 +26,8 @@ function lead(agentId: string): SeatRecord {
   return { agentId, parentAgentId: null, role: "lead", provider: "claude-lead", title: null };
 }
 
-function mail(to: string, subject: string, from: Mail["from"] = { agentId: "room", role: "system" }): Omit<Mail, "id" | "at"> {
-  return { from, to, priority: "action", subject, body: `body of ${subject}`, needs: "nothing", whyNow: "test" };
+function mail(to: string, subject: string, from: Mail["from"] = { agentId: "room", role: "system" }, needs: Mail["needs"] = "nothing"): Omit<Mail, "id" | "at"> {
+  return { from, to, priority: "action", subject, body: `body of ${subject}`, needs, whyNow: "test" };
 }
 
 test("mail posted while a delivery waits for the recipient's status is not lost", async () => {
@@ -73,9 +73,9 @@ test("mail that arrives while the room learns its recipient is archived is bounc
   engine.rememberSeat(lead("lead1"));
   const from = { agentId: "lead1", role: "lead" } as const;
 
-  const first = engine.post(mail("gone1", "A", from));
+  const first = engine.post(mail("gone1", "A", from, "reply"));
   await waiting.promise;
-  const second = await engine.post(mail("gone1", "B", from));
+  const second = await engine.post(mail("gone1", "B", from, "reply"));
   release.resolve();
   await first;
 
@@ -110,10 +110,61 @@ test("mail to a seat the daemon no longer has is dropped and its sender told", a
   const engine = engineFor({ lead2: { ...idle, send: async (text) => void toSender.push(text) } });
   engine.rememberSeat(lead("lead2"));
 
-  const posted = await engine.post(mail("deleted2", "anyone there", { agentId: "lead2", role: "lead" }));
+  const posted = await engine.post(mail("deleted2", "anyone there", { agentId: "lead2", role: "lead" }, "reply"));
 
   assert.deepEqual(engine.held("deleted2"), []);
   assert.ok(toSender.some((text) => text.includes(`UNDELIVERABLE: #${posted.id}`)));
+});
+
+test("a dropped mail that asked for nothing does not start its sender's turn; the notice comes with its next mail", async () => {
+  const toSender: string[] = [];
+  const engine = engineFor({ lead3: { ...idle, send: async (text) => void toSender.push(text) } });
+  engine.rememberSeat(lead("lead3"));
+
+  const dropped = await engine.post(mail("deleted3", "ACCEPT: released", { agentId: "lead3", role: "lead" }));
+  assert.equal(toSender.length, 0, "the sender was started for a mail nobody waited on");
+
+  const next = await engine.post(mail("lead3", "a mail that does start a turn"));
+  assert.equal(toSender.length, 1);
+  assert.ok(toSender[0].includes(`UNDELIVERABLE: #${dropped.id}`));
+  assert.ok(toSender[0].includes(next.id));
+  assert.deepEqual(engine.held("lead3"), []);
+});
+
+test("quiet mail waits for the next mail that starts a turn, and the inbox hands it out meanwhile", async () => {
+  const sent: string[] = [];
+  const engine = engineFor({ r6: { ...idle, send: async (text) => void sent.push(text) }, r7: { ...idle, send: async (text) => void sent.push(text) } });
+
+  const quiet = await engine.post({ ...mail("r6", "ACK"), priority: "fyi", quiet: true });
+  await engine.sweep();
+  assert.equal(sent.length, 0, "a quiet mail started a turn");
+
+  const loud = await engine.post(mail("r6", "QUESTION"));
+  assert.equal(sent.length, 1);
+  assert.ok(sent[0].includes(quiet.id) && sent[0].includes(loud.id));
+
+  const other = await engine.post({ ...mail("r7", "ACK"), priority: "fyi", quiet: true });
+  assert.deepEqual(engine.takeHeld("r7").map((m) => m.id), [other.id]);
+});
+
+test("a report kept for a turn end that never reached the room is posted once its seat is at rest", async () => {
+  let status = "running";
+  const toLead: string[] = [];
+  const engine = engineFor({
+    peer8: { refresh: async () => {}, current: () => ({ status }) },
+    lead8: { ...idle, send: async (text) => void toLead.push(text) },
+  });
+
+  const kept = engine.keepReport(mail("lead8", "REVIEW: abc123 PASS", { agentId: "peer8", role: "peer" }, "reply"));
+  await engine.sweep();
+  assert.equal(toLead.length, 0, "the report went out while its seat was still in the turn");
+
+  status = "idle";
+  await engine.sweep();
+  assert.equal(toLead.length, 1);
+  assert.ok(toLead[0].includes(`#${kept.id}`));
+  await engine.sweep();
+  assert.equal(toLead.length, 1);
 });
 
 test("mail whose delivery was cut off is still there for the next engine, marked as a possible repeat", async () => {

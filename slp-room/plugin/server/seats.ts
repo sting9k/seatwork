@@ -97,7 +97,7 @@ export function rolePrompt(role: Role, context: PromptContext): string {
   const missing: string[] = [];
   const rendered = render(roleText.trim(), vars, (name) => missing.push(name));
   if (missing.length) console.error(`slp-seat: roles/${role}.md uses unknown placeholders: ${missing.join(", ")}`);
-  const needsRoomDir = role === "hq" || role === "supervisor"; // the law template, the registry log and the room notebook live there
+  const needsRoomDir = role === "hq"; // the model table, the registry log and the room notebook live there; a project seat is shown none of it
   const parts = [
     `# Seat: ${role}${context.spec ? ` (specialization: ${context.spec})` : ""}`,
     `This session is a ${role} seat in a Paseo room.${needsRoomDir ? ` ROOM_DIR=${ROOM_DIR}. ROOM_HOME=${ROOM_HOME}.` : ""} Role skills live in your skills directory: use them for the procedures they name.`,

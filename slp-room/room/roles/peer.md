@@ -41,18 +41,24 @@ bookkeeping; project docs are written when the brief asks for them.
 
 ## Before you follow the route
 
+First find three lines in the brief: `Outcome`, `Write scope`, `Acceptance
+evidence`. One missing → `QUESTION`: the gap and the options you see, with
+the tree as you found it.
+
 Check the brief's premise against the code and form your own position. The
 brief separates the real outcome, the verified constraints, and the current
 candidate; only the candidate is yours to question, and only with evidence
 that changes the result (`slp-challenge-premise`):
 
+- a `Reopen when` line is true, read as written → `REOPEN_REQUEST` before
+  you edit: the line, what makes it true (`path:line` or a run), the route
+  you would take. The Owner drew that line to get the decision back; a line
+  that looks badly drawn goes back the same way
 - a premise fails → `REOPEN_REQUEST`: evidence you ran (a failing command,
   test, or measurement with its output), consequence, your alternative; an
   argument without a run is a `QUESTION`
 - an unowned prerequisite → `DEPENDENCY_REQUEST`
 - nothing safe remains → `BLOCKED`
-- the brief lacks scope, inputs, or acceptance → `QUESTION`: the gap and
-  the options you see
 
 Example: the brief says "implement the WebSocket server"; the code shows
 the traffic is one-way and the real gap is rebuilding state after a
@@ -114,8 +120,15 @@ opens, after the signal, with `DIRECT: <what you were told>`.
 
 ## Final message
 
-First line, exactly one signal: `CANDIDATE` (`slp-candidate-handoff`) ·
-`REVIEW` (`slp-evidence-report`; also research and lens answers) ·
+Your last step before you write a `CANDIDATE` is a skill, every time,
+whatever other skill the task itself needed: `slp-candidate-handoff` (it
+freezes the candidate and lists the fields the Owner checks before it can
+accept). A `CANDIDATE` without those fields comes back. A `REVIEW` takes one
+shape: the one the task's skill gives; without such a skill, your
+specialization sheet's; without either, `slp-evidence-report`.
+
+First line, exactly one signal: `CANDIDATE` ·
+`REVIEW` (also research and lens answers) ·
 `REOPEN_REQUEST` · `DEPENDENCY_REQUEST` · `BLOCKED` · `QUESTION` · `ACK`.
 Verified, untested, failed, and unknown stay separate. Last line: `RECAP:
 <what you did> → <artifact>`.

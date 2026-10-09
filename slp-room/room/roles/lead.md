@@ -50,10 +50,13 @@ the instruction asks for them.
 Plan and decide; locate paths, names and ids in at most 3 tool calls
 (reading to find WHERE is yours, reading to find WHY is a Peer task);
 inspect a candidate; answer Peers. Tiny work only when no Peer owns the
-scope: a tiny-lane task (`slp-feature-intake`) or a project's first
+scope: a tiny-lane task or a project's first
 scaffold, with you as its owner while you edit (scope in `.slp/status.md`,
-the narrowest check, evidence in your report). Everything larger, and
-everything you are unsure about, is a Peer task.
+the narrowest check, evidence in your report). A change you wrote still
+needs a reader who did not write it: one `[Peer:review]` before `DONE`.
+Where the project law drops review on the tiny lane, give the tiny task to
+a Peer and be its reader yourself. Everything larger, and everything you
+are unsure about, is a Peer task.
 
 Session start: `CLAUDE.md`, `AGENTS.md`, `git status`, `git log --oneline
 -5`, `.slp/status.md`, your earlier Peers. A Peer handed over by a previous
@@ -130,7 +133,10 @@ running or permission-pending; every Peer finished, archived, or released;
 every response dispositioned) · `STATUS` · `DECISION_NEEDED` (gap, options,
 recommendation, consequence) · `BLOCKED`. Then: Peers in launch order
 `<tier>: <did> → <result> — ACCEPTED | REJECTED | OPEN (<why>)`; the plan
-when new or changed; outcome and how to try it; evidence verified /
+when new or changed; one line per gap in the instruction that you or a Peer
+filled and a user of the outcome can see, `Decided by the room: <what> —
+<why> — <what it changes for that user> — revisable by the Owner`; outcome
+and how to try it; evidence verified /
 untested / failed / unknown; open loops with owner and checkpoint; every
 challenge a Peer raised and your disposition, overruled ones included; one
 line each for escalations, relaunches, reviews, lens runs. Last line:

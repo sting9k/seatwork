@@ -25,7 +25,9 @@ export interface PeerTier {
 export interface LensModels {
   /** One lens, the second brain. */
   oracle: string;
-  /** Two lenses that must differ; the first two of `pair`, then `pool`, never the same model twice. */
+  /** The one lens for a hard question, when the table keeps a stronger model for it. */
+  hard?: string;
+  /** Two lenses that must differ: the first two of `pair`. More come from `pool`; a pool entry that repeats a pair model is a second lens on that model. */
   pair: string[];
   pool: string[];
   thinking: string;
@@ -51,10 +53,12 @@ function peerTable(m: Models): string {
 }
 
 function lensTable(m: Models): string {
+  // the table decides whether a model may sit twice in one run: only by listing it in the pool as well as in the pair
+  const repeats = m.lens.pool.some((p) => m.lens.pair.includes(p));
   return [
-    `- one lens (oracle): \`${m.lens.oracle}\``,
+    `- one lens (oracle): \`${m.lens.oracle}\`${m.lens.hard ? `; a hard question: \`${m.lens.hard}\`` : ""}`,
     `- two lenses: \`${m.lens.pair.join("` and `")}\` — two different models, always`,
-    `- more lenses: add from \`${m.lens.pool.join("`, `")}\`; never the same model twice in one run`,
+    `- more lenses: add from \`${m.lens.pool.join("`, `")}\`; ${repeats ? "a model that sits twice gets two different angles" : "never the same model twice in one run"}`,
     `- thinking \`${m.lens.thinking}\` on every lens`,
   ].join("\n");
 }
@@ -117,7 +121,7 @@ function allowed(m: Models): Record<string, string[]> {
     supervisor: seat(m.seats?.supervisor),
     lead: seat(m.seats?.lead),
     peer: Object.values(m.peer?.tiers ?? {}).flatMap((t) => t.providers ?? []),
-    lens: [m.lens?.oracle, ...(m.lens?.pair ?? []), ...(m.lens?.pool ?? [])].filter((p): p is string => typeof p === "string"),
+    lens: [m.lens?.oracle, m.lens?.hard, ...(m.lens?.pair ?? []), ...(m.lens?.pool ?? [])].filter((p): p is string => typeof p === "string"),
   };
 }
 

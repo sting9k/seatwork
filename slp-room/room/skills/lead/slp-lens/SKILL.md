@@ -27,9 +27,9 @@ Announce each phase in one line of your own report.
 
 | Need | Lenses | Models (the lens table in your role prompt) |
 |---|---|---|
-| second brain on a plan, a bug, what to do next | 1 | the oracle |
+| second brain on a plan, a bug, what to do next | 1 | the oracle; its hard-question model when the question is hard |
 | an answer that matters; one model's blind spot would hurt | 2 | the pair: two different models, always |
-| a decision with several angles, a plan review, an incident, a verdict the Owner asked for | 3+, one angle each; default angles: *independent* (first principles, strongest answer, decision-critical assumptions) · *premise challenger* (tests the framing, builds one viable counterfactual, does not manufacture disagreement) · *specialist* only when a domain's rules decide it | the pair plus the pool; never the same model twice in one run |
+| a decision with several angles, a plan review, an incident, a verdict the Owner asked for | 3+, one angle each; default angles: *independent* (first principles, strongest answer, decision-critical assumptions) · *premise challenger* (tests the framing, builds one viable counterfactual, does not manufacture disagreement) · *specialist* only when a domain's rules decide it | the pair plus the pool, as the lens table says |
 
 Other angles when the question wants them: *only what the code proves* · *free to propose
 what the code does not contain, labels grounded / plausible / unverified* · *this domain's
@@ -54,8 +54,10 @@ SNAPSHOT               commit sha, or snapshot patch + sha when the tree is dirt
 ANGLE                  per lens, optional
 OUTPUT CONTRACT        case-specific: focused decision, finding ledger, gate-by-gate plan
                        review, incident timeline, evidence synthesis — patterns in
-                       references/report-format.md; at minimum POSITION · EVIDENCE ·
-                       ASSUMPTIONS · WHAT WOULD PROVE ME WRONG · confidence
+                       references/report-format.md; with no pattern, the words `your
+                       final-message shape`: the lens role holds that shape (position
+                       with confidence, labelled evidence, assumptions, falsifier, open
+                       points), so every lens answers under one set of labels
 ```
 
 For a one-lens second brain the first five lines may be a paragraph; the rest still holds.

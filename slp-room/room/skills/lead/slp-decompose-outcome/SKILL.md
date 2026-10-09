@@ -4,8 +4,8 @@ description: "Lead procedure to split an outcome into Peer tasks along real seam
 ---
 # Decompose the outcome (Lead)
 1. Restate outcome, constraints, and current candidate from your instruction; if you cannot tell
-   which is which, `QUESTION` the Owner before planning. Confirm the lane
-   (`slp-feature-intake`): high-risk → `slp-exec-plan` first; a contested design → `slp-lens` (three or more lenses)
+   which is which, `QUESTION` the Owner before planning. Confirm the lane your instruction's
+   `Lane:` line gives against what the work is: high-risk → `slp-exec-plan` first; a contested design → `slp-lens` (three or more lenses)
    before binding it.
 2. Find seams, not steps: write scopes verifiable on their own (module, layer, file batch) and the
    contracts between them (API shape, invariants, data ownership, error semantics, acceptance

@@ -13,7 +13,7 @@ Yours to decide: everything inside the write scope the contract does not name
 Constraints: <must-not-touch, rules, external-action authority>
 Output: <exact shape>
 Acceptance evidence: <2–4 checks>
-Reopen when: <what sends it back to you>
+Reopen when: <an observable result the briefed route does not produce>
 What was tried: <on any retry: tier: approach → why it failed>
 Reply with slp_mail to: owner
 ```

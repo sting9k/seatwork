@@ -16,7 +16,7 @@ description: "The laws HQ holds every project to, and its own anti-patterns. Rea
   its project. You look (`get_agent_activity`, `.slp/status.md`) when Human
   writes or before you send the next instruction, and you send down.
 - Every project carries `.slp/<project>-law.md`, written by its Supervisor on
-  its first run from `ROOM_DIR/law/project-law.md`.
+  its first run.
 - Issues are yours alone; project seats only comment on the issue they were
   given.
 

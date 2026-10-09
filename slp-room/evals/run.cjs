@@ -5,7 +5,7 @@
  * servers for `slp` and `paseo` (stub-mcp.mjs). Claude seats run through `claude -p`, Codex seats through
  * `codex exec` on the runtime the plugin builds. The transcript is then graded by the case's graders.
  *
- *   node evals/run.cjs --label baseline [--only <regex on case name>] [--harness claude|codex] [--jobs 3] [--budget 4] [--list]
+ *   node evals/run.cjs --label baseline [--only <regex on case name>] [--harness claude|codex] [--jobs 3] [--budget 4] [--timeout 20] [--list]
  *   node evals/run.cjs --regrade baseline          # grade saved transcripts again with the current graders
  *   node evals/run.cjs --label old --room-from <dir> # take the room files from another copy (an earlier run's)
  *
@@ -79,12 +79,15 @@ function runsFor(c) {
   const { models } = plugin;
   let runs;
   if (c.runs) runs = c.runs;
-  else if (c.role === "peer") runs = ["default", "cheap", "cross-family"].map((tier) => models.peer.tiers[tier]).filter(Boolean).map((tier) => seat(tier.providers[0], tier.thinking));
+  else if (c.role === "peer") runs = (args.tiers ? String(args.tiers).split(",") : ["default", "cheap", "cross-family"]).map((tier) => models.peer.tiers[tier]).filter(Boolean).map((tier) => seat(tier.providers[0], tier.thinking));
   else if (c.role === "lens") runs = models.lens.pair.map((provider) => seat(provider, models.lens.thinking));
   else runs = [seat(models.seats[c.role].provider, models.seats[c.role].thinking)];
   // --codex-model <model>: also run every role on Codex with that model, to measure roles models.json keeps on Claude
   if (args["codex-model"] && !runs.some((run) => run.harness === "codex")) runs.push({ harness: "codex", model: args["codex-model"], effort: runs[0]?.effort ?? "high", note: "not a room seat" });
-  return runs.filter((run) => ["claude", "codex"].includes(run.harness) && (!args.harness || run.harness === args.harness));
+  // --effort <level>: every run at that thinking level, whatever models.json gives the seat
+  if (args.effort) runs = runs.map((run) => ({ ...run, effort: String(args.effort) }));
+  // a case may name the one harness it means anything on (`harness: "claude"`: a refusal only a Claude permission rule can stage)
+  return runs.filter((run) => ["claude", "codex"].includes(run.harness) && (!args.harness || run.harness === args.harness) && (!c.harness || run.harness === c.harness));
 }
 
 const skillDirs = new Map();
@@ -104,19 +107,35 @@ function git(cwd, ...argv) {
   execFileSync("git", ["-c", "user.email=eval@room", "-c", "user.name=eval", ...argv], { cwd, stdio: "ignore" });
 }
 
+const live = new Set();
+function killGroup(pid) {
+  try {
+    process.kill(-pid, "SIGKILL");
+  } catch {
+    // the group is already gone
+  }
+}
+for (const signal of ["SIGINT", "SIGTERM"])
+  process.on(signal, () => {
+    for (const pid of live) killGroup(pid);
+    process.exit(1);
+  });
+
 /** Runs a harness CLI that prints one JSON event per line; returns the events and the exit code. */
 function harnessProcess(command, argv, cwd, dir, extraEnv) {
   return new Promise((done) => {
     const env = { ...process.env, ...extraEnv };
     delete env.CLAUDECODE;
     delete env.CLAUDE_CODE_ENTRYPOINT;
-    const child = spawn(command, argv, { cwd, env, stdio: ["ignore", "pipe", "pipe"] });
+    // its own process group: a scan the seat left running dies with the run instead of outliving it
+    const child = spawn(command, argv, { cwd, env, stdio: ["ignore", "pipe", "pipe"], detached: true });
+    live.add(child.pid);
     const events = [];
     let buffer = "";
     let stderr = "";
     const timer = setTimeout(() => {
       stderr += "\n[eval] timeout: killed\n";
-      child.kill("SIGKILL");
+      killGroup(child.pid);
     }, TIMEOUT_MS);
     child.stdout.on("data", (chunk) => {
       buffer += chunk;
@@ -140,6 +159,8 @@ function harnessProcess(command, argv, cwd, dir, extraEnv) {
     });
     child.on("close", (code) => {
       clearTimeout(timer);
+      killGroup(child.pid); // whatever the seat started in the background
+      live.delete(child.pid);
       writeFileSync(join(dir, "stderr.txt"), stderr);
       writeFileSync(join(dir, "events.jsonl"), events.map((e) => JSON.stringify(e)).join("\n"));
       done({ events, code });
@@ -147,12 +168,16 @@ function harnessProcess(command, argv, cwd, dir, extraEnv) {
   });
 }
 
+/** A shell command without the bodies of its here-documents: text written into a file is not something that ran. */
+const withoutHeredocs = (command) => command.replace(/<<-?\s*(['"]?)(\w+)\1[^\n]*\n[\s\S]*?\n\s*\2\b/g, "<<$2");
+
 function matchesWhere(tool, g) {
   if (g.input && !new RegExp(g.input, "s").test(JSON.stringify(tool.input ?? {}))) return false;
   for (const [key, pattern] of Object.entries(g.where ?? {})) {
     const value = tool.input?.[key];
     if (value === undefined) return false;
-    if (!new RegExp(pattern, "s").test(typeof value === "string" ? value : JSON.stringify(value))) return false;
+    const text = typeof value === "string" ? (key === "command" ? withoutHeredocs(value) : value) : JSON.stringify(value);
+    if (!new RegExp(pattern, "s").test(text)) return false;
   }
   return true;
 }
@@ -209,7 +234,9 @@ function prepare(c, run) {
   const dir = runDir(c, run);
   const cwd = join(dir, "cwd");
   mkdirSync(cwd, { recursive: true });
-  const fill = (s) => String(s).replace(/\{\{cwd\}\}/g, cwd);
+  // {{cwd}} is the run's project directory; {{minutes_ago:N}} an ISO time N minutes before the run starts (stalls, old signals)
+  const startedAt = Date.now();
+  const fill = (s) => String(s).replace(/\{\{cwd\}\}/g, cwd).replace(/\{\{minutes_ago:(\d+)\}\}/g, (_, m) => new Date(startedAt - Number(m) * 60_000).toISOString());
 
   if (c.fixture) cpSync(join(EVALS, "fixtures", c.fixture), cwd, { recursive: true });
   if (c.fixture && c.git !== false) {
@@ -256,9 +283,11 @@ async function runClaude(c, run, p) {
     "--model", run.model,
     "--effort", run.effort,
     "--output-format", "stream-json", "--verbose",
-    "--permission-mode", "dontAsk",
+    // a case that may edit runs in the mode Paseo gives the real seat (models.json `modes.claude`): the room's own
+    // procedures write through the shell (a candidate frozen as a patch under /tmp), which an allowlist refuses
+    "--permission-mode", p.writable ? plugin.models.modes.claude : "dontAsk",
     "--allowedTools", [...BASE_ALLOW, ...(c.allow ?? [])].join(","),
-    "--disallowedTools", disallowed.join(","),
+    "--disallowedTools", [...disallowed, ...(c.deny ?? [])].join(","), // `deny`: what this case's seat is refused, whatever its mode allows
     "--append-system-prompt", p.system,
     "--setting-sources", "project,local",
     "--strict-mcp-config", "--mcp-config", join(p.dir, "mcp.json"),

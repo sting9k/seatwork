@@ -5,8 +5,8 @@ description: "Lead procedure to write a checked-in Execution Plan (ExecPlan) for
 # Execution plan (Lead)
 
 An ExecPlan is a concise, checked-in direction document that must survive restart or handoff.
-Create one when `slp-feature-intake` says the lane is high-risk, or when work must outlive the
-current session. A task or issue is enough for tiny and normal work. Active plans live in
+Create one when the work is high-risk, by your instruction's `Lane:` line or by what it does,
+or when work must outlive the current session. A task or issue is enough for tiny and normal work. Active plans live in
 `.slp/plans/` (or the location the project law names).
 
 ## Required content

@@ -1,0 +1,9 @@
+{
+  "name": "timer-page",
+  "version": "1.0.0",
+  "private": true,
+  "description": "A static page that lists the team's timers.",
+  "scripts": {
+    "test": "node --test"
+  }
+}

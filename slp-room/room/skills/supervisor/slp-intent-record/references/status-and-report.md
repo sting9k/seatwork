@@ -39,7 +39,8 @@ Asked: "the CRM shows an incoming call before the phone stops ringing" → usabl
   - default: SSE client → CANDIDATE under review
   - cheap: fixture data → accepted
 Try it: `npm run dev` in crm/, call the staging number.
-Evidence: popup latency 180–260 ms over ten calls on an idle machine; reconnect test green locally, red 1 run in 5 on CI; untested: the fix on CI.
+Evidence (Lead SDK): `npm publish --dry-run` → 0.3.0, 14 files; the registry lists 0.3.0.
+Evidence (Lead CRM): popup latency 180–260 ms over ten calls on an idle machine; reconnect test green locally, red 1 run in 5 on CI; untested: the fix on CI.
 Decided by the room: SSE + HTTP commands instead of WebSocket (Lead CRM; traffic one-way, reconnect is the gap; reopen evidence attached) — revisable by you.
 Overruled: Peer SSE asked for a polling fallback (evidence: one corporate proxy buffers SSE) — HOLD: candidate stands; proxies are out of scope until a customer has one. Open: no.
 Your last change ("no WebSocket dependency") reached Lead CRM and Peer SSE.

@@ -60,7 +60,7 @@ const TOOLS = {
   slp_room_stats: {
     description: "What the mail log says happened in the last N days, per project and per signal (candidates, rejects, reopen requests, escalations).",
     inputSchema: object({ days: { type: "number", description: "How many days back; default 14." } }),
-    call: (a) => `no mail in the last ${a.days ?? 14} days`,
+    call: (a) => state.roomStats ?? `no mail in the last ${a.days ?? 14} days`,
   },
   create_agent: {
     description: "Create an agent. Agent-scoped creation defaults to your workspace and creates your subagent. Pass title, provider (<provider>/<model>), settings (modeId, thinkingOptionId), initialPrompt, notifyOnFinish; workspaceId only to place it elsewhere.",

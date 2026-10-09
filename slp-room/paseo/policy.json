@@ -298,7 +298,7 @@
     "bundledSkills": "none"
   },
   "mail": {
-    "$comment": "The room's MCP server (slp_mail, slp_inbox) and delivery rules. Agents never use send_agent_prompt; every message is an envelope the plugin delivers without interrupting anyone.",
+    "$comment": "The room's MCP server (slp_mail, slp_inbox) and delivery rules. Agents never use send_agent_prompt; every message is an envelope the plugin delivers without interrupting anyone. A CANDIDATE, REVIEW or DONE a seat mails its parent waits for that seat's own turn end and is its one report; an ACK, a DONE that repeats itself after mail that asked nothing, and the bounce of a mail that asked nothing start no turn and are read with the recipient's next mail.",
     "port": 47611,
     "maxBodyChars": 4000,
     "holdFyiWhileRunning": true,

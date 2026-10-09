@@ -7,7 +7,7 @@
     },
     "supervisor": {
       "provider": "claude-supervisor/claude-opus-5-5",
-      "thinking": "xhigh",
+      "thinking": "high",
       "alternatives": []
     },
     "lead": {
@@ -19,29 +19,13 @@
   "peer": {
     "reviewThinking": "high",
     "tiers": {
-      "cheap": {
-        "providers": [
-          "claude-peer/claude-haiku-4-5"
-        ],
-        "thinking": "medium",
-        "use": "mechanical, fully specified: extraction, renames, formatting, log triage, doc edits, test scaffolds",
-        "never": "anything needing judgement about behavior"
-      },
       "default": {
         "providers": [
           "claude-peer/claude-sonnet-5-5"
         ],
-        "thinking": "medium",
+        "thinking": "high",
         "use": "implementation, debugging, multi-file changes with invariants, research with judgement",
-        "never": "reasoning-risk work"
-      },
-      "expensive": {
-        "providers": [
-          "claude-peer/claude-opus-5-5"
-        ],
-        "thinking": "medium",
-        "use": "architecture decisions, cross-module invariants, subtle concurrency or data bugs, a task that failed at default",
-        "never": "first attempts on gut feeling"
+        "never": "the review of a candidate a Claude Peer wrote"
       },
       "cross-family": {
         "providers": [
@@ -54,15 +38,15 @@
     }
   },
   "lens": {
-    "$comment": "Lenses are not Peers: strong models that think independently for the Lead, from a neutral brief, without the Lead's judgement or context. One lens = the oracle. Two = the pair, which must be two different models. More = add from pool, never the same model twice.",
-    "oracle": "codex-lens/gpt-6-astra",
+    "$comment": "Lenses are not Peers: strong models that think independently for the Lead, from a neutral brief, without the Lead's judgement or context. One lens = the oracle, or `hard` when the question is hard. Two = the pair, which must be two different models. A third comes from pool; a pool entry that repeats a pair model puts a second lens on that model, on its own angle.",
+    "oracle": "codex-lens/gpt-6.1-sol",
+    "hard": "codex-lens/gpt-6-astra",
     "pair": [
       "codex-lens/gpt-6-astra",
       "claude-lens/claude-opus-5-5"
     ],
     "pool": [
-      "codex-lens/gpt-6.1-sol",
-      "claude-lens/claude-sonnet-5-5"
+      "claude-lens/claude-opus-5-5"
     ],
     "thinking": "high"
   },

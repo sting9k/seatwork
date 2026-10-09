@@ -125,6 +125,10 @@ Two sections keep you in control:
 - **Decided by the room:** what the agents chose on their own, and whether you may revisit it.
 - **Overruled:** an objection some agent raised that was not followed, with its evidence.
 
+Checks are run by the Lead, once, on the integrated result. The Supervisor reads the
+room and the tree and passes the Lead's lines up under its name, `Evidence (Lead
+<workstream>): <check> → <last lines>`, so you can tell what was run from what was read.
+
 What you have to decide is in the `WAITING ON YOU:` row at the end: cost,
 product scope, or an outside action such as push and deploy. Agents never
 decide these for you.
@@ -148,7 +152,11 @@ does not know it came from HQ.
 ## 6. How agents talk to each other
 
 Agents send mail; they do not interrupt each other. Mail arrives when the
-recipient has finished its current turn.
+recipient has finished its current turn. A finished result (`CANDIDATE`,
+`REVIEW`, `DONE`) goes up once, when its sender's own turn has ended, so
+nobody acts on a seat that is still working. An acknowledgement, or a
+`DONE` that only repeats itself, wakes nobody: it is read with the next
+mail.
 
 | Signal | Sent by | Meaning |
 |---|---|---|
@@ -192,16 +200,16 @@ HQ writes it for you the first time. After that, edit the `models` object in
     "seats": { "lead": { "thinking": "medium" } },
     "peer": {
       "tiers": {
-        "default": { "providers": ["claude-peer/claude-opus-5-5"] },
-        "expensive": null
+        "default": { "thinking": "medium" },
+        "cross-family": null
       }
     }
   }
 }
 ```
 
-This example makes the Lead think at medium, puts the `default` Peer tier on
-Opus, and removes the `expensive` tier.
+This example makes the Lead and the `default` Peer tier think at medium, and
+removes the `cross-family` tier.
 
 - `null` removes an entry. Delete `models` to go back to the shared table.
 - A change applies to agents created afterwards; nothing to reinstall.
@@ -219,14 +227,16 @@ Edit in the repo, then run the installer again.
 | `slp-room/paseo/policy.json` | Who mails whom, who creates whom, waiting times | `./install.sh` |
 | `slp-room/room/roles/`, `skills/` | Each role's prompt and procedures | `./install.sh --no-plugin` |
 
-A Peer has four model tiers:
+A Peer's model tiers. The shipped table has two; a `cheap` or an `expensive`
+tier is added the same way, as one more entry under `peer.tiers`:
 
 | Tier | Used for |
 |---|---|
-| `cheap` | Mechanical work with a fully specified brief |
-| `default` | Writing code, debugging |
-| `expensive` | Architecture, hard bugs |
-| `cross-family` | Reviewing code another model wrote |
+| `default` | Writing code, debugging, research |
+| `cross-family` | Reviewing code another model family wrote |
+
+A Lens table has `oracle` (one lens), `hard` (the one lens for a hard
+question), `pair` (two lenses, two different models) and `pool` (a third).
 
 ## 9. Where files live
 

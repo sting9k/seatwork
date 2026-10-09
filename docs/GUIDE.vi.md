@@ -123,6 +123,10 @@ Trong báo cáo có hai mục giúp bạn giữ quyền kiểm soát:
 - **Decided by the room:** những gì các agent đã tự quyết, và bạn có thể lật lại hay không.
 - **Overruled:** ý kiến phản đối của agent nào đó đã bị bác, kèm bằng chứng của nó.
 
+Lead là người chạy phép kiểm, một lần, trên kết quả đã gộp. Supervisor đọc trạng thái room
+và cây mã, rồi chép dòng của Lead lên dưới tên Lead: `Evidence (Lead <workstream>): <phép
+kiểm> → <mấy dòng cuối>`. Nhờ vậy bạn phân biệt được cái đã chạy với cái chỉ được đọc.
+
 Việc cần bạn quyết nằm ở dòng `WAITING ON YOU:` cuối báo cáo. Đó là những
 việc về chi phí, phạm vi sản phẩm, hoặc hành động ra ngoài như push và
 deploy. Agent không bao giờ quyết thay bạn mấy việc này.
@@ -146,7 +150,10 @@ lệnh đến từ HQ.
 ## 6. Agent trao đổi với nhau thế nào
 
 Agent gửi thư cho nhau, không ngắt lời nhau. Thư chỉ tới khi người nhận làm
-xong lượt hiện tại.
+xong lượt hiện tại. Kết quả đã xong (`CANDIDATE`, `REVIEW`, `DONE`) đi lên
+đúng một lần, khi lượt của chính người gửi kết thúc, để không ai hành động
+trên một seat còn đang làm. Thư xác nhận, hoặc `DONE` chỉ lặp lại chính nó,
+không đánh thức ai: nó được đọc cùng thư kế tiếp.
 
 | Tín hiệu | Ai gửi | Nghĩa |
 |---|---|---|
@@ -190,16 +197,16 @@ Lần đầu HQ ghi giúp bạn. Về sau bạn sửa tay mục `models` trong
     "seats": { "lead": { "thinking": "medium" } },
     "peer": {
       "tiers": {
-        "default": { "providers": ["claude-peer/claude-opus-5-5"] },
-        "expensive": null
+        "default": { "thinking": "medium" },
+        "cross-family": null
       }
     }
   }
 }
 ```
 
-Ví dụ này cho Lead suy nghĩ mức medium, Peer bậc `default` dùng Opus, và bỏ
-bậc `expensive`.
+Ví dụ này cho Lead và Peer bậc `default` suy nghĩ mức medium, và bỏ bậc
+`cross-family`.
 
 - Ghi `null` để bỏ một mục. Xoá cả mục `models` để quay về bảng chung.
 - Thay đổi áp dụng cho agent tạo sau đó, không cần cài lại.
@@ -217,14 +224,16 @@ Sửa trong repo rồi chạy lại lệnh cài.
 | `slp-room/paseo/policy.json` | Ai gửi thư cho ai, ai tạo ai, thời gian chờ | `./install.sh` |
 | `slp-room/room/roles/`, `skills/` | Prompt và quy trình của từng vai | `./install.sh --no-plugin` |
 
-Peer có bốn bậc model:
+Các bậc model của Peer. Bảng đi kèm có hai bậc; muốn thêm bậc `cheap` hay
+`expensive` thì thêm một mục nữa dưới `peer.tiers`:
 
 | Bậc | Dùng cho |
 |---|---|
-| `cheap` | Việc máy móc, đề bài đã rõ |
-| `default` | Viết code, debug |
-| `expensive` | Kiến trúc, bug khó |
-| `cross-family` | Review code do model khác viết |
+| `default` | Viết code, debug, research |
+| `cross-family` | Review code do họ model khác viết |
+
+Bảng Lens có `oracle` (một lens), `hard` (một lens cho câu hỏi khó), `pair`
+(hai lens, hai model khác nhau) và `pool` (lens thứ ba).
 
 ## 9. File nằm ở đâu
 

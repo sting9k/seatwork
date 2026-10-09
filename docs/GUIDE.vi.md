@@ -158,8 +158,13 @@ xong lượt hiện tại.
 | `REVISED BRIEF` | Lead | Peer nói đúng, đề bài được sửa |
 | `HOLD` / `NOTED` | Lead | Giữ hướng cũ, ý kiến của Peer được ghi lại |
 
-Plugin kiểm soát ai được gửi thư cho ai và ai được tạo ai. Ví dụ Peer không
-gửi thư được cho Peer khác, HQ không tạo được Lead.
+Plugin kiểm tra ai được gửi thư cho ai và ai được tạo ai. Thư Peer gửi cho
+Peer khác bị từ chối. Seat tạo sai luật bị lưu trữ và seat tạo ra nó được
+báo lại; lúc đó lượt đầu của nó có thể đã chạy.
+
+Các luật này để chặn nhầm lẫn, không phải hàng rào bảo mật: mọi seat chạy
+bằng tài khoản của bạn, với file của bạn. Lens được dặn chỉ đọc; trên Claude
+các tool sửa file bị tắt, nhưng lệnh shell vẫn ghi được.
 
 ## 7. Cấu hình riêng của project
 
@@ -241,7 +246,7 @@ phiên của bạn.
 ## 10. Tự dọn dẹp
 
 Cứ 10 phút plugin lưu trữ những agent đã rảnh quá lâu và không còn agent
-con đang chạy.
+con đang chạy. Agent đang chờ cấp quyền hoặc chờ trả lời thì được để yên.
 
 | Vai | Rảnh bao lâu thì lưu trữ |
 |---|---|
@@ -259,6 +264,7 @@ con đang chạy.
 | `is not a registered SLP project` | Nhờ HQ setup project trước |
 | `lists for … only …` | Dùng model có trong bảng, hoặc sửa `.slp/room.json` |
 | `which the room has not enabled` | Sửa `.slp/room.json`, hoặc bật seat đó trong `seats.yml` |
+| `its runtime could not be built` | Sửa thứ thông báo nêu ra (thường là `~/.codex/config.toml`), rồi tạo lại agent |
 | Agent báo chưa đăng nhập | Chạy `claude auth login` |
 | Agent không biết quy trình mới | Mở agent mới |
 

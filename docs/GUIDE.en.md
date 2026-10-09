@@ -160,8 +160,13 @@ recipient has finished its current turn.
 | `REVISED BRIEF` | Lead | The Peer was right; the brief changed |
 | `HOLD` / `NOTED` | Lead | The route stands; the Peer's objection is on record |
 
-The plugin enforces who may mail whom and who may create whom. A Peer cannot
-mail another Peer; HQ cannot create a Lead.
+The plugin checks who may mail whom and who may create whom. A Peer's mail
+to another Peer is refused. A seat created against the rules is archived and
+its creator is told; its first prompt may have started by then.
+
+These rules guard against mistakes. They are not a security boundary: every
+seat runs under your account, with your files. A Lens is told to read only;
+on Claude its edit tools are off, but a shell command can still write.
 
 ## 7. A project's own configuration
 
@@ -242,7 +247,8 @@ Claude seats keep their sessions in `~/.claude/projects`, next to yours.
 ## 10. Automatic cleanup
 
 Every 10 minutes the plugin archives agents that have been idle too long and
-have no running agent below them.
+have no running agent below them. An agent waiting for a permission or an
+answer is left alone.
 
 | Role | Archived after being idle for |
 |---|---|
@@ -260,6 +266,7 @@ have no running agent below them.
 | `is not a registered SLP project` | Ask HQ to set the project up first |
 | `lists for … only …` | Use a model from the table, or edit `.slp/room.json` |
 | `which the room has not enabled` | Fix `.slp/room.json`, or enable that seat in `seats.yml` |
+| `its runtime could not be built` | Fix what the message names (often `~/.codex/config.toml`), then create the agent again |
 | An agent says it is not signed in | Run `claude auth login` |
 | An agent does not know a new procedure | Open a new agent |
 

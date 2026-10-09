@@ -62,7 +62,8 @@ registered projects (`~/.config/slp-room/projects.json`).
 ## Change
 
 - Prompts, skills, models: edit `slp-room/room/`, run `./install.sh --no-plugin`.
-- Seats or policy: edit `seats.yml` or `policy.json`, run `./install.sh`
-  (policy changes also need `RUNTIME_VERSION` bumped in `plugin/server/runtimes.ts`).
+- Seats or policy: edit `seats.yml` or `policy.json`, run `./install.sh`.
+  Runtimes rebuild on their own when the policy or your own harness config changed.
+- Plugin code: edit `slp-room/plugin/`, run `npm test` there (Node 22.15 or later), then `./install.sh`.
 - Logs: `paseo plugin logs slp-seat`, `~/.config/slp-room/mail/log.jsonl`,
   `~/.config/slp-room/gc.log`.

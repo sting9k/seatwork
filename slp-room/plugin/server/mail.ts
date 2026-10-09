@@ -19,8 +19,9 @@ import type { MailPolicy, RoomPolicy } from "./policy";
  *   recipient waiting/unknown   → hold, retry on the next trigger or sweep
  *   recipient archived or gone  → drop it, bounce UNDELIVERABLE to the sender
  *
- * Queues live on disk (mail/queue/<agentId>.jsonl) so nothing is lost across
- * plugin reloads; mail/log.jsonl records every step.
+ * Queues live on disk (mail/queue/<agentId>.jsonl) and a mail leaves its queue
+ * only once the daemon has taken it, so nothing is lost when the plugin reloads
+ * or dies; mail/log.jsonl records every step.
  */
 
 export type Priority = "blocking" | "action" | "fyi";
@@ -38,6 +39,8 @@ export interface Mail {
   body: string;
   needs: Needs;
   whyNow: string;
+  /** On disk while its delivery is under way. Still set later: that delivery was cut off and may have arrived. */
+  sending?: true;
 }
 
 export interface SeatRecord {
@@ -91,9 +94,20 @@ function writeQueue(agentId: string, mails: Mail[]): void {
   renameSync(tmp, file);
 }
 
+/** Rewrites a queue from what is on disk now, so mail posted in the meantime is kept. `null` drops a mail. */
+function updateQueue(agentId: string, change: (mail: Mail) => Mail | null): void {
+  writeQueue(agentId, readQueue(agentId).flatMap((mail) => change(mail) ?? []));
+}
+
 function logLine(kind: string, mail: Mail, detail?: string): void {
   ensureDirs();
   appendFileSync(LOG_FILE, `${JSON.stringify({ at: new Date().toISOString(), kind, id: mail.id, from: mail.from.agentId, to: mail.to, priority: mail.priority, subject: mail.subject, detail })}\n`);
+}
+
+/** A seat stopped until someone answers it: a pending permission, or a status that says it waits. */
+export function waitsOnSomeone(agent: { status?: string; pendingPermissions?: unknown[] | null }): boolean {
+  if (Array.isArray(agent.pendingPermissions) && agent.pendingPermissions.length > 0) return true;
+  return agent.status === "permission" || agent.status === "attention" || agent.status === "needs_input";
 }
 
 export function truncate(text: string, max: number): string {
@@ -113,6 +127,7 @@ export function envelope(mail: Mail, policy: MailPolicy): string {
     `SLP MAIL #${mail.id} ${tag} from ${mail.fromLabel ?? senderLabel(mail.from)} re: ${mail.subject}`,
     `why now: ${mail.whyNow}`,
     `needs: ${mail.needs}`,
+    ...(mail.sending ? [`possible repeat: an earlier delivery of this mail was cut off; if you already handled #${mail.id}, do nothing`] : []),
     "--- body ---",
     truncate(mail.body.trim(), policy.maxBodyChars),
     "--- how to handle ---",
@@ -311,10 +326,10 @@ export class MailEngine {
     return readQueue(agentId);
   }
 
-  /** Marks held mail as read by the recipient itself (slp_inbox). */
+  /** Marks held mail as read by the recipient itself (slp_inbox). Mail on its way out is left to the delivery. */
   takeHeld(agentId: string): Mail[] {
-    const mails = readQueue(agentId);
-    writeQueue(agentId, []);
+    const mails = readQueue(agentId).filter((mail) => !mail.sending);
+    updateQueue(agentId, (mail) => (mail.sending ? mail : null));
     for (const mail of mails) logLine("read-by-inbox", mail);
     return mails;
   }
@@ -324,9 +339,10 @@ export class MailEngine {
     if (this.delivering.has(agentId)) return;
     this.delivering.add(agentId);
     try {
-      const queue = readQueue(agentId);
-      if (queue.length === 0) return;
+      if (readQueue(agentId).length === 0) return;
       const status = await this.status(agentId);
+      // read after the wait: mail posted meanwhile is in the file now
+      const queue = readQueue(agentId);
       if (status === "gone") {
         writeQueue(agentId, []);
         for (const mail of queue) {
@@ -350,29 +366,30 @@ export class MailEngine {
         return; // hold everything; the next trigger retries
       }
       let send: Mail[];
-      let keep: Mail[];
       if (status === "idle") {
         send = queue;
-        keep = [];
       } else {
         // running: only harnesses whose steer waits for the current tool call get mail mid-turn
         const harness = parseSeat(this.seats.get(agentId)?.provider)?.harness;
         const mode = harness ? this.policy.midTurn[harness] : "hold";
         send = mode === "steer" ? queue.filter((m) => m.priority !== "fyi" || !this.policy.holdFyiWhileRunning) : [];
-        keep = queue.filter((m) => !send.includes(m));
       }
       if (send.length === 0) return;
-      writeQueue(agentId, keep);
+      const asRead = new Map(send.map((mail) => [mail.id, mail]));
+      // the mail stays on disk, marked, until the daemon has it: a process that dies here loses nothing
+      updateQueue(agentId, (mail) => (asRead.has(mail.id) ? { ...mail, sending: true } : mail));
       try {
         // The SDK's default for a running agent is "interrupt"; the room never interrupts.
         await this.paseo.agents.ref(agentId).send(digest(send, this.policy), { activeTurnBehavior: "steer" } as never);
-        for (const mail of send) logLine(status === "idle" ? "delivered-idle" : "delivered-steer", mail);
       } catch (error) {
-        // put them back, in front
-        writeQueue(agentId, [...send, ...readQueue(agentId)]);
+        // refused, so nothing arrived: the mail waits as it was read
+        updateQueue(agentId, (mail) => asRead.get(mail.id) ?? mail);
         for (const mail of send) logLine("delivery-failed", mail, error instanceof Error ? error.message : String(error));
         this.log(`mail: delivery to ${agentId} failed: ${error instanceof Error ? error.message : String(error)}`);
+        return;
       }
+      updateQueue(agentId, (mail) => (asRead.has(mail.id) ? null : mail));
+      for (const mail of send) logLine(status === "idle" ? "delivered-idle" : "delivered-steer", mail);
     } finally {
       this.delivering.delete(agentId);
     }
@@ -391,17 +408,16 @@ export class MailEngine {
     const handle = this.paseo.agents.ref(agentId);
     try {
       await handle.refresh();
-    } catch {
-      return "gone";
+    } catch (error) {
+      // only the daemon saying so proves a seat is gone; a lost connection or a timeout proves nothing
+      return /^Agent not found\b/.test(error instanceof Error ? error.message : String(error)) ? "gone" : "unknown";
     }
     const snapshot = handle.current() as { status?: string; archivedAt?: string | null; pendingPermissions?: unknown[] } | null;
     if (!snapshot) return "unknown";
     if (snapshot.archivedAt) return "gone";
-    if (Array.isArray(snapshot.pendingPermissions) && snapshot.pendingPermissions.length > 0) return "permission";
-    const status = snapshot.status ?? "";
-    if (status === "running") return "running";
-    if (status === "idle") return "idle";
-    if (status === "permission" || status === "attention" || status === "needs_input") return "permission";
+    if (waitsOnSomeone(snapshot)) return "permission";
+    if (snapshot.status === "running") return "running";
+    if (snapshot.status === "idle") return "idle";
     return "unknown";
   }
 }

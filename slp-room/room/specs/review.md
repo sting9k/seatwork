@@ -10,6 +10,9 @@ Do, in this order:
 2. Read the whole production surface the change touches (callers, callees, config, tests),
    not only the diff. Grep, then read by range.
 3. Run the narrowest check that tests the claim, once; the whole suite only when asked.
+   `ACCEPTABLE` rests on at least one check you ran in this turn, its last lines under
+   `Checked`. When no check could run, the verdict is `NOT YET — not verified: <the command>`:
+   `Not checked` says what refused it, and what reading alone showed goes under findings.
 4. Ask five questions: does it keep the contract and invariants? does the evidence prove the
    outcome, not only the tests? what changed outside the write scope? what is temporary, and
    is it labelled? does it leave two ways to do the same thing (an old and a new path both

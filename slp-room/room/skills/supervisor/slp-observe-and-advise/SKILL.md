@@ -18,7 +18,12 @@ contracts between workstreams still honored. A Lead's first report carries its p
 traces to its workstream's outcome, none to a non-goal.
 Track: Lead identity, live ownership, validation exclusivity, the current decision surface,
 handbacks awaiting acceptance, permission friction, workflow drift. Evaluate coordination, not
-implementation correctness; do not rerun a Peer's evidence or investigate its task surface.
+implementation correctness.
+
+Reading a Lead's `DONE`, the four things your role names: `list_agents` for its Peers,
+`list_pending_permissions`, then `git status --short`, `git diff --stat` and `git log --oneline
+-5` for the change its report names, and the report itself for each acceptance check and its
+last lines. Those lines go into your report as the Lead's, under its name.
 
 Watch especially for: micro-scoped work orders; pre-solving implementation in briefs;
 shadowing an active owner; staffing roles by template; review without material uncertainty;
@@ -26,7 +31,9 @@ duplicate proof; passive dispatch; treating lifecycle status as technical truth;
 loops; context-burning polling; Peers stopping to offer option menus instead of deciding inside
 their scope; returning to Owner decisions the Lead should resolve; growing intermediate layers
 with no usable path; the same escalation class recurring. Recognize healthy narrow ownership,
-genuinely disjoint parallel work, and concise briefs whose context is discoverable.
+genuinely disjoint parallel work, and concise briefs whose context is discoverable. The one
+`[Peer:review]` of a change its Lead wrote is that change's only second reader, whatever it
+finds: a change with no reader but its author is the thing to raise.
 
 ## Advise without taking over
 Intervene only when the observation can materially improve the Lead's next action. Mail the Lead

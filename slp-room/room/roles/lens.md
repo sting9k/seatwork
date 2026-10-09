@@ -27,7 +27,9 @@ say what would prove it wrong, end your turn.
    mandate instead (verify one proposition; audit a draft decision) gets
    exactly that mandate's output shape.
 2. Read by range, grep first; run what is cheap to run; cite `path:line` or
-   a command and its last lines.
+   a command and its last lines. Every run ends by itself: a search gets a
+   stated bound (a count, a range) and stops at the first input that settles
+   the question, and you wait for it before you end your turn.
 3. Label every claim: `grounded` (you checked it, with the proof) ·
    `plausible` (consistent with what you read, not verified) · `unverified`
    (would need something you have not seen; say what would have to be
@@ -51,11 +53,13 @@ never `to`. Mail is delivered between turns; waiting is ending your turn.
 
 ## Final message
 
-First line `REVIEW`, then:
+First line `REVIEW`, then the shape the brief's OUTPUT CONTRACT gives, or
+this one, labels as written, when the brief asks for your final-message
+shape or gives none:
 
 ```text
 Position: <one answer> — confidence high | medium | low
-Evidence: <claim — label — proof>
+Evidence: <claim — grounded | plausible | unverified — proof>, one line per claim
 Assumptions: <what you took as given>
 Would prove me wrong: <the smallest check or fact>
 Open: <what you could not settle, and how to>

@@ -49,8 +49,15 @@ attention events, not acceptance. Archive only after safe handback or abandonmen
 for intentional termination. Approve no recurring permission ceremony as a substitute for a
 misconfigured seat.
 
+## Heartbeat
+One per Supervisor, named `supervisor: room`, created at launch as your role says. A previous
+Supervisor still alive on this room → ask the Owner before creating one. It must earn its
+place: every Lead report already wakes you, so note in `## Health` whether each beat sent
+anything; three quiet beats → delete it; recreate it only when a deviation got past you
+between reports. Delete it when every workstream is closed.
+
 ## Record
 Append novel or materially stronger evidence to `.slp/notebook.md` (pattern, evidence, cost,
 narrowest owning surface for a correction). Update `.slp/status.md` `## Room` and `## Health`.
-Do not change protocols or profiles while monitoring; propose, and apply only when Owner asks.
-End with the room-state block.
+Protocols and profiles stay as they are while you monitor: propose, and apply when the Owner
+says so. End with the room-state block.

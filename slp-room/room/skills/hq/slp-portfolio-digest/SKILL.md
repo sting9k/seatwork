@@ -8,7 +8,7 @@ description: "HQ procedure for the cross-project digest Human asks for: one page
    `## Dissent`, `## Room`, `## Health`),
    `.slp/notebook.md` tail, then `gh issue list --state open --limit 30` (or
    `issues/<project>.md` without a remote).
-3. `~/.config/slp-room/registry-log.jsonl` and `list_agents` filtered by cwd: which Supervisor is
+3. `ROOM_HOME/registry-log.jsonl` (ROOM_HOME is in your seat header) and `list_agents` filtered by cwd: which Supervisor is
    alive, idle, running, or waiting on a permission.
 4. Write `reports/<yyyy-mm-dd>-digest.md`: per project **usable now** · **open decisions** (who
    waits on Human) · **decided by the room** (what the room chose on its own and whether Human

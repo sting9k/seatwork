@@ -21,7 +21,7 @@ Reply with slp_mail to: owner
 ## Read-only suffix (last paragraph of every read-only brief, verbatim)
 
 ```text
-This is analysis only. Do NOT edit, create, or delete any files. Do NOT write code. Do NOT spawn agents.
+This is analysis only: your whole deliverable is your final message, and the tree stays as you found it. Do not edit files, write code, or launch agents.
 ```
 
 ## Example: a writable brief

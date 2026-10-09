@@ -1,6 +1,6 @@
 ---
 name: slp-write-brief
-description: "Lead procedure to write a Peer or Lens brief that locks the contract and leaves the implementation to its owner: the template, the contract checklist, the read-only suffix, the create_agent call. Use before every launch. The template and a filled example are in references/brief-template.md."
+description: "Lead procedure to write a Peer or Lens brief that locks the contract and leaves the implementation to its owner: the template, the contract checklist, the read-only suffix, the tier and retry rules, the create_agent call, and how a REVISED BRIEF is sent. Use before every launch and every retry. The template and a filled example are in references/brief-template.md."
 ---
 # Write the brief (Lead)
 1. Fill the template in [references/brief-template.md](references/brief-template.md): Project,
@@ -24,6 +24,17 @@ description: "Lead procedure to write a Peer or Lens brief that locks the contra
 5. Read-only briefs say `read-only — do not modify files` in Write scope, use `[Peer:review]` or
    `[Peer:research]` (a lens is its own seat: `[Lens]`, see `slp-lens`), and end with the
    read-only suffix from the template file, verbatim.
-6. `create_agent` with `title`, `provider` from your role's table, `settings`, `initialPrompt`,
-   `notifyOnFinish: false`; no `cwd`, no `background`. Then continue unrelated ready work or end
-   your turn; the Peer's mail wakes you.
+6. Tier from the provider table in your role; unsure → the lower tier, and size alone keeps
+   the tier. Up one tier only after a same-tier retry with a sharper brief failed for a
+   capability reason (wrong reasoning, broken invariants, lost the thread). Missing context,
+   vague acceptance, too big, or a permission block → fix the brief or split, same tier. An
+   expensive-tier capability failure, or three non-capability failures at one tier →
+   `slp-lens` with three or more lenses. Every retry carries `What was tried`.
+7. `create_agent` with `title`, `provider` from your role's table, `settings.modeId`,
+   `settings.thinkingOptionId`, `initialPrompt`, `notifyOnFinish: false`; `workspaceId` only
+   when two writers must run at once (a worktree each, `create_workspace`); leave `cwd` and
+   `background` unset. Then continue unrelated ready work or end your turn; the Peer's mail
+   wakes you.
+8. A `REVISED BRIEF` is the whole brief again with the changed lines marked, sent as one mail
+   (`reply_to` the Peer's signal, or `to` its id): the Peer reads one document, not a thread
+   of patches.

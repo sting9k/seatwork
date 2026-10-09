@@ -1,8 +1,19 @@
 ---
 name: slp-lead-handoff
-description: "Supervisor procedure to replace a Lead whose context is long or whose behavior degraded: successor Lead with an experience handoff, old Lead finishes its current step and is archived after acceptance. Also the self-improvement loop between consecutive Leads."
+description: "Supervisor procedure for a Lead that stalls, degrades, runs long, or has an unauthorized action in flight: the status check and resume, the emergency stop, and the handoff to a successor Lead with adoption of its Peers. Also the self-improvement loop between consecutive Leads."
 ---
 # Lead handoff (Supervisor)
+
+## Stall or emergency, before any handoff
+
+A Lead silent past the threshold in your role prompt, with no running Peer and no pending
+permission: mail it a status check (`needs: reply`) and end your turn. Still silent →
+`cancel_agent`, then mail "resume from <its last recorded progress>". Silent again, or its
+context past the law's limit → the handoff below. An unauthorized external or destructive
+action in flight: mail its Lead now, `cancel_agent` the actor if it is still going, and tell
+the Owner in your final message. A stalled Peer belongs to its Lead.
+
+## Handoff
 
 Trigger: the Lead's context is past the project law's limit (default ~45% of its window), it
 loses the thread after compaction, it stalls twice, or the Owner asks.

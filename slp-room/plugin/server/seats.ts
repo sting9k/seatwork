@@ -1,6 +1,6 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { ROOM_DIR, SEATS_FILE } from "./paths";
+import { ROOM_DIR, ROOM_HOME, SEATS_FILE } from "./paths";
 import { loadModels, promptVars, render, type Models } from "./models";
 import type { RoomParams } from "./policy";
 
@@ -97,10 +97,10 @@ export function rolePrompt(role: Role, context: PromptContext): string {
   const missing: string[] = [];
   const rendered = render(roleText.trim(), vars, (name) => missing.push(name));
   if (missing.length) console.error(`slp-seat: roles/${role}.md uses unknown placeholders: ${missing.join(", ")}`);
-  const needsRoomDir = role === "hq" || role === "supervisor"; // the law template and projects.json live there
+  const needsRoomDir = role === "hq" || role === "supervisor"; // the law template, the registry log and the room notebook live there
   const parts = [
     `# Seat: ${role}${context.spec ? ` (specialization: ${context.spec})` : ""}`,
-    `This session is a ${role} seat in a Paseo room.${needsRoomDir ? ` ROOM_DIR=${ROOM_DIR}.` : ""} Role skills live in your skills directory: use them for the procedures they name.`,
+    `This session is a ${role} seat in a Paseo room.${needsRoomDir ? ` ROOM_DIR=${ROOM_DIR}. ROOM_HOME=${ROOM_HOME}.` : ""} Role skills live in your skills directory: use them for the procedures they name.`,
     rendered,
     spec ? `\n---\n\n${spec.trim()}` : null,
     sheet ? `\n---\n\n${sheet.trim()}` : null,

@@ -82,6 +82,8 @@ function runsFor(c) {
   else if (c.role === "peer") runs = ["default", "cheap", "cross-family"].map((tier) => models.peer.tiers[tier]).filter(Boolean).map((tier) => seat(tier.providers[0], tier.thinking));
   else if (c.role === "lens") runs = models.lens.pair.map((provider) => seat(provider, models.lens.thinking));
   else runs = [seat(models.seats[c.role].provider, models.seats[c.role].thinking)];
+  // --codex-model <model>: also run every role on Codex with that model, to measure roles models.json keeps on Claude
+  if (args["codex-model"] && !runs.some((run) => run.harness === "codex")) runs.push({ harness: "codex", model: args["codex-model"], effort: runs[0]?.effort ?? "high", note: "not a room seat" });
   return runs.filter((run) => ["claude", "codex"].includes(run.harness) && (!args.harness || run.harness === args.harness));
 }
 

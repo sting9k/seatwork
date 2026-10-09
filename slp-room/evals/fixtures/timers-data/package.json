@@ -1,0 +1,9 @@
+{
+  "name": "durations",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Parses human-written durations into milliseconds.",
+  "scripts": {
+    "test": "node --test"
+  }
+}

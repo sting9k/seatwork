@@ -38,7 +38,8 @@ Ba điều cần nhớ:
 
 ## 2. Cài đặt
 
-Cần có Paseo 0.10.3 trở lên, `jq`, `python3` kèm PyYAML, Claude Code và Codex.
+Cần có Paseo 0.10.3 trở lên, `jq`, `python3` kèm PyYAML, Claude Code và Codex
+(thêm Pi hoặc OpenCode nếu bạn cho vai nào chạy trên đó).
 
 ```bash
 git clone https://github.com/sting9k/seatwork.git
@@ -48,8 +49,8 @@ git clone https://github.com/sting9k/seatwork.git
 cd seatwork/slp-room && ./install.sh
 ```
 
-Lệnh cài thêm vào Paseo các "seat" (mỗi seat là một vai chạy trên Claude
-hoặc Codex), bốn profile, plugin `slp-seat` và project `hq-seatwork`. Chạy
+Lệnh cài thêm vào Paseo các "seat" (mỗi seat là một vai chạy trên Claude,
+Codex, Pi hoặc OpenCode), bốn profile, plugin `slp-seat` và project `hq-seatwork`. Chạy
 lại bao nhiêu lần cũng được.
 
 ### Đăng nhập Claude
@@ -219,7 +220,7 @@ Sửa trong repo rồi chạy lại lệnh cài.
 
 | File | Quyết định | Chạy lại |
 |---|---|---|
-| `slp-room/paseo/seats.yml` | Claude hay Codex ngồi vai nào | `./install.sh` |
+| `slp-room/paseo/seats.yml` | Harness nào (Claude, Codex, Pi, OpenCode) được bật cho từng vai; vai chạy trên harness nào là `models.json` | `./install.sh` |
 | `slp-room/room/models.json` | Mỗi vai dùng model nào | `./install.sh --no-plugin` |
 | `slp-room/paseo/policy.json` | Ai gửi thư cho ai, ai tạo ai, thời gian chờ | `./install.sh` |
 | `slp-room/room/roles/`, `skills/` | Prompt và quy trình của từng vai | `./install.sh --no-plugin` |
@@ -242,7 +243,7 @@ Bảng Lens có `oracle` (một lens), `hard` (một lens cho câu hỏi khó), 
 ├── hq-seatwork/         thư mục làm việc của HQ
 ├── room/                prompt, skill, bảng model đang dùng
 ├── role-skills/         skill theo vai cho seat Claude
-├── runtimes/            môi trường riêng của seat Codex
+├── runtimes/            môi trường riêng của seat Codex, Pi, OpenCode
 ├── mail/                thư và nhật ký thư
 ├── projects.json        các project đã đăng ký
 ├── registry-log.jsonl   các agent đã tạo

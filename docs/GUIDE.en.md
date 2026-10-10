@@ -39,7 +39,8 @@ Three things to remember:
 
 ## 2. Install
 
-You need Paseo 0.10.3 or later, `jq`, `python3` with PyYAML, Claude Code and Codex.
+You need Paseo 0.10.3 or later, `jq`, `python3` with PyYAML, Claude Code and Codex
+(plus Pi or OpenCode if you put a role on one of them).
 
 ```bash
 git clone https://github.com/sting9k/seatwork.git
@@ -50,7 +51,7 @@ cd seatwork/slp-room && ./install.sh
 ```
 
 The installer adds to Paseo the "seats" (a seat is one role running on
-Claude or Codex), four profiles, the `slp-seat` plugin and the `hq-seatwork`
+Claude, Codex, Pi or OpenCode), four profiles, the `slp-seat` plugin and the `hq-seatwork`
 project. It is safe to run again.
 
 ### Signing Claude in
@@ -222,7 +223,7 @@ Edit in the repo, then run the installer again.
 
 | File | Decides | Run again |
 |---|---|---|
-| `slp-room/paseo/seats.yml` | Whether Claude or Codex holds each role | `./install.sh` |
+| `slp-room/paseo/seats.yml` | Which harnesses (Claude, Codex, Pi, OpenCode) are enabled for each role; which one a role runs on is `models.json` | `./install.sh` |
 | `slp-room/room/models.json` | Which model each role uses | `./install.sh --no-plugin` |
 | `slp-room/paseo/policy.json` | Who mails whom, who creates whom, waiting times | `./install.sh` |
 | `slp-room/room/roles/`, `skills/` | Each role's prompt and procedures | `./install.sh --no-plugin` |
@@ -245,7 +246,7 @@ question), `pair` (two lenses, two different models) and `pool` (a third).
 ├── hq-seatwork/         HQ's working directory
 ├── room/                the prompts, skills and model table in use
 ├── role-skills/         per-role skills for Claude seats
-├── runtimes/            the separate environment of Codex seats
+├── runtimes/            the separate environment of Codex, Pi and OpenCode seats
 ├── mail/                mail and the mail log
 ├── projects.json        registered projects
 ├── registry-log.jsonl   agents created so far

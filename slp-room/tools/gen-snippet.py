@@ -71,10 +71,12 @@ def main() -> int:
         provider, _, model = hq["provider"].partition("/")
         for profile in profiles:
             if profile["provider"].endswith("-hq"):
-                profile.update(provider=provider, model=model, modeId=models["modes"][provider.split("-")[0]])
-                profile.pop("thinkingOptionId", None)
-                if hq.get("thinking"):
-                    profile["thinkingOptionId"] = hq["thinking"]
+                profile.update(provider=provider, model=model)
+                # a harness without session modes, or a model without thinking options, takes no such setting: Paseo refuses one
+                for key, value in (("modeId", models["modes"].get(provider.split("-")[0])), ("thinkingOptionId", hq.get("thinking"))):
+                    profile.pop(key, None)
+                    if value:
+                        profile[key] = value
     tools = policy["paseoTools"]
     all_tools: list[str] = tools["all"]
     allow: dict[str, list[str]] = tools["allow"]

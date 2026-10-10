@@ -37,7 +37,8 @@ export interface Models {
   seats: { hq: SeatModel; supervisor: SeatModel; lead: SeatModel };
   peer: { tiers: Record<string, PeerTier>; reviewThinking: string };
   lens: LensModels;
-  modes: Record<string, string>;
+  /** The Paseo session mode a seat is created in, per harness; null where the harness has none and Paseo refuses any. */
+  modes: Record<string, string | null>;
 }
 
 export const MODELS_FILE = join(ROOM_DIR, "models.json");
@@ -65,7 +66,9 @@ function lensTable(m: Models): string {
 
 /** The placeholder map for role prompts. */
 export function promptVars(m: Models, params: RoomParams): Record<string, string> {
-  const modes = Object.entries(m.modes).map(([h, mode]) => `${h} \`${mode}\``).join(", ");
+  const withMode = Object.entries(m.modes).filter(([, mode]) => mode).map(([h, mode]) => `${h} \`${mode}\``);
+  const without = Object.entries(m.modes).filter(([, mode]) => !mode).map(([h]) => h);
+  const modes = [withMode.join(", "), without.length ? `${without.join(", ")}: none, omit \`modeId\`` : ""].filter(Boolean).join("; ");
   return {
     peer_table: peerTable(m),
     review_thinking: m.peer.reviewThinking,

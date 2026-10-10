@@ -54,6 +54,17 @@ The installer adds to Paseo the "seats" (a seat is one role running on
 Claude, Codex, Pi or OpenCode), four profiles, the `slp-seat` plugin and the `hq-seatwork`
 project. It is safe to run again.
 
+A first install asks one question: HQ on the room's default seat, or on an
+agent CLI and model you choose. With the default, only the seats in
+`seats.yml` are installed. To change it later:
+
+```bash
+./install.sh --hq ask
+```
+
+To answer without the question: `--hq <harness>/<model>` (with
+`--hq-thinking <level>` when needed) or `--hq default`.
+
 ### Signing Claude in
 
 Claude seats share the sign-in of the `claude` command in your terminal.
@@ -193,7 +204,10 @@ Every project has a `.slp/` directory:
 ### Its own model table
 
 HQ writes it for you the first time. After that, edit the `models` object in
-`.slp/room.json` by hand. Write only what differs from the shared table:
+`.slp/room.json` by hand. Write only what differs from the shared table. Any
+role can run on any harness (`<harness>-<role>/<model>`): HQ sets up a seat
+the room does not have yet when it writes the table; after a hand edit, run
+`./install.sh --seat <harness>-<role>`:
 
 ```json
 {
@@ -223,7 +237,8 @@ Edit in the repo, then run the installer again.
 
 | File | Decides | Run again |
 |---|---|---|
-| `slp-room/paseo/seats.yml` | Which harnesses (Claude, Codex, Pi, OpenCode) are enabled for each role; which one a role runs on is `models.json` | `./install.sh` |
+| `slp-room/paseo/seats.yml` | The seats every install gets; which harness a role runs on is `models.json` | `./install.sh` |
+| `~/.config/slp-room/setup.json` | This machine's own seats: HQ's harness, seats added for a project | `./install.sh` |
 | `slp-room/room/models.json` | Which model each role uses | `./install.sh --no-plugin` |
 | `slp-room/paseo/policy.json` | Who mails whom, who creates whom, waiting times | `./install.sh` |
 | `slp-room/room/roles/`, `skills/` | Each role's prompt and procedures | `./install.sh --no-plugin` |
@@ -248,6 +263,7 @@ question), `pair` (two lenses, two different models) and `pool` (a third).
 ├── role-skills/         per-role skills for Claude seats
 ├── runtimes/            the separate environment of Codex, Pi and OpenCode seats
 ├── mail/                mail and the mail log
+├── setup.json           this machine's choices: HQ's seat, seats added
 ├── projects.json        registered projects
 ├── registry-log.jsonl   agents created so far
 └── gc.log               the cleanup log
@@ -276,7 +292,7 @@ answer is left alone.
 | `holds only hq seats` | Open this role in its own project |
 | `is not a registered SLP project` | Ask HQ to set the project up first |
 | `lists for … only …` | Use a model from the table, or edit `.slp/room.json` |
-| `which the room has not enabled` | Fix `.slp/room.json`, or enable that seat in `seats.yml` |
+| `which the room has not enabled` | Fix `.slp/room.json`, or run `./install.sh --seat <seat>` to set that seat up |
 | `its runtime could not be built` | Fix what the message names (often `~/.codex/config.toml`), then create the agent again |
 | An agent says it is not signed in | Run `claude auth login` |
 | An agent does not know a new procedure | Open a new agent |

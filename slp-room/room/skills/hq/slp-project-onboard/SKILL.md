@@ -20,8 +20,10 @@ the law.
    `ROOM_DIR/models.json`, show it as a short list (Supervisor, Lead, each
    Peer tier, the lenses, with model and thinking), take the changes, and
    build `models` holding only the differences, same shape (`null` removes a
-   tier). Only seats the room has enabled can be named; the tool refuses
-   anything else and says why. Never propose a change yourself.
+   tier). Any role may sit on any harness (claude, codex, pi, opencode),
+   written `<harness>-<role>/<model>`; a seat the room does not have yet is
+   set up by the tool, which names it in its answer. Never propose a change
+   yourself.
 4. `slp_register_project(path, name, mission, models)`. Tell Human once: the
    table lives in `<project>/.slp/room.json` under `models`; later changes are
    made by hand there and apply to the next seat created, no reinstall; a

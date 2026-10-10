@@ -1,15 +1,16 @@
 #!/usr/bin/env python3
 """Generate paseo/config.snippet.json and $SLP_ROOM_HOME/seats.json from seats.yml, policy.json,
-profiles.json and models.json. Run by install.sh; safe to run by hand."""
+profiles.json, models.json and this machine's own choices (setup.json, see choices.py). Run by
+install.sh; safe to run by hand."""
 from __future__ import annotations
 
 import json
-import os
 import pathlib
-import subprocess
 import sys
 
 import yaml
+
+from choices import HARNESSES, ROLES, ROOM_HOME, catalog, load_setup
 
 HERE = pathlib.Path(__file__).resolve().parent.parent
 SEATS_YML = HERE / "paseo" / "seats.yml"
@@ -17,11 +18,8 @@ POLICY = HERE / "paseo" / "policy.json"
 PROFILES = HERE / "paseo" / "profiles.json"
 MODELS = HERE / "room" / "models.json"
 OUT = HERE / "paseo" / "config.snippet.json"
-ROOM_HOME = pathlib.Path(os.environ.get("SLP_ROOM_HOME") or pathlib.Path.home() / ".config" / "slp-room")
-SEATS_OUT = ROOM_HOME / "seats.json"   # for the plugin; derived from seats.yml, never committed
+SEATS_OUT = ROOM_HOME / "seats.json"   # for the plugin; derived from seats.yml and setup.json, never committed
 
-HARNESSES = ["claude", "codex", "pi", "opencode"]
-ROLES = ["hq", "supervisor", "lead", "peer", "lens"]
 LABEL = {"claude": "Claude", "codex": "Codex", "pi": "Pi", "opencode": "OpenCode"}
 ROLE_LABEL = {"hq": "HQ Supervisor", "supervisor": "Supervisor", "lead": "Lead", "peer": "Peer", "lens": "Lens"}
 # How each harness is kept apart from the user's own setup (shown in the provider description).
@@ -58,27 +56,25 @@ def providers_in_models(models: dict) -> dict[str, set[str]]:
     return used
 
 
-def catalog(harness: str) -> dict[str, dict] | None:
-    """The harness's live model catalog from the daemon, or None when unavailable."""
-    try:
-        out = subprocess.run(["paseo", "provider", "models", harness, "--json"], capture_output=True, text=True, timeout=20)
-    except (OSError, subprocess.TimeoutExpired):
-        return None
-    if out.returncode != 0:
-        return None
-    try:
-        return {m["id"]: m for m in json.loads(out.stdout)}
-    except (ValueError, KeyError, TypeError):
-        return None
-
-
 def main() -> int:
     seats_cfg = yaml.safe_load(SEATS_YML.read_text()) or {}
-    seats: dict[str, list[str]] = seats_cfg.get("seats") or {}
+    seats: dict[str, list[str]] = {role: list(harnesses or []) for role, harnesses in (seats_cfg.get("seats") or {}).items()}
     restrict = bool(seats_cfg.get("restrict_models", True))
     policy = json.loads(POLICY.read_text())
     profiles = json.loads(PROFILES.read_text())
     models = json.loads(MODELS.read_text())
+    setup = load_setup()
+    # HQ on the seat this machine chose: in the table the checks below read, and in the profile the user opens
+    hq = setup.get("hq") if isinstance(setup.get("hq"), dict) else None
+    if hq:
+        models["seats"]["hq"] = {**models["seats"]["hq"], **hq}
+        provider, _, model = hq["provider"].partition("/")
+        for profile in profiles:
+            if profile["provider"].endswith("-hq"):
+                profile.update(provider=provider, model=model, modeId=models["modes"][provider.split("-")[0]])
+                profile.pop("thinkingOptionId", None)
+                if hq.get("thinking"):
+                    profile["thinkingOptionId"] = hq["thinking"]
     tools = policy["paseoTools"]
     all_tools: list[str] = tools["all"]
     allow: dict[str, list[str]] = tools["allow"]
@@ -88,11 +84,17 @@ def main() -> int:
         if role not in ROLES:
             print(f"seats.yml: unknown role {role}; roles are {ROLES}", file=sys.stderr)
             return 1
-        for harness in harnesses or []:
+        for harness in harnesses:
             if harness not in HARNESSES:
                 print(f"seats.yml: unknown harness {harness} under {role}; harnesses are {HARNESSES}", file=sys.stderr)
                 return 1
             enabled.append((harness, role))
+    # the seats this machine added: HQ's own, and those a project's table asked for
+    for seat in ([hq["provider"].split("/")[0]] if hq else []) + setup.get("seats", []):
+        harness, _, role = seat.partition("-")
+        if (harness, role) not in enabled:
+            enabled.append((harness, role))
+            seats.setdefault(role, []).append(harness)
     if not enabled:
         print("seats.yml: no seats enabled", file=sys.stderr)
         return 1
@@ -157,7 +159,8 @@ def main() -> int:
     snippet = {"daemon": {"agentProfiles": profiles}, "agents": {"providers": providers}}
     OUT.write_text(json.dumps(snippet, indent=2, ensure_ascii=False) + "\n")
     SEATS_OUT.parent.mkdir(parents=True, exist_ok=True)
-    SEATS_OUT.write_text(json.dumps({"seats": seats, "providers": sorted(providers)}, indent=2) + "\n")
+    # installer: where the plugin finds install.sh when a project's table needs a seat the room does not have
+    SEATS_OUT.write_text(json.dumps({"seats": seats, "providers": sorted(providers), "installer": str(HERE / "install.sh")}, indent=2) + "\n")
     print(f"wrote {OUT.relative_to(HERE)}: {len(providers)} providers, {len(profiles)} profiles; seats → {SEATS_OUT}")
     return 0
 

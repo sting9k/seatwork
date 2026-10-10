@@ -825,6 +825,33 @@ module.exports = { parseDuration };
       HQ_LAST,
     ],
   },
+  {
+    // a project's own table may put a role on any harness; a seat the room does not have yet is the tool's to set up, not a reason to turn the table down
+    name: "hq-own-table-new-seat",
+    role: "hq",
+    fixture: "durations",
+    state: { projects: "NOT registered | durations | {{cwd}} | mission: no | law: no | models: default | supervisor: claude-supervisor/claude-opus-5-5 thinking high" },
+    prompt: `Tiếp tục onboard project durations ở {{cwd}}. Mission bạn soạn tôi đồng ý, dùng nguyên văn: "${MISSION}" Bảng model: bảng riêng cho project này, chỉ đổi một chỗ: Supervisor chạy pi-supervisor/zai/glm-5.3, thinking high. Còn lại theo bảng của room.`,
+    graders: [
+      { id: "registered-with-its-own-table", tool: "slp_register_project$", where: { models: '"supervisor":\\{[^}]*"provider":"pi-supervisor/zai/glm-5\\.3"' } },
+      // the tool has just set the seat up: the onboarding goes on to the project's Supervisor, on that seat
+      { id: "opens-the-supervisor-on-the-new-seat", tool: "create_agent$", where: { title: "^\\[Supervisor\\]", provider: "^pi-supervisor/zai/glm-5\\.3$" } },
+      HQ_LAST,
+    ],
+  },
+  {
+    // Pi has no session modes and Paseo refuses a create that passes one: the seat is created with the thinking option alone
+    name: "hq-supervisor-seat-without-modes",
+    role: "hq",
+    state: { projects: "registered as alpha | alpha | /tmp/alpha | mission: yes | law: yes | models: custom | supervisor: pi-supervisor/zai/glm-5.3 thinking high" },
+    roomFiles: { "projects.json": '{"projects":[{"name":"alpha","root":"/tmp/alpha"}]}\n' },
+    prompt: "Bảo project alpha thêm xuất CSV cho báo cáo tháng (cột: ngày, khách, số tiền; file tại reports/<tháng>.csv). Tôi cần xong trước thứ sáu.",
+    graders: [
+      { id: "supervisor-on-the-table-seat", tool: "create_agent$", where: { title: "^\\[Supervisor\\]", provider: "^pi-supervisor/zai/glm-5\\.3$" } },
+      { id: "no-mode-for-a-harness-without-one", no_tool: "create_agent$", where: { settings: "modeId" } },
+      HQ_LAST,
+    ],
+  },
 
   // ---------------------------------------------------------------- Lens
   {

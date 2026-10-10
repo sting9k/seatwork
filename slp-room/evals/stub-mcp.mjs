@@ -10,6 +10,10 @@ const server = process.env.SLP_EVAL_SERVER ?? "slp";
 const shown = new Set((process.env.SLP_EVAL_TOOLS ?? "").split(",").filter(Boolean));
 const state = process.env.SLP_EVAL_STATE ? JSON.parse(readFileSync(process.env.SLP_EVAL_STATE, "utf8")) : {};
 const agents = [...(state.agents ?? [])];
+// the registry as slp_projects prints it; a registration rewrites its project's line, so a seat that looks again sees what it did
+let projects = state.projects ? String(state.projects).split("\n") : [];
+// the seats every install has (paseo/seats.yml); the real tool sets up any other seat a table names, and says so
+const ROOM_SEATS = ["claude-hq", "claude-supervisor", "claude-lead", "claude-peer", "claude-lens", "codex-peer", "codex-lens"];
 let counter = 0;
 const next = (prefix) => `${prefix}${++counter}`;
 const object = (properties, required = []) => ({ type: "object", properties, required, additionalProperties: true });
@@ -50,12 +54,33 @@ const TOOLS = {
   slp_projects: {
     description: "The project registry, one line per project known to Paseo: registered or not, name, root, whether its mission and law exist, its model table (default or custom) and the Supervisor seat to use.",
     inputSchema: object({}),
-    call: () => state.projects ?? "no projects known to Paseo",
+    call: () => projects.join("\n") || "no projects known to Paseo",
   },
   slp_register_project: {
-    description: "Register a project in the room: writes .slp/room.json and .slp/mission.md in the project and adds it to the registry. Only for a project Paseo already knows.",
-    inputSchema: object({ path: string("Absolute path of the project root."), name: string("Registry name, letters digits dashes."), mission: string("3–6 lines: what the project is for, who uses it, what done looks like, what is out of bounds."), models: { type: "object", description: "Differences over the room's models.json, or omit for the room's table." } }, ["path", "mission"]),
-    call: (a) => `registered: ${a.name ?? "project"} at ${a.path}. Still missing: law (.slp/${a.name ?? "project"}-law.md, written by the project's Supervisor on its first task).`,
+    description:
+      "Register a project that Paseo already has: writes its room marker, its mission and its own model table when given, and its registry line. A seat the table names that the room does not have yet is set up first. Repeat it with `mission` or `models` to replace them.",
+    inputSchema: object(
+      {
+        path: string("The project's root, or its name in Paseo (see slp_projects)."),
+        name: string("Registry name, letters digits dashes. Default: the Paseo name."),
+        mission: string("What the project is for and what done looks like, a few lines of markdown."),
+        models: { type: "object", description: "Only the differences from ROOM_DIR/models.json, same shape; objects merge, lists and values replace, null removes a key. Omit to use the room's table." },
+      },
+      ["path"],
+    ),
+    call: (a) => {
+      const at = projects.findIndex((row) => row.includes(` | ${a.path} | `));
+      const [, roomSupervisor = "claude-supervisor/claude-opus-5-5", roomThinking = "high"] = /supervisor: (\S+) thinking (\S+)/.exec(projects[at] ?? "") ?? [];
+      const name = a.name ?? String(a.path).split("/").filter(Boolean).pop() ?? "project";
+      const supervisor = a.models?.seats?.supervisor ?? {};
+      const table = `models: ${a.models ? "custom" : "default"} | supervisor: ${supervisor.provider ?? roomSupervisor} thinking ${supervisor.thinking ?? roomThinking}`;
+      const named = JSON.stringify(a.models ?? {}).match(/\b(claude|codex|pi|opencode)-(hq|supervisor|lead|peer|lens)(?=\/)/g) ?? [];
+      const added = [...new Set(named)].filter((seat) => !ROOM_SEATS.includes(seat));
+      const row = `registered as ${name} | ${name} | ${a.path} | mission: ${a.mission ? "yes" : "no"} | law: no | ${table}`;
+      if (at >= 0) projects[at] = row;
+      else projects.push(row);
+      return `registered: ${name} at ${a.path}. ${table}.${added.length ? ` Seats set up for this table: ${added.join(", ")}.` : ""} Still missing: law (.slp/${name}-law.md, written by the project's Supervisor on its first task).`;
+    },
   },
   slp_room_stats: {
     description: "What the mail log says happened in the last N days, per project and per signal (candidates, rejects, reopen requests, escalations).",

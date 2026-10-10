@@ -17,7 +17,7 @@ import { roomStats } from "./server/stats";
 
 type CreateRequest = PluginBeforeRequests["agent.create"];
 
-const VERSION = "0.9.0";
+const VERSION = "0.9.1";
 const MAIL_DIR = join(ROOM_HOME, "mail");
 const MCP_TOKEN_FILE = join(MAIL_DIR, "token");
 const NONCES_FILE = join(MAIL_DIR, "nonces.json");

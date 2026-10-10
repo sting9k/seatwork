@@ -40,3 +40,19 @@ test("the lens table names the lens for a hard question, and lets a model repeat
   const distinct = promptVars({ ...table, lens: { ...table.lens, pool: ["claude-lens/sonnet"] } }, params).lens_table;
   assert.match(distinct, /never the same model twice/);
 });
+
+test("a harness without session modes is one a seat is told to create with no modeId", () => {
+  const seat = { provider: "claude-lead/opus", thinking: "high" };
+  const table: Models = {
+    seats: { hq: seat, supervisor: seat, lead: seat },
+    peer: { reviewThinking: "high", tiers: {} },
+    lens: { oracle: "codex-lens/sol", pair: [], pool: [], thinking: "high" },
+    modes: { claude: "bypassPermissions", pi: null, opencode: "build" },
+  };
+  const params = { heartbeatCron: "*/15 * * * *", peerStallMinutes: 6, reviewStallMinutes: 30, leadStallMinutes: 30, readBudgetTokens: 80000, cheapReadBudgetTokens: 40000 };
+
+  const shown = promptVars(table, params).modes;
+  assert.match(shown, /claude `bypassPermissions`, opencode `build`/);
+  assert.match(shown, /pi: none, omit `modeId`/);
+  assert.doesNotMatch(shown, /null/, "Paseo refuses any mode it is handed for a harness that has none");
+});

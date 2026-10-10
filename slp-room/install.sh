@@ -1,21 +1,30 @@
 #!/usr/bin/env bash
 # slp-room installer: room files, policy, Paseo providers and profiles, the slp-seat plugin.
 # Flags: --no-plugin  --no-reload  --no-daemon-policy  --no-pi-adapter
+#   --hq default|ask|<harness>/<model> [--hq-thinking <id>]   what HQ runs on; asked once, on a first install from a terminal
+#   --seat <harness>-<role>   set up a seat paseo/seats.yml does not list (repeatable; kept in setup.json)
+#   --seats-only              the seats and nothing else: providers into Paseo, reload; room files and plugin untouched
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOM_HOME="${SLP_ROOM_HOME:-$HOME/.config/slp-room}"
 PASEO_HOME="${PASEO_HOME:-$HOME/.paseo}"
 CONFIG="$PASEO_HOME/config.json"
-DO_PLUGIN=1; DO_RELOAD=1; DO_DAEMON_POLICY=1; DO_PI_ADAPTER=1
-for arg in "$@"; do
-  case "$arg" in
+DO_PLUGIN=1; DO_RELOAD=1; DO_DAEMON_POLICY=1; DO_PI_ADAPTER=1; DO_ROOM=1
+CHOICES=()
+while [ $# -gt 0 ]; do
+  case "$1" in
     --no-plugin) DO_PLUGIN=0 ;;
     --no-reload) DO_RELOAD=0 ;;
     --no-daemon-policy) DO_DAEMON_POLICY=0 ;;
     --no-pi-adapter) DO_PI_ADAPTER=0 ;;
-    *) echo "unknown option: $arg" >&2; exit 2 ;;
+    --seats-only) DO_ROOM=0; DO_PLUGIN=0 ;;
+    --hq|--hq-thinking|--seat)
+      [ $# -ge 2 ] || { echo "$1 needs a value" >&2; exit 2; }
+      CHOICES+=("$1" "$2"); shift ;;
+    *) echo "unknown option: $1" >&2; exit 2 ;;
   esac
+  shift
 done
 for bin in jq paseo python3; do command -v "$bin" >/dev/null || { echo "$bin is required" >&2; exit 1; }; done
 python3 -c "import yaml" 2>/dev/null || { echo "python3 needs PyYAML (pip3 install pyyaml) to read paseo/seats.yml" >&2; exit 1; }
@@ -25,14 +34,26 @@ umask 077
 mkdir -p "$ROOM_HOME"
 chmod 700 "$ROOM_HOME"
 
-# --- 0. generate paseo/config.snippet.json and $ROOM_HOME/seats.json from seats.yml + policy + models ----
+# --- 0. this machine's choices ($ROOM_HOME/setup.json), then paseo/config.snippet.json and
+#        $ROOM_HOME/seats.json from seats.yml + setup.json + policy + models ----
+SLP_ROOM_HOME="$ROOM_HOME" python3 "$HERE/tools/choices.py" ${CHOICES[@]+"${CHOICES[@]}"}
 SLP_ROOM_HOME="$ROOM_HOME" python3 "$HERE/tools/gen-snippet.py"
 
 # --- 1. room files --------------------------------------------------------------
-mkdir -p "$ROOM_HOME/room"
-# the whole room tree: models.json, roles/, harness/, specs/, skills/
-rsync -a --delete "$HERE/room/" "$ROOM_HOME/room/"
-cp "$HERE/paseo/policy.json" "$ROOM_HOME/policy.json"
+if [ "$DO_ROOM" = 1 ]; then
+  mkdir -p "$ROOM_HOME/room"
+  # the whole room tree: models.json, roles/, harness/, specs/, skills/
+  rsync -a --delete "$HERE/room/" "$ROOM_HOME/room/"
+  cp "$HERE/paseo/policy.json" "$ROOM_HOME/policy.json"
+fi
+# the installed table is the one HQ and the plugin read: HQ's seat in it is this machine's when it chose one
+if [ -f "$ROOM_HOME/room/models.json" ]; then
+  TMP="$(mktemp "$ROOM_HOME/room/models.json.XXXXXX")"
+  jq --slurpfile room "$HERE/room/models.json" --slurpfile setup "$ROOM_HOME/setup.json" \
+    '.seats.hq = ($room[0].seats.hq + ($setup[0].hq | if type == "object" then {thinking: "default"} + . else {} end))' \
+    "$ROOM_HOME/room/models.json" > "$TMP"
+  mv "$TMP" "$ROOM_HOME/room/models.json"
+fi
 # runtimes of seats no longer enabled are removed (the plugin rebuilds the others when policy.json changed)
 if [ -d "$ROOM_HOME/runtimes" ]; then
   for dir in "$ROOM_HOME"/runtimes/*/*/; do

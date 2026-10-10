@@ -1,3 +1,4 @@
+import { execFile } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { ROOM_DIR, ROOM_HOME, SEATS_FILE } from "./paths";
@@ -35,11 +36,38 @@ function readIfExists(path: string): string | null {
   return existsSync(path) ? readFileSync(path, "utf8") : null;
 }
 
-/** The seats paseo/seats.yml enables, read from the seats.json that install.sh generates. */
+/** The seats paseo/seats.yml and this machine's setup.json enable, read from the seats.json that install.sh generates. */
 export function enabledSeats(): Seat[] {
   if (!existsSync(SEATS_FILE)) throw new Error(`slp-seat: ${SEATS_FILE} not found; run install.sh`);
   const parsed = JSON.parse(readFileSync(SEATS_FILE, "utf8")) as { providers?: string[] };
   return (parsed.providers ?? []).map(parseSeat).filter((s): s is Seat => s !== null);
+}
+
+/**
+ * Sets up seats the room does not have yet, as `./install.sh --seat` does by
+ * hand: the installer records them in setup.json, writes their providers into
+ * Paseo and reloads its config (a reload leaves plugins and running agents alone).
+ */
+export async function enableSeats(providers: string[]): Promise<void> {
+  if (providers.length === 0) return;
+  for (const provider of providers) {
+    if (!parseSeat(provider)) throw new Error(`"${provider}" is not a seat: a seat is <harness>-<role>, harnesses ${HARNESSES.join(", ")}, roles ${ROLES.join(", ")}`);
+  }
+  const flags = providers.flatMap((provider) => ["--seat", provider]);
+  const { installer } = JSON.parse(readFileSync(SEATS_FILE, "utf8")) as { installer?: string };
+  if (!installer || !existsSync(installer)) {
+    throw new Error(`slp-seat: install.sh is not where the last install left it (${installer ?? "unknown"}); run \`./install.sh ${flags.join(" ")}\` in slp-room, then repeat`);
+  }
+  await new Promise<void>((resolve, reject) => {
+    // it may install the Pi MCP adapter on the way, hence the long timeout
+    execFile("bash", [installer, "--seats-only", ...flags], { env: { ...process.env, SLP_ROOM_HOME: ROOM_HOME }, timeout: 300_000, maxBuffer: 8 * 1024 * 1024 }, (error, _stdout, stderr) => {
+      if (error) reject(new Error(`install.sh --seats-only ${flags.join(" ")}: ${stderr.trim() || error.message}`));
+      else resolve();
+    });
+  });
+  const enabled = enabledSeats().map((seat) => seat.provider);
+  const missing = providers.filter((provider) => !enabled.includes(provider));
+  if (missing.length) throw new Error(`slp-seat: install.sh ran but ${missing.join(", ")} is still not set up`);
 }
 
 /** `harness/<harness>-harness.md`: how this harness exposes the room's tools (tool names, tool search, what is denied). Named so nobody mistakes `claude.md` for a CLAUDE.md. */

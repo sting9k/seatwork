@@ -20,7 +20,9 @@ Human
 ```
 
 Any harness (claude, codex, pi, opencode) can hold any role. Which seats
-exist is `slp-room/paseo/seats.yml`; which models they use is
+every install gets is `slp-room/paseo/seats.yml`; a seat beyond those is set
+up on the machine that asks for it (HQ's at install, a project's when HQ
+registers its model table). Which models the seats use is
 `slp-room/room/models.json`; what a role may touch is
 `slp-room/paseo/policy.json`. The committed values are one setup, not a default.
 
@@ -41,7 +43,9 @@ Full guide: [English](docs/GUIDE.en.md) · [Tiếng Việt](docs/GUIDE.vi.md).
 cd slp-room && ./install.sh
 ```
 
-Needs `jq`, `paseo`, `python3` with PyYAML. Claude seats use the sign-in of `claude` in your
+Needs `jq`, `paseo`, `python3` with PyYAML. A first install asks one question: HQ on the
+room's default seat, or on an agent CLI and model you choose (`./install.sh --hq ask` asks
+again, `--hq <harness>/<model>` or `--hq default` answers without the question). Claude seats use the sign-in of `claude` in your
 terminal (`claude auth login`), shared by every role; no token. Then open **HQ Supervisor** in
 the `hq-seatwork` project (the plugin creates it at
 `~/.config/slp-room/hq-seatwork`; HQ starts nowhere else) once, to add your
@@ -55,7 +59,9 @@ law, asking you only what the repository cannot answer. A project's own table
 is the `models` object of `<project>/.slp/room.json`: only the differences
 from `slp-room/room/models.json`, edited by hand afterwards, applied to the
 next seat created and enforced (a seat on a model the table does not list is
-refused). The first
+refused). The table may put a role on any harness: HQ sets up a seat the room
+does not have yet when it registers the table (by hand:
+`./install.sh --seat <harness>-<role>`). The first
 registration turns the project guard on: project seats then start only inside
 registered projects (`~/.config/slp-room/projects.json`).
 
@@ -64,6 +70,8 @@ registered projects (`~/.config/slp-room/projects.json`).
 - Prompts, skills, models: edit `slp-room/room/`, run `./install.sh --no-plugin`.
 - Seats or policy: edit `seats.yml` or `policy.json`, run `./install.sh`.
   Runtimes rebuild on their own when the policy or your own harness config changed.
+- This machine's own seats (HQ's harness, seats added for a project): `~/.config/slp-room/setup.json`,
+  written by `./install.sh --hq …` and `--seat …`; edit it and run `./install.sh` to remove one.
 - Plugin code: edit `slp-room/plugin/`, run `npm test` there (Node 22.15 or later), then `./install.sh`.
 - A prompt change: run `node evals/run.cjs --label <name>` in `slp-room/` before and after (real `claude -p` sessions, costs tokens; see `slp-room/evals/README.md`).
 - Logs: `paseo plugin logs slp-seat`, `~/.config/slp-room/mail/log.jsonl`,

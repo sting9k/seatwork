@@ -181,7 +181,7 @@ export default function contribute(server: PluginServerContext) {
     {
       name: "slp_register_project",
       description:
-        "Register a project that Paseo already has: writes its room marker, its mission and its own model table when given, and its registry line. Repeat it with `mission` or `models` to replace them. Refused for seats that do not keep the registry.",
+        "Register a project that Paseo already has: writes its room marker, its mission and its own model table when given, and its registry line. A seat the table names that the room does not have yet is set up first. Repeat it with `mission` or `models` to replace them. Refused for seats that do not keep the registry.",
       inputSchema: {
         type: "object",
         properties: {
@@ -444,7 +444,7 @@ export default function contribute(server: PluginServerContext) {
     const seat = parseSeat(request.config.provider);
     if (!seat) return request;
     if (!enabledSeats().some((s) => s.provider === seat.provider)) {
-      throw new Error(`slp-seat: ${seat.provider} is not enabled in paseo/seats.yml (enable it there and re-run install.sh)`);
+      throw new Error(`slp-seat: ${seat.provider} is not a seat the room has set up (\`./install.sh --seat ${seat.provider}\` in slp-room sets it up)`);
     }
 
     const registry = loadRegistry();

@@ -53,6 +53,17 @@ Lệnh cài thêm vào Paseo các "seat" (mỗi seat là một vai chạy trên 
 Codex, Pi hoặc OpenCode), bốn profile, plugin `slp-seat` và project `hq-seatwork`. Chạy
 lại bao nhiêu lần cũng được.
 
+Lần cài đầu, lệnh hỏi một câu: HQ chạy trên seat mặc định của room, hay trên
+agent CLI và model bạn tự chọn. Chọn mặc định thì chỉ có các seat trong
+`seats.yml` được cài. Muốn đổi về sau:
+
+```bash
+./install.sh --hq ask
+```
+
+Trả lời sẵn, không cần hỏi: `--hq <harness>/<model>` (thêm `--hq-thinking <mức>`
+nếu cần) hoặc `--hq default`.
+
 ### Đăng nhập Claude
 
 Seat Claude dùng chung phiên đăng nhập với lệnh `claude` trong terminal.
@@ -190,7 +201,9 @@ Mỗi project có thư mục `.slp/`:
 ### Bảng model riêng
 
 Lần đầu HQ ghi giúp bạn. Về sau bạn sửa tay mục `models` trong
-`.slp/room.json`. Chỉ ghi phần khác với bảng chung:
+`.slp/room.json`. Chỉ ghi phần khác với bảng chung. Vai nào cũng chạy được
+trên harness nào (`<harness>-<vai>/<model>`): seat nào room chưa có thì HQ
+dựng luôn lúc ghi bảng, còn sửa tay thì chạy `./install.sh --seat <harness>-<vai>`:
 
 ```json
 {
@@ -220,7 +233,8 @@ Sửa trong repo rồi chạy lại lệnh cài.
 
 | File | Quyết định | Chạy lại |
 |---|---|---|
-| `slp-room/paseo/seats.yml` | Harness nào (Claude, Codex, Pi, OpenCode) được bật cho từng vai; vai chạy trên harness nào là `models.json` | `./install.sh` |
+| `slp-room/paseo/seats.yml` | Các seat mà máy nào cài cũng có; vai chạy trên harness nào là `models.json` | `./install.sh` |
+| `~/.config/slp-room/setup.json` | Seat riêng của máy này: harness của HQ, seat dựng thêm cho project | `./install.sh` |
 | `slp-room/room/models.json` | Mỗi vai dùng model nào | `./install.sh --no-plugin` |
 | `slp-room/paseo/policy.json` | Ai gửi thư cho ai, ai tạo ai, thời gian chờ | `./install.sh` |
 | `slp-room/room/roles/`, `skills/` | Prompt và quy trình của từng vai | `./install.sh --no-plugin` |
@@ -245,6 +259,7 @@ Bảng Lens có `oracle` (một lens), `hard` (một lens cho câu hỏi khó), 
 ├── role-skills/         skill theo vai cho seat Claude
 ├── runtimes/            môi trường riêng của seat Codex, Pi, OpenCode
 ├── mail/                thư và nhật ký thư
+├── setup.json           lựa chọn của máy này: seat của HQ, seat dựng thêm
 ├── projects.json        các project đã đăng ký
 ├── registry-log.jsonl   các agent đã tạo
 └── gc.log               nhật ký dọn dẹp
@@ -273,7 +288,7 @@ con đang chạy. Agent đang chờ cấp quyền hoặc chờ trả lời thì 
 | `holds only hq seats` | Vai này phải mở trong project của nó |
 | `is not a registered SLP project` | Nhờ HQ setup project trước |
 | `lists for … only …` | Dùng model có trong bảng, hoặc sửa `.slp/room.json` |
-| `which the room has not enabled` | Sửa `.slp/room.json`, hoặc bật seat đó trong `seats.yml` |
+| `which the room has not enabled` | Sửa `.slp/room.json`, hoặc chạy `./install.sh --seat <seat>` để dựng seat đó |
 | `its runtime could not be built` | Sửa thứ thông báo nêu ra (thường là `~/.codex/config.toml`), rồi tạo lại agent |
 | Agent báo chưa đăng nhập | Chạy `claude auth login` |
 | Agent không biết quy trình mới | Mở agent mới |

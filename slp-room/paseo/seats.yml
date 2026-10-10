@@ -1,15 +1,18 @@
-# Which seats the room installs. Only these <harness>-<role> providers are written
-# into Paseo and only their runtimes are built; everything else does not exist.
+# The seats every install gets. Only these <harness>-<role> providers are written into
+# Paseo and only their runtimes are built.
 # Harnesses: claude, codex, pi, opencode. Roles: hq, supervisor, lead, peer, lens.
-# Any harness can hold any role, so every harness is enabled for every role here. Which
-# one a role actually runs on is room/models.json; a seat no role uses can be removed.
+# Any harness can hold any role, and a seat that is not listed here is set up on the
+# machine that asks for it, not in this file: install.sh asks which harness and model HQ
+# runs on (--hq), and HQ sets up the seats a project's own model table names when it
+# registers the project (by hand: ./install.sh --seat <harness>-<role>). Those choices
+# are kept in ~/.config/slp-room/setup.json.
 # Every provider named in room/models.json must be enabled here. Edit, then ./install.sh.
 seats:
-  hq: [claude, codex, pi, opencode]
-  supervisor: [claude, codex, pi, opencode]
-  lead: [claude, codex, pi, opencode]
-  peer: [claude, codex, pi, opencode]
-  lens: [claude, codex, pi, opencode]
+  hq: [claude]
+  supervisor: [claude]
+  lead: [claude]
+  peer: [claude, codex]
+  lens: [codex, claude]
 
 # true: each provider lists only the models room/models.json assigns to it (read from the
 # harness's live catalog at install time). false: the harness's full model list.

@@ -2,10 +2,10 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { paseoCli } from "./cli";
 import { hqDir } from "./hq";
-import { projectModels } from "./models";
+import { missingSeats, projectModels } from "./models";
 import { REGISTRY_FILE } from "./paths";
 import { loadRegistry, readLaw, realOrSelf } from "./registry";
-import { enabledSeats } from "./seats";
+import { enabledSeats, enableSeats } from "./seats";
 
 interface PaseoProject {
   projectId: string;
@@ -60,6 +60,8 @@ export async function describeProjects(): Promise<string> {
  * Registers a project Paseo already knows: the `.slp/room.json` marker, the
  * mission and the project's own model table when given, and its line in
  * projects.json. Repeating it updates what is given and changes nothing else.
+ * A table may put a role on a harness the room has no seat for yet: those
+ * seats are set up before the table is written.
  */
 export async function registerProject(args: { path: string; name?: string; mission?: string; models?: unknown }): Promise<string> {
   const wanted = realOrSelf(args.path.trim());
@@ -79,7 +81,10 @@ export async function registerProject(args: { path: string; name?: string; missi
   mkdirSync(slp, { recursive: true });
   const marker = join(slp, "room.json");
   const content = readMarker(project.path);
+  let added: string[] = [];
   if (args.models !== undefined) {
+    added = missingSeats(args.models, enabledSeats().map((s) => s.provider), "models");
+    await enableSeats(added);
     // checked before it is written: a table that names a seat the room does not have would refuse every seat
     projectModels(args.models, enabledSeats().map((s) => s.provider), "models");
     content.models = args.models;
@@ -95,5 +100,6 @@ export async function registerProject(args: { path: string; name?: string; missi
     existsSync(join(slp, "mission.md")) ? null : "mission (.slp/mission.md)",
     readLaw(project.path, name) ? null : `law (.slp/${name}-law.md, written by the project's Supervisor on its first task)`,
   ].filter(Boolean);
-  return `${known ? "already registered" : "registered"}: ${name} at ${project.path}. ${modelsLine(project.path)}. ${missing.length ? `Still missing: ${missing.join("; ")}.` : "Mission and law are in place."}`;
+  const seats = added.length ? ` Seats set up for this table: ${added.join(", ")}.` : "";
+  return `${known ? "already registered" : "registered"}: ${name} at ${project.path}. ${modelsLine(project.path)}.${seats} ${missing.length ? `Still missing: ${missing.join("; ")}.` : "Mission and law are in place."}`;
 }

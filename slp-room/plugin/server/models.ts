@@ -125,6 +125,23 @@ function allowed(m: Models): Record<string, string[]> {
   };
 }
 
+const providerOf = (entry: string): string => String(entry).split("/")[0];
+
+/** The room's table with `override` laid over it, checked for everything but whether its seats exist. */
+function laidOver(override: unknown, where: string): Models {
+  if (!isObject(override)) throw new Error(`${where}: "models" must be an object shaped like ${MODELS_FILE}`);
+  const merged = merge(loadModels(), override) as Models;
+  for (const [role, entries] of Object.entries(allowed(merged))) {
+    if (entries.length === 0) throw new Error(`${where}: "models" leaves the ${role} role without a model`);
+    for (const entry of entries) {
+      if (!String(entry).includes("/")) throw new Error(`${where}: "${entry}" must be <harness>-<role>/<model>`);
+      if (!providerOf(entry).endsWith(`-${role}`)) throw new Error(`${where}: "${entry}" is listed for ${role} but is not a ${role} seat`);
+    }
+  }
+  if (merged.lens.pair.length < 2 || new Set(merged.lens.pair).size < 2) throw new Error(`${where}: lens.pair must be two different models`);
+  return merged;
+}
+
 /**
  * The room's table with a project's own `models` laid over it. Throws, naming
  * the entry, when the result names a seat that is not enabled, puts a provider
@@ -132,21 +149,20 @@ function allowed(m: Models): Record<string, string[]> {
  * by hand, so the error has to say what to fix.
  */
 export function projectModels(override: unknown, enabledProviders: string[], where: string): Models {
-  const base = loadModels();
-  if (override === undefined) return base;
-  if (!isObject(override)) throw new Error(`${where}: "models" must be an object shaped like ${MODELS_FILE}`);
-  const merged = merge(base, override) as Models;
-  for (const [role, entries] of Object.entries(allowed(merged))) {
-    if (entries.length === 0) throw new Error(`${where}: "models" leaves the ${role} role without a model`);
-    for (const entry of entries) {
-      const provider = String(entry).split("/")[0];
-      if (!String(entry).includes("/")) throw new Error(`${where}: "${entry}" must be <harness>-<role>/<model>`);
-      if (!provider.endsWith(`-${role}`)) throw new Error(`${where}: "${entry}" is listed for ${role} but is not a ${role} seat`);
-      if (!enabledProviders.includes(provider)) throw new Error(`${where}: "${entry}" names ${provider}, which the room has not enabled (enabled: ${enabledProviders.join(", ")})`);
-    }
+  if (override === undefined) return loadModels();
+  const merged = laidOver(override, where);
+  for (const entry of Object.values(allowed(merged)).flat()) {
+    const provider = providerOf(entry);
+    if (!enabledProviders.includes(provider)) throw new Error(`${where}: "${entry}" names ${provider}, which the room has not enabled (enabled: ${enabledProviders.join(", ")}); \`./install.sh --seat ${provider}\` sets it up`);
   }
-  if (merged.lens.pair.length < 2 || new Set(merged.lens.pair).size < 2) throw new Error(`${where}: lens.pair must be two different models`);
   return merged;
+}
+
+/** The seats a project's own `models` names that the room does not have yet; the table is checked as projectModels checks it. */
+export function missingSeats(override: unknown, enabledProviders: string[], where: string): string[] {
+  if (override === undefined) return [];
+  const named = Object.values(allowed(laidOver(override, where))).flat().map(providerOf);
+  return [...new Set(named)].filter((provider) => !enabledProviders.includes(provider));
 }
 
 /** Whether a seat about to be created runs on a model its project's table lists for its role. */

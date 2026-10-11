@@ -1,5 +1,5 @@
 {
-  "$comment": "Single source of truth for what each seat may touch. tools/gen-snippet.py turns the paseo part into config.snippet.json; install.sh copies the whole file to ~/.config/slp-room/policy.json where the plugin reads the harness part when it builds runtimes.",
+  "$comment": "Single source of truth for what each seat may touch. tools/gen-snippet.py turns the paseo part into ~/.config/slp-room/config.snippet.json; install.sh copies the whole file to ~/.config/slp-room/policy.json where the plugin reads the harness part when it builds runtimes.",
   "paseoTools": {
     "all": [
       "speak",
@@ -193,6 +193,16 @@
         "NotebookEdit"
       ]
     },
+    "launch": {
+      "env": {
+        "CLAUDE_CODE_DISABLE_AUTO_MEMORY": "1"
+      },
+      "extraArgs": {
+        "setting-sources": "project,local",
+        "strict-mcp-config": null
+      }
+    },
+    "$comment_launch": "How a seat starts, per harness. Claude seats run on the user's ~/.claude: these flags make them take the sign-in only (no user settings, no personal MCP server) and the env keeps auto-memory out of it. The other harnesses start on a home of their own: {runtime} is ~/.config/slp-room/runtimes/<harness>/<role>. tools/gen-snippet.py writes each launch block into the harness's providers (env, and extraArgs under options), so a seat starts this way when the plugin is not running; the plugin gives every session it opens the same env.",
     "shareFiles": [
       "CLAUDE.md"
     ],
@@ -216,6 +226,11 @@
     "$comment_deniedSkills": "Claude Code bundled skills that overlap the room (scheduling, orchestration, config editing, sub-agent reviews). Applied as Skill(skill:<name>) deny rules in the provider's disallowedTools."
   },
   "codex": {
+    "launch": {
+      "env": {
+        "CODEX_HOME": "{runtime}"
+      }
+    },
     "runtime": {
       "shareFiles": [
         "auth.json",
@@ -250,6 +265,11 @@
     }
   },
   "pi": {
+    "launch": {
+      "env": {
+        "PI_CODING_AGENT_DIR": "{runtime}"
+      }
+    },
     "runtime": {
       "$comment": "Pi only receives Paseo tools when the pi-mcp-adapter extension is installed (pi install npm:pi-mcp-adapter). keepPackages lists substrings of user packages to carry into the seat; everything else is dropped.",
       "shareFiles": [
@@ -268,6 +288,12 @@
     }
   },
   "opencode": {
+    "launch": {
+      "env": {
+        "OPENCODE_CONFIG_DIR": "{runtime}",
+        "OPENCODE_CONFIG": "{runtime}/opencode.json"
+      }
+    },
     "runtime": {
       "shareEntries": [],
       "config": {

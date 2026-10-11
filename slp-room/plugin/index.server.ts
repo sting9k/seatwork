@@ -12,7 +12,7 @@ import { describeProjects, registerProject } from "./server/onboard";
 import { modelAllowed, projectModels, type Models } from "./server/models";
 import { loadPolicy } from "./server/policy";
 import { findProject, findRoomMarker, loadRegistry, projectBlock } from "./server/registry";
-import { CLAUDE_ARGS, claudeRoleDir, describeIsolation, ensureRuntime, envFor, sharedClaudeFiles } from "./server/runtimes";
+import { claudeRoleDir, describeIsolation, ensureRuntime, envFor, sharedClaudeFiles } from "./server/runtimes";
 import { enabledSeats, maySpawn, parseSeat, rolePrompt, specFromTitle, type Role } from "./server/seats";
 import { CLOSES_WORK, signalOf, subjectSignal } from "./server/signals";
 import { roomStats } from "./server/stats";
@@ -26,14 +26,15 @@ import { Watcher, type SeatView, type TimelineView } from "./server/watch/watche
 
 type CreateRequest = PluginBeforeRequests["agent.create"];
 
-const VERSION = "0.10.1";
+const VERSION = "0.11.0";
 const MAIL_DIR = join(ROOM_HOME, "mail");
 const MCP_TOKEN_FILE = join(MAIL_DIR, "token");
 const NONCES_FILE = join(MAIL_DIR, "nonces.json");
 
 /**
  * slp-seat: the room's hooks into Paseo. A seat gets its prompt, project block and mail server at
- * agent.create; turn ends and permission requests become mail; archives and GC clean up after it.
+ * agent.create and its own environment each time its session opens; turn ends and permission
+ * requests become mail; archives and GC clean up after it.
  */
 export default function contribute(server: PluginServerContext) {
   // the room home holds mail bodies and copies of the user's harness config: its owner only
@@ -338,7 +339,11 @@ export default function contribute(server: PluginServerContext) {
       nonces[nonce] = request.agentId;
       saveNonces(nonces);
     }
-    return request;
+    const seat = parseSeat(request.provider);
+    if (!seat) return request;
+    // Paseo saves no env with an agent: a seat reopened after a restart would start on the user's own home
+    ensureRuntime(seat);
+    return { ...request, env: { ...request.env, ...envFor(seat, policy) } };
   });
 
   server.on("agent.created", async (event, { paseo }) => {
@@ -403,6 +408,14 @@ export default function contribute(server: PluginServerContext) {
   server.on("agent.archived", async (event, { paseo }) => {
     watcher?.forget(event.agent.id);
     await getGc(paseo).onArchived(event.agent.id);
+  });
+
+  // a runtime that closes (daemon stopping, seat deleted) takes its turn with it, and Paseo sends that turn no end:
+  // what the room kept for the turn goes; held mail stays, and the sweep posts a report the seat had mailed
+  server.on("agent.closed", (event) => {
+    watcher?.cut(event.agent.id);
+    mailedUp.delete(event.agent.id);
+    engine?.takeWake(event.agent.id);
   });
 
   server.on("agent.turn_ended", async (event, { paseo }) => {
@@ -567,18 +580,15 @@ export default function contribute(server: PluginServerContext) {
     }
 
     // without its own home a seat would start on the user's, with the user's MCP servers and plugins
-    let dir: string | null;
     try {
-      dir = ensureRuntime(seat);
+      ensureRuntime(seat);
     } catch (error) {
       throw new Error(`slp-seat: ${seat.provider} refused: its runtime could not be built (${error instanceof Error ? error.message : String(error)}). Fix that and create the seat again.`);
     }
 
-    const env: Record<string, string> = { ...(request.env ?? {}), ...envFor(seat.harness, dir) };
-
-    // the room's MCP server; agent.session_open ties this nonce to the agent id
+    // the room's MCP server; agent.session_open ties this nonce to the agent id and adds the seat's own environment
     const nonce = randomBytes(9).toString("base64url");
-    env.SLP_NONCE = nonce;
+    const env: Record<string, string> = { ...(request.env ?? {}), SLP_NONCE: nonce };
     const mcpServers = {
       ...(request.config.mcpServers ?? {}),
       slp: { type: "http" as const, url: mcp.urlFor(port, nonce), alwaysLoad: true },
@@ -598,7 +608,7 @@ export default function contribute(server: PluginServerContext) {
     if (seat.harness === "claude") {
       const current = (providerOptions ?? {}) as { additionalDirectories?: unknown; extraArgs?: Record<string, string | null> };
       const dirs = Array.isArray(current.additionalDirectories) ? current.additionalDirectories.filter((d): d is string => typeof d === "string") : [];
-      providerOptions = { ...current, additionalDirectories: [...new Set([...dirs, claudeRoleDir(seat.role)])], extraArgs: { ...(current.extraArgs ?? {}), ...CLAUDE_ARGS } };
+      providerOptions = { ...current, additionalDirectories: [...new Set([...dirs, claudeRoleDir(seat.role)])], extraArgs: { ...(current.extraArgs ?? {}), ...policy.launch.claude.extraArgs } };
     }
     return { ...request, env, config: { ...request.config, systemPrompt, mcpServers, ...(providerOptions ? { providerOptions } : {}) } };
   }

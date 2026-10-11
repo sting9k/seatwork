@@ -12,11 +12,14 @@ import type { MailPolicy, RoomPolicy } from "./policy";
  * the envelope (priority, sender label, why now, how to handle), checks the
  * route, and decides when the recipient sees it:
  *
- *   recipient idle              → deliver now, one digest with everything held
+ *   recipient at rest           → deliver now, one digest with everything held; at rest is
+ *                                 idle, closed (no runtime, as after a daemon restart:
+ *                                 Paseo reopens it) or stopped by a failed turn
  *   recipient running           → hold until its turn ends (policy mail.midTurn is
  *                                 "hold"; "steer" would hand it to Paseo mid-turn,
  *                                 which cancels the running tool on Claude and Pi)
- *   recipient waiting/unknown   → hold, retry on the next trigger or sweep
+ *   recipient waiting/unknown   → hold, retry on the next trigger or sweep (a pending
+ *                                 permission, a session still opening, a silent daemon)
  *   recipient archived or gone  → drop it, bounce UNDELIVERABLE to the sender
  *
  * Two kinds of mail never start a turn early. Quiet mail (an acknowledgement, a
@@ -482,20 +485,22 @@ export class MailEngine {
     }
   }
 
+  /** `idle` is any seat a message starts a turn in: at rest, without a runtime (Paseo reopens it), or after a failed turn. */
   private async status(agentId: string): Promise<"idle" | "running" | "permission" | "unknown" | "gone"> {
     const handle = this.paseo.agents.ref(agentId);
     try {
       await handle.refresh();
-    } catch (error) {
-      // only the daemon saying so proves a seat is gone; a lost connection or a timeout proves nothing
-      return /^Agent not found\b/.test(error instanceof Error ? error.message : String(error)) ? "gone" : "unknown";
+    } catch {
+      // a lost connection or a timeout proves nothing about the seat
+      return "unknown";
     }
     const snapshot = handle.current() as { status?: string; archivedAt?: string | null; pendingPermissions?: unknown[] } | null;
-    if (!snapshot) return "unknown";
-    if (snapshot.archivedAt) return "gone";
+    // the daemon answered: it has no such agent (deleted), or the agent is archived
+    if (!snapshot || snapshot.archivedAt) return "gone";
     if (waitsOnSomeone(snapshot)) return "permission";
     if (snapshot.status === "running") return "running";
-    if (snapshot.status === "idle") return "idle";
+    if (snapshot.status === "idle" || snapshot.status === "closed" || snapshot.status === "error") return "idle";
+    // initializing: its session is still opening
     return "unknown";
   }
 }

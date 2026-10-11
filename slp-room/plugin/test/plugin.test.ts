@@ -42,13 +42,39 @@ test("the plugin makes the room home private to its owner", () => {
   assert.equal(statSync(ROOM_HOME).mode & 0o077, 0);
 });
 
+/** The env Paseo launches a session with after the room's hook: on a reopening Paseo itself hands in none. */
+async function opened(provider: string, reason: string, env: Record<string, string> = {}): Promise<Record<string, string>> {
+  const request = { agentId: `opened-${provider}`, workspaceId: null, provider, cwd: PROJECT, reason, purpose: "interactive", env };
+  return ((await call("before agent.session_open", { request })) as { env: Record<string, string> }).env;
+}
+
 test("a seat whose runtime cannot be built is refused, and created on its own home once it can", async () => {
   await assert.rejects(async () => call("before agent.create", createRequest("pi-peer")), /pi-peer/);
+  await assert.rejects(async () => opened("pi-peer", "resume"), "a seat without its home was reopened, on the user's");
 
   rmSync(join(runtimes, "pi"));
   const created = (await call("before agent.create", createRequest("pi-peer"))) as { env: Record<string, string> };
-  assert.equal(created.env.PI_CODING_AGENT_DIR, join(runtimes, "pi", "peer"));
-  assert.ok(existsSync(join(created.env.PI_CODING_AGENT_DIR, "settings.json")));
+  const env = await opened("pi-peer", "create", created.env);
+  assert.equal(env.PI_CODING_AGENT_DIR, join(runtimes, "pi", "peer"));
+  assert.ok(existsSync(join(env.PI_CODING_AGENT_DIR, "settings.json")));
+});
+
+test("a Claude seat is created with the policy's launch flags and its role's skills, beside what its creator asked for", async () => {
+  const asked = { extraArgs: { debug: null }, additionalDirectories: ["/elsewhere"] };
+  const request = { request: { config: { provider: "claude-peer", cwd: PROJECT, title: "[Peer] task", providerOptions: asked }, env: {} } };
+  const created = (await call("before agent.create", request)) as { config: { providerOptions: typeof asked } };
+
+  assert.deepEqual(created.config.providerOptions.extraArgs, { debug: null, "setting-sources": "project,local", "strict-mcp-config": null });
+  assert.deepEqual(created.config.providerOptions.additionalDirectories, ["/elsewhere", join(ROOM_HOME, "role-skills", "claude", "peer")]);
+});
+
+test("a seat's session opens with the seat's own environment every time, not only when the seat is created", async () => {
+  for (const reason of ["resume", "refresh", "import"]) {
+    assert.deepEqual(await opened("pi-peer", reason), { PI_CODING_AGENT_DIR: join(runtimes, "pi", "peer") }, reason);
+    assert.deepEqual(await opened("claude-peer", reason), { CLAUDE_CODE_DISABLE_AUTO_MEMORY: "1" }, reason);
+  }
+  // an agent that is no seat of the room keeps what it came with
+  assert.deepEqual(await opened("claude", "resume", { MINE: "1" }), { MINE: "1" });
 });
 
 // the daemon's agents; the plugin keeps the first Paseo client a hook hands it
@@ -102,7 +128,7 @@ async function seat(id: string, provider: string, parentAgentId: string | null, 
     env: Record<string, string>;
     config: { systemPrompt: string; mcpServers: { slp: { url: string } } };
   };
-  await call("before agent.session_open", { request: { env: made.env, reason: "create", agentId: id } });
+  await call("before agent.session_open", { request: { env: made.env, reason: "create", agentId: id, provider } });
   const inbox: string[] = [];
   agents[id] = { refresh: async () => {}, current: () => ({ status: "idle" }), send: async (text: string) => void inbox.push(text) };
   const agent = { id, parentAgentId, provider, cwd: PROJECT, title, workspaceId: null };
@@ -159,6 +185,26 @@ test("a seat that mailed its signal to its Owner is not reported a second time w
 
   await turnEnds(peer, "QUESTION\nseconds or minutes?\nRECAP: asked the Owner → waiting");
   assert.equal(lead.inbox.length, 1);
+});
+
+test("what the room kept for a turn does not outlive the runtime that closed in it", async () => {
+  const supervisor = await seat("supervisor-closed", "claude-supervisor", null, "[Supervisor] project");
+  const lead = await seat("lead-closed", "claude-lead", supervisor.agent.id, "[Lead] stream");
+  const peer = await seat("peer-closed", "claude-peer", lead.agent.id, "[Peer] task");
+  const closes = (who: TestSeat) => call("on agent.closed", { agent: who.agent }, context);
+
+  // the Peer asked in mid-turn, then its runtime closed: Paseo sends that turn no end
+  await peer.mail({ to: "owner", subject: "QUESTION: which unit", body: "QUESTION\nseconds or minutes?", needs: "decision" });
+  await closes(peer);
+  await turnEnds(peer, "QUESTION\nand which rounding?\nRECAP: asked the Owner → waiting");
+  assert.equal(lead.inbox.length, 2, "a question from the reopened Peer was taken for the one it had mailed before");
+
+  // a turn that mail asking nothing had started closes the same way; the Lead's next turn is one somebody else started
+  await turnEnds(lead, "DONE\noutcome accepted on the integrated state\nRECAP: closed the workstream → accepted");
+  await supervisor.mail({ to: lead.agent.id, subject: "ACCEPT: closed at abc123", body: "ACCEPT. Nothing is needed back.", needs: "nothing", priority: "fyi" });
+  await closes(lead);
+  await turnEnds(lead, "DONE\nthe Owner asked for the sha: abc123\nRECAP: answered → abc123");
+  assert.equal(supervisor.inbox.length, 2, "a DONE in a turn no mail started was held back as an echo");
 });
 
 /** What the daemon would hand the watcher for this seat's turn. */

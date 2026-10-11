@@ -200,6 +200,26 @@ test("a Peer created with a brief that lacks a line: its Lead is told when its f
   assert.equal(scans.read().flatMap((record) => record.findings).filter((finding) => finding.rule === "incomplete-brief").length, 1);
 });
 
+test("a turn whose runtime closed is not read again; reopened, the seat is watched as before and its brief is not told twice", async () => {
+  const { watcher, mail, scans, turn } = room();
+  turn([prompt(CUT)]);
+  watcher.turnStarted(PEER, "turn-1");
+  await watcher.tick();
+  assert.equal(mail.length, 1);
+
+  watcher.cut(PEER.agentId);
+  turn([prompt(CUT), edit(src("src/other.js"))]);
+  await watcher.tick();
+  assert.equal(mail.length, 1, "a turn that gets no end was read again");
+
+  turn([prompt(CUT), edit(src("src/other.js")), edit(src("src/third.js"), "turn-2")]);
+  watcher.turnStarted(PEER, "turn-2");
+  await watcher.tick();
+  assert.equal(mail.length, 2);
+  assert.match(mail[1].subject, /changed src\/third\.js/);
+  assert.equal(scans.read().flatMap((record) => record.findings).filter((finding) => finding.rule === "incomplete-brief").length, 1);
+});
+
 test("a brief's gap and the turn's own finding, seen in one look, go up in one mail", async () => {
   const { watcher, mail, turn } = room();
   watcher.turnStarted(PEER, "turn-1"); // the prompt is not in the timeline yet

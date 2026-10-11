@@ -11,6 +11,12 @@ export interface ClaudeRuntimePolicy {
   shareFiles: string[];
 }
 
+/** How a harness's seats start. In an env value `{runtime}` is the seat's own home; `extraArgs` are launch flags (Claude). */
+export interface LaunchPolicy {
+  env: Record<string, string>;
+  extraArgs?: Record<string, string | null>;
+}
+
 export interface CodexRuntimePolicy {
   shareFiles: string[];
   shareSkills: string[];
@@ -102,6 +108,7 @@ export interface RuntimePolicy {
   mail: MailPolicy;
   gc: GcPolicy;
   watcher: WatcherPolicy;
+  launch: Record<"claude" | "codex" | "pi" | "opencode", LaunchPolicy>;
   claude: ClaudeRuntimePolicy;
   codex: CodexRuntimePolicy;
   pi: PiRuntimePolicy;
@@ -129,6 +136,12 @@ export function loadPolicy(): RuntimePolicy {
     mail: need(parsed.mail, "mail"),
     gc: need(parsed.gc, "gc"),
     watcher: need(parsed.watcher, "watcher"),
+    launch: {
+      claude: need(claude.launch, "claude.launch"),
+      codex: need(parsed.codex?.launch, "codex.launch"),
+      pi: need(parsed.pi?.launch, "pi.launch"),
+      opencode: need(parsed.opencode?.launch, "opencode.launch"),
+    },
     claude: { shareFiles: need(claude.shareFiles, "claude.shareFiles"), deniedSkills: claude.deniedSkills ?? [] },
     codex: need(parsed.codex?.runtime, "codex.runtime"),
     pi: need(parsed.pi?.runtime, "pi.runtime"),

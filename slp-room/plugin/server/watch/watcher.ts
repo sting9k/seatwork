@@ -152,6 +152,12 @@ export class Watcher {
     this.seats.delete(agentId);
   }
 
+  /** The seat's runtime closed in mid-turn: that turn gets no end and is not read again. What the seat was told stays told. */
+  cut(agentId: string): void {
+    const watched = this.seats.get(agentId);
+    if (watched) watched.turn = watched.ending = null;
+  }
+
   private queue(watched: Watched, turn: Turn, moment: Moment): Promise<void> {
     watched.busy = watched.busy.then(() => this.scan(watched, turn, moment)).catch((error) => this.deps.log(`watch: scan of ${watched.seat.agentId} failed: ${error instanceof Error ? error.message : String(error)}`));
     return watched.busy;

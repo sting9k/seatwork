@@ -11,14 +11,10 @@ interface Handle {
 
 const idle = { refresh: async () => {}, current: () => ({ status: "idle" }) };
 
-/** An engine over these agents; any other id is one the daemon no longer has. */
+/** An engine over these agents; any other id is one the daemon no longer has: it answers, with no agent. */
 function engineFor(handles: Record<string, Partial<Handle>>): MailEngine {
-  const missing = (id: string) => ({
-    refresh: async () => {
-      throw new Error(`Agent not found: ${id}`);
-    },
-  });
-  const paseo = { agents: { ref: (id: string) => handles[id] ?? missing(id) } };
+  const missing = { refresh: async () => null, current: () => null };
+  const paseo = { agents: { ref: (id: string) => handles[id] ?? missing } };
   return new MailEngine(paseo as never, MAIL_POLICY, { routes: {}, spawn: {} } as never, () => {});
 }
 
@@ -103,6 +99,24 @@ test("a failed status read holds the mail until the daemon answers again", async
   await engine.sweep();
   assert.equal(sent.length, 1);
   assert.ok(sent[0].includes(posted.id));
+});
+
+test("a seat that a message can start takes its mail, whatever left it at rest; one still opening does not", async () => {
+  const cases = [
+    ["closed", true], // no runtime: every seat after a daemon restart
+    ["error", true], // its last turn failed
+    ["initializing", false],
+  ] as const;
+  for (const [status, taken] of cases) {
+    const sent: string[] = [];
+    const id = `seat-${status}`;
+    const engine = engineFor({ [id]: { refresh: async () => {}, current: () => ({ status }), send: async (text) => void sent.push(text) } });
+
+    const posted = await engine.post(mail(id, "QUESTION"));
+
+    assert.equal(sent.length, taken ? 1 : 0, status);
+    assert.deepEqual(engine.held(id).map((m) => m.id), taken ? [] : [posted.id], status);
+  }
 });
 
 test("mail to a seat the daemon no longer has is dropped and its sender told", async () => {

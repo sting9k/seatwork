@@ -192,27 +192,16 @@ export function ensureRuntime(seat: Pick<Seat, "harness" | "role">, policy: Runt
   return dir;
 }
 
-/** Flags of every Claude seat: from ~/.claude it takes the sign-in only, no user settings and no personal MCP server. */
-export const CLAUDE_ARGS: Record<string, string | null> = { "setting-sources": "project,local", "strict-mcp-config": null };
-
 /** The files of ~/.claude the policy shares (CLAUDE.md), as text for the seat's prompt. */
 export function sharedClaudeFiles(policy: RuntimePolicy = loadPolicy()): string | null {
   const texts = policy.claude.shareFiles.map((name) => join(CLAUDE_HOME, name)).filter((file) => existsSync(file)).map((file) => readFileSync(file, "utf8").trim());
   return texts.filter(Boolean).join("\n\n") || null;
 }
 
-/** The environment a seat starts with: its isolated home, or for Claude the switch that keeps it from writing auto-memory into ~/.claude. */
-export function envFor(harness: Harness, dir: string | null): Record<string, string> {
-  if (harness === "claude") return { CLAUDE_CODE_DISABLE_AUTO_MEMORY: "1" };
-  if (!dir) return {};
-  switch (harness) {
-    case "codex":
-      return { CODEX_HOME: dir };
-    case "pi":
-      return { PI_CODING_AGENT_DIR: dir };
-    case "opencode":
-      return { OPENCODE_CONFIG_DIR: dir, OPENCODE_CONFIG: join(dir, "opencode.json") };
-  }
+/** The environment every session of a seat opens with (policy `launch.env`): its own home, or for Claude the switch that keeps auto-memory out of ~/.claude. */
+export function envFor(seat: Pick<Seat, "harness" | "role">, policy: RuntimePolicy = loadPolicy()): Record<string, string> {
+  const home = seat.harness === "claude" ? "" : runtimeDir(seat);
+  return Object.fromEntries(Object.entries(policy.launch[seat.harness].env).map(([name, value]) => [name, value.replaceAll("{runtime}", home)]));
 }
 
 

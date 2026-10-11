@@ -39,7 +39,7 @@ Three things to remember:
 
 ## 2. Install
 
-You need Paseo 0.10.3 or later, `jq`, `python3` with PyYAML, Claude Code and Codex
+You need Paseo 0.11.2 or later, `jq`, `python3` with PyYAML, Claude Code and Codex
 (plus Pi or OpenCode if you put a role on one of them).
 
 ```bash
@@ -79,7 +79,9 @@ claude auth login
 ```
 
 Seatwork uses no token. A seat does not carry your personal skills, plugins,
-hooks or MCP servers either; it has only its role's skills.
+hooks or MCP servers either; it has only its role's skills. The switches
+that keep a seat off your personal setup are part of its provider in Paseo's
+config, so they hold even while the plugin is not running.
 
 ## 3. Add a project
 
@@ -172,6 +174,11 @@ recipient has finished its current turn. A finished result (`CANDIDATE`,
 `REVIEW`, `DONE`) goes up once, when its sender's own turn has ended, so
 nobody acts on a seat that is still working. A mail is delivered whole,
 whatever its length.
+
+A seat does not have to be open to get mail. After the daemon restarts,
+every agent is closed until something opens it, and mail opens it. A seat
+whose last turn failed takes mail the same way. Mail to an archived or
+deleted seat comes back to its sender as `UNDELIVERABLE`.
 
 Some mail wakes nobody and is read with the next mail: an acknowledgement,
 a `DONE` that only repeats itself, a Lead's `STATUS` after its first report,
@@ -374,6 +381,7 @@ npm run watch:replay -- --ask ../evals/results/<label>
 | `lists for … only …` | Use a model from the table, or edit `.slp/room.json` |
 | `which the room has not enabled` | Fix `.slp/room.json`, or run `./install.sh --seat <seat>` to set that seat up |
 | `its runtime could not be built` | Fix what the message names (often `~/.codex/config.toml`), then create the agent again |
+| `is too old: the room needs 0.11.2 or later` | Update Paseo, run `paseo daemon restart`, then `./install.sh` again |
 | An agent says it is not signed in | Run `claude auth login` |
 | An agent does not know a new procedure | Open a new agent |
 

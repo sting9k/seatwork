@@ -38,7 +38,7 @@ Ba điều cần nhớ:
 
 ## 2. Cài đặt
 
-Cần có Paseo 0.10.3 trở lên, `jq`, `python3` kèm PyYAML, Claude Code và Codex
+Cần có Paseo 0.11.2 trở lên, `jq`, `python3` kèm PyYAML, Claude Code và Codex
 (thêm Pi hoặc OpenCode nếu bạn cho vai nào chạy trên đó).
 
 ```bash
@@ -78,7 +78,9 @@ claude auth login
 ```
 
 Seatwork không dùng token. Seat cũng không mang theo skill, plugin, hook hay
-MCP server cá nhân của bạn; nó chỉ có skill của vai mình.
+MCP server cá nhân của bạn; nó chỉ có skill của vai mình. Các công tắc tách
+seat khỏi cấu hình cá nhân của bạn nằm ngay trong provider của seat ở cấu
+hình Paseo, nên chúng vẫn có hiệu lực cả khi plugin không chạy.
 
 ## 3. Thêm project
 
@@ -169,6 +171,11 @@ Agent gửi thư cho nhau, không ngắt lời nhau. Thư chỉ tới khi ngư�
 xong lượt hiện tại. Kết quả đã xong (`CANDIDATE`, `REVIEW`, `DONE`) đi lên
 đúng một lần, khi lượt của chính người gửi kết thúc, để không ai hành động
 trên một seat còn đang làm. Thư dài bao nhiêu cũng tới nơi nguyên vẹn.
+
+Seat không cần đang mở mới nhận được thư. Sau khi daemon khởi động lại, mọi
+agent đều đóng cho tới khi có thứ gì mở nó, và thư sẽ mở nó. Seat vừa có
+lượt chạy bị lỗi cũng nhận thư như vậy. Thư gửi cho seat đã lưu trữ hoặc đã
+bị xoá sẽ quay về người gửi với tiêu đề `UNDELIVERABLE`.
 
 Có những thư không đánh thức ai, chỉ được đọc cùng thư kế tiếp: thư xác
 nhận, `DONE` chỉ lặp lại chính nó, `STATUS` của Lead sau báo cáo đầu tiên,
@@ -370,6 +377,7 @@ npm run watch:replay -- --ask ../evals/results/<label>
 | `lists for … only …` | Dùng model có trong bảng, hoặc sửa `.slp/room.json` |
 | `which the room has not enabled` | Sửa `.slp/room.json`, hoặc chạy `./install.sh --seat <seat>` để dựng seat đó |
 | `its runtime could not be built` | Sửa thứ thông báo nêu ra (thường là `~/.codex/config.toml`), rồi tạo lại agent |
+| `is too old: the room needs 0.11.2 or later` | Cập nhật Paseo, chạy `paseo daemon restart`, rồi chạy lại `./install.sh` |
 | Agent báo chưa đăng nhập | Chạy `claude auth login` |
 | Agent không biết quy trình mới | Mở agent mới |
 

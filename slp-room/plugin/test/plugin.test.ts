@@ -93,6 +93,8 @@ interface TestSeat {
   inbox: string[];
   prompt: string;
   mail(args: Record<string, unknown>): Promise<string>;
+  /** What slp_inbox hands this seat. */
+  held(): Promise<string>;
 }
 
 async function seat(id: string, provider: string, parentAgentId: string | null, title: string): Promise<TestSeat> {
@@ -105,17 +107,17 @@ async function seat(id: string, provider: string, parentAgentId: string | null, 
   agents[id] = { refresh: async () => {}, current: () => ({ status: "idle" }), send: async (text: string) => void inbox.push(text) };
   const agent = { id, parentAgentId, provider, cwd: PROJECT, title, workspaceId: null };
   await call("on agent.created", { agent }, context);
-  const mail = async (args: Record<string, unknown>) => {
+  const tool = async (name: string, args: Record<string, unknown>) => {
     const response = await fetch(made.config.mcpServers.slp.url, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: "slp_mail", arguments: args } }),
+      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name, arguments: args } }),
     });
     const { result } = (await response.json()) as { result: { content: { text: string }[]; isError: boolean } };
     if (result.isError) throw new Error(result.content[0].text);
     return result.content[0].text;
   };
-  return { agent, inbox, prompt: made.config.systemPrompt, mail };
+  return { agent, inbox, prompt: made.config.systemPrompt, mail: (args) => tool("slp_mail", args), held: () => tool("slp_inbox", {}) };
 }
 
 function turnEnds(who: TestSeat, finalMessage: string, outcome: object = { kind: "completed" }) {
@@ -235,6 +237,57 @@ test("a Peer's ACK does not start its Lead's turn; the Lead reads it with its ne
   assert.equal(lead.inbox.length, 2);
   assert.match(lead.inbox[1], /DIGEST — 2 messages/);
   assert.match(lead.inbox[1], /re: ACK/);
+});
+
+test("a Lead's first STATUS starts its Supervisor's turn; a later one waits, and a report that asks something takes its place", async () => {
+  const supervisor = await seat("supervisor-status", "claude-supervisor", null, "[Supervisor] project");
+  const lead = await seat("lead-status", "claude-lead", supervisor.agent.id, "[Lead] stream");
+
+  await turnEnds(lead, "STATUS\nthe plan is written and one Peer runs\nRECAP: planned → Peer launched");
+  assert.equal(supervisor.inbox.length, 1, "the first report carries the plan: the Supervisor reads it at once");
+
+  await turnEnds(lead, "STATUS\nthe first lens reported; waiting for the second\nRECAP: read one lens → waiting");
+  await turnEnds(lead, "STATUS\nboth lenses reported; the Peer repairs\nRECAP: rejected → Peer repairing");
+  assert.equal(supervisor.inbox.length, 1, "a progress report started the Supervisor's turn");
+
+  await turnEnds(lead, "DECISION_NEEDED\ncallers may run at the same time; the brief does not say\nRECAP: found a gap → decision needed");
+  assert.equal(supervisor.inbox.length, 2);
+  assert.match(supervisor.inbox[1], /re: DECISION_NEEDED from lead/);
+  assert.doesNotMatch(supervisor.inbox[1], /lens reported|lenses reported/, "a progress report older than the report beside it was delivered");
+});
+
+test("of a Lead's waiting STATUS reports the inbox hands out the newest only", async () => {
+  const supervisor = await seat("supervisor-inbox", "claude-supervisor", null, "[Supervisor] project");
+  const lead = await seat("lead-inbox", "claude-lead", supervisor.agent.id, "[Lead] stream");
+
+  await turnEnds(lead, "STATUS\nthe plan is written\nRECAP: planned → Peer launched");
+  await turnEnds(lead, "STATUS\nthe first lens reported\nRECAP: read one lens → waiting");
+  await turnEnds(lead, "STATUS\nboth lenses reported\nRECAP: rejected → Peer repairing");
+
+  const held = await supervisor.held();
+  assert.match(held, /both lenses reported/);
+  assert.doesNotMatch(held, /the first lens reported/);
+  assert.equal(await supervisor.held(), "inbox empty");
+});
+
+test("a HOLD that asks nothing of a Peer whose candidate is under review waits for the verdict; one that answers a challenge reaches the Peer at once", async () => {
+  const lead = await seat("lead-hold", "claude-lead", null, "[Lead] stream");
+  const waiting = await seat("peer-hold", "claude-peer", lead.agent.id, "[Peer] task");
+  const stopped = await seat("peer-stopped", "claude-peer", lead.agent.id, "[Peer] other task");
+
+  await turnEnds(waiting, "CANDIDATE\nsha abc123\nRECAP: added the unit → abc123");
+  await lead.mail({ reply_to: mailId(lead.inbox[0]), subject: "HOLD abc123: inspected, with two lenses", body: "abc123 received; the tree stays frozen. Nothing to do now.", needs: "nothing", priority: "fyi" });
+  assert.deepEqual(waiting.inbox, [], "a receipt started a turn of a Peer that has nothing to do");
+
+  await lead.mail({ to: waiting.agent.id, subject: "REJECT abc123: one repair", body: "REJECT abc123: the unit is not printed back.", needs: "reply" });
+  assert.equal(waiting.inbox.length, 1);
+  assert.match(waiting.inbox[0], /DIGEST — 2 messages/);
+  assert.match(waiting.inbox[0], /re: HOLD abc123/);
+
+  await turnEnds(stopped, "REOPEN_REQUEST\nthe contract line is false on this input\nRECAP: ran the input → asked to reopen");
+  await lead.mail({ reply_to: mailId(lead.inbox[1]), subject: "HOLD: candidate stands", body: "HOLD: candidate stands. The line holds for the inputs the outcome names.", needs: "nothing" });
+  assert.equal(stopped.inbox.length, 1, "a Peer stopped on its challenge did not get the answer");
+  assert.match(stopped.inbox[0], /BLOCKING from owner re: HOLD: candidate stands/);
 });
 
 test("a Supervisor's prompt names no path of the room's own files", async () => {

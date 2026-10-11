@@ -72,25 +72,37 @@ export function excerpt(text: string, relevant: RegExp, maxChars: number): Excer
   return { text: out.join("\n"), whole };
 }
 
+const readsMessage = (inquiry: Inquiry) => inquiry.reads.includes("final_message");
+const relevantTo = (inquiries: readonly Inquiry[]) => new RegExp(inquiries.map((inquiry) => `(?:${inquiry.relevant.source})`).join("|"), "i");
+
+/**
+ * The inquiries whose evidence fits: a question goes with every line of the message it reads, or it is not asked.
+ * Those that read least join first; one that would push a needed line out is left for this turn.
+ */
+export function fitting(inquiries: readonly Inquiry[], message: string, limits: StateLimits): Inquiry[] {
+  const lines = message.split("\n");
+  const need = (inquiry: Inquiry) => lines.filter((line) => line.trim() && inquiry.relevant.test(line)).length;
+  const chosen: Inquiry[] = [];
+  for (const inquiry of inquiries.filter(readsMessage).sort((a, b) => need(a) - need(b))) {
+    if (excerpt(message, relevantTo([...chosen, inquiry]), limits.messageChars).whole) chosen.push(inquiry);
+  }
+  return inquiries.filter((inquiry) => !readsMessage(inquiry) || chosen.includes(inquiry));
+}
+
 export interface BuiltRequest {
   request: DecisionRequest;
   hash: string;
-  /** False when the message excerpt lost lines the questions need. */
-  whole: boolean;
 }
 
+/** The request for inquiries that fit (see `fitting`). */
 export function buildRequest(inquiries: readonly Inquiry[], facts: TurnFacts, brief: Brief | null, limits: StateLimits): BuiltRequest {
   const reads = new Set<StateField>(inquiries.flatMap((inquiry) => inquiry.reads));
   const state: Record<string, JsonValue> = {};
   const briefLines: Record<string, JsonValue> = {};
-  let whole = true;
   for (const field of ORDER) {
     if (!reads.has(field)) continue;
     if (field === "final_message") {
-      const patterns = inquiries.filter((inquiry) => inquiry.reads.includes("final_message")).map((inquiry) => `(?:${inquiry.relevant.source})`);
-      const cut = excerpt(facts.message, new RegExp(patterns.join("|"), "i"), limits.messageChars);
-      state.final_message = cut.text;
-      whole = cut.whole;
+      state.final_message = excerpt(facts.message, relevantTo(inquiries.filter(readsMessage)), limits.messageChars).text;
     } else if (field === "changed_files") {
       const paths = [...new Set([...facts.edits.map((edit) => edit.path), ...(facts.lastEdit ? [facts.lastEdit.path] : [])])];
       state.changed_files = paths.slice(0, MAX_FILES);
@@ -106,5 +118,5 @@ export function buildRequest(inquiries: readonly Inquiry[], facts: TurnFacts, br
   const questions: Record<string, DecisionQuestion> = {};
   for (const inquiry of inquiries) Object.assign(questions, inquiry.questions);
   const request: DecisionRequest = { state: redactDeep(ordered), questions };
-  return { request, hash: digest(JSON.stringify(request)), whole };
+  return { request, hash: digest(JSON.stringify(request)) };
 }

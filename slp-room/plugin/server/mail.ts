@@ -20,11 +20,13 @@ import type { MailPolicy, RoomPolicy } from "./policy";
  *   recipient archived or gone  → drop it, bounce UNDELIVERABLE to the sender
  *
  * Two kinds of mail never start a turn early. Quiet mail (an acknowledgement, a
- * report that repeats itself, the bounce of a mail nobody waited on) stays in
- * the queue until other mail starts the recipient's turn, and rides along. A
- * report a seat mails its parent before its own turn has ended (CANDIDATE,
- * REVIEW, DONE) is kept aside and posted at that turn's end: a parent that
- * acts on a child still in its turn cuts the turn off.
+ * report that repeats itself, a Lead's progress report after its first, a receipt
+ * for a candidate under review, the bounce of a mail nobody waited on) stays in
+ * the queue until other mail starts the recipient's turn, and rides along; of a
+ * seat's progress reports only the newest waits. A report a seat mails its parent
+ * before its own turn has ended (CANDIDATE, REVIEW, DONE) is kept aside and
+ * posted at that turn's end: a parent that acts on a child still in its turn
+ * cuts the turn off. A body is delivered whole, whatever its length.
  *
  * Queues live on disk (mail/queue/<agentId>.jsonl) and a mail leaves its queue
  * only once the daemon has taken it, so nothing is lost when the plugin reloads
@@ -50,6 +52,8 @@ export interface Mail {
   sending?: true;
   /** Never starts a turn by itself: it waits for the recipient's next mail, or its inbox. */
   quiet?: true;
+  /** A progress report: its sender's next report replaces it while it still waits. */
+  progress?: true;
 }
 
 export interface SeatRecord {
@@ -125,10 +129,6 @@ export function waitsOnSomeone(agent: { status?: string; pendingPermissions?: un
   return agent.status === "permission" || agent.status === "attention" || agent.status === "needs_input";
 }
 
-export function truncate(text: string, max: number): string {
-  return text.length <= max ? text : `${text.slice(0, max)}\n[… cut at ${max} chars; ask the sender for the rest]`;
-}
-
 /** Fallback for mail queued before fromLabel existed. */
 export function senderLabel(from: Mail["from"]): string {
   if (from.role === "system") return "room";
@@ -136,7 +136,7 @@ export function senderLabel(from: Mail["from"]): string {
 }
 
 /** The envelope the recipient reads. Written by the plugin, never by an agent. */
-export function envelope(mail: Mail, policy: MailPolicy): string {
+export function envelope(mail: Mail): string {
   const tag = mail.priority.toUpperCase();
   return [
     `SLP MAIL #${mail.id} ${tag} from ${mail.fromLabel ?? senderLabel(mail.from)} re: ${mail.subject}`,
@@ -144,16 +144,16 @@ export function envelope(mail: Mail, policy: MailPolicy): string {
     `needs: ${mail.needs}`,
     ...(mail.sending ? [`possible repeat: an earlier delivery of this mail was cut off; if you already handled #${mail.id}, do nothing`] : []),
     "--- body ---",
-    truncate(mail.body.trim(), policy.maxBodyChars),
+    mail.body.trim(),
     "--- how to handle ---",
     HANDLING[mail.priority],
   ].join("\n");
 }
 
-function digest(mails: Mail[], policy: MailPolicy): string {
-  if (mails.length === 1) return envelope(mails[0], policy);
+function digest(mails: Mail[]): string {
+  if (mails.length === 1) return envelope(mails[0]);
   const sorted = [...mails].sort((a, b) => PRIORITY_RANK[a.priority] - PRIORITY_RANK[b.priority] || a.at.localeCompare(b.at));
-  return [`SLP MAIL DIGEST — ${sorted.length} messages, highest first. Handle each by its own header.`, "", ...sorted.map((m) => envelope(m, policy))].join("\n\n");
+  return [`SLP MAIL DIGEST — ${sorted.length} messages, highest first. Handle each by its own header.`, "", ...sorted.map((m) => envelope(m))].join("\n\n");
 }
 
 export class MailEngine {
@@ -366,6 +366,16 @@ export class MailEngine {
     }
   }
 
+  /** Drops the progress reports of `from` that still wait for `to`: a newer report of that seat is on its way. */
+  dropProgress(from: string, to: string): void {
+    if (!readQueue(to).some((mail) => mail.progress && mail.from.agentId === from && !mail.sending)) return;
+    updateQueue(to, (mail) => {
+      if (!mail.progress || mail.from.agentId !== from || mail.sending) return mail;
+      logLine("replaced-by-newer-report", mail);
+      return null;
+    });
+  }
+
   /** The mail that started this seat's current turn; empty when something else did (a prompt, a heartbeat). Read once. */
   takeWake(agentId: string): Mail[] {
     const mails = this.woke.get(agentId) ?? [];
@@ -437,7 +447,7 @@ export class MailEngine {
       if (status === "idle") this.woke.set(agentId, send);
       try {
         // The SDK's default for a running agent is "interrupt"; the room never interrupts.
-        await this.paseo.agents.ref(agentId).send(digest(send, this.policy), { activeTurnBehavior: "steer" } as never);
+        await this.paseo.agents.ref(agentId).send(digest(send), { activeTurnBehavior: "steer" } as never);
       } catch (error) {
         // refused, so nothing arrived: the mail waits as it was read
         if (status === "idle") this.woke.delete(agentId);

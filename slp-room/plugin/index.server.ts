@@ -26,7 +26,7 @@ import { Watcher, type SeatView, type TimelineView } from "./server/watch/watche
 
 type CreateRequest = PluginBeforeRequests["agent.create"];
 
-const VERSION = "0.10.0";
+const VERSION = "0.10.1";
 const MAIL_DIR = join(ROOM_HOME, "mail");
 const MCP_TOKEN_FILE = join(MAIL_DIR, "token");
 const NONCES_FILE = join(MAIL_DIR, "nonces.json");
@@ -174,27 +174,27 @@ export default function contribute(server: PluginServerContext) {
           return `kept #${kept.id} as your report to owner: it is delivered once, when your turn ends. End your turn with ${signal} on the first line; do not send it again.`;
         }
       }
-      // an acknowledgement asks nothing of anyone: it never starts a turn
-      const ack = signal === "ACK";
+      // an acknowledgement asks nothing of anyone, and neither does a receipt for a candidate under review: neither starts a turn
+      const waits = signal === "ACK" || isReceipt({ recipientRole: recipient.role, subject, needs: args.needs, fromAbove: engine.isAncestor(from, to), recipientEndedWith: lastSignal.get(to) });
       const mail = await engine.post({
         from: { agentId: from, role: sender.role },
         to,
-        priority: ack ? "fyi" : priority,
+        priority: waits ? "fyi" : priority,
         subject,
         body,
         needs,
         whyNow: whyNowFor(engine.isAncestor(from, to) ? "owner" : sender.role, needs),
-        ...(ack ? { quiet: true as const } : {}),
+        ...(waits ? { quiet: true as const } : {}),
       });
       const held = engine.held(to).some((m) => m.id === mail.id);
-      return `sent #${mail.id} to ${engine.isAncestor(to, from) ? "owner" : `${recipient.role} ${to}`} as ${mail.priority}; ${ack ? "it is read with the recipient's next mail" : held ? "held until the recipient can take it" : "delivered"}. Continue your work; do not wait for a reply unless needs=decision blocks you.`;
+      return `sent #${mail.id} to ${engine.isAncestor(to, from) ? "owner" : `${recipient.role} ${to}`} as ${mail.priority}; ${waits ? "it is read with the recipient's next mail" : held ? "held until the recipient can take it" : "delivered"}. Continue your work; do not wait for a reply unless needs=decision blocks you.`;
     },
   );
 
   mcp.register(
     {
       name: "slp_inbox",
-      description: "Read the mail the plugin is holding for you (fyi mail that arrived while you were busy). Returns and clears it.",
+      description: "Read the mail the plugin is holding for you: mail that arrived while you were busy, and mail that starts no turn of its own (the newest progress report of a seat you launched, acknowledgements). Returns and clears it.",
       inputSchema: { type: "object", properties: {}, required: [] },
     },
     async (_args, context) => {
@@ -425,17 +425,19 @@ export default function contribute(server: PluginServerContext) {
       const text = lastAssistantText(event.timeline);
       const signal = signalOf(text);
       const repeats = signal !== undefined && lastSignal.get(id) === signal;
+      // a Lead's first report carries its plan; a STATUS after it asks nothing of the seat above
+      let progress = signal === "STATUS" && seat.role === "lead" && lastSignal.has(id);
       if (signal) lastSignal.set(id, signal);
       let priority: Priority = "fyi";
       let subject = `${signal ?? "turn ended"}: ${seat.role} ${event.agent.title ?? event.agent.id}`;
       let needs: Needs = "nothing";
-      let quiet = signal === "ACK";
+      let quiet = signal === "ACK" || progress;
       let send = true;
       if (event.outcome.kind === "failed") {
         priority = "blocking";
         subject = `FAILED: ${event.outcome.error.message.slice(0, 120)}`;
         needs = "decision";
-        quiet = false;
+        quiet = progress = false;
       } else if (signal ? mailed.has(signal) : kept) {
         // one report per turn
         log(`turn end of ${id} not mailed again: the seat mailed ${signal ?? "its report"} to its parent itself`);
@@ -459,8 +461,9 @@ export default function contribute(server: PluginServerContext) {
           subject,
           body: text || `(no final message; outcome ${event.outcome.kind})`,
           needs,
-          whyNow: event.outcome.kind === "failed" ? "the seat's turn failed; its work is stopped" : quiet ? `nothing new: the seat ended its turn with ${signal === "ACK" ? "an acknowledgement" : "DONE again, after mail that asked nothing"}` : `the seat ended its turn with ${signal ?? "a progress message"}`,
+          whyNow: event.outcome.kind === "failed" ? "the seat's turn failed; its work is stopped" : progress ? "progress only: the seat ended its turn with STATUS and asks nothing of you" : quiet ? `nothing new: the seat ended its turn with ${signal === "ACK" ? "an acknowledgement" : "DONE again, after mail that asked nothing"}` : `the seat ended its turn with ${signal ?? "a progress message"}`,
           ...(quiet ? { quiet: true as const } : {}),
+          ...(progress ? { progress: true as const } : {}),
         };
       }
     }
@@ -472,6 +475,8 @@ export default function contribute(server: PluginServerContext) {
     // whoever finished a turn may now take held mail; the watcher has read the turn, so the next one may start
     await eng.deliver(id);
     if (!reportsTo) return;
+    // a newer report takes the place of this seat's progress report that still waits unread
+    if (kept || report) eng.dropProgress(id, reportsTo);
     // the report the seat mailed before its turn ended goes out now, however the turn ended
     if (kept) await eng.post({ ...kept, to: reportsTo });
     if (report) await eng.post(report);
@@ -616,6 +621,16 @@ export default function contribute(server: PluginServerContext) {
 /** True when a turn was started by mail and none of it asked the seat for anything. */
 function askedNothing(wake: readonly Mail[]): boolean {
   return wake.length > 0 && wake.every((mail) => mail.needs === "nothing" && (mail.priority === "fyi" || mail.from.role === "system"));
+}
+
+/**
+ * A receipt: the seat above writes HOLD or NOTED, says it needs nothing, and the Peer's last turn handed its work
+ * over. That Peer waits for the verdict and has nothing to do with a receipt; a Peer stopped on a challenge is
+ * waiting for exactly this mail.
+ */
+function isReceipt(input: { recipientRole: Role; subject: string; needs: unknown; fromAbove: boolean; recipientEndedWith: string | undefined }): boolean {
+  if (input.recipientRole !== "peer" || !input.fromAbove || input.needs !== "nothing") return false;
+  return /^\W*(?:HOLD|NOTED)\b/.test(input.subject) && input.recipientEndedWith !== undefined && CLOSES_WORK.has(input.recipientEndedWith);
 }
 
 function classifyAgentMail(input: { senderRole: Role; recipientRole: Role; subject: string; needs: Needs; suggested?: Priority }): Priority {

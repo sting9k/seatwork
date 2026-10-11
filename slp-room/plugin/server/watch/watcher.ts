@@ -3,15 +3,15 @@ import type { Role } from "../seats";
 import { fromTemplate, missingLines, parseBrief, type Brief } from "./brief";
 import type { Budget } from "./budget";
 import { Lru } from "./cache";
-import { prompts, toEvents, turnStartOf, type TimelineInput } from "./events";
+import { letters, prompts, toEvents, turnStartOf, type TimelineInput } from "./events";
 import { turnFacts, type TurnFacts } from "./facts";
 import { changedBetween, type TreeSnapshot } from "./git";
 import type { DecisionAnswer, DecisionEngine, DecisionReply } from "./jev";
 import { estimateTokens } from "./jev";
 import { inquiryFor, REVISION, type Inquiry } from "./questions";
-import { gate, RULE_ORDER, unqualified, type Moment, type RuleId } from "./rules";
+import { CREATED_WITH, gate, RULE_ORDER, unqualified, type BriefGap, type Moment, type RuleId } from "./rules";
 import type { ScanFinding, ScanLog, ScanRecord } from "./scanlog";
-import { buildRequest } from "./state";
+import { buildRequest, fitting } from "./state";
 
 /** Reads the turns of Lead and Peer seats, turns facts into findings, and tells the seat above. It never touches a seat. */
 
@@ -55,6 +55,9 @@ export interface WatcherDeps {
 
 interface Turn {
   id: string | null;
+  startedAt: number;
+  /** Scans of this turn so far. */
+  reads: number;
   before: Promise<TreeSnapshot | null>;
   told: Set<string>;
   mailed: boolean;
@@ -65,6 +68,8 @@ interface Watched {
   seat: SeatView;
   brief: Brief | null;
   mails: number;
+  /** Briefs whose gap was noted: a brief is told once, however many turns it stays the last prompt. */
+  briefsTold: Set<string>;
   /** The turn that is running. */
   turn: Turn | null;
   /** The turn before it, while its end has not been read: held mail can start the next turn first. */
@@ -79,6 +84,27 @@ const URGENT: ReadonlySet<RuleId> = new Set(["irreversible", "outside-project"])
 const ABOUT_BRIEF: ReadonlySet<RuleId> = new Set(["incomplete-brief"]);
 const READ_ONLY_TITLE = /\[(?:peer:(?:review|research)|lens)\b/i;
 const MAIL = /^\s*SLP MAIL\b/;
+const isPrompt = (entry: TimelineInput) => (entry.item as { type?: unknown } | null)?.type === "user_message";
+
+/** What the brief that opened a Peer's turn lacks: the prompt its Lead created it with, or a brief in the mail that started the turn. */
+function briefGapOf(entries: readonly TimelineInput[], received: readonly string[], turnId: string | null, cwd: string): BriefGap | null {
+  const last = received.at(-1);
+  if (last === undefined) return null;
+  if (!MAIL.test(last)) {
+    // a Peer a Lead created has one prompt until its first mail: the brief, whatever shape the Lead gave it
+    const lines = received.length === 1 ? missingLines(parseBrief(last, cwd)) : [];
+    return lines.length > 0 ? { lines } : null;
+  }
+  // mail that started an earlier turn was judged then
+  const opener = entries.findLast(isPrompt);
+  if (turnId !== null && opener?.turnId !== undefined && opener.turnId !== turnId) return null;
+  for (const letter of letters(last)) {
+    if (letter.from !== "owner" || !/\bBRIEF\b/.test(letter.subject)) continue;
+    const lines = missingLines(parseBrief(letter.body, cwd), letter.body);
+    if (lines.length > 0) return { lines, mail: { id: letter.id, subject: letter.subject } };
+  }
+  return null;
+}
 
 export class Watcher {
   private readonly seats = new Map<string, Watched>();
@@ -91,12 +117,12 @@ export class Watcher {
   }
 
   private open(seat: SeatView, turnId: string | null): Turn {
-    return { id: turnId, before: this.deps.snapshot(seat.cwd).catch(() => null), told: new Set(), mailed: false, carried: false };
+    return { id: turnId, startedAt: this.deps.now(), reads: 0, before: this.deps.snapshot(seat.cwd).catch(() => null), told: new Set(), mailed: false, carried: false };
   }
 
   turnStarted(seat: SeatView, turnId: string | null): void {
     if (!this.watches(seat)) return;
-    const watched = this.seats.get(seat.agentId) ?? { seat, brief: null, mails: 0, turn: null, ending: null, busy: Promise.resolve() };
+    const watched = this.seats.get(seat.agentId) ?? { seat, brief: null, mails: 0, briefsTold: new Set(), turn: null, ending: null, busy: Promise.resolve() };
     watched.seat = seat;
     watched.ending = watched.turn ?? watched.ending;
     const turn = (watched.turn = this.open(seat, turnId));
@@ -112,7 +138,7 @@ export class Watcher {
   /** `carried`: a mail that starts the parent's turn follows at once (the seat's report), so a notice may wait for it. */
   async turnEnded(seat: SeatView, turnId: string | null, carried: boolean): Promise<void> {
     if (!this.watches(seat)) return;
-    const watched = this.seats.get(seat.agentId) ?? { seat, brief: null, mails: 0, turn: null, ending: null, busy: Promise.resolve() };
+    const watched = this.seats.get(seat.agentId) ?? { seat, brief: null, mails: 0, briefsTold: new Set(), turn: null, ending: null, busy: Promise.resolve() };
     this.seats.set(seat.agentId, watched);
     // a turn that started before the plugin did is still read at its end
     const turn = [watched.turn, watched.ending].find((known) => known?.id === turnId) ?? this.open(seat, turnId);
@@ -144,6 +170,7 @@ export class Watcher {
       if (moment === "end") this.deps.log(`watch: the turn of ${seat.agentId} was not read: the daemon gave no timeline`);
       return;
     }
+    turn.reads += 1;
     // the next turn may have begun before this one's end is read: the history stops where this turn does
     const last = turn.id === null ? -1 : view.entries.findLastIndex((entry) => entry.turnId === turn.id);
     const next = last < 0 ? -1 : view.entries.findIndex((entry, index) => index > last && entry.turnId !== undefined && entry.turnId !== turn.id);
@@ -151,24 +178,25 @@ export class Watcher {
     const events = toEvents(entries, seat.cwd);
     const received = prompts(entries);
     // the latest prompt written from the brief template is the brief in force (a REVISED BRIEF is the whole brief again)
-    for (const prompt of received) {
+    let briefAt = -1;
+    received.forEach((prompt, index) => {
       const parsed = parseBrief(prompt, seat.cwd);
-      if (fromTemplate(parsed)) watched.brief = parsed;
-    }
-    // a Peer a Lead created has, in its first turn, one prompt: the brief, whatever shape the Lead gave it
-    const created = seat.role === "peer" && seat.parentRole === "lead" && received.length === 1 && !MAIL.test(received[0]);
-    const briefGaps = created ? missingLines(parseBrief(received[0], seat.cwd)) : [];
+      if (!fromTemplate(parsed)) return;
+      watched.brief = parsed;
+      briefAt = index;
+    });
+    const briefGap = seat.role === "peer" && seat.parentRole === "lead" ? briefGapOf(entries, received, turn.id, seat.cwd) : null;
     const before = await turn.before;
     const after = before && moment === "end" ? await this.deps.snapshot(seat.cwd).catch(() => null) : null;
     const changed = before && after ? await changedBetween(before, after) : null;
-    const facts = turnFacts({ events, turnStart: turnStartOf(entries, events, turn.id), cwd: seat.cwd, root: before?.root ?? seat.cwd, brief: watched.brief, ended: moment === "end", changed, now: this.deps.now() });
+    const facts = turnFacts({ events, turnStart: turnStartOf(entries, events, turn.id), cwd: seat.cwd, root: before?.root ?? seat.cwd, brief: watched.brief, ended: moment === "end", changed, now: this.deps.now(), startedAt: turn.startedAt, later: briefAt < 0 ? [] : received.slice(briefAt + 1) });
     const silent = this.silentMinutes(seat);
-    const result = gate({ facts, brief: watched.brief, moment, briefGaps, now: this.deps.now(), pendingPermission: view.pendingPermission, thresholds: { ...policy.thresholds, silentMinutes: silent, inFlightMinutes: silent * policy.thresholds.inFlightFactor } });
+    const result = gate({ facts, brief: watched.brief, moment, briefGap, now: this.deps.now(), pendingPermission: view.pendingPermission, thresholds: { ...policy.thresholds, silentMinutes: silent, inFlightMinutes: silent * policy.thresholds.inFlightFactor } });
 
     const modeOf = (rule: RuleId) => policy.rules[rule] ?? "log";
     const findings: ScanFinding[] = [];
     for (const finding of result.findings) {
-      if (modeOf(finding.rule) === "off" || turn.told.has(finding.key)) continue;
+      if (modeOf(finding.rule) === "off" || turn.told.has(finding.key) || (ABOUT_BRIEF.has(finding.rule) && watched.briefsTold.has(finding.key))) continue;
       findings.push({ rule: finding.rule, key: finding.key, by: "facts", evidence: finding.evidence, outcome: "logged" });
     }
     const asked = result.questions.filter((question) => modeOf(question.rule) !== "off" && !turn.told.has(question.key));
@@ -176,8 +204,13 @@ export class Watcher {
     if (findings.length === 0 && !engine && moment !== "end") return;
 
     const mail = policy.mode === "on" ? await this.tell(watched, turn, findings, facts) : undefined;
-    for (const finding of findings) turn.told.add(finding.key);
-    const record: ScanRecord = { at: new Date(this.deps.now()).toISOString(), seat: seat.agentId, role: seat.role, parent: seat.parent, turn: turn.id, moment, rev: REVISION, ...(facts.signal ? { signal: facts.signal } : {}), tests: facts.lastEdit ? facts.tests : "nothing-to-verify", statics: facts.lastEdit ? facts.statics : "nothing-to-verify", findings, ...(engine ? { engine } : {}), ...(mail ? { mail } : {}) };
+    // what this seat saw when it first ran a test this turn: the label of the work it was handed
+    const ran = facts.checksThisTurn.find((run) => run.what === "test" || run.what === "named")?.result;
+    for (const finding of findings) {
+      turn.told.add(finding.key);
+      if (ABOUT_BRIEF.has(finding.rule)) watched.briefsTold.add(finding.key);
+    }
+    const record: ScanRecord = { at: new Date(this.deps.now()).toISOString(), seat: seat.agentId, role: seat.role, parent: seat.parent, turn: turn.id, moment, rev: REVISION, ...(facts.signal ? { signal: facts.signal } : {}), tests: facts.lastEdit ? facts.tests : "nothing-to-verify", statics: facts.lastEdit ? facts.statics : "nothing-to-verify", reads: turn.reads, ...(moment === "end" && ran ? { ran } : {}), findings, ...(engine ? { engine } : {}), ...(mail ? { mail } : {}) };
     this.deps.scans.append(record);
   }
 
@@ -185,9 +218,10 @@ export class Watcher {
   private async ask(asked: readonly { rule: RuleId; key: string }[], facts: TurnFacts, brief: Brief | null, moment: Moment, findings: ScanFinding[]): Promise<ScanRecord["engine"]> {
     const { policy, engine, budget } = this.deps;
     const inquiries = asked.map((question) => inquiryFor(question.rule)).filter((inquiry): inquiry is Inquiry => inquiry !== undefined);
-    const logFacts = () => {
+    // what the facts alone say of a rule whose question could not be put
+    const logFacts = (rules: readonly RuleId[] = asked.map((question) => question.rule)) => {
       for (const { rule, key } of asked) {
-        const evidence = unqualified(rule, facts);
+        const evidence = rules.includes(rule) ? unqualified(rule, facts) : null;
         if (evidence) findings.push({ rule, key, by: "facts", evidence, outcome: "logged" });
       }
     };
@@ -197,18 +231,22 @@ export class Watcher {
       logFacts();
       return { ok: false, reason: !engine.ready() ? "not-ready" : `budget-${pace}` };
     }
-    const built = buildRequest(inquiries, facts, brief, policy.state);
-    if (!built.whole) {
+    // a question whose lines of the message do not fit is left out; the others are still asked
+    const fit = fitting(inquiries, facts.message, policy.state);
+    const skipped = inquiries.filter((inquiry) => !fit.includes(inquiry)).map((inquiry) => inquiry.rule);
+    if (fit.length === 0) {
       logFacts();
       return { ok: false, reason: "evidence-too-long" };
     }
+    logFacts(skipped);
+    const built = buildRequest(fit, facts, brief, policy.state);
     let answers = this.answers.get(built.hash);
     let outcome: ScanRecord["engine"];
     if (answers) outcome = { ok: true, model: "cache", tokens: 0, ms: 0, cached: true };
     else {
       const reply: DecisionReply = await engine.ask(built.request);
       if (!reply.ok) {
-        logFacts();
+        logFacts(fit.map((inquiry) => inquiry.rule));
         return { ok: false, reason: `${reply.reason}: ${reply.detail}`.slice(0, 200) };
       }
       budget.record(moment, reply.inputTokens || estimateTokens(built.request));
@@ -216,7 +254,8 @@ export class Watcher {
       this.answers.set(built.hash, answers);
       outcome = { ok: true, model: reply.model, tokens: reply.inputTokens, ms: reply.ms };
     }
-    for (const inquiry of inquiries) {
+    if (skipped.length > 0) outcome.skipped = skipped;
+    for (const inquiry of fit) {
       const score = inquiry.score(answers);
       const key = asked.find((question) => question.rule === inquiry.rule)!.key;
       if (score === null) continue;
@@ -244,7 +283,7 @@ export class Watcher {
     if (told.length === 0 || watched.mails >= policy.maxMailsPerSeat) return undefined;
     const who = `${seat.role} ${seat.title ?? seat.agentId}`;
     const basis = (finding: ScanFinding) => {
-      if (ABOUT_BRIEF.has(finding.rule)) return "This is read from the brief it was created with.";
+      if (ABOUT_BRIEF.has(finding.rule)) return finding.key.endsWith(`:${CREATED_WITH}`) ? "This is read from the brief it was created with." : "This is read from the mail as it reached the Peer.";
       return finding.by === "model" ? `The reading of its message is a model's (score ${finding.score?.toFixed(2)}); the rest is read from its tool calls.` : "This is read from its tool calls, not from what it says.";
     };
     const advice = [

@@ -45,13 +45,23 @@ export interface Situation {
   facts: TurnFacts;
   brief: Brief | null;
   moment: Moment;
-  /** Lines the brief a Lead created a Peer with lacks; empty for a complete brief and for any turn but that Peer's first. */
-  briefGaps: readonly string[];
+  /** What a brief a Lead gave a Peer lacks; null for a complete brief and for a turn no brief opened. */
+  briefGap: BriefGap | null;
   now: number;
   /** The seat is stopped on a permission, not silent; its parent has that mail. */
   pendingPermission: boolean;
   thresholds: Thresholds;
 }
+
+export interface BriefGap {
+  /** The template lines it lacks. */
+  lines: readonly string[];
+  /** The mail that carried it; absent for the brief the Peer was created with. */
+  mail?: { id: string; subject: string };
+}
+
+/** The key of the gap in the brief a Peer was created with; a mailed brief's gap is keyed by its mail. */
+export const CREATED_WITH = "created";
 
 export interface Finding {
   rule: RuleId;
@@ -104,7 +114,7 @@ const RULES: readonly Rule[] = [
     moments: ["live", "end"],
     read: ({ facts, brief }) => {
       if (facts.outsideScope.length === 0 || !brief?.scope) return null;
-      const scope = brief.scope.readOnly ? "its brief is read-only" : `its write scope is ${list(brief.scope.patterns, 6)}`;
+      const scope = brief.scope.readOnly ? "its brief is read-only" : `its write scope is ${list(brief.scope.patterns, 6)}${brief.scope.except.length > 0 ? ` except ${list(brief.scope.except, 3)}` : ""}`;
       return { finding: `changed ${list(facts.outsideScope)}; ${scope}`, key: facts.outsideScope.join("|") };
     },
   },
@@ -160,7 +170,12 @@ const RULES: readonly Rule[] = [
   {
     id: "incomplete-brief",
     moments: ["start", "live", "end"],
-    read: ({ briefGaps }) => (briefGaps.length > 0 ? { finding: `was briefed without these template lines: ${briefGaps.join("; ")}` } : null),
+    read: ({ briefGap }) => {
+      if (!briefGap) return null;
+      const lines = briefGap.lines.join("; ");
+      if (!briefGap.mail) return { finding: `was briefed without these template lines: ${lines}`, key: CREATED_WITH };
+      return { finding: `was mailed a brief ("${briefGap.mail.subject.slice(0, 80)}") without these template lines: ${lines}`, key: briefGap.mail.id };
+    },
   },
   {
     // whether unverified work is a defect depends on what the message claims

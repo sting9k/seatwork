@@ -43,7 +43,6 @@ export function installRoom(providers: string[], adjust: (policy: { watcher: { m
 
 export const MAIL_POLICY = {
   port: 0,
-  maxBodyChars: 4000,
   holdFyiWhileRunning: true,
   midTurn: { claude: "hold", codex: "hold", pi: "hold", opencode: "hold" },
 } as const;

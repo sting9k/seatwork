@@ -26,6 +26,10 @@ export const ended = (callId: string, exitCode: number) =>
 
 export const mail = (subject: string, turnId?: string) => entry({ type: "tool_call", name: "mcp__slp__slp_mail", status: "completed", detail: { type: "unknown", input: { to: "owner", subject, body: "…" }, output: "sent" } }, turnId);
 
+/** A mail as the room delivers it to a seat. */
+export const letter = (id: string, subject: string, body: string, from = "owner") =>
+  [`SLP MAIL #${id} ACTION from ${from} re: ${subject}`, "why now: owner is waiting for your answer to continue", "needs: reply", "--- body ---", body, "--- how to handle ---", "ACTION — handle it in this turn."].join("\n");
+
 export const BRIEF = [
   "Project: /work/echo",
   "Outcome: parseDuration accepts hours.",

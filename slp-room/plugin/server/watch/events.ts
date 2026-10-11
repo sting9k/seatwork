@@ -87,6 +87,38 @@ export function prompts(entries: readonly TimelineInput[]): string[] {
   return entries.map((entry) => record(entry.item)).filter((item) => item.type === "user_message").map((item) => text(item.text));
 }
 
+export interface Letter {
+  id: string;
+  /** As the recipient reads it: `owner` for any seat above it, `room`, or `role:id`. */
+  from: string;
+  subject: string;
+  body: string;
+}
+
+const ENVELOPE = /^SLP MAIL #(\S+) [A-Z]+ from (.+?) re: (.*)$/;
+
+/** The mails in a prompt the room delivered, one envelope or a digest of several; none for any other prompt. */
+export function letters(prompt: string): Letter[] {
+  const found: Letter[] = [];
+  let open: (Letter & { lines: string[] | null }) | null = null;
+  for (const line of prompt.split("\n")) {
+    // inside a body every line is the sender's text, a quoted envelope included
+    if (open?.lines) {
+      if (line === "--- how to handle ---") {
+        found.push({ id: open.id, from: open.from, subject: open.subject, body: open.lines.join("\n") });
+        open = null;
+      } else open.lines.push(line);
+      continue;
+    }
+    const header = ENVELOPE.exec(line);
+    if (header) open = { id: header[1], from: header[2], subject: header[3], body: "", lines: null };
+    else if (open && line === "--- body ---") open.lines = [];
+  }
+  // a prompt that ends inside a body: the rest of it is that body
+  if (open?.lines) found.push({ id: open.id, from: open.from, subject: open.subject, body: open.lines.join("\n") });
+  return found;
+}
+
 const STATUS: Record<string, RunStatus> = { running: "running", completed: "ok", failed: "failed", canceled: "canceled" };
 
 function record(value: unknown): Record<string, unknown> {

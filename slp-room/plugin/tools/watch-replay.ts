@@ -13,7 +13,7 @@ import { turnFacts } from "../server/watch/facts";
 import { JevEngine } from "../server/watch/jev";
 import { inquiryFor, type Inquiry } from "../server/watch/questions";
 import { gate } from "../server/watch/rules";
-import { buildRequest } from "../server/watch/state";
+import { buildRequest, fitting } from "../server/watch/state";
 
 interface Turn {
   id: string;
@@ -147,20 +147,20 @@ async function main(): Promise<void> {
     const facts = turnFacts({ events, turnStart: turnStartOf(turn.entries, events, turnId), cwd: turn.cwd, root: turn.root, brief: turn.brief, ended: true, changed: turn.changed });
     turns += 1;
     // an eval's Peer case is that Peer's first turn: its prompt is the brief a Lead would have created it with
-    const briefGaps = turn.brief && turn.id.startsWith("peer-") ? missingLines(turn.brief) : [];
-    const result = gate({ facts, brief: turn.brief, moment: "end", briefGaps, now: facts.lastActivity ?? 0, pendingPermission: false, thresholds });
+    const lacks = turn.brief && turn.id.startsWith("peer-") ? missingLines(turn.brief) : [];
+    const result = gate({ facts, brief: turn.brief, moment: "end", briefGap: lacks.length > 0 ? { lines: lacks } : null, now: facts.lastActivity ?? 0, pendingPermission: false, thresholds });
     const told = result.findings.map((finding) => `${finding.rule}: ${finding.evidence}`);
     for (const finding of result.findings) count(`told ${finding.rule}`);
     for (const question of result.questions) count(`opened ${question.rule}`);
     const inquiries = result.questions.map((question) => inquiryFor(question.rule)).filter((inquiry): inquiry is Inquiry => inquiry !== undefined);
     const scores: string[] = [];
     if (ask && inquiries.length > 0) {
-      const built = buildRequest(inquiries, facts, turn.brief, policy.state);
-      const reply = built.whole ? await engine.ask(built.request) : null;
+      const fit = fitting(inquiries, facts.message, policy.state);
+      const reply = fit.length > 0 ? await engine.ask(buildRequest(fit, facts, turn.brief, policy.state).request) : null;
       if (reply?.ok) {
         asked += 1;
         tokens += reply.inputTokens;
-        for (const inquiry of inquiries) {
+        for (const inquiry of fit) {
           const score = inquiry.score(reply.answers);
           scores.push(`${inquiry.rule} ${score?.toFixed(2)}`);
           if (score !== null && score >= (policy.scores[inquiry.rule] ?? 1)) {

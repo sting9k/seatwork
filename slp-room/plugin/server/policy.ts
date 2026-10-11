@@ -41,8 +41,6 @@ export type MidTurnDelivery = "steer" | "hold";
 export interface MailPolicy {
   /** Fixed port for the room's MCP server, so seat URLs survive plugin reloads. */
   port: number;
-  /** Longest body delivered verbatim; longer bodies are cut with a marker. */
-  maxBodyChars: number;
   /** With midTurn "steer": FYI mail still waits for the turn to end. */
   holdFyiWhileRunning: boolean;
   /** "steer" hands mail to Paseo's steer while the recipient runs (cancels its tool on Claude and Pi); "hold" waits for the turn to end. */

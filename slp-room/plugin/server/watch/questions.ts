@@ -9,7 +9,7 @@ import type { RuleId } from "./rules";
  */
 
 /** Goes up with any change of wording, options or state: thresholds are fitted to one revision. */
-export const REVISION = 2;
+export const REVISION = 3;
 
 export type StateField = "final_message" | "action" | "changed_files" | `brief.${"outcome" | "yours_to_decide" | "contract" | "constraints" | "authority" | "reopen_when"}`;
 

@@ -1,5 +1,5 @@
 import { PROJECT, ROOM_HOME } from "./support/room";
-import { bash, BRIEF, edit, prompt, say } from "./support/watch";
+import { bash, BRIEF, edit, letter, prompt, say } from "./support/watch";
 import assert from "node:assert/strict";
 import { join } from "node:path";
 import { test } from "node:test";
@@ -21,7 +21,7 @@ const POLICY: WatcherPolicy = {
   maxMailsPerSeat: 5,
   engine: { url: "", model: "", keyFile: "", keyEnv: "", deadlineMs: 100, restAfterFailures: 3, restMinutes: 10 },
   budget: { usdPerMillionTokens: 0.042, monthlyPlanUsd: 6, monthlyCapUsd: 10 },
-  state: { messageChars: 2400, briefLineChars: 400 },
+  state: { messageChars: 12000, briefLineChars: 400 },
   calibration: { labelWindowMinutes: 60, minLabels: 100, minAuroc: 0.75, maxFalseRaiseRate: 0.05 },
 };
 const PARAMS = { heartbeatCron: "", peerStallMinutes: 6, reviewStallMinutes: 30, leadStallMinutes: 30, readBudgetTokens: 0, cheapReadBudgetTokens: 0 };
@@ -29,14 +29,14 @@ const PEER: SeatView = { agentId: "peer-1", role: "peer", title: "[Peer] hours",
 const src = (file: string) => join(PROJECT, file);
 let run = 0;
 
-function room(options: { mode?: WatcherPolicy["mode"]; says?: number; engine?: DecisionEngine; budget?: Partial<WatcherPolicy["budget"]> } = {}) {
+function room(options: { mode?: WatcherPolicy["mode"]; says?: number; engine?: DecisionEngine; budget?: Partial<WatcherPolicy["budget"]>; rules?: WatcherPolicy["rules"] } = {}) {
   run += 1;
   const mail: Notice[] = [];
   const asked: DecisionRequest[] = [];
   let entries: TimelineInput[] = [];
   const reply = (verified: number): DecisionReply => ({ ok: true, model: "jev-test", inputTokens: 500, ms: 1, answers: { report_on_checks: { type: "choice", choice: "", probabilities: { not_mentioned: 0, says_not_verified: 1 - verified, says_verified: verified } }, checks_apply: { type: "noul", noul: 0.97 } } });
   const engine: DecisionEngine = options.engine ?? { ready: () => true, ask: async (request) => (asked.push(request), reply(options.says ?? 0.96)) };
-  const policy = { ...POLICY, mode: options.mode ?? "on", budget: { ...POLICY.budget, ...options.budget } };
+  const policy = { ...POLICY, mode: options.mode ?? "on", budget: { ...POLICY.budget, ...options.budget }, rules: { ...POLICY.rules, ...options.rules } };
   const budget = new Budget(join(ROOM_HOME, `watcher-${run}`, "usage-{month}.json"), policy.budget);
   const scans = new ScanLog(join(ROOM_HOME, `watcher-${run}`, "scans.jsonl"));
   const watcher = new Watcher({ policy, params: PARAMS, engine, budget, scans, timeline: async () => ({ entries, pendingPermission: false }), snapshot: async () => null, notify: async (notice) => (mail.push(notice), `m${mail.length}`), now: () => Date.parse("2026-10-11T00:10:00Z"), log: () => {} });
@@ -59,9 +59,24 @@ test("a finished turn whose message claims green tests that never ran is told to
   // the model was shown the message and the changed file, never the brief or any tool output
   assert.deepEqual(Object.keys(asked[0].state as object), ["changed_files", "final_message"]);
   const [record] = scans.read();
-  assert.deepEqual([record.moment, record.signal, record.tests, record.mail], ["end", "CANDIDATE", "none", "m1"]);
+  // the look at the turn's start wrote no line of its own; the end's line counts it
+  assert.deepEqual([record.moment, record.signal, record.tests, record.reads, record.ran, record.mail], ["end", "CANDIDATE", "none", 2, undefined, "m1"]);
   assert.deepEqual(record.findings.map((f) => [f.rule, f.by, f.outcome]), [["unverified-completion", "model", "raised"]]);
   assert.equal(budget.summary().total.tokens, 500);
+});
+
+test("a report too long for a question that reads all of it is still asked what its lines about checks claim", async () => {
+  const { watcher, mail, asked, scans, turn } = room({ rules: { "reopen-condition": "log" } });
+  const table = Array.from({ length: 400 }, (_, i) => `| R${i} | invoice.js | holds rule ${i} in the invoice of a prorated month |`);
+  watcher.turnStarted(PEER, "turn-1");
+  turn([prompt(BRIEF), edit(src("src/duration.js")), say(["CANDIDATE: hours added.", "Verification: npm test → 14 passing.", ...table].join("\n"))]);
+  await watcher.turnEnded(PEER, "turn-1", true);
+
+  assert.equal(mail.length, 1, "the long report was not read at all");
+  assert.deepEqual(Object.keys(asked[0].questions), ["checks_apply", "report_on_checks"]);
+  const [record] = scans.read();
+  assert.deepEqual(record.engine && "skipped" in record.engine && record.engine.skipped, ["reopen-condition"]);
+  assert.deepEqual(record.findings.map((f) => [f.rule, f.by, f.outcome]), [["unverified-completion", "model", "raised"]]);
 });
 
 test("the same turn is quiet when the tests did run, when the message admits they did not, and when the model is unsure", async () => {
@@ -70,7 +85,7 @@ test("the same turn is quiet when the tests did run, when the message admits the
   ran.turn([prompt(BRIEF), edit(src("src/duration.js")), bash("npm test"), say("CANDIDATE: hours added. npm test → 14 passing.")]);
   await ran.watcher.turnEnded(PEER, "turn-1", true);
   assert.deepEqual([ran.mail.length, ran.asked.length], [0, 0]);
-  assert.equal(ran.scans.read()[0].tests, "passed");
+  assert.deepEqual([ran.scans.read()[0].tests, ran.scans.read()[0].ran], ["passed", "passed"]);
 
   const unsure = room({ says: 0.6 });
   unsure.watcher.turnStarted(PEER, "turn-1");
@@ -146,6 +161,19 @@ test("a turn whose end is read after the seat's next turn began is judged on its
   assert.equal(mail[1].withReport, false);
 });
 
+test("a new turn is not silent because the last one ended long ago, and a file a later mail names is not outside the scope", async () => {
+  const { watcher, mail, scans, turn } = room();
+  const earlier = [prompt(BRIEF, "turn-0"), edit(src("src/duration.js"), "turn-0"), bash("npm test", {}, "turn-0"), say("CANDIDATE: hours added", "turn-0")];
+  // the room's clock is ten minutes past these entries: the Lead took its time to answer
+  turn([...earlier, prompt("SLP MAIL #9 BLOCKING from owner re: REJECT: one repair\n--- body ---\n`src/other.js` needs the same guard.", "turn-1")]);
+  watcher.turnStarted(PEER, "turn-1");
+  await watcher.tick();
+  turn([...earlier, prompt("SLP MAIL #9 BLOCKING from owner re: REJECT: one repair\n--- body ---\n`src/other.js` needs the same guard.", "turn-1"), edit(src("src/other.js"), "turn-1"), bash("npm test", {}, "turn-1"), say("CANDIDATE: repaired", "turn-1")]);
+  await watcher.turnEnded(PEER, "turn-1", true);
+  assert.equal(mail.length, 0);
+  assert.deepEqual(scans.read().flatMap((record) => record.findings.map((finding) => finding.rule)), []);
+});
+
 const CUT = BRIEF.replace(/Reopen when:.*\n/, "");
 
 test("a Peer created with a brief that lacks a line: its Lead is told when its first turn starts, and the turn keeps its own mail", async () => {
@@ -164,6 +192,11 @@ test("a Peer created with a brief that lacks a line: its Lead is told when its f
   assert.equal(mail.length, 2);
   assert.match(mail[1].subject, /changed src\/other\.js/);
   assert.doesNotMatch(mail[1].body, /briefed without/);
+
+  // nor in a later turn that no prompt opened (a background job woke the Peer): the brief is still its only prompt
+  turn([prompt(CUT), edit(src("src/other.js")), bash("npm test"), say("CANDIDATE: hours added"), bash("npm test", {}, "turn-2")]);
+  watcher.turnStarted(PEER, "turn-2");
+  await watcher.tick();
   assert.equal(scans.read().flatMap((record) => record.findings).filter((finding) => finding.rule === "incomplete-brief").length, 1);
 });
 
@@ -188,7 +221,28 @@ test("a brief in free prose is a brief all the same: the Lead is told every line
   assert.match(mail[0].body, /The last line is needed word for word/);
 });
 
-test("only the brief a Lead created a Peer with is held to the five lines", async () => {
+test("a brief that reaches a Peer by mail is held to the same lines, and told once", async () => {
+  const { watcher, mail, scans, turn } = room();
+  const first = [prompt(BRIEF, "turn-1"), say("CANDIDATE: hours added", "turn-1")];
+  // a brief cut on its way: it ends after "Yours to decide"
+  const cut = prompt(letter("m7", "ACCEPT abc123 + BRIEF T2: the days unit", BRIEF.split("\n").slice(0, 6).join("\n")), "turn-2");
+  turn([...first, cut]);
+  watcher.turnStarted(PEER, "turn-2");
+  await watcher.tick();
+  assert.equal(mail.length, 1);
+  assert.match(mail[0].subject, /^OBSERVATION: peer \[Peer\] hours was mailed a brief \("ACCEPT abc123 \+ BRIEF T2: the days unit"\) without these template lines: Acceptance evidence/);
+  assert.match(mail[0].body, /without these template lines: Acceptance evidence; Reopen when; Reply with slp_mail to: owner\./);
+  assert.match(mail[0].body, /read from the mail as it reached the Peer\.\n\nA brief that lacks a line is mended with a REVISED BRIEF/);
+
+  // a later turn that no mail opened still has that mail as its last prompt
+  await watcher.turnEnded(PEER, "turn-2", true);
+  turn([...first, cut, say("working on it", "turn-2"), bash("npm test", {}, "turn-3")]);
+  watcher.turnStarted(PEER, "turn-3");
+  await watcher.turnEnded(PEER, "turn-3", false);
+  assert.equal(scans.read().flatMap((record) => record.findings).filter((finding) => finding.rule === "incomplete-brief").length, 1);
+});
+
+test("which prompts are held to the five lines: a Lead's brief to a Peer, created or mailed", async () => {
   /** Whether the watcher found a gap in the brief when this seat started on this history. */
   const judged = async (seat: SeatView, history: TimelineInput[]) => {
     const { watcher, scans, turn } = room();
@@ -200,8 +254,13 @@ test("only the brief a Lead created a Peer with is held to the five lines", asyn
   assert.equal(await judged(PEER, [prompt(CUT)]), true);
   // a later turn, as after a plugin reload: nothing remembered, the first prompt still in the history
   assert.equal(await judged(PEER, [prompt(CUT, "turn-0"), say("QUESTION: which unit?", "turn-0"), prompt("ANSWER: hours")]), false);
-  // a brief that came as mail (a REVISED BRIEF marks its changed lines in ways the template does not fix)
-  assert.equal(await judged(PEER, [prompt(`SLP MAIL #7 ACTION from owner re: REVISED BRIEF\n--- body ---\n${CUT}`)]), false);
+  // a brief that came as mail lacks what it lacks, whatever a revision puts before a changed line
+  assert.equal(await judged(PEER, [prompt(letter("m1", "REVISED BRIEF: hours and days", CUT))]), true);
+  assert.equal(await judged(PEER, [prompt(letter("m2", "REVISED BRIEF: hours and days", BRIEF.replace("Reopen when:", "[changed] Reopen when:")))]), false);
+  assert.equal(await judged(PEER, [prompt(`SLP MAIL DIGEST — 2 messages, highest first. Handle each by its own header.\n\n${letter("m3", "ANSWER: hours", "hours")}\n\n${letter("m4", "BRIEF: the days unit", CUT)}`)]), true);
+  // other mail is no brief: a repair order that repeats two template lines, and a brief nobody above the Peer sent
+  assert.equal(await judged(PEER, [prompt(letter("m5", "REJECT abc123: one repair", "REJECT abc123: print the unit back.\nWrite scope: unchanged\nOutput: CANDIDATE with the new sha\nReply with slp_mail to: owner"))]), false);
+  assert.equal(await judged(PEER, [prompt(letter("m6", "BRIEF: the days unit", CUT, "room"))]), false);
   // a Peer the user opened, a research Peer under a Supervisor, a Lead under its Supervisor: none is a Lead's brief to a Peer
   assert.equal(await judged({ ...PEER, parent: null, parentRole: null }, [prompt("fix the flaky test")]), false);
   assert.equal(await judged({ ...PEER, parentRole: "supervisor" }, [prompt(CUT)]), false);

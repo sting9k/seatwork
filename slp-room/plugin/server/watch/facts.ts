@@ -98,6 +98,10 @@ export interface FactsInput {
   changed: readonly string[] | null;
   /** Time of the scan. */
   now?: number;
+  /** When the turn began, as the watcher saw it. */
+  startedAt?: number;
+  /** What the seat above wrote to this seat after the brief in force: a file it names there is one it asked about. */
+  later?: readonly string[];
 }
 
 /** Targets of a delete that no scope can excuse. */
@@ -279,7 +283,7 @@ export function turnFacts(input: FactsInput): TurnFacts {
     const kind = pathKind(root, resolve(root, path));
     if (kind === "source" || kind === "doc") written.add(path);
   }
-  const outsideScope = scope ? [...written].filter((path) => !inScope(scope, path)).sort() : [];
+  const outsideScope = scope ? [...written].filter((path) => !inScope(scope, path) && !namedLater(path, input.later ?? [])).sort() : [];
   const outsideProject = [...new Set(writesThisTurn.filter((edit) => edit.kind === "outside" && !underProject(edit.path)).map((edit) => edit.path))].sort();
 
   const turnEvents = events.filter((event) => inTurn(event.seq));
@@ -319,7 +323,7 @@ export function turnFacts(input: FactsInput): TurnFacts {
     editedAfterReopen: reopenAt === undefined ? undefined : sourceEdits.find((edit) => edit.at > reopenAt!),
     actions: acted.length,
     inFlight: running ? { what: describe(running), since: running.at } : undefined,
-    lastActivity: last?.at,
+    lastActivity: lastMove(turnEvents[turnEvents.length - 1]?.at, input.startedAt) ?? last?.at,
   };
 }
 
@@ -336,6 +340,20 @@ function waitedSeconds(event: ShellEvent, reading: ShellReading, now: number | u
   const to = running ? now : event.at;
   if (from === undefined || to === undefined) return event.status === "failed" ? 0 : asked;
   return Math.min(asked, Math.max(0, (to - from) / 1000));
+}
+
+/** The later of two times, either of which may be unknown. */
+function lastMove(a: number | undefined, b: number | undefined): number | undefined {
+  return a === undefined ? b : b === undefined ? a : Math.max(a, b);
+}
+
+const FORBIDS = /\b(?:do not|don't|never|must not|may not|leave|unchanged|untouched|frozen|out of scope|outside (?:the |your )?(?:write )?scope)\b/i;
+
+/** Whether a later word from the seat above names this file in a sentence that does not forbid it. */
+function namedLater(path: string, later: readonly string[]): boolean {
+  const name = path.split("/").pop() ?? path;
+  const wanted = name.includes(".") && name.length >= 4 ? [path, name] : [path];
+  return later.some((text) => text.split(/(?<=[.!?;])\s+|\n/).some((sentence) => wanted.some((word) => sentence.includes(word)) && !FORBIDS.test(sentence)));
 }
 
 function lastMessage(events: readonly TurnEvent[]): string {

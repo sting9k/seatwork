@@ -240,3 +240,15 @@ test("the inbox does not hand out mail that is being delivered", async () => {
   assert.equal(sent.length, 1);
   assert.deepEqual(engine.held("r5"), []);
 });
+
+test("a long body reaches its recipient whole", async () => {
+  const sent: string[] = [];
+  const engine = engineFor({ r9: { ...idle, send: async (text) => void sent.push(text) } });
+  // five times the length the room used to cut at
+  const brief = `${"Contract / invariants: one line of the contract.\n".repeat(400)}Reply with slp_mail to: owner`;
+
+  await engine.post({ ...mail("r9", "BRIEF: the lock"), body: brief });
+
+  assert.equal(sent.length, 1);
+  assert.ok(sent[0].includes(brief), "the body was cut on its way");
+});

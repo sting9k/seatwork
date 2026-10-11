@@ -32,10 +32,11 @@ Object.assign(process.env, {
 const REPO_ROOM = join(__dirname, "..", "..", "..");
 
 /** What install.sh leaves in the room home: the room files, the policy and the enabled seats. */
-export function installRoom(providers: string[]): void {
+export function installRoom(providers: string[], adjust: (policy: { watcher: { mode: string } }) => void = () => {}): void {
   cpSync(join(REPO_ROOM, "room"), join(ROOM_HOME, "room"), { recursive: true });
   const policy = JSON.parse(readFileSync(join(REPO_ROOM, "paseo", "policy.json"), "utf8"));
   policy.mail.port = 0; // any free port
+  adjust(policy);
   writeFileSync(join(ROOM_HOME, "policy.json"), JSON.stringify(policy));
   writeFileSync(join(ROOM_HOME, "seats.json"), JSON.stringify({ providers }));
 }

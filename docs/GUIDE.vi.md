@@ -168,8 +168,13 @@ lệnh đến từ HQ.
 Agent gửi thư cho nhau, không ngắt lời nhau. Thư chỉ tới khi người nhận làm
 xong lượt hiện tại. Kết quả đã xong (`CANDIDATE`, `REVIEW`, `DONE`) đi lên
 đúng một lần, khi lượt của chính người gửi kết thúc, để không ai hành động
-trên một seat còn đang làm. Thư xác nhận, hoặc `DONE` chỉ lặp lại chính nó,
-không đánh thức ai: nó được đọc cùng thư kế tiếp.
+trên một seat còn đang làm. Thư dài bao nhiêu cũng tới nơi nguyên vẹn.
+
+Có những thư không đánh thức ai, chỉ được đọc cùng thư kế tiếp: thư xác
+nhận, `DONE` chỉ lặp lại chính nó, `STATUS` của Lead sau báo cáo đầu tiên,
+và `HOLD` không cần trả lời gửi cho Peer đang chờ kết quả kiểm tra. Trong các
+`STATUS` của một Lead, room chỉ giữ bản mới nhất; Supervisor đọc nó ở nhịp
+heartbeat.
 
 | Tín hiệu | Ai gửi | Nghĩa |
 |---|---|---|
@@ -315,7 +320,7 @@ Mười luật dựa hoàn toàn vào lệnh gọi công cụ và vào brief, kh
 | `repeating` | làm cùng một việc 4 lần liền, kết quả y như nhau |
 | `shell-wait` | chờ trong shell đủ một phút (`sleep`, vòng lặp có sleep) |
 | `silent` | đang trong lượt mà không hoạt động quá thời gian chờ của vai |
-| `incomplete-brief` | là Peer được Lead tạo bằng một brief thiếu `Outcome`, `Write scope`, `Acceptance evidence`, `Reopen when` hoặc dòng cuối `Reply with slp_mail to: owner` (brief viết tự do thì thiếu cả năm); báo một lần, lúc Peer bắt đầu lượt đầu tiên |
+| `incomplete-brief` | là Peer nhận từ Lead một brief thiếu `Outcome`, `Write scope`, `Acceptance evidence`, `Reopen when` hoặc dòng cuối `Reply with slp_mail to: owner` (brief viết tự do thì thiếu cả năm). Luật xét cả brief lúc tạo Peer lẫn brief gửi sau đó qua thư (thư có chữ `BRIEF` trong tiêu đề); mỗi brief báo một lần, lúc lượt mà nó mở ra bắt đầu |
 
 Bốn luật cần người đọc câu trả lời của seat. Code quyết định lúc nào hỏi (ví
 dụ: câu trả lời báo xong việc, code đã đổi, và không có test nào qua sau lần
@@ -335,14 +340,18 @@ Model phân loại là Jev, gọi qua OpenRouter. Đặt khoá ở
 `~/.config/slp-room/watch/key` (quyền 600) hoặc trong biến môi trường
 `SLP_WATCH_KEY`. Không có khoá thì mười luật dựa vào lệnh vẫn chạy. Thứ được
 gửi đi: các dòng brief mà câu hỏi cần, tên các file đã đổi, và câu trả lời
-cuối của seat sau khi đã che bí mật. Output của công cụ không bao giờ được
-gửi. Chi phí được đếm từ mỗi lần trả lời; `watcher.budget` đặt kế hoạch 6
+cuối của seat sau khi đã che bí mật. Câu trả lời dài tới 12.000 ký tự được
+gửi nguyên; dài hơn thì chỉ gửi các dòng câu hỏi cần đọc, và câu hỏi nào
+không đủ chỗ cho các dòng của nó thì bị bỏ qua, có ghi tên trong nhật ký.
+Output của công cụ không bao giờ được gửi. Chi phí được đếm từ mỗi lần trả lời; `watcher.budget` đặt kế hoạch 6
 USD một tháng và ngừng hỏi ở 10 USD.
 
 Muốn bật: để chạy `shadow` một thời gian, nhờ HQ xem số liệu watcher (HQ gọi
-`slp_watch_stats`: chi phí, và với từng luật là nó lên tiếng bao nhiêu lần,
-trong đó bao nhiêu lượt bị seat phía trên trả lại), rồi chạy
-`./install.sh --watcher on`.
+`slp_watch_stats`: chi phí, số lượt đã theo dõi và số lần đọc, và với từng
+luật là nó lên tiếng bao nhiêu lần, trong đó bao nhiêu lượt bị seat phía
+trên trả lại), rồi chạy `./install.sh --watcher on`. Với
+`unverified-completion`, một lượt bị trả lại chỉ được tính khi seat phía trên
+tự chạy test và thấy hỏng: bài còn bị trả lại vì nhiều lý do khác.
 
 Muốn thử luật trên các lượt đã ghi lại mà không đụng tới room nào, chạy
 trong `slp-room/plugin`:

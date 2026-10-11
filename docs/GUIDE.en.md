@@ -170,9 +170,14 @@ does not know it came from HQ.
 Agents send mail; they do not interrupt each other. Mail arrives when the
 recipient has finished its current turn. A finished result (`CANDIDATE`,
 `REVIEW`, `DONE`) goes up once, when its sender's own turn has ended, so
-nobody acts on a seat that is still working. An acknowledgement, or a
-`DONE` that only repeats itself, wakes nobody: it is read with the next
-mail.
+nobody acts on a seat that is still working. A mail is delivered whole,
+whatever its length.
+
+Some mail wakes nobody and is read with the next mail: an acknowledgement,
+a `DONE` that only repeats itself, a Lead's `STATUS` after its first report,
+and a `HOLD` that asks nothing of a Peer whose result is being checked. Of a
+Lead's `STATUS` reports only the newest is kept; the Supervisor reads it on
+its heartbeat.
 
 | Signal | Sent by | Meaning |
 |---|---|---|
@@ -319,7 +324,7 @@ Ten rules stand on what the tool calls and the brief show, at no cost:
 | `repeating` | did the same thing 4 times in a row with the same result |
 | `shell-wait` | waited in the shell for a minute (`sleep`, a loop that sleeps) |
 | `silent` | has been in its turn with no activity past the role's stall time |
-| `incomplete-brief` | is a Peer a Lead created with a brief that lacks `Outcome`, `Write scope`, `Acceptance evidence`, `Reopen when` or the last line `Reply with slp_mail to: owner` (a brief in free prose lacks them all); told once, when the Peer's first turn starts |
+| `incomplete-brief` | is a Peer whose Lead gave it a brief that lacks `Outcome`, `Write scope`, `Acceptance evidence`, `Reopen when` or the last line `Reply with slp_mail to: owner` (a brief in free prose lacks them all). This covers the brief the Peer was created with and a brief mailed to it later (a mail whose subject says `BRIEF`); told once per brief, when the turn it opens starts |
 
 Four rules need a reader for the seat's message. Code decides when to ask
 (for example: the message closes the work, source changed, and no test
@@ -339,14 +344,18 @@ The decision model is Jev, reached through OpenRouter. Put the key in
 `~/.config/slp-room/watch/key` (mode 600) or in the environment variable
 `SLP_WATCH_KEY`. Without a key the ten fact rules still work. What is sent:
 the lines of the brief a question reads, the names of changed files, and the
-seat's final message with secrets blanked. Tool output is never sent.
+seat's final message with secrets blanked (whole up to 12,000 characters; a
+longer one is cut to the lines a question reads, and a question whose lines
+do not fit is skipped and named in the log). Tool output is never sent.
 Spending is counted from each reply; `watcher.budget` plans 6 USD a month
 and stops asking at 10.
 
 To switch it on: let it run in `shadow` for a while, ask HQ for the watcher
-stats (it calls `slp_watch_stats`: spending, and per rule how often it spoke
-and how many of those turns the seat above sent back), then run
-`./install.sh --watcher on`.
+stats (it calls `slp_watch_stats`: spending, how many turns were watched and
+how often they were read, and per rule how often it spoke and how many of
+those turns the seat above sent back), then run `./install.sh --watcher on`.
+For `unverified-completion` a returned turn counts only when the seat above
+ran a test itself and saw it fail: work also comes back for other reasons.
 
 To try rules on recorded turns without touching a room, run in
 `slp-room/plugin`:

@@ -102,8 +102,10 @@ delivered between the recipient's turns: write when you have the
 disposition, keep working, and **end your turn when you need an answer**;
 mail wakes you. Waiting is ending your turn; a sleep, a poll, or a loop in
 your shell is the one thing that blocks the room. A Peer's turn end reaches
-you as mail, and the Owner gets yours the same way; the first signal word
-sets your order: `BLOCKING` first, `ACTION` this turn, `FYI` read. Mail
+you as mail, and the Owner gets yours the same way: your first report, and
+after it every `DECISION_NEEDED`, `BLOCKED` and `DONE`, starts its turn; a
+later `STATUS` waits until it looks. The first signal word sets your order:
+`BLOCKING` first, `ACTION` this turn, `FYI` read. Mail
 `from owner` with `REVISED BRIEF` or a new instruction changes your plan:
 update `.slp/status.md`, send each affected Peer its whole new brief, note
 it in your next report. Anything else from owner is a question, answered

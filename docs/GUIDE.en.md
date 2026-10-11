@@ -54,9 +54,9 @@ The installer adds to Paseo the "seats" (a seat is one role running on
 Claude, Codex, Pi or OpenCode), four profiles, the `slp-seat` plugin and the `hq-seatwork`
 project. It is safe to run again.
 
-A first install asks one question: HQ on the room's default seat, or on an
-agent CLI and model you choose. With the default, only the seats in
-`seats.yml` are installed. To change it later:
+A first install asks two questions. The first: HQ on the room's default
+seat, or on an agent CLI and model you choose. With the default, only the
+seats in `seats.yml` are installed. To change it later:
 
 ```bash
 ./install.sh --hq ask
@@ -64,6 +64,10 @@ agent CLI and model you choose. With the default, only the seats in
 
 To answer without the question: `--hq <harness>/<model>` (with
 `--hq-thinking <level>` when needed) or `--hq default`.
+
+The second: whether to install the watcher (section 11). A yes installs it
+in `shadow` mode; without an answer it is not installed. To change it later:
+`./install.sh --watcher ask`, or `--watcher off`, `shadow` or `on`.
 
 ### Signing Claude in
 
@@ -238,9 +242,9 @@ Edit in the repo, then run the installer again.
 | File | Decides | Run again |
 |---|---|---|
 | `slp-room/paseo/seats.yml` | The seats every install gets; which harness a role runs on is `models.json` | `./install.sh` |
-| `~/.config/slp-room/setup.json` | This machine's own seats: HQ's harness, seats added for a project | `./install.sh` |
+| `~/.config/slp-room/setup.json` | This machine's own choices: HQ's harness, seats added for a project, the watcher's mode | `./install.sh` |
 | `slp-room/room/models.json` | Which model each role uses | `./install.sh --no-plugin` |
-| `slp-room/paseo/policy.json` | Who mails whom, who creates whom, waiting times | `./install.sh` |
+| `slp-room/paseo/policy.json` | Who mails whom, who creates whom, waiting times, the watcher | `./install.sh` |
 | `slp-room/room/roles/`, `skills/` | Each role's prompt and procedures | `./install.sh --no-plugin` |
 
 A Peer's model tiers. The shipped table has two; a `cheap` or an `expensive`
@@ -263,9 +267,10 @@ question), `pair` (two lenses, two different models) and `pool` (a third).
 ├── role-skills/         per-role skills for Claude seats
 ├── runtimes/            the separate environment of Codex, Pi and OpenCode seats
 ├── mail/                mail and the mail log
-├── setup.json           this machine's choices: HQ's seat, seats added
+├── setup.json           this machine's choices: HQ's seat, seats added, the watcher
 ├── projects.json        registered projects
 ├── registry-log.jsonl   agents created so far
+├── watch/               the watcher: its key, scan log and monthly spending
 └── gc.log               the cleanup log
 ```
 
@@ -284,7 +289,73 @@ answer is left alone.
 | Lead, Peer | 48 hours |
 | Lens | 12 hours |
 
-## 11. Common errors
+## 11. The watcher
+
+The plugin reads every turn of a Lead and a Peer: the tool calls and the
+final message, never the thinking. When a turn shows a sign of going wrong,
+the seat above gets one mail from `room` whose subject starts with
+`OBSERVATION` (a Peer's goes to its Lead, a Lead's to its Supervisor). The
+watcher never stops or changes a seat, and it keeps no memory between turns.
+
+The installer asks once whether to install it, and keeps the answer in
+`~/.config/slp-room/setup.json`:
+
+| Mode (`./install.sh --watcher <mode>`) | What happens |
+|---|---|
+| `off` (unless you said yes) | Nothing is read |
+| `shadow` (a yes to the installer's question) | Turns are read and findings are logged; nobody is mailed |
+| `on` | Findings are also mailed, at most one per turn |
+
+Ten rules stand on what the tool calls and the brief show, at no cost:
+
+| Rule | Told when the seat |
+|---|---|
+| `irreversible` | ran something that cannot be undone from inside the task (`git reset --hard`, a recursive delete outside its scope, a forced push) |
+| `outside-project` | wrote outside the project |
+| `outside-scope` | changed a file its brief's write scope does not cover |
+| `edit-after-reopen` | mailed `REOPEN_REQUEST` and went on changing source |
+| `review-without-check` | gave a `REVIEW` that accepts while no check ran |
+| `same-failure` | ran the same check 4 times with the same failure |
+| `repeating` | did the same thing 4 times in a row with the same result |
+| `shell-wait` | waited in the shell for a minute (`sleep`, a loop that sleeps) |
+| `silent` | has been in its turn with no activity past the role's stall time |
+| `incomplete-brief` | is a Peer a Lead created with a brief that lacks `Outcome`, `Write scope`, `Acceptance evidence`, `Reopen when` or the last line `Reply with slp_mail to: owner` (a brief in free prose lacks them all); told once, when the Peer's first turn starts |
+
+Four rules need a reader for the seat's message. Code decides when to ask
+(for example: the message closes the work, source changed, and no test
+passed after the last change), a decision model reads what the message
+claims, and code compares the two. The first is installed as `raise`; the
+other three as `log`: they write their score to the log and mail nobody
+until you set them to `raise` in `policy.json`.
+
+| Rule | Asked when |
+|---|---|
+| `unverified-completion` | the message speaks of checks, and no test stands behind the last change |
+| `external-action` | the seat pushed, published or deployed, and its brief has constraints |
+| `decided-beyond-brief` | the message reports a decision of the seat's own |
+| `reopen-condition` | the brief has a `Reopen when` line and the seat did not ask to reopen |
+
+The decision model is Jev, reached through OpenRouter. Put the key in
+`~/.config/slp-room/watch/key` (mode 600) or in the environment variable
+`SLP_WATCH_KEY`. Without a key the ten fact rules still work. What is sent:
+the lines of the brief a question reads, the names of changed files, and the
+seat's final message with secrets blanked. Tool output is never sent.
+Spending is counted from each reply; `watcher.budget` plans 6 USD a month
+and stops asking at 10.
+
+To switch it on: let it run in `shadow` for a while, ask HQ for the watcher
+stats (it calls `slp_watch_stats`: spending, and per rule how often it spoke
+and how many of those turns the seat above sent back), then run
+`./install.sh --watcher on`.
+
+To try rules on recorded turns without touching a room, run in
+`slp-room/plugin`:
+
+```bash
+npm run watch:replay -- --ask ../evals/results/<label>
+```
+
+## 12. Common errors
 
 | Message | What to do |
 |---|---|

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""Generate paseo/config.snippet.json and $SLP_ROOM_HOME/seats.json from seats.yml, policy.json,
-profiles.json, models.json and this machine's own choices (setup.json, see choices.py). Run by
-install.sh; safe to run by hand."""
+"""Generate $SLP_ROOM_HOME/config.snippet.json and $SLP_ROOM_HOME/seats.json from seats.yml,
+policy.json, profiles.json, models.json and this machine's own choices (setup.json, see choices.py).
+Run by install.sh; safe to run by hand."""
 from __future__ import annotations
 
 import json
@@ -17,8 +17,9 @@ SEATS_YML = HERE / "paseo" / "seats.yml"
 POLICY = HERE / "paseo" / "policy.json"
 PROFILES = HERE / "paseo" / "profiles.json"
 MODELS = HERE / "room" / "models.json"
-OUT = HERE / "paseo" / "config.snippet.json"
-SEATS_OUT = ROOM_HOME / "seats.json"   # for the plugin; derived from seats.yml and setup.json, never committed
+# both hold this machine's choices and paths, so they live in the room home, never in the repo
+OUT = ROOM_HOME / "config.snippet.json"   # for install.sh: the profiles and providers it merges into Paseo's config
+SEATS_OUT = ROOM_HOME / "seats.json"      # for the plugin: the seats that are set up
 
 LABEL = {"claude": "Claude", "codex": "Codex", "pi": "Pi", "opencode": "OpenCode"}
 ROLE_LABEL = {"hq": "HQ Supervisor", "supervisor": "Supervisor", "lead": "Lead", "peer": "Peer", "lens": "Lens"}
@@ -124,6 +125,12 @@ def main() -> int:
             "description": f"{ROLE_LABEL[role]} seat {ISOLATION[harness]}; Paseo tools: {', '.join(allow[role]) or 'none'}",
             "paseoTools": {"enabled": True, "disabledTools": disabled},
         }
+        # the seat's isolation is part of its provider, so it holds for a session the plugin did not open
+        launch = policy[harness]["launch"]
+        runtime = str(ROOM_HOME / "runtimes" / harness / role)
+        entry["env"] = {name: value.replace("{runtime}", runtime) for name, value in launch["env"].items()}
+        if launch.get("extraArgs"):
+            entry["options"] = {"extraArgs": launch["extraArgs"]}
         if harness == "claude":
             denied_skills = [f"Skill(skill:{name})" for name in policy["claude"].get("deniedSkills", [])]
             entry["disallowedTools"] = policy["claude"]["disallowedTools"][role] + denied_skills
@@ -159,11 +166,11 @@ def main() -> int:
             return 1
 
     snippet = {"daemon": {"agentProfiles": profiles}, "agents": {"providers": providers}}
+    ROOM_HOME.mkdir(parents=True, exist_ok=True)
     OUT.write_text(json.dumps(snippet, indent=2, ensure_ascii=False) + "\n")
-    SEATS_OUT.parent.mkdir(parents=True, exist_ok=True)
     # installer: where the plugin finds install.sh when a project's table needs a seat the room does not have
     SEATS_OUT.write_text(json.dumps({"seats": seats, "providers": sorted(providers), "installer": str(HERE / "install.sh")}, indent=2) + "\n")
-    print(f"wrote {OUT.relative_to(HERE)}: {len(providers)} providers, {len(profiles)} profiles; seats → {SEATS_OUT}")
+    print(f"wrote {OUT}: {len(providers)} providers, {len(profiles)} profiles; seats → {SEATS_OUT}")
     return 0
 
 

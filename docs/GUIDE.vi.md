@@ -53,9 +53,9 @@ Lệnh cài thêm vào Paseo các "seat" (mỗi seat là một vai chạy trên 
 Codex, Pi hoặc OpenCode), bốn profile, plugin `slp-seat` và project `hq-seatwork`. Chạy
 lại bao nhiêu lần cũng được.
 
-Lần cài đầu, lệnh hỏi một câu: HQ chạy trên seat mặc định của room, hay trên
-agent CLI và model bạn tự chọn. Chọn mặc định thì chỉ có các seat trong
-`seats.yml` được cài. Muốn đổi về sau:
+Lần cài đầu, lệnh hỏi hai câu. Câu thứ nhất: HQ chạy trên seat mặc định của
+room, hay trên agent CLI và model bạn tự chọn. Chọn mặc định thì chỉ có các
+seat trong `seats.yml` được cài. Muốn đổi về sau:
 
 ```bash
 ./install.sh --hq ask
@@ -63,6 +63,10 @@ agent CLI và model bạn tự chọn. Chọn mặc định thì chỉ có các 
 
 Trả lời sẵn, không cần hỏi: `--hq <harness>/<model>` (thêm `--hq-thinking <mức>`
 nếu cần) hoặc `--hq default`.
+
+Câu thứ hai: có cài watcher không (mục 11). Trả lời có thì watcher được cài
+ở chế độ `shadow`; không trả lời thì không cài. Muốn đổi về sau:
+`./install.sh --watcher ask`, hoặc `--watcher off`, `shadow`, `on`.
 
 ### Đăng nhập Claude
 
@@ -234,9 +238,9 @@ Sửa trong repo rồi chạy lại lệnh cài.
 | File | Quyết định | Chạy lại |
 |---|---|---|
 | `slp-room/paseo/seats.yml` | Các seat mà máy nào cài cũng có; vai chạy trên harness nào là `models.json` | `./install.sh` |
-| `~/.config/slp-room/setup.json` | Seat riêng của máy này: harness của HQ, seat dựng thêm cho project | `./install.sh` |
+| `~/.config/slp-room/setup.json` | Lựa chọn riêng của máy này: harness của HQ, seat dựng thêm cho project, chế độ của watcher | `./install.sh` |
 | `slp-room/room/models.json` | Mỗi vai dùng model nào | `./install.sh --no-plugin` |
-| `slp-room/paseo/policy.json` | Ai gửi thư cho ai, ai tạo ai, thời gian chờ | `./install.sh` |
+| `slp-room/paseo/policy.json` | Ai gửi thư cho ai, ai tạo ai, thời gian chờ, watcher | `./install.sh` |
 | `slp-room/room/roles/`, `skills/` | Prompt và quy trình của từng vai | `./install.sh --no-plugin` |
 
 Các bậc model của Peer. Bảng đi kèm có hai bậc; muốn thêm bậc `cheap` hay
@@ -259,9 +263,10 @@ Bảng Lens có `oracle` (một lens), `hard` (một lens cho câu hỏi khó), 
 ├── role-skills/         skill theo vai cho seat Claude
 ├── runtimes/            môi trường riêng của seat Codex, Pi, OpenCode
 ├── mail/                thư và nhật ký thư
-├── setup.json           lựa chọn của máy này: seat của HQ, seat dựng thêm
+├── setup.json           lựa chọn của máy này: seat của HQ, seat dựng thêm, watcher
 ├── projects.json        các project đã đăng ký
 ├── registry-log.jsonl   các agent đã tạo
+├── watch/               watcher: khoá, nhật ký quét, chi phí từng tháng
 └── gc.log               nhật ký dọn dẹp
 ```
 
@@ -280,7 +285,73 @@ con đang chạy. Agent đang chờ cấp quyền hoặc chờ trả lời thì 
 | Lead, Peer | 48 giờ |
 | Lens | 12 giờ |
 
-## 11. Lỗi thường gặp
+## 11. Watcher
+
+Plugin đọc mọi lượt của Lead và Peer: các lệnh gọi công cụ và câu trả lời
+cuối, không đọc phần suy nghĩ. Khi một lượt có dấu hiệu đi sai, seat phía
+trên nhận một thư từ `room` có tiêu đề bắt đầu bằng `OBSERVATION` (của Peer
+thì báo Lead, của Lead thì báo Supervisor). Watcher không dừng hay sửa seat
+nào, và không giữ trí nhớ giữa các lượt.
+
+Lệnh cài hỏi một lần có cài watcher không, và giữ câu trả lời trong
+`~/.config/slp-room/setup.json`:
+
+| Chế độ (`./install.sh --watcher <chế độ>`) | Điều xảy ra |
+|---|---|
+| `off` (khi bạn chưa trả lời có) | Không đọc gì |
+| `shadow` (khi trả lời có lúc cài) | Đọc lượt và ghi nhật ký; không gửi thư cho ai |
+| `on` | Gửi thêm thư, nhiều nhất một thư mỗi lượt |
+
+Mười luật dựa hoàn toàn vào lệnh gọi công cụ và vào brief, không tốn tiền:
+
+| Luật | Báo khi seat |
+|---|---|
+| `irreversible` | chạy lệnh không hoàn tác được từ trong việc đang làm (`git reset --hard`, xoá đệ quy ngoài phạm vi, push đè) |
+| `outside-project` | ghi file ra ngoài project |
+| `outside-scope` | sửa file nằm ngoài phạm vi ghi của brief |
+| `edit-after-reopen` | đã gửi `REOPEN_REQUEST` mà vẫn sửa code tiếp |
+| `review-without-check` | đưa `REVIEW` chấp nhận trong khi không chạy kiểm tra nào |
+| `same-failure` | chạy cùng một kiểm tra 4 lần, hỏng y như nhau |
+| `repeating` | làm cùng một việc 4 lần liền, kết quả y như nhau |
+| `shell-wait` | chờ trong shell đủ một phút (`sleep`, vòng lặp có sleep) |
+| `silent` | đang trong lượt mà không hoạt động quá thời gian chờ của vai |
+| `incomplete-brief` | là Peer được Lead tạo bằng một brief thiếu `Outcome`, `Write scope`, `Acceptance evidence`, `Reopen when` hoặc dòng cuối `Reply with slp_mail to: owner` (brief viết tự do thì thiếu cả năm); báo một lần, lúc Peer bắt đầu lượt đầu tiên |
+
+Bốn luật cần người đọc câu trả lời của seat. Code quyết định lúc nào hỏi (ví
+dụ: câu trả lời báo xong việc, code đã đổi, và không có test nào qua sau lần
+sửa cuối), model phân loại đọc xem câu trả lời khẳng định gì, rồi code so
+hai bên. Khi cài, luật đầu ở mức `raise`; ba luật còn lại ở mức `log`: chỉ
+ghi điểm vào nhật ký, không gửi thư cho tới khi bạn đổi sang `raise` trong
+`policy.json`.
+
+| Luật | Hỏi khi |
+|---|---|
+| `unverified-completion` | câu trả lời nói về kiểm tra, mà không có test nào đứng sau lần sửa cuối |
+| `external-action` | seat đã push, publish hoặc deploy, và brief có ràng buộc |
+| `decided-beyond-brief` | câu trả lời báo một quyết định của riêng seat |
+| `reopen-condition` | brief có dòng `Reopen when` và seat không xin mở lại |
+
+Model phân loại là Jev, gọi qua OpenRouter. Đặt khoá ở
+`~/.config/slp-room/watch/key` (quyền 600) hoặc trong biến môi trường
+`SLP_WATCH_KEY`. Không có khoá thì mười luật dựa vào lệnh vẫn chạy. Thứ được
+gửi đi: các dòng brief mà câu hỏi cần, tên các file đã đổi, và câu trả lời
+cuối của seat sau khi đã che bí mật. Output của công cụ không bao giờ được
+gửi. Chi phí được đếm từ mỗi lần trả lời; `watcher.budget` đặt kế hoạch 6
+USD một tháng và ngừng hỏi ở 10 USD.
+
+Muốn bật: để chạy `shadow` một thời gian, nhờ HQ xem số liệu watcher (HQ gọi
+`slp_watch_stats`: chi phí, và với từng luật là nó lên tiếng bao nhiêu lần,
+trong đó bao nhiêu lượt bị seat phía trên trả lại), rồi chạy
+`./install.sh --watcher on`.
+
+Muốn thử luật trên các lượt đã ghi lại mà không đụng tới room nào, chạy
+trong `slp-room/plugin`:
+
+```bash
+npm run watch:replay -- --ask ../evals/results/<label>
+```
+
+## 12. Lỗi thường gặp
 
 | Thông báo | Cách xử lý |
 |---|---|

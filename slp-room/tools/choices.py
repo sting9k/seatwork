@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """This machine's own choices, kept in $SLP_ROOM_HOME/setup.json and never in the repo: the seat HQ
-runs on, and the seats added on top of paseo/seats.yml. Run by install.sh; gen-snippet.py reads
-what it leaves."""
+runs on, the seats added on top of paseo/seats.yml, and whether the watcher is installed. Run by
+install.sh; gen-snippet.py reads what it leaves."""
 from __future__ import annotations
 
 import argparse
@@ -18,6 +18,7 @@ SETUP = ROOM_HOME / "setup.json"
 
 HARNESSES = ["claude", "codex", "pi", "opencode"]
 ROLES = ["hq", "supervisor", "lead", "peer", "lens"]
+WATCHER_MODES = ["off", "shadow", "on"]
 
 
 def fail(message: str) -> SystemExit:
@@ -46,7 +47,7 @@ def is_seat(text: object) -> bool:
 
 def load_setup() -> dict:
     """setup.json, checked: it may have been edited by hand. `hq` is "default" or {provider, thinking};
-    `seats` is a list of <harness>-<role>."""
+    `seats` is a list of <harness>-<role>; `watcher` is off, shadow or on."""
     if not SETUP.exists():
         return {}
     try:
@@ -64,6 +65,8 @@ def load_setup() -> dict:
     seats = setup.get("seats", [])
     if not isinstance(seats, list) or not all(is_seat(s) for s in seats):
         raise fail(f'{SETUP}: "seats" must list <harness>-<role> ids; harnesses are {HARNESSES}, roles are {ROLES}')
+    if setup.get("watcher", "off") not in WATCHER_MODES:
+        raise fail(f'{SETUP}: "watcher" must be one of {WATCHER_MODES}')
     return setup
 
 
@@ -126,11 +129,21 @@ def ask_hq() -> dict | str:
     return {"provider": f"{harness}-hq/{model}", **({"thinking": thinking} if thinking else {})}
 
 
+def ask_watcher() -> str:
+    """Asks on the terminal whether the watcher is installed; installed, it starts in shadow mode."""
+    print("The watcher reads every Lead and Peer turn and logs the signs of a turn going wrong.")
+    print(f"With a key in {ROOM_HOME / 'watch' / 'key'} it also sends a seat's final message to a decision model. Install it?")
+    print("  1) no")
+    print("  2) shadow: it reads and logs, and mails nobody (`--watcher on` makes it mail the seat above)")
+    return "shadow" if pick("Choice", ["no", "shadow"], "no") == "shadow" else "off"
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--hq", metavar="default|ask|<harness>/<model>", help="the seat HQ runs on; asked on a first install from a terminal")
     parser.add_argument("--hq-thinking", metavar="<id>", help="thinking option for --hq <harness>/<model>; default: the model's own")
     parser.add_argument("--seat", action="append", default=[], metavar="<harness>-<role>", help="a seat to add on top of paseo/seats.yml")
+    parser.add_argument("--watcher", choices=[*WATCHER_MODES, "ask"], help="the watcher's mode; asked on a first install from a terminal")
     args = parser.parse_args()
 
     setup = load_setup()
@@ -152,13 +165,18 @@ def main() -> int:
     elif choice is not None:
         harness, _, model = choice.partition("/")
         setup["hq"] = hq_seat(harness, model, args.hq_thinking)
+    watcher = args.watcher
+    if watcher is None and "watcher" not in setup and sys.stdin.isatty():
+        watcher = "ask"
+    if watcher is not None:
+        setup["watcher"] = ask_watcher() if watcher == "ask" else watcher
 
     if json.dumps(setup, sort_keys=True) != before:
         ROOM_HOME.mkdir(parents=True, exist_ok=True)
         SETUP.write_text(json.dumps(setup, indent=2) + "\n")
     hq = setup.get("hq", "default")
     shown = "the room's" if hq == "default" else hq["provider"] + (f", thinking {hq['thinking']}" if hq.get("thinking") else "")
-    print(f"HQ seat: {shown}; seats added on this machine: {', '.join(setup.get('seats', [])) or 'none'} ({SETUP})")
+    print(f"HQ seat: {shown}; seats added on this machine: {', '.join(setup.get('seats', [])) or 'none'}; watcher: {setup.get('watcher', 'off')} ({SETUP})")
     return 0
 
 

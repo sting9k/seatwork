@@ -323,6 +323,50 @@
     "deleteOrphanHeartbeats": true,
     "tellParent": true
   },
+  "watcher": {
+    "$comment": "The watcher reads the turns of the roles in `watch` and tells the seat above when a turn goes off (a Peer's to its Lead, a Lead's to its Supervisor). Code computes the facts of a turn from its tool calls; most turns end there, at no cost. A rule either stands on facts alone or opens one question to a decision model about what the seat's message claims. mode: off does nothing; shadow scans and writes watch/scans.jsonl but mails nobody; on also mails. The mode is each machine's own choice: install.sh asks once and writes it into the installed copy (`./install.sh --watcher off|shadow|on` changes it); this file ships it off. It never stops, cancels or edits a seat.",
+    "mode": "off",
+    "watch": ["lead", "peer"],
+    "pollSeconds": 20,
+    "historyEntries": 200,
+    "$comment_rules": "Per rule: raise (mail the seat above when mode is on), log (scan log only), off. The first ten stand on facts read from tool calls and from the brief. The last four ask the model. unverified-completion mails: measured on this room's seats it caught 22 of 23 claims of checks that had not run, with 0 of 14 false. The other three stay on log until this room's own labels show they separate (slp_watch_stats prints the numbers).",
+    "rules": {
+      "irreversible": "raise",
+      "outside-project": "raise",
+      "outside-scope": "raise",
+      "edit-after-reopen": "raise",
+      "review-without-check": "raise",
+      "same-failure": "raise",
+      "repeating": "raise",
+      "shell-wait": "raise",
+      "silent": "raise",
+      "incomplete-brief": "raise",
+      "unverified-completion": "raise",
+      "external-action": "log",
+      "decided-beyond-brief": "log",
+      "reopen-condition": "log"
+    },
+    "$comment_thresholds": "sleepSeconds: seconds of waiting in the shell in one turn (sleep, a loop that sleeps), by the clock, before it is told. repeatRun: the same action with the same result, back to back. cycleRepeats: rounds of a pattern of two to four actions. sameFailure: the same check failing the same way. inFlightFactor: one running command may take this many times the role's stall minutes (room.params) before its silence is told.",
+    "thresholds": { "sleepSeconds": 60, "repeatRun": 4, "cycleRepeats": 3, "sameFailure": 4, "inFlightFactor": 3 },
+    "$comment_scores": "For a rule that asks the model: the score (0 to 1) from which its finding counts. Fitted to one model version and one revision of the questions (watch/questions.ts).",
+    "scores": { "unverified-completion": 0.85, "external-action": 0.85, "decided-beyond-brief": 0.85, "reopen-condition": 0.85 },
+    "maxMailsPerSeat": 5,
+    "$comment_engine": "The decision model. url is the full endpoint (TypeSafe's /v1/systemone or OpenRouter's /api/alpha/decisions take the same body). The key is read from the environment variable keyEnv, else from the file keyFile under the room home; without a key the rules that ask are logged as facts only. The seat's last message and a few lines of its brief go to that endpoint; tool output never does.",
+    "engine": {
+      "url": "https://openrouter.ai/api/alpha/decisions",
+      "model": "typesafe/jev-1.13",
+      "keyFile": "watch/key",
+      "keyEnv": "SLP_WATCH_KEY",
+      "deadlineMs": 6000,
+      "restAfterFailures": 3,
+      "restMinutes": 10
+    },
+    "$comment_budget": "What the model may cost, counted from the tokens each reply reports. When a day has spent its share of the plan, only end-of-turn questions are asked; at the cap nothing is asked until the next month.",
+    "budget": { "usdPerMillionTokens": 0.042, "monthlyPlanUsd": 6, "monthlyCapUsd": 10 },
+    "state": { "messageChars": 2400, "briefLineChars": 400 },
+    "$comment_calibration": "How a rule that asks earns `raise`: a turn is labelled by what the seat above did with it within labelWindowMinutes (ACCEPT, or REJECT / REVISED BRIEF / HOLD); a rule is fit once it has minLabels labelled turns and separates them with at least minAuroc, at a threshold that flags at most maxFalseRaiseRate of the accepted ones.",
+    "calibration": { "labelWindowMinutes": 60, "minLabels": 100, "minAuroc": 0.75, "maxFalseRaiseRate": 0.05 }
+  },
   "room": {
     "$comment": "Who may mail whom and who may create whom; the plugin checks both. They guard against mistakes and are not a security boundary: every seat runs as the same user. Nothing travels up from a Supervisor to hq (turn ends, permissions, GC notices, mail): hq looks at the room and sends down. A spawn entry role:spec allows only that specialization (supervisor: peer:research). A mail off the route table or outside the tree is refused; a seat created outside spawn is archived and its parent told (its first prompt may have started by then). params are quoted by the role prompts through {{placeholders}}.",
     "routes": {

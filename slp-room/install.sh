@@ -3,6 +3,7 @@
 # Flags: --no-plugin  --no-reload  --no-daemon-policy  --no-pi-adapter
 #   --hq default|ask|<harness>/<model> [--hq-thinking <id>]   what HQ runs on; asked once, on a first install from a terminal
 #   --seat <harness>-<role>   set up a seat paseo/seats.yml does not list (repeatable; kept in setup.json)
+#   --watcher off|shadow|on|ask   the watcher on this machine; asked once, on a first install from a terminal
 #   --seats-only              the seats and nothing else: providers into Paseo, reload; room files and plugin untouched
 set -euo pipefail
 
@@ -19,7 +20,7 @@ while [ $# -gt 0 ]; do
     --no-daemon-policy) DO_DAEMON_POLICY=0 ;;
     --no-pi-adapter) DO_PI_ADAPTER=0 ;;
     --seats-only) DO_ROOM=0; DO_PLUGIN=0 ;;
-    --hq|--hq-thinking|--seat)
+    --hq|--hq-thinking|--seat|--watcher)
       [ $# -ge 2 ] || { echo "$1 needs a value" >&2; exit 2; }
       CHOICES+=("$1" "$2"); shift ;;
     *) echo "unknown option: $1" >&2; exit 2 ;;
@@ -44,7 +45,8 @@ if [ "$DO_ROOM" = 1 ]; then
   mkdir -p "$ROOM_HOME/room"
   # the whole room tree: models.json, roles/, harness/, specs/, skills/
   rsync -a --delete "$HERE/room/" "$ROOM_HOME/room/"
-  cp "$HERE/paseo/policy.json" "$ROOM_HOME/policy.json"
+  # the watcher's mode is this machine's choice; the repo ships it off
+  jq --slurpfile setup "$ROOM_HOME/setup.json" '.watcher.mode = ($setup[0].watcher // "off")' "$HERE/paseo/policy.json" > "$ROOM_HOME/policy.json"
 fi
 # the installed table is the one HQ and the plugin read: HQ's seat in it is this machine's when it chose one
 if [ -f "$ROOM_HOME/room/models.json" ]; then
@@ -75,6 +77,9 @@ EOF
   echo "  Ask HQ to onboard a project (or copy projects.json.example to projects.json) to switch on the registry."
 fi
 echo "Room files: $ROOM_HOME/room  policy: $ROOM_HOME/policy.json  seats: $(jq -r '.providers | join(", ")' "$ROOM_HOME/seats.json")"
+if [ "$(jq -r '.watcher // "off"' "$ROOM_HOME/setup.json")" != off ] && [ -z "${SLP_WATCH_KEY:-}" ] && [ ! -s "$ROOM_HOME/watch/key" ]; then
+  echo "Watcher: no key in $ROOM_HOME/watch/key (or SLP_WATCH_KEY): the rules that read tool calls work, the four that ask a model only log their facts."
+fi
 
 # --- 1b. Pi MCP adapter: without it Pi seats get no Paseo tools -----------------------
 if [ "$DO_PI_ADAPTER" = 1 ] && command -v pi >/dev/null; then

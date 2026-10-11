@@ -15,14 +15,16 @@ const catalog = [
 ];
 writeFileSync(process.env.SLP_PASEO_BIN!, `#!/bin/sh\n[ "$1 $2" = "provider models" ] || exit 1\necho '${JSON.stringify(catalog)}'\n`);
 
-/** What the installer's question leaves as HQ's seat, given these lines typed at it. */
-function answer(typed: string): unknown {
+/** setup.json after the installer's choices ran with these flags and these lines typed at it. */
+function setupAfter(flags: string[], typed: string): { hq?: unknown; watcher?: unknown } {
   rmSync(setupFile, { force: true });
   const env = { ...process.env, PATH: `${dirname(process.env.SLP_PASEO_BIN!)}${delimiter}${process.env.PATH}` };
-  const run = spawnSync("python3", [choices, "--hq", "ask"], { input: typed, env, encoding: "utf8" });
+  const run = spawnSync("python3", [choices, ...flags], { input: typed, env, encoding: "utf8" });
   assert.equal(run.status, 0, run.stderr);
-  return JSON.parse(readFileSync(setupFile, "utf8")).hq;
+  return JSON.parse(readFileSync(setupFile, "utf8"));
 }
+
+const answer = (typed: string) => setupAfter(["--hq", "ask"], typed).hq;
 
 test("the installer's question: the room's HQ seat, or the user's own agent CLI and model for it", () => {
   const cases: [typed: string, hq: unknown][] = [
@@ -33,4 +35,16 @@ test("the installer's question: the room's HQ seat, or the user's own agent CLI 
     ["2\ncodex\nnope\n1\nhigh\n", { provider: "codex-hq/m-one", thinking: "high" }], // a wrong answer is asked again
   ];
   for (const [typed, hq] of cases) assert.deepEqual(answer(typed), hq, JSON.stringify(typed));
+});
+
+test("the watcher is installed only on a yes: asked, it starts in shadow; unasked, it is not there", () => {
+  const cases: [flags: string[], typed: string, watcher: unknown][] = [
+    [["--watcher", "ask"], "\n", "off"],
+    [["--watcher", "ask"], "", "off"], // no terminal to answer
+    [["--watcher", "ask"], "2\n", "shadow"],
+    [["--watcher", "ask"], "shadow\n", "shadow"],
+    [["--watcher", "on"], "", "on"],
+    [[], "", undefined], // nothing asked without a terminal: the installer then writes the mode off
+  ];
+  for (const [flags, typed, watcher] of cases) assert.equal(setupAfter(flags, typed).watcher, watcher, JSON.stringify([flags, typed]));
 });

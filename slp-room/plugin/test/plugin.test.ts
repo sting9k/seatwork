@@ -1,4 +1,5 @@
 import { installRoom, PROJECT, ROOM_HOME } from "./support/room";
+import { bash, BRIEF, edit, prompt, say } from "./support/watch";
 import assert from "node:assert/strict";
 import { chmodSync, existsSync, mkdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -19,7 +20,8 @@ const output = { log: console.log, error: console.error };
 let dispose: () => Promise<void>;
 
 before(() => {
-  installRoom(["claude-supervisor", "claude-lead", "claude-peer", "pi-peer"]);
+  // the watcher mails in these tests; a room as installed only logs what it finds
+  installRoom(["claude-supervisor", "claude-lead", "claude-peer", "pi-peer"], (policy) => void (policy.watcher.mode = "on"));
   chmodSync(ROOM_HOME, 0o755); // as a room home made under the usual umask
   mkdirSync(runtimes);
   writeFileSync(join(runtimes, "pi"), ""); // no Pi runtime can be built while this file is in the way
@@ -155,6 +157,48 @@ test("a seat that mailed its signal to its Owner is not reported a second time w
 
   await turnEnds(peer, "QUESTION\nseconds or minutes?\nRECAP: asked the Owner → waiting");
   assert.equal(lead.inbox.length, 1);
+});
+
+/** What the daemon would hand the watcher for this seat's turn. */
+function hasTimeline(who: TestSeat, entries: object[]) {
+  Object.assign(agents[who.agent.id], { timeline: { refetch: async () => ({ entries, agent: { pendingPermissions: [] } }) } });
+}
+
+test("what the watcher saw in a Peer's turn reaches its Lead in the same prompt as the Peer's report", async () => {
+  const lead = await seat("lead-watch", "claude-lead", null, "[Lead] stream");
+  const peer = await seat("peer-watch", "claude-peer", lead.agent.id, "[Peer] hours");
+  hasTimeline(peer, [prompt(BRIEF), edit(join(PROJECT, "src/billing.js")), bash("npm test"), say("CANDIDATE: hours added")]);
+
+  await call("on agent.turn_started", { agent: peer.agent, turnId: "turn-1" }, context);
+  await turnEnds(peer, "CANDIDATE: hours added");
+
+  assert.equal(lead.inbox.length, 1, "the notice and the report each started a turn of the Lead");
+  assert.match(lead.inbox[0], /from room re: OBSERVATION: peer \[Peer\] hours changed src\/billing\.js; its write scope is src\/duration\.js, test\/\*\*/);
+  assert.match(lead.inbox[0], /re: CANDIDATE from peer/);
+});
+
+test("a notice about a turn that sends no report of its own still reaches the Lead", async () => {
+  const lead = await seat("lead-alone", "claude-lead", null, "[Lead] stream");
+  const peer = await seat("peer-alone", "claude-peer", lead.agent.id, "[Peer] hours");
+  hasTimeline(peer, [prompt(BRIEF), edit(join(PROJECT, "src/billing.js")), say("ACK")]);
+
+  await turnEnds(peer, "ACK");
+
+  assert.equal(lead.inbox.length, 1);
+  assert.match(lead.inbox[0], /OBSERVATION: peer \[Peer\] hours changed src\/billing\.js/);
+});
+
+test("a Lead is told at once when the Peer it created starts on a brief that lacks its last line", async () => {
+  const lead = await seat("lead-brief", "claude-lead", null, "[Lead] stream");
+  const peer = await seat("peer-brief", "claude-peer", lead.agent.id, "[Peer] hours");
+  hasTimeline(peer, [prompt(BRIEF.replace(/\nReply with slp_mail to: owner/, ""))]);
+
+  await call("on agent.turn_started", { agent: peer.agent, turnId: "turn-1" }, context);
+  for (let waited = 0; lead.inbox.length === 0 && waited < 100; waited += 1) await new Promise((resolve) => setTimeout(resolve, 10));
+
+  assert.equal(lead.inbox.length, 1);
+  assert.match(lead.inbox[0], /from room re: OBSERVATION: peer \[Peer\] hours was briefed without these template lines: Reply with slp_mail to: owner/);
+  assert.match(lead.inbox[0], /REVISED BRIEF/);
 });
 
 test("a DONE repeated after a mail that asked nothing does not start the Owner's turn again, and is not lost", async () => {

@@ -1,7 +1,7 @@
 {
   "name": "slp-seat",
   "private": true,
-  "version": "0.9.1",
+  "version": "0.10.0",
   "description": "Paseo plugin: isolated per-seat runtimes and role prompts for a Supervisor → Lead → Peer room across Claude, Codex, Pi and OpenCode.",
   "files": [
     "paseo-plugin.json",
@@ -10,7 +10,8 @@
   ],
   "scripts": {
     "typecheck": "tsc --noEmit",
-    "test": "node --require ./test/register.cjs --test \"test/*.test.ts\""
+    "test": "node --require ./test/register.cjs --test \"test/*.test.ts\"",
+    "watch:replay": "node --require ./test/register.cjs tools/watch-replay.ts"
   },
   "devDependencies": {
     "@getpaseo/plugin": "0.10.3",

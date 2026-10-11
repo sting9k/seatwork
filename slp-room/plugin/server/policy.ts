@@ -78,10 +78,32 @@ export interface GcPolicy {
   tellParent: boolean;
 }
 
+/** The watcher, see watch/watcher.ts. `off` does nothing, `shadow` scans and logs, `on` also mails the seat above. */
+export interface WatcherPolicy {
+  mode: "off" | "shadow" | "on";
+  /** Roles whose turns are read. */
+  watch: RoleName[];
+  /** Seconds between two looks at a running turn. */
+  pollSeconds: number;
+  /** Timeline entries read per look. */
+  historyEntries: number;
+  /** Per rule: mail it, only log it, or skip it. A rule not listed is logged. */
+  rules: Record<string, "raise" | "log" | "off">;
+  thresholds: { sleepSeconds: number; repeatRun: number; cycleRepeats: number; sameFailure: number; inFlightFactor: number };
+  /** Per rule that asks the model: the score from which its finding counts. */
+  scores: Record<string, number>;
+  maxMailsPerSeat: number;
+  engine: { url: string; model: string; keyFile: string; keyEnv: string; deadlineMs: number; restAfterFailures: number; restMinutes: number };
+  budget: { usdPerMillionTokens: number; monthlyPlanUsd: number; monthlyCapUsd: number };
+  state: { messageChars: number; briefLineChars: number };
+  calibration: { labelWindowMinutes: number; minLabels: number; minAuroc: number; maxFalseRaiseRate: number };
+}
+
 export interface RuntimePolicy {
   room: RoomPolicy;
   mail: MailPolicy;
   gc: GcPolicy;
+  watcher: WatcherPolicy;
   claude: ClaudeRuntimePolicy;
   codex: CodexRuntimePolicy;
   pi: PiRuntimePolicy;
@@ -108,6 +130,7 @@ export function loadPolicy(): RuntimePolicy {
     },
     mail: need(parsed.mail, "mail"),
     gc: need(parsed.gc, "gc"),
+    watcher: need(parsed.watcher, "watcher"),
     claude: { shareFiles: need(claude.shareFiles, "claude.shareFiles"), deniedSkills: claude.deniedSkills ?? [] },
     codex: need(parsed.codex?.runtime, "codex.runtime"),
     pi: need(parsed.pi?.runtime, "pi.runtime"),

@@ -1,23 +1,32 @@
 import { appendFileSync, chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { randomBytes } from "node:crypto";
 import { join } from "node:path";
+import type { PaseoApi } from "@getpaseo/client";
 import type { PluginBeforeRequests, PluginServerContext } from "@getpaseo/plugin/server";
 import { Collector } from "./server/gc";
 import { MailEngine, type Mail, type Priority, type Needs } from "./server/mail";
 import { checkHqPlacement, ensureHqProject } from "./server/hq";
 import { McpHttpServer } from "./server/mcp-http";
-import { REGISTRY_LOG, ROOM_HOME } from "./server/paths";
+import { REGISTRY_LOG, ROOM_HOME, WATCH_DIR } from "./server/paths";
 import { describeProjects, registerProject } from "./server/onboard";
 import { modelAllowed, projectModels, type Models } from "./server/models";
 import { loadPolicy } from "./server/policy";
 import { findProject, findRoomMarker, loadRegistry, projectBlock } from "./server/registry";
 import { CLAUDE_ARGS, claudeRoleDir, describeIsolation, ensureRuntime, envFor, sharedClaudeFiles } from "./server/runtimes";
 import { enabledSeats, maySpawn, parseSeat, rolePrompt, specFromTitle, type Role } from "./server/seats";
+import { CLOSES_WORK, signalOf, subjectSignal } from "./server/signals";
 import { roomStats } from "./server/stats";
+import { Budget } from "./server/watch/budget";
+import { calibrate, renderCalibration, type MailLine } from "./server/watch/calibrate";
+import { snapshot } from "./server/watch/git";
+import { JevEngine } from "./server/watch/jev";
+import { REVISION } from "./server/watch/questions";
+import { ScanLog } from "./server/watch/scanlog";
+import { Watcher, type SeatView, type TimelineView } from "./server/watch/watcher";
 
 type CreateRequest = PluginBeforeRequests["agent.create"];
 
-const VERSION = "0.9.1";
+const VERSION = "0.10.0";
 const MAIL_DIR = join(ROOM_HOME, "mail");
 const MCP_TOKEN_FILE = join(MAIL_DIR, "token");
 const NONCES_FILE = join(MAIL_DIR, "nonces.json");
@@ -60,6 +69,45 @@ export default function contribute(server: PluginServerContext) {
   const getGc = (paseo: Parameters<typeof getEngine>[0]) => {
     if (!gc) gc = new Collector(paseo, getEngine(paseo), policy.gc, log, forgetAgent);
     return gc;
+  };
+  const budget = new Budget(join(WATCH_DIR, "usage-{month}.json"), policy.watcher.budget);
+  const scans = new ScanLog(join(WATCH_DIR, "scans.jsonl"));
+  let watcher: Watcher | null = null;
+  const getWatcher = (paseo: Parameters<typeof getEngine>[0]) => {
+    watcher ??= new Watcher({
+      policy: policy.watcher,
+      params: policy.room.params,
+      engine: new JevEngine({ ...policy.watcher.engine, apiKey: watchKey(policy.watcher.engine) }),
+      budget,
+      scans,
+      timeline: (agentId) => readTimeline(paseo, agentId, policy.watcher.historyEntries),
+      snapshot,
+      notify: async (notice) => {
+        const mail = await getEngine(paseo).post({
+          from: { agentId: "room", role: "system" },
+          fromLabel: "room",
+          to: notice.to,
+          priority: "action",
+          subject: notice.subject,
+          body: notice.body,
+          needs: "nothing",
+          whyNow: "the room noticed something in a seat you launched; its own report does not say it",
+          // a notice about a finished turn rides with that turn's report instead of starting a turn before it
+          ...(notice.withReport ? { quiet: true as const } : {}),
+        });
+        return mail.id;
+      },
+      now: Date.now,
+      log,
+    });
+    return watcher;
+  };
+  /** A seat as the watcher sees it; null for an agent that is not a room seat. */
+  const viewOf = (paseo: Parameters<typeof getEngine>[0], agent: { id: string; provider: string; cwd: string; title: string | null; parentAgentId: string | null }): SeatView | null => {
+    const seat = parseSeat(agent.provider);
+    if (!seat) return null;
+    const parent = getEngine(paseo).parentOf(agent.id) ?? agent.parentAgentId;
+    return { agentId: agent.id, role: seat.role, title: agent.title, cwd: agent.cwd, parent, parentRole: (parent && getEngine(paseo).seat(parent)?.role) || null };
   };
 
   mcp.register(
@@ -213,6 +261,25 @@ export default function contribute(server: PluginServerContext) {
 
   mcp.register(
     {
+      name: "slp_watch_stats",
+      description: "What the watcher found and what it cost: this month's spending on its decision model, and per rule how often it spoke and how its findings compare with what the seat above did next. Refused for seats that do not keep the registry.",
+      inputSchema: { type: "object", properties: {}, required: [] },
+    },
+    async (_args, context) => {
+      registryOwner(context.nonce, "slp_watch_stats");
+      const spend = budget.summary();
+      const mailLog = join(MAIL_DIR, "log.jsonl");
+      const mail = existsSync(mailLog) ? readFileSync(mailLog, "utf8").split("\n").flatMap((line) => { try { return line.trim() ? [JSON.parse(line) as MailLine] : []; } catch { return []; } }) : [];
+      const lines = [
+        `watcher mode ${policy.watcher.mode}; ${spend.month}: ${spend.total.calls} calls, ${spend.total.tokens} tokens, $${spend.total.usd.toFixed(4)} of a $${spend.planUsd} plan (cap $${spend.capUsd}); today $${spend.today.usd.toFixed(4)}; asking is ${spend.pace}`,
+        renderCalibration(calibrate(scans.read(), mail, policy.watcher.calibration, Date.now(), REVISION), policy.watcher.calibration),
+      ];
+      return lines.join("\n");
+    },
+  );
+
+  mcp.register(
+    {
       name: "slp_adopt",
       description:
         "Take over a seat handed to you (a handoff): from now on it reports to you, its `to: owner` reaches you, and you may mail it. Allowed only for a role you may create, and only when its current owner is archived or sits in your own chain. Then mail it its brief and your disposition of its last signal.",
@@ -327,11 +394,14 @@ export default function contribute(server: PluginServerContext) {
 
   // Any turn start wakes the engine and the collector, so both work right after a
   // plugin reload (the API hands us the Paseo client only inside hook contexts).
-  server.on("agent.turn_started", (_event, { paseo }) => {
+  server.on("agent.turn_started", (event, { paseo }) => {
     getGc(paseo);
+    const view = viewOf(paseo, event.agent);
+    if (view) getWatcher(paseo).turnStarted(view, event.turnId);
   });
 
   server.on("agent.archived", async (event, { paseo }) => {
+    watcher?.forget(event.agent.id);
     await getGc(paseo).onArchived(event.agent.id);
   });
 
@@ -344,58 +414,67 @@ export default function contribute(server: PluginServerContext) {
     const kept = eng.takeReport(id);
     const mailed = mailedUp.get(id) ?? new Set<string>();
     mailedUp.delete(id);
-    // whoever finished a turn may now take held mail
-    await eng.deliver(id);
     const parentId = eng.parentOf(id) ?? event.agent.parentAgentId;
-    if (!seat || !parentId) return;
-    const parent = eng.seat(parentId);
+    const parent = parentId ? eng.seat(parentId) : undefined;
     // nothing travels up to hq: it reads the Supervisor's final message and .slp/status.md when it looks
-    if (!parent || parent.role === "hq") return;
-    // the report the seat mailed before its turn ended goes out now, however the turn ended
-    if (kept) await eng.post({ ...kept, to: parentId });
-    if (event.outcome.kind === "canceled") return;
-    const text = lastAssistantText(event.timeline);
-    const signal = signalOf(text);
-    const repeats = signal !== undefined && lastSignal.get(id) === signal;
-    if (signal) lastSignal.set(id, signal);
-    let priority: Priority;
-    let subject: string;
-    let needs: Needs;
-    let quiet = false;
-    if (event.outcome.kind === "failed") {
-      priority = "blocking";
-      subject = `FAILED: ${event.outcome.error.message.slice(0, 120)}`;
-      needs = "decision";
-    } else if (signal ? mailed.has(signal) : kept) {
-      // one report per turn: the parent has this signal from the seat's own mail
-      log(`turn end of ${id} not mailed again: the seat mailed ${signal ?? "its report"} to its parent itself`);
-      return;
-    } else if (signal && signal !== "STATUS" && signal !== "ACK") {
-      priority = "action";
-      subject = `${signal} from ${seat.role} ${event.agent.title ?? event.agent.id}`;
-      needs = ["QUESTION", "BLOCKED", "DECISION_NEEDED", "REOPEN_REQUEST", "DEPENDENCY_REQUEST"].includes(signal) ? "decision" : "reply";
-      // DONE again, in a turn started only by mail that asked nothing: the parent has it already
-      if (signal === "DONE" && repeats && askedNothing(wake)) {
-        priority = "fyi";
-        needs = "nothing";
-        quiet = true;
+    const reportsTo = seat && parentId && parent && parent.role !== "hq" ? parentId : null;
+    const canceled = event.outcome.kind === "canceled";
+    // the turn's own report; it stays null when the parent has this turn's signal from the seat's own mail
+    let report: Parameters<MailEngine["post"]>[0] | null = null;
+    if (seat && reportsTo && !canceled) {
+      const text = lastAssistantText(event.timeline);
+      const signal = signalOf(text);
+      const repeats = signal !== undefined && lastSignal.get(id) === signal;
+      if (signal) lastSignal.set(id, signal);
+      let priority: Priority = "fyi";
+      let subject = `${signal ?? "turn ended"}: ${seat.role} ${event.agent.title ?? event.agent.id}`;
+      let needs: Needs = "nothing";
+      let quiet = signal === "ACK";
+      let send = true;
+      if (event.outcome.kind === "failed") {
+        priority = "blocking";
+        subject = `FAILED: ${event.outcome.error.message.slice(0, 120)}`;
+        needs = "decision";
+        quiet = false;
+      } else if (signal ? mailed.has(signal) : kept) {
+        // one report per turn
+        log(`turn end of ${id} not mailed again: the seat mailed ${signal ?? "its report"} to its parent itself`);
+        send = false;
+      } else if (signal && signal !== "STATUS" && signal !== "ACK") {
+        priority = "action";
+        subject = `${signal} from ${seat.role} ${event.agent.title ?? event.agent.id}`;
+        needs = ["QUESTION", "BLOCKED", "DECISION_NEEDED", "REOPEN_REQUEST", "DEPENDENCY_REQUEST"].includes(signal) ? "decision" : "reply";
+        // DONE again, in a turn started only by mail that asked nothing: the parent has it already
+        if (signal === "DONE" && repeats && askedNothing(wake)) {
+          priority = "fyi";
+          needs = "nothing";
+          quiet = true;
+        }
       }
-    } else {
-      priority = "fyi";
-      subject = `${signal ?? "turn ended"}: ${seat.role} ${event.agent.title ?? event.agent.id}`;
-      needs = "nothing";
-      quiet = signal === "ACK";
+      if (send) {
+        report = {
+          from: { agentId: id, role: seat.role },
+          to: reportsTo,
+          priority,
+          subject,
+          body: text || `(no final message; outcome ${event.outcome.kind})`,
+          needs,
+          whyNow: event.outcome.kind === "failed" ? "the seat's turn failed; its work is stopped" : quiet ? `nothing new: the seat ended its turn with ${signal === "ACK" ? "an acknowledgement" : "DONE again, after mail that asked nothing"}` : `the seat ended its turn with ${signal ?? "a progress message"}`,
+          ...(quiet ? { quiet: true as const } : {}),
+        };
+      }
     }
-    await eng.post({
-      from: { agentId: id, role: seat.role },
-      to: parentId,
-      priority,
-      subject,
-      body: text || `(no final message; outcome ${event.outcome.kind})`,
-      needs,
-      whyNow: event.outcome.kind === "failed" ? "the seat's turn failed; its work is stopped" : quiet ? `nothing new: the seat ended its turn with ${signal === "ACK" ? "an acknowledgement" : "DONE again, after mail that asked nothing"}` : `the seat ended its turn with ${signal ?? "a progress message"}`,
-      ...(quiet ? { quiet: true as const } : {}),
-    });
+    // the watcher reads the turn before anything goes up: its notice rides with a mail that starts the parent's turn, or goes alone when this turn sends none
+    const view = canceled ? null : viewOf(paseo, event.agent);
+    const carried = [kept, report].some((mail) => mail && !mail.quiet);
+    if (view) await getWatcher(paseo).turnEnded(view, event.turnId, carried);
+    else watcher?.forget(id);
+    // whoever finished a turn may now take held mail; the watcher has read the turn, so the next one may start
+    await eng.deliver(id);
+    if (!reportsTo) return;
+    // the report the seat mailed before its turn ended goes out now, however the turn ended
+    if (kept) await eng.post({ ...kept, to: reportsTo });
+    if (report) await eng.post(report);
   });
 
   server.on("agent.permission_requested", async (event, { paseo }) => {
@@ -431,10 +510,15 @@ export default function contribute(server: PluginServerContext) {
   const collect = setInterval(() => {
     void gc?.run();
   }, Math.max(1, policy.gc.everyMinutes) * 60_000);
+  // the watcher's look at turns that are still running
+  const watch = setInterval(() => {
+    void watcher?.tick();
+  }, Math.max(5, policy.watcher.pollSeconds) * 1000);
 
   return async () => {
     clearInterval(sweep);
     clearInterval(collect);
+    clearInterval(watch);
     await mcp.close();
   };
 
@@ -529,24 +613,6 @@ export default function contribute(server: PluginServerContext) {
 
 /* ---------- classification ---------- */
 
-const SIGNAL = /\b(DONE|DECISION_NEEDED|BLOCKED|REOPEN_REQUEST|DEPENDENCY_REQUEST|QUESTION|CANDIDATE|REVIEW|STATUS)\b/;
-/** An acknowledgement counts only where a line opens with it: the word turns up inside other reports. */
-const ACK = /^\W*ACK\b/;
-/** Signals that say "my work is finished": the parent acts on the seat (accepts, archives) when it reads one. */
-const CLOSES_WORK = new Set(["CANDIDATE", "REVIEW", "DONE"]);
-
-/** The protocol signal of a final message. The role prompts put it on the first line; the whole text is the fallback. */
-function signalOf(text: string): string | undefined {
-  const firstLine = text.split("\n").find((line) => line.trim())?.trim() ?? "";
-  if (ACK.test(firstLine)) return "ACK";
-  return SIGNAL.exec(firstLine)?.[1] ?? SIGNAL.exec(text)?.[1];
-}
-
-/** The signal a mail's subject opens with, if any; a signal word further in is part of a sentence. */
-function subjectSignal(subject: string): string | undefined {
-  return ACK.test(subject) ? "ACK" : new RegExp(`^\\W*${SIGNAL.source}`).exec(subject)?.[1];
-}
-
 /** True when a turn was started by mail and none of it asked the seat for anything. */
 function askedNothing(wake: readonly Mail[]): boolean {
   return wake.length > 0 && wake.every((mail) => mail.needs === "nothing" && (mail.priority === "fyi" || mail.from.role === "system"));
@@ -591,6 +657,26 @@ function lastAssistantText(timeline: readonly unknown[]): string {
 
 function formatForInbox(mail: Mail): string {
   return `#${mail.id} ${mail.priority.toUpperCase()} from ${mail.fromLabel ?? `${mail.from.role}:${mail.from.agentId}`} re: ${mail.subject}\nneeds: ${mail.needs}\n${mail.body.trim()}`;
+}
+
+/* ---------- the watcher's view of Paseo ---------- */
+
+/** The key of the watcher's decision model: from the environment, else from its file under the room home. */
+function watchKey(engine: { keyEnv: string; keyFile: string }): string | undefined {
+  const fromEnv = process.env[engine.keyEnv]?.trim();
+  if (fromEnv) return fromEnv;
+  const file = join(ROOM_HOME, engine.keyFile);
+  return existsSync(file) ? readFileSync(file, "utf8").trim() || undefined : undefined;
+}
+
+/** A seat's recent timeline with tool calls and messages merged, as Paseo projects it. */
+async function readTimeline(paseo: PaseoApi, agentId: string, limit: number): Promise<TimelineView | null> {
+  try {
+    const page = await paseo.agents.ref(agentId).timeline.refetch({ direction: "tail", projection: "projected", limit });
+    return { entries: page.entries.map((entry) => ({ item: entry.item, timestamp: entry.timestamp, turnId: entry.turnId })), pendingPermission: (page.agent?.pendingPermissions?.length ?? 0) > 0 };
+  } catch {
+    return null;
+  }
 }
 
 /* ---------- small persistence helpers ---------- */

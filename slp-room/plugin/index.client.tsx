@@ -1,13 +1,14 @@
 import type { PluginClientContext } from "@getpaseo/plugin/client";
 import { chime } from "./client/chime";
+import { RoomItem, RoomScreen } from "./client/room";
 import { roomWaiting } from "./shared/room";
 
 /** How often the open app asks the room what waits on the Owner. */
 const EVERY_MS = 15_000;
 
 /**
- * slp-seat in the app: while it is open it asks the room what waits on the Owner, and plays a short sound for
- * each turn that newly does. The asking is also what lets the room move held mail after a daemon restart.
+ * slp-seat in the app: the Room screen and its sidebar row, and a short sound for each turn that newly waits on
+ * the Owner. Asking the room is also what lets it move held mail after a daemon restart.
  */
 export default function contribute(client: PluginClientContext) {
   const heard = new Set<string>();
@@ -27,8 +28,12 @@ export default function contribute(client: PluginClientContext) {
   };
   void look();
   const timer = setInterval(() => void look(), EVERY_MS);
+  const screen = client.addScreen({ id: "room", title: "Room", Component: RoomScreen });
+  const item = client.addSidebarFooterItem({ id: "room", title: "Room", Component: RoomItem });
   return () => {
     stopped = true;
     clearInterval(timer);
+    void item();
+    void screen();
   };
 }

@@ -10,6 +10,7 @@ import { checkHqPlacement, ensureHqProject } from "./server/hq";
 import { McpHttpServer } from "./server/mcp-http";
 import { REGISTRY_LOG, ROOM_HOME, WATCH_DIR } from "./server/paths";
 import { describeProjects, registerProject } from "./server/onboard";
+import { OwedList, roomStatus as readRoomStatus } from "./server/room-status";
 import { modelAllowed, projectModels, type Models } from "./server/models";
 import { loadPolicy } from "./server/policy";
 import { findProject, findRoomMarker, loadRegistry, projectBlock } from "./server/registry";
@@ -24,12 +25,12 @@ import { JevEngine } from "./server/watch/jev";
 import { REVISION } from "./server/watch/questions";
 import { ScanLog } from "./server/watch/scanlog";
 import { usageReport } from "./server/watch/usage";
-import { roomWaiting } from "./shared/room";
+import { roomStatus, roomWaiting } from "./shared/room";
 import { Watcher, type SeatView, type TimelineView } from "./server/watch/watcher";
 
 type CreateRequest = PluginBeforeRequests["agent.create"];
 
-const VERSION = "0.12.0";
+const VERSION = "0.13.0";
 const MAIL_DIR = join(ROOM_HOME, "mail");
 const MCP_TOKEN_FILE = join(MAIL_DIR, "token");
 const NONCES_FILE = join(MAIL_DIR, "nonces.json");
@@ -69,8 +70,8 @@ export default function contribute(server: PluginServerContext) {
   const mailedUp = new Map<string, Set<string>>();
   /** seat → the signal its last turn ended with. */
   const lastSignal = new Map<string, string>();
-  /** seat nobody above reads by mail → what its last turn left for the Owner to answer. */
-  const owed = new Map<string, { key: string; agentId: string; title: string | null; what: string; at: string }>();
+  /** What the last turn of a seat nobody above reads by mail left for the Owner to answer. */
+  const owed = new OwedList(join(ROOM_HOME, "owed.json"));
   let gc: Collector | null = null;
   const getGc = (paseo: Parameters<typeof getEngine>[0]) => {
     if (!gc) gc = new Collector(paseo, getEngine(paseo), policy.gc, log, forgetAgent);
@@ -416,21 +417,23 @@ export default function contribute(server: PluginServerContext) {
   // plugin reload (the API hands us the Paseo client only inside hook contexts).
   // the app asks this while it is open. After a daemon start it is the first thing to hand the room a Paseo client:
   // mail held on disk moves without waiting for an agent to run
-  server.handle(roomWaiting, (_input, { paseo }) => {
+  server.handle(roomWaiting, async (_input, { paseo }) => {
     if (!engine) void getEngine(paseo).sweep();
     getGc(paseo);
-    return { chime: policy.owner.chime, waiting: [...owed.values()] };
+    return { chime: policy.owner.chime, waiting: await owed.current(paseo) };
   });
 
+  server.handle(roomStatus, (_input, { paseo }) => readRoomStatus(paseo, getEngine(paseo), owed, scans.read()));
+
   server.on("agent.turn_started", (event, { paseo }) => {
-    owed.delete(event.agent.id);
+    owed.clear(event.agent.id);
     getGc(paseo);
     const view = viewOf(paseo, event.agent);
     if (view) getWatcher(paseo).turnStarted(view, event.turnId);
   });
 
   server.on("agent.archived", async (event, { paseo }) => {
-    owed.delete(event.agent.id);
+    owed.clear(event.agent.id);
     watcher?.forget(event.agent.id);
     await getGc(paseo).onArchived(event.agent.id);
   });
@@ -439,7 +442,6 @@ export default function contribute(server: PluginServerContext) {
   // what the room kept for the turn goes; held mail stays, and the sweep posts a report the seat had mailed
   server.on("agent.closed", (event) => {
     watcher?.cut(event.agent.id);
-    owed.delete(event.agent.id);
     mailedUp.delete(event.agent.id);
     engine?.takeWake(event.agent.id);
   });
@@ -461,7 +463,7 @@ export default function contribute(server: PluginServerContext) {
     // a seat nobody above reads by mail: the Owner reads its final message, and the app is told when it asks something
     if (seat && !reportsTo && !canceled) {
       const what = event.outcome.kind === "failed" ? "FAILED" : asksOwner(lastAssistantText(event.timeline));
-      if (what) owed.set(id, { key: `${id}:${Date.now()}`, agentId: id, title: event.agent.title, what, at: new Date().toISOString() });
+      if (what) owed.set({ key: `${id}:${Date.now()}`, agentId: id, title: event.agent.title, what, at: new Date().toISOString() });
     }
     // the turn's own report; it stays null when the parent has this turn's signal from the seat's own mail
     let report: Parameters<MailEngine["post"]>[0] | null = null;

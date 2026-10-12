@@ -103,7 +103,14 @@ test("a seat's session opens with the seat's own environment every time, not onl
 
 // the daemon's agents; the plugin keeps the first Paseo client a hook hands it
 const agents: Record<string, object> = {};
-const context = { paseo: { agents: { ref: (id: string) => agents[id] } } };
+/** What the daemon lists: every agent it still has that is not archived. */
+const listed = async () => ({
+  entries: Object.entries(agents).flatMap(([id, handle]) => {
+    const now = (handle as { current?: () => { status?: string; archivedAt?: string } | null }).current?.();
+    return now && !now.archivedAt ? [{ agent: { id, updatedAt: new Date().toISOString(), ...now } }] : [];
+  }),
+});
+const context = { paseo: { agents: { ref: (id: string) => agents[id], list: listed } } };
 
 // a seat as the daemon reports it: deleted (it answers, with no agent), archived, or not reported at all
 const deleted = { refresh: async () => null, current: () => null };
@@ -421,7 +428,7 @@ test("a seat that is gone is not handed over, and no seat is handed to a role th
   await assert.rejects(successor.adopt(peer.agent.id), /peer-adopt-gone is archived or gone/);
 });
 
-test("what a turn leaves for the Owner is listed for the app until that seat works again or is gone; a seat with a seat above it is not the Owner's", async () => {
+test("what a turn leaves for the Owner is listed for the app until that seat works again or is gone, across a closed runtime and a plugin restart; a seat with a seat above it is not the Owner's", async () => {
   const supervisor = await seat("supervisor-owed", "claude-supervisor", null, "[Supervisor] project");
   const lead = await seat("lead-owed", "claude-lead", supervisor.agent.id, "[Lead] stream");
   const waiting = async () => {
@@ -449,11 +456,50 @@ test("what a turn leaves for the Owner is listed for the app until that seat wor
     assert.deepEqual(await waiting(), [], "the seat is at work again, and still listed");
   }
 
-  for (const gone of ["agent.closed", "agent.archived"]) {
-    await turnEnds(supervisor, "DECISION_NEEDED\nkeep or break the old behavior?");
-    await call(`on ${gone}`, { agent: supervisor.agent, archivedAt: "2026-10-12T00:00:00Z" }, context);
-    assert.deepEqual(await waiting(), [], gone);
-  }
+  // a runtime that closes answers nothing: a daemon restart closes every seat
+  await turnEnds(supervisor, "DECISION_NEEDED\nkeep or break the old behavior?");
+  await call("on agent.closed", { agent: supervisor.agent }, context);
+  assert.deepEqual(await waiting(), ["supervisor-owed DECISION_NEEDED"]);
+  // nor does a plugin that starts again
+  const again = new Map<string, Hook>();
+  const stop = contribute({ before: () => {}, on: () => {}, registerUsageSource: () => {}, handle: (contract: { name: string }, handler: Hook) => void again.set(contract.name, handler) } as never);
+  const afterRestart = (await again.get("room.waiting")!({} as never, context as never)) as { waiting: { agentId: string }[] };
+  await stop();
+  assert.ok(afterRestart.waiting.some((item) => item.agentId === "supervisor-owed"), "a plugin restart forgot what waits on the Owner");
+
+  await call("on agent.archived", { agent: supervisor.agent, archivedAt: "2026-10-12T00:00:00Z" }, context);
+  assert.deepEqual(await waiting(), [], "an archived seat");
+  await turnEnds(supervisor, "DECISION_NEEDED\nkeep or break the old behavior?");
+  agents[supervisor.agent.id] = deleted;
+  assert.deepEqual(await waiting(), [], "a seat the daemon no longer has");
+});
+
+test("the Room screen is given the seats that still exist as a tree, with the mail each holds, what waits on the Owner and the latest mail", async () => {
+  const supervisor = await seat("supervisor-screen", "claude-supervisor", null, "[Supervisor] project");
+  const lead = await seat("lead-screen", "claude-lead", supervisor.agent.id, "[Lead] stream");
+  const peer = await seat("peer-screen", "claude-peer", lead.agent.id, "[Peer] hours");
+  const gone = await seat("peer-screen-archived", "claude-peer", lead.agent.id, "[Peer] old task");
+  agents[gone.agent.id] = archived;
+  // the Lead is in a turn, so the Peer's report waits for it
+  Object.assign(agents[lead.agent.id], { current: () => ({ status: "running" }) });
+  await turnEnds(peer, "CANDIDATE\nsha abc123\nRECAP: added the unit → abc123");
+  await turnEnds(supervisor, "DECISION_NEEDED\nkeep or break the old behavior?");
+
+  const room = (await call("rpc room.status", {}, context)) as {
+    waiting: { agentId: string; what: string }[];
+    seats: { agentId: string; status: string; held: number; depth: number }[];
+    mail: { from: string; to: string; subject: string; state: string }[];
+  };
+  const mine = (id: string) => id.includes("-screen");
+
+  assert.deepEqual(room.seats.filter((row) => mine(row.agentId)), [
+    { agentId: "supervisor-screen", role: "supervisor", title: "[Supervisor] project", status: "idle", held: 0, depth: 0 },
+    { agentId: "lead-screen", role: "lead", title: "[Lead] stream", status: "running", held: 1, depth: 1 },
+    { agentId: "peer-screen", role: "peer", title: "[Peer] hours", status: "idle", held: 0, depth: 2 },
+  ]);
+  assert.deepEqual(room.waiting.filter((item) => mine(item.agentId)).map((item) => `${item.agentId} ${item.what}`), ["supervisor-screen DECISION_NEEDED"]);
+  const [{ from, to, subject, state }] = room.mail;
+  assert.deepEqual({ from, to, subject, state }, { from: "[Peer] hours", to: "[Lead] stream", subject: "CANDIDATE from peer [Peer] hours", state: "waiting" });
 });
 
 test("a Supervisor's prompt names no path of the room's own files", async () => {

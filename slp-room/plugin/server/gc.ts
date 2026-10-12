@@ -28,7 +28,7 @@ import type { GcPolicy } from "./policy";
 
 const GC_LOG = join(ROOM_HOME, "gc.log");
 
-interface LiveAgent {
+export interface LiveAgent {
   id: string;
   status: string;
   updatedAt: string;
@@ -70,6 +70,23 @@ function logLine(kind: string, detail: Record<string, unknown>): void {
   appendFileSync(GC_LOG, `${JSON.stringify({ at: new Date().toISOString(), kind, ...detail })}\n`);
 }
 
+/** Every unarchived agent on the daemon, by id. */
+export async function liveAgents(paseo: PaseoApi): Promise<Map<string, LiveAgent>> {
+  const out = new Map<string, LiveAgent>();
+  let cursor: string | undefined;
+  for (let page = 0; page < 20; page += 1) {
+    const result = await paseo.agents.list({ filter: { includeArchived: false }, page: { limit: 200, ...(cursor ? { cursor } : {}) } });
+    for (const entry of result.entries) {
+      const agent = (entry as { agent: LiveAgent }).agent;
+      out.set(agent.id, agent);
+    }
+    const info = (result as { pageInfo?: { nextCursor?: string | null; hasMore?: boolean } }).pageInfo;
+    cursor = info?.hasMore && info.nextCursor ? info.nextCursor : undefined;
+    if (!cursor) break;
+  }
+  return out;
+}
+
 export class Collector {
   private running = false;
   /** Heartbeat deletions run one at a time: the periodic pass and an archive hook may overlap. */
@@ -89,7 +106,7 @@ export class Collector {
     if (this.running) return;
     this.running = true;
     try {
-      const live = await this.liveAgents();
+      const live = await liveAgents(this.paseo);
       await this.archiveIdleSeats(live);
       if (this.policy.deleteOrphanHeartbeats) await this.deleteHeartbeats((agentId) => !live.has(agentId));
     } catch (error) {
@@ -115,23 +132,6 @@ export class Collector {
         this.log(`gc: heartbeat cleanup for ${agentId} failed: ${error instanceof Error ? error.message : String(error)}`);
       }
     }
-  }
-
-  /** Every unarchived agent on the daemon, by id. */
-  private async liveAgents(): Promise<Map<string, LiveAgent>> {
-    const out = new Map<string, LiveAgent>();
-    let cursor: string | undefined;
-    for (let page = 0; page < 20; page += 1) {
-      const result = await this.paseo.agents.list({ filter: { includeArchived: false }, page: { limit: 200, ...(cursor ? { cursor } : {}) } });
-      for (const entry of result.entries) {
-        const agent = (entry as { agent: LiveAgent }).agent;
-        out.set(agent.id, agent);
-      }
-      const info = (result as { pageInfo?: { nextCursor?: string | null; hasMore?: boolean } }).pageInfo;
-      cursor = info?.hasMore && info.nextCursor ? info.nextCursor : undefined;
-      if (!cursor) break;
-    }
-    return out;
   }
 
   private async archiveIdleSeats(live: Map<string, LiveAgent>): Promise<void> {

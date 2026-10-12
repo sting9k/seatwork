@@ -56,6 +56,8 @@ export const setupState = defineRpc({
     watcherKey: z.boolean(),
     /** The registered projects: each runs on the room's table, with its own differences laid over it when it has any. */
     projects: z.array(project),
+    /** What the watcher's decision model cost this month, in dollars; null while the watcher is off. */
+    spend: z.object({ usd: z.number(), planUsd: z.number(), capUsd: z.number() }).nullable(),
     /** ok: true fine, false needs the Owner, null unknown. */
     checks: z.array(z.object({ id: z.string(), label: z.string(), ok: z.boolean().nullable(), detail: z.string() })),
   }),

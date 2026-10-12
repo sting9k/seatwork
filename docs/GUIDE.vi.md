@@ -125,18 +125,24 @@ Bấm **Seatwork** ở đầu sidebar của Paseo. Command Center cũng có mụ
 tên là "Seatwork: set up the room". Dòng này ghi "Set up" khi chưa có room
 và "Needs you" khi một phép kiểm tra máy không đạt.
 
-Màn hình có bảy phần, từ trên xuống.
+Model và các project nằm bên trái. Trạng thái của room, watcher, âm báo và
+máy này nằm bên phải. Ở cửa sổ hẹp chúng xếp chồng lên nhau.
 
-### Room
+### Trạng thái của room
 
-Một thẻ ghi trạng thái của room và một nút: **Init** ở lần đầu, **Apply**
-ở các lần sau. Lựa chọn bên dưới được lưu ngay khi bạn chọn, nhưng room
-chỉ đổi khi bạn bấm nút đó. Trước lúc đó, thẻ ghi rõ những gì chưa được
-áp dụng.
+Thẻ trên cùng bên phải. Nó ghi room có đang chạy không và có bao nhiêu
+seat. Khi chưa có room, thẻ này có nút **Init**.
+
+Lựa chọn được lưu ngay khi bạn chọn, nhưng room chỉ đổi khi bạn áp dụng.
+Khi có thay đổi đang chờ, thẻ này ghi rõ tên chúng và hiện **Apply
+changes** cùng **Discard**. Vai bạn vừa đổi được đánh dấu trong cây, kèm
+model cũ và model mới.
 
 ### Models
 
-Bảng của room: mỗi vai một dòng. Bấm một vai để chọn nó chạy trên gì.
+Bảng của room, vẽ đúng như cách room được dựng: HQ, rồi Supervisor do nó
+mở, rồi Lead, rồi Peer và Lens. Mỗi model là một thẻ nhỏ: chấm màu là agent
+CLI, các vạch là mức thinking. Bấm một vai để chọn nó chạy trên gì.
 
 - **HQ, Supervisor, Lead** mỗi vai chạy một model. Chọn agent CLI, model
   và mức thinking. Danh sách model có ô tìm kiếm. Danh sách chỉ hiện những
@@ -144,47 +150,49 @@ Bảng của room: mỗi vai một dòng. Bấm một vai để chọn nó chạ
 - **Peer và Lens** mỗi vai là một, nhưng có nhiều model. Mỗi model có một
   tên (`cheap`, `default`, `high`…) và một dòng nói nó dùng cho việc gì.
   Lead đọc tên và dòng đó rồi tự chọn cho từng việc. Bạn có thể đổi một
-  model, bấm **Remove** để bỏ nó, hoặc thêm một model nữa: đặt tên (chữ
-  thường, số, gạch ngang) và ghi dòng "Use for".
+  model, bỏ nó bằng biểu tượng thùng rác, hoặc bấm **Add a model**: đặt tên
+  (chữ thường, số, gạch ngang) và ghi dòng "Use for".
 - **Back to the shipped table** bỏ hết lựa chọn của bạn.
 
-HQ chạy theo bảng này, và mọi project không có bảng riêng cũng vậy. Phần
-này ghi rõ có bao nhiêu project như thế.
+HQ chạy theo bảng này, và mọi project không có model riêng cũng vậy. Thẻ
+ghi rõ có bao nhiêu project như thế.
 
-Seat được dựng khi một lựa chọn cần tới nó. Cho Lead chạy Codex rồi bấm
-Apply là có `codex-lead`.
+Seat được dựng khi một lựa chọn cần tới nó. Cho Lead chạy Codex rồi áp dụng
+là có `codex-lead`.
 
 ### Projects
 
-Mỗi project của room một dòng: "the room's table", hoặc "own" kèm các vai
-mà nó đổi. Bấm một project để đặt model riêng cho nó, chỉ cho project đó.
-Chi tiết ở mục 7.
+Mỗi project của room một dòng: **Room table**, hoặc **Own** kèm những gì
+project đó đổi. Bấm một project để đặt model riêng cho nó, chỉ cho project
+đó. Chi tiết ở mục 7.
 
 ### Watcher
 
 - **Mode**: Off, Shadow hoặc On. Xem mục 10.
-- **Key**: hiện ra sau khi Init. Không bắt buộc.
+- **Model key**: hiện ra sau khi Init. Không bắt buộc. Bấm **Add** hoặc
+  **Replace**.
+- **This month**: model của watcher đã tốn bao nhiêu, so với kế hoạch tháng.
 
-### Sound
+### Chime
 
-**Chime**: một tiếng báo ngắn trong app đang mở, khi có seat chờ bạn.
+Một tiếng báo ngắn trong app đang mở, khi có seat chờ bạn.
 
 ### This host
 
-Các phép kiểm tra máy này. Mỗi dòng ghi **OK**, **Needs you** hoặc
-**Unknown**.
+Các phép kiểm tra máy này, mỗi dòng có dấu tích hoặc dấu cảnh báo, và các
+agent CLI đã sẵn sàng trên máy.
 
-| Kiểm tra | Ghi "Needs you" khi |
+| Kiểm tra | Cảnh báo khi |
 |---|---|
 | Paseo's tools for agents | Bộ công cụ đang tắt. Thiếu nó, seat không tạo được và không liên lạc được với nhau. |
-| Room files | Plugin và file của room thuộc hai phiên bản khác nhau. Bấm Apply. |
+| Room files | Plugin và file của room thuộc hai phiên bản khác nhau. Hãy áp dụng. |
 | Pi | Có seat Pi mà máy không có Pi, hoặc Pi cũ hơn 0.99. |
 | Dictation, Voice mode | Một trong hai đang bật. Nó bật cho mọi agent trên máy; tắt trong phần cài đặt của Paseo. |
 
 ### Remove the room
 
-Bấm **Remove** hai lần. Nó từ chối khi còn seat của room đang mở: hãy lưu
-trữ các agent đó trước. Sau đó nó:
+Dòng chữ dưới cột bên phải. Nó hỏi lại một lần, rồi từ chối khi còn seat
+của room đang mở: hãy lưu trữ các agent đó trước. Sau đó nó:
 
 - gỡ các seat và profile khỏi Paseo;
 - lưu trữ workspace `hq-seatwork`;
@@ -344,15 +352,15 @@ Lead dùng bảng thế này:
   `cross-family`. Giữ ba tên đó và đổi model bên dưới. Tên khác thì thêm
   tuỳ ý.
 
-Đổi bảng trên màn hình Seatwork rồi bấm Apply.
+Đổi bảng trên màn hình Seatwork rồi áp dụng.
 
 ### Bảng riêng của project
 
 Trên màn hình Seatwork, bấm project trong phần **Projects**. Bạn thấy bảng
 của room cho Supervisor, Lead, Peer và Lens. Đổi một vai rồi bấm **Save**:
-vai đó giờ là của riêng project, các vai còn lại vẫn theo bảng của room.
-**Same as the room's table** trả một vai về bảng của room; **Use the
-room's table** trả hết.
+vai đó giờ là của riêng project, được đánh dấu **Own**, các vai còn lại
+vẫn theo bảng của room. **Same as the room's table** trả một vai về bảng
+của room; **Use the room's table for every role** trả hết.
 
 HQ cũng có thể viết bảng này khi đăng ký project.
 
@@ -387,7 +395,7 @@ Ví dụ này cho Lead và model `default` của Peer dùng thinking medium, và
 
 Bảng quyết định ngay lúc một seat được mở. Vì vậy:
 
-- Thay đổi tới mọi seat mở sau khi bạn bấm Apply (bảng của room) hoặc Save
+- Thay đổi tới mọi seat mở sau khi bạn áp dụng (bảng của room) hoặc lưu
   (bảng của project). Không cần cài lại.
 - Seat đang mở giữ model của nó cho tới khi được lưu trữ.
 - Bạn không phải thay Supervisor hay Lead đang mở. Prompt của nó vẫn ghi
@@ -510,7 +518,8 @@ bên. Luật đầu tiên có gửi thư; ba luật còn lại chỉ ghi log cho
 | `reopen-condition` | brief có dòng `Reopen when` mà seat không xin mở lại |
 
 Bốn luật này cần một key. Model quyết định là Jev, gọi qua OpenRouter. Dán
-key vào ô **Key** trong phần Watcher của màn hình Seatwork. Key được lưu ở
+key vào ô **Model key** trong thẻ Watcher của màn hình Seatwork. Key được
+lưu ở
 `~/.config/slp-room/watch/key`, chỉ user của bạn đọc được, và không bao giờ
 hiện lại. Biến môi trường `SLP_WATCH_KEY` cũng dùng được. Không có key thì
 mười luật ở trên vẫn chạy, và không có gì rời khỏi máy.
@@ -522,7 +531,7 @@ là 6 USD một tháng, tới 10 USD thì ngừng hỏi. Xem trong mục Usage c
 Paseo, dòng "Room watcher".
 
 Muốn bật: cho nó chạy Shadow một thời gian, hỏi HQ thống kê watcher, rồi
-đặt Mode của nó thành On và bấm Apply.
+đặt Mode của nó thành On rồi áp dụng.
 
 ## 11. Bảo trì
 

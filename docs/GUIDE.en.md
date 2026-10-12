@@ -125,19 +125,25 @@ Press **Seatwork** at the top of Paseo's sidebar. The Command Center has it
 too, as "Seatwork: set up the room". The row says "Set up" while no room
 exists and "Needs you" when a check of this machine fails.
 
-The screen has seven parts, from top to bottom.
+The models and the projects are on the left. The room's state, the watcher,
+the sound and this machine are on the right. In a narrow window they stack.
 
-### The room
+### The room's state
 
-One card with the state of the room and one button: **Init** the first
-time, **Apply** afterwards. Your choices below are saved as you make them,
-but the room changes only when you press that button. Until then the card
-names what is not applied yet.
+The card at the top right. It says whether the room runs and how many seats
+it has. Before a room exists it carries **Init**.
+
+Your choices are saved as you make them, but the room changes only when you
+apply them. When something waits, this card names it and shows **Apply
+changes** and **Discard**. A role you changed is marked in the tree with its
+old model and its new one.
 
 ### Models
 
-The room's table: one line per role. Press a role to choose what it runs
-on.
+The room's table, drawn as the room is built: HQ, then the Supervisor it
+opens, then the Lead, then Peer and Lens. Each model is a chip: the dot is
+the agent CLI, the bars are the thinking level. Press a role to choose what
+it runs on.
 
 - **HQ, Supervisor, Lead** run on one model each. Choose the agent CLI,
   the model and the thinking level. The model list has a search box. The
@@ -146,46 +152,48 @@ on.
 - **Peer and Lens** are one role with several models. Each model has a
   name (`cheap`, `default`, `high`…) and a line saying what it is for. The
   Lead reads the names and the lines and picks one for each task. You can
-  change a model, **Remove** it, or add one more: give it a name
-  (lower-case letters, digits, dashes) and a "Use for" line.
+  change a model, remove it with the bin icon, or press **Add a model**:
+  give it a name (lower-case letters, digits, dashes) and a "Use for" line.
 - **Back to the shipped table** drops all your choices.
 
-HQ runs on this table, and so does every project that has no table of its
-own. The part says how many projects that is.
+HQ runs on this table, and so does every project that has no models of its
+own. The card says how many projects that is.
 
-A seat is set up when a choice needs it. Put the Lead on Codex, press
-Apply, and `codex-lead` exists.
+A seat is set up when a choice needs it. Put the Lead on Codex, apply, and
+`codex-lead` exists.
 
 ### Projects
 
-One line per project of the room: "the room's table", or "own" with the
-roles it changes. Press a project to give it models of its own, for that
+One line per project of the room: **Room table**, or **Own** with what the
+project changes. Press a project to give it models of its own, for that
 project only. Section 7 has the details.
 
 ### Watcher
 
 - **Mode**: Off, Shadow or On. See section 10.
-- **Key**: shown after Init. Optional.
+- **Model key**: shown after Init. Optional. Press **Add** or **Replace**.
+- **This month**: what the watcher's model cost, against its monthly plan.
 
-### Sound
+### Chime
 
-**Chime**: a short sound in the open app when a seat waits on you.
+A short sound in the open app when a seat waits on you.
 
 ### This host
 
-Checks of this machine. Each says **OK**, **Needs you** or **Unknown**.
+Checks of this machine, each with a tick or a warning, and the agent CLIs
+that are ready here.
 
-| Check | Needs you when |
+| Check | Warns when |
 |---|---|
 | Paseo's tools for agents | They are off. Seats cannot create or reach each other without them. |
-| Room files | The plugin and the room's files are from different versions. Press Apply. |
+| Room files | The plugin and the room's files are from different versions. Apply. |
 | Pi | A Pi seat is set up and Pi is missing or older than 0.99. |
 | Dictation, Voice mode | One is on. It is on for every agent on this machine; turn it off in Paseo's settings. |
 
 ### Remove the room
 
-Press **Remove** twice. It refuses while a seat of the room is still open:
-archive those agents first. Then it:
+The link under the right column. It asks once more, then refuses while a
+seat of the room is still open: archive those agents first. Then it:
 
 - takes the seats and profiles out of Paseo;
 - archives the `hq-seatwork` workspace;
@@ -349,15 +357,15 @@ How the Lead uses it:
   `cross-family`. Keep those three names and change the models under them.
   Add other names freely.
 
-Change the table on the Seatwork screen, then press Apply.
+Change the table on the Seatwork screen, then apply.
 
 ### A project's own table
 
 On the Seatwork screen, press the project under **Projects**. You see the
 room's table for Supervisor, Lead, Peer and Lens. Change a role and press
-**Save**: that role is now the project's own, and the rest still follows
-the room's table. **Same as the room's table** gives one role back;
-**Use the room's table** gives them all back.
+**Save**: that role is now the project's own, marked **Own**, and the rest
+still follows the room's table. **Same as the room's table** gives one
+role back; **Use the room's table for every role** gives them all back.
 
 HQ can also write the table when it registers the project.
 
@@ -392,8 +400,8 @@ This makes the Lead and the `default` Peer model think at medium, and takes
 
 The table decides at the moment a seat is opened. So:
 
-- A change reaches every seat opened after you press Apply (the room's
-  table) or Save (a project's). Nothing to reinstall.
+- A change reaches every seat opened after you apply it (the room's table)
+  or save it (a project's). Nothing to reinstall.
 - A seat that is already open keeps its model until it is archived.
 - You do not have to replace a Supervisor or a Lead that is already open.
   Its prompt still shows the old table, but the plugin holds each seat it
@@ -516,8 +524,8 @@ two. The first one mails; the other three only log until you set them to
 | `reopen-condition` | the brief has a `Reopen when` line and the seat did not ask to reopen |
 
 These four need a key. The decision model is Jev, reached through
-OpenRouter. Paste the key into **Key** in the Watcher part of the Seatwork
-screen. It is
+OpenRouter. Paste the key into **Model key** in the Watcher card of the
+Seatwork screen. It is
 stored in `~/.config/slp-room/watch/key`, readable by your user only, and
 is never shown again. The environment variable `SLP_WATCH_KEY` works too.
 Without a key the ten rules above still work and nothing leaves the
@@ -530,7 +538,7 @@ Tool output is never sent. Spending is counted from each reply: the plan is
 "Room watcher".
 
 To switch it on, let it run in Shadow for a while, ask HQ for the watcher
-stats, then set its Mode to On and press Apply.
+stats, then set its Mode to On and apply.
 
 ## 11. Upkeep
 

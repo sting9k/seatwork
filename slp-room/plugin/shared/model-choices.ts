@@ -95,6 +95,31 @@ export function dropTier(choices: Json, room: Table, role: TierRole, label: stri
   return { ...choices, [role]: { ...group, tiers } };
 }
 
+/** What applying would do to one of a role's models: nothing, change it, add it, or take it out. */
+export type TierChange = "same" | "changed" | "added" | "removed";
+
+/**
+ * A Peer's or a Lens's models in `next`, each marked by how it differs from `now` (the table in
+ * force), followed by the models `next` no longer has. With no table in force nothing is a change.
+ */
+export function tierDiff(now: Table | null, next: Table, role: TierRole): (TierChoice & { change: TierChange })[] {
+  const before = new Map((now ? tierChoices(now, role) : []).map((tier) => [tier.label, tier]));
+  const same = (a: TierChoice, b: TierChoice) => a.harness === b.harness && a.model === b.model && a.thinking === b.thinking && a.use === b.use;
+  const after = tierChoices(next, role).map((tier) => {
+    const was = before.get(tier.label);
+    before.delete(tier.label);
+    return { ...tier, change: (!now ? "same" : !was ? "added" : same(was, tier) ? "same" : "changed") as TierChange };
+  });
+  return [...after, ...[...before.values()].map((tier) => ({ ...tier, change: "removed" as TierChange }))];
+}
+
+/** Whether HQ, the Supervisor or the Lead would run on something else after applying. */
+export function seatChanged(now: Table | null, next: Table, role: SeatRole): boolean {
+  if (!now) return false;
+  const [a, b] = [seatChoice(now, role), seatChoice(next, role)];
+  return a.harness !== b.harness || a.model !== b.model || a.thinking !== b.thinking;
+}
+
 /** The roles a set of choices changes, in the screen's order. */
 export function changedRoles(choices: Json): (SeatRole | TierRole)[] {
   const seats = isObject(choices.seats) ? choices.seats : {};

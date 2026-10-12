@@ -46,8 +46,9 @@ export class OwedList {
     return [...this.items.values()];
   }
 
+  /** What still waits; the daemon is asked only when something does. */
   async current(paseo: PaseoApi): Promise<Owed[]> {
-    return this.among(await liveAgents(paseo));
+    return this.items.size === 0 ? [] : this.among(await liveAgents(paseo));
   }
 
   private save(): void {
@@ -73,9 +74,11 @@ export async function roomStatus(paseo: PaseoApi, engine: MailEngine, owed: Owed
   const hq = hqDir();
   const records = engine.allSeats().filter((seat) => live.has(seat.agentId));
   const place = new Map<string, { key: string; name: string }>();
+  const placed = new Map<string, { key: string; name: string }>();
   for (const seat of records) {
     const cwd = seat.cwd ?? live.get(seat.agentId)!.cwd;
-    place.set(seat.agentId, cwd ? placeOf(cwd, registry, hq) : { key: "", name: "unplaced" });
+    if (cwd && !placed.has(cwd)) placed.set(cwd, placeOf(cwd, registry, hq));
+    place.set(seat.agentId, cwd ? placed.get(cwd)! : { key: "", name: "unplaced" });
   }
   const groups = new Map<string, { name: string; members: SeatRecord[] }>([["hq", { name: "HQ", members: [] }]]);
   for (const project of registry?.projects ?? []) groups.set(project.name, { name: project.name, members: [] });

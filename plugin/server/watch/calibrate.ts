@@ -19,31 +19,62 @@ export type Label = "returned" | "accepted";
 const RETURNS = /^\W*(?:REJECT|REVISED BRIEF)\b/i;
 const ACCEPTS = /^\W*ACCEPT\b/i;
 
+/** Whether a mail's subject is a verdict: ACCEPT, REJECT or REVISED BRIEF. */
+export const isVerdict = (subject: string): boolean => RETURNS.test(subject) || ACCEPTS.test(subject);
+
+/** Queued mail by sender, then recipient, in log order. */
+type Sent = Map<string, Map<string, { at: number; subject: string }[]>>;
+
+function sentMail(mail: readonly MailLine[]): Sent {
+  const sent: Sent = new Map();
+  for (const line of mail) {
+    if (line.kind !== "queued") continue;
+    const to = sent.get(line.from) ?? new Map<string, { at: number; subject: string }[]>();
+    sent.set(line.from, to);
+    const mails = to.get(line.to) ?? [];
+    to.set(line.to, mails);
+    mails.push({ at: Date.parse(line.at), subject: line.subject });
+  }
+  return sent;
+}
+
 /** The first verdict of the seat above on a turn that handed work over; null while there is none. */
-function verdictOf(scan: ScanRecord, mail: readonly MailLine[], now: number, windowMinutes: number): { label: Label; at: number } | null {
+function verdictOf(scan: ScanRecord, sent: Sent, now: number, windowMinutes: number): { label: Label; at: number } | null {
   if (scan.moment !== "end" || !scan.parent || !scan.signal || !CLOSES_WORK.has(scan.signal)) return null;
   const ended = Date.parse(scan.at);
   const until = ended + windowMinutes * 60_000;
-  for (const line of mail) {
-    const at = Date.parse(line.at);
-    if (line.kind !== "queued" || line.from !== scan.parent || line.to !== scan.seat || at <= ended || at > until) continue;
-    if (RETURNS.test(line.subject)) return { label: "returned", at };
-    if (ACCEPTS.test(line.subject)) return { label: "accepted", at };
+  for (const { at, subject } of sent.get(scan.parent)?.get(scan.seat) ?? []) {
+    if (at <= ended || at > until) continue;
+    if (RETURNS.test(subject)) return { label: "returned", at };
+    if (ACCEPTS.test(subject)) return { label: "accepted", at };
   }
   // a DONE is taken in silence: a question about it is not a verdict
   return scan.signal === "DONE" && now > until ? { label: "accepted", at: until } : null;
 }
 
 export function labelOf(scan: ScanRecord, mail: readonly MailLine[], now: number, windowMinutes: number): Label | null {
-  return verdictOf(scan, mail, now, windowMinutes)?.label ?? null;
+  return verdictOf(scan, sentMail(mail), now, windowMinutes)?.label ?? null;
+}
+
+/** Each seat's turn ends, oldest first. */
+function turnEnds(scans: readonly ScanRecord[]): Map<string, ScanRecord[]> {
+  const ends = new Map<string, ScanRecord[]>();
+  for (const scan of scans) {
+    if (scan.moment !== "end") continue;
+    const own = ends.get(scan.seat) ?? [];
+    ends.set(scan.seat, own);
+    own.push(scan);
+  }
+  for (const own of ends.values()) own.sort((a, b) => a.at.localeCompare(b.at));
+  return ends;
 }
 
 /** Whether a returned turn bears out a rule's finding; null when nothing shows why the work came back. */
-function borneOut(rule: RuleId, scan: ScanRecord, verdictAt: number, scans: readonly ScanRecord[]): boolean | null {
+function borneOut(rule: RuleId, scan: ScanRecord, verdictAt: number, ends: ReadonlyMap<string, ScanRecord[]>): boolean | null {
   if (rule !== "unverified-completion") return true;
   const ended = Date.parse(scan.at);
-  const above = scans.filter((other) => other.seat === scan.parent && other.moment === "end" && Date.parse(other.at) > ended).sort((a, b) => a.at.localeCompare(b.at));
-  for (const turn of above) {
+  for (const turn of (scan.parent && ends.get(scan.parent)) || []) {
+    if (!(Date.parse(turn.at) > ended)) continue;
     if (turn.ran === "failed") return true;
     if (turn.ran === "passed") return false;
     // the turn in which the verdict was written is the last that can show its reason
@@ -97,12 +128,20 @@ export function operatingPoint(items: readonly Scored[], maxFalseRate: number): 
   const positives = items.filter((item) => item.positive).length;
   const negatives = items.length - positives;
   if (positives === 0 || negatives === 0) return null;
+  const sorted = [...items].sort((a, b) => b.score - a.score);
   let best: Operating | null = null;
-  for (const threshold of [...new Set(items.map((item) => item.score))].sort((a, b) => b - a)) {
-    const flagged = items.filter((item) => item.score >= threshold);
-    const falseRate = flagged.filter((item) => !item.positive).length / negatives;
+  let hits = 0;
+  let falseHits = 0;
+  // from the highest score down: all read so far is flagged
+  for (let i = 0; i < sorted.length; ) {
+    const threshold = sorted[i].score;
+    for (; i < sorted.length && sorted[i].score === threshold; i += 1) {
+      if (sorted[i].positive) hits += 1;
+      else falseHits += 1;
+    }
+    const falseRate = falseHits / negatives;
     if (falseRate > maxFalseRate) break;
-    best = { threshold, recall: flagged.filter((item) => item.positive).length / positives, falseRate };
+    best = { threshold, recall: hits / positives, falseRate };
   }
   return best;
 }
@@ -140,9 +179,11 @@ export function calibrate(scans: readonly ScanRecord[], mail: readonly MailLine[
   /** Per turn that was sent back: the scan that ended it and when the verdict came. */
   const returns = new Map<string, { scan: ScanRecord; at: number }>();
   const reads = new Map<string, number>();
+  const sent = sentMail(mail);
+  const ends = turnEnds(scans);
   for (const scan of scans) {
     if (scan.rev === rev) reads.set(turnKey(scan), Math.max(reads.get(turnKey(scan)) ?? 0, scan.reads ?? 1));
-    const verdict = verdictOf(scan, mail, now, policy.labelWindowMinutes);
+    const verdict = verdictOf(scan, sent, now, policy.labelWindowMinutes);
     if (!verdict) continue;
     labels.set(turnKey(scan), verdict.label);
     if (verdict.label === "returned") returns.set(turnKey(scan), { scan, at: verdict.at });
@@ -170,7 +211,7 @@ export function calibrate(scans: readonly ScanRecord[], mail: readonly MailLine[
       report.spoke += 1;
       if (entry.raised) report.raised += 1;
       const sentBack = returns.get(key);
-      const positive = sentBack ? borneOut(entry.rule, sentBack.scan, sentBack.at, scans) : false;
+      const positive = sentBack ? borneOut(entry.rule, sentBack.scan, sentBack.at, ends) : false;
       if (label && positive !== null) report.scored.push({ score: entry.score, positive });
       rules.set(entry.rule, report);
     }

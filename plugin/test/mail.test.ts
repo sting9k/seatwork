@@ -1,5 +1,7 @@
-import { deferred, MAIL_POLICY } from "./support/room";
+import { deferred, MAIL_POLICY, ROOM_HOME } from "./support/room";
 import assert from "node:assert/strict";
+import { existsSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import { test } from "node:test";
 import { MailEngine, type Mail, type SeatRecord } from "../server/mail";
 
@@ -279,4 +281,27 @@ test("a long body reaches its recipient whole", async () => {
 
   assert.equal(sent.length, 1);
   assert.ok(sent[0].includes(brief), "the body was cut on its way");
+});
+
+test("a queue with nothing waiting has no file, and the sweep drops the empty ones an older version left", async () => {
+  const queue = (agentId: string) => join(ROOM_HOME, "mail", "queue", `${agentId}.jsonl`);
+  const sent: string[] = [];
+  const engine = engineFor({ q1: { ...idle, send: async (text) => void sent.push(text) } });
+
+  await engine.post(mail("q1", "A"));
+  assert.equal(sent.length, 1);
+  assert.ok(!existsSync(queue("q1")), "a delivered queue stays on disk: the sweep would read it every minute for good");
+
+  writeFileSync(queue("seat-of-an-older-version"), "");
+  await engine.sweep();
+  assert.ok(!existsSync(queue("seat-of-an-older-version")));
+});
+
+test("a mail is still known by its id after the plugin starts again: its sender and recipient are read from the log", async () => {
+  const before = engineFor({ k1: { ...idle, send: async () => {} } });
+  const sent = await before.post(mail("k1", "QUESTION: which unit", { agentId: "peer-k", role: "peer" }, "reply"));
+
+  const after = engineFor({});
+  assert.deepEqual(after.lookupMail(sent.id), { from: "peer-k", to: "k1" });
+  assert.equal(after.lookupMail("no-such-mail"), null);
 });

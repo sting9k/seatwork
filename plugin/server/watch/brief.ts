@@ -64,19 +64,22 @@ function fieldOf(label: string): BriefField | null {
 
 /** A value runs until the next template line; text before the first label is ignored. */
 export function parseBrief(text: string, root: string): Brief {
-  const fields: Partial<Record<BriefField, string>> = {};
-  let current: BriefField | null = null;
+  // lines are joined once, at the end: a value may be very long
+  const lines: Partial<Record<BriefField, string[]>> = {};
+  let current: string[] | null = null;
   for (const line of text.split("\n")) {
     const match = LABEL_LINE.exec(line);
     const field = match ? fieldOf(match[1]) : null;
     if (match && field) {
-      current = field;
       // a REVISED BRIEF repeats the template: the later line is the one in force
-      fields[field] = match[2].trim();
-    } else if (current) {
-      fields[current] = `${fields[current] ?? ""}\n${line}`.trim();
+      const value = match[2].trim();
+      current = lines[field] = value ? [value] : [];
+    } else if (current && line.trim()) {
+      current.push(current.length === 0 ? line.trim() : line.trimEnd());
     }
   }
+  const fields: Partial<Record<BriefField, string>> = {};
+  for (const [field, own] of Object.entries(lines)) fields[field as BriefField] = own.join("\n");
   const scope = fields.writeScope ? parseWriteScope(fields.writeScope, fields.project?.trim() || root) : null;
   const proof = [fields.acceptance, fields.contract, fields.output].filter((v): v is string => !!v).join("\n");
   return { fields, scope, namedChecks: namedChecks(proof), readOnly: scope?.readOnly === true };

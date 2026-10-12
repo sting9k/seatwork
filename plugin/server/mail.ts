@@ -1,4 +1,4 @@
-import { appendFileSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { maySpawn } from "./seats";
 import { join } from "node:path";
 import type { PaseoApi } from "./paseo";
@@ -6,6 +6,7 @@ import { paseoCli } from "./cli";
 import { REGISTRY_LOG, ROOM_HOME } from "./paths";
 import { parseSeat, type Role } from "./seats";
 import type { MailPolicy, RoomPolicy } from "./policy";
+import { Lru } from "./watch/cache";
 
 /** Seatwork mail: writes the envelope, checks the route, and holds a mail on disk until its recipient is at rest. */
 
@@ -53,6 +54,7 @@ const HANDLING: Record<Priority, string> = {
 }
 
 const PRIORITY_RANK: Record<Priority, number> = { blocking: 0, action: 1, fyi: 2 };
+const RECENT_MAILS = 2000;
 
 function nowId(): string {
   return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
@@ -79,11 +81,13 @@ function readQueue(agentId: string): Mail[] {
     .map((line) => JSON.parse(line) as Mail);
 }
 
+/** Writes a queue; an empty one has no file. */
 function writeQueue(agentId: string, mails: Mail[]): void {
   ensureDirs();
   const file = queueFile(agentId);
+  if (mails.length === 0) return rmSync(file, { force: true });
   const tmp = `${file}.tmp`;
-  writeFileSync(tmp, mails.map((m) => JSON.stringify(m)).join("\n") + (mails.length ? "\n" : ""));
+  writeFileSync(tmp, mails.map((m) => JSON.stringify(m)).join("\n") + "\n");
   renameSync(tmp, file);
 }
 
@@ -132,7 +136,7 @@ function digest(mails: Mail[]): string {
 
 export class MailEngine {
   private readonly seats = new Map<string, SeatRecord>();
-  private readonly posted = new Map<string, { from: string; to: string }>();
+  private readonly posted = new Lru<{ from: string; to: string }>(RECENT_MAILS);
   private readonly adoptions = new Map<string, string>();
   private delivering = new Set<string>();
   private readonly woke = new Map<string, Mail[]>();
@@ -145,7 +149,6 @@ export class MailEngine {
   ) {
     ensureDirs();
     this.loadSeats();
-    this.loadPosted();
     this.loadAdoptions();
   }
 
@@ -199,22 +202,27 @@ export class MailEngine {
     return { ok: true, previous };
   }
 
-  private loadPosted(): void {
-    if (!existsSync(LOG_FILE)) return;
-    for (const line of readFileSync(LOG_FILE, "utf8").split("\n")) {
-      if (!line.includes('"kind":"queued"')) continue;
+  /** Finds in the log the sender and recipient of a mail no longer in memory. */
+  private findPosted(id: string): { from: string; to: string } | null {
+    if (!existsSync(LOG_FILE)) return null;
+    const lines = readFileSync(LOG_FILE, "utf8").split("\n");
+    for (let i = lines.length - 1; i >= 0; i -= 1) {
+      if (!lines[i].includes('"kind":"queued"') || !lines[i].includes(id)) continue;
       try {
-        const rec = JSON.parse(line) as { kind: string; id: string; from: string; to: string };
-        if (rec.kind === "queued") this.posted.set(rec.id, { from: rec.from, to: rec.to });
+        const rec = JSON.parse(lines[i]) as { kind: string; id: string; from: string; to: string };
+        if (rec.kind !== "queued" || rec.id !== id) continue;
+        this.posted.set(id, { from: rec.from, to: rec.to });
+        return { from: rec.from, to: rec.to };
       } catch {
         // skip bad line
       }
     }
+    return null;
   }
 
   /** Who sent mail #id and to whom; null when unknown. */
   lookupMail(id: string): { from: string; to: string } | null {
-    return this.posted.get(id) ?? null;
+    return this.posted.get(id) ?? this.findPosted(id);
   }
 
   /* ---------- seat directory (who is whose parent) ---------- */
@@ -423,7 +431,9 @@ export class MailEngine {
     if (!existsSync(QUEUE_DIR)) return;
     for (const name of readdirSync(QUEUE_DIR)) {
       if (!name.endsWith(".jsonl")) continue;
-      await this.deliver(name.slice(0, -".jsonl".length));
+      // older versions left empty queue files
+      if (statSync(join(QUEUE_DIR, name), { throwIfNoEntry: false })?.size === 0) rmSync(join(QUEUE_DIR, name), { force: true });
+      else await this.deliver(name.slice(0, -".jsonl".length));
     }
     // a kept report whose seat is in no turn any more: its turn end never reached us
     if (!existsSync(REPORT_DIR)) return;

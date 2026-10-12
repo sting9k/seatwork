@@ -1,5 +1,6 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import { KEEP_LOG_DAYS } from "./gc";
 import { hqDir } from "./hq";
 import { ROOM_HOME, REGISTRY_LOG } from "./paths";
 
@@ -35,9 +36,10 @@ function signalOf(subject: string): string {
   return SIGNALS.find((s) => upper.startsWith(s)) ?? "other";
 }
 
-/** Counts of every signal mailed in the last `days`, per project, with the ratios Better-Seatwork asks about. */
-export function roomStats(days: number): string {
-  const since = Date.now() - Math.max(1, days) * 86_400_000;
+/** Counts of the signals mailed in the last `asked` days, a week at most, per project. */
+export function roomStats(asked: number): string {
+  const days = Math.min(Math.max(1, asked), KEEP_LOG_DAYS);
+  const since = Date.now() - days * 86_400_000;
   const cwdOf = new Map<string, string>();
   for (const rec of readJsonl<{ agentId: string; cwd?: string }>(REGISTRY_LOG)) if (rec.cwd) cwdOf.set(rec.agentId, rec.cwd);
   const lines = readJsonl<LogLine>(MAIL_LOG).filter((l) => l.kind === "queued" && Date.parse(l.at) >= since);

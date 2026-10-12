@@ -5,7 +5,7 @@ import type { PluginBeforeRequests, PluginServerContext } from "@getpaseo/plugin
 import type { PaseoApi } from "./server/paseo";
 import { z } from "zod";
 import { paseoCli } from "./server/cli";
-import { Collector, liveAgents } from "./server/gc";
+import { collectFiles, Collector, KEEP_LOG_DAYS, liveAgents } from "./server/gc";
 import { MailEngine, type Mail, type Priority, type Needs } from "./server/mail";
 import { checkHqPlacement, ensureHqProject, hqDir, removeHqProject } from "./server/hq";
 import { McpHttpServer } from "./server/mcp-http";
@@ -24,7 +24,7 @@ import { applyWithSdk, readSwitches, removeWithSdk, turnBundledSkillsOff } from 
 import { clearOldRoom } from "./server/setup/old-room";
 import { roomModels, type Setup } from "./server/setup/plan";
 import { keptAt, roomFolders, takeRoomFiles, type ProjectFiles } from "./server/setup/project-files";
-import { isSetUp, KEEP_REMOVED_DAYS, moveRoomHomeAside, readSetup, sweepRemoved } from "./server/setup/room-home";
+import { isSetUp, KEEP_REMOVED_DAYS, moveRoomHomeAside, readSetup } from "./server/setup/room-home";
 import { asksOwner, CLOSES_WORK, signalOf, subjectSignal } from "./server/signals";
 import { roomStats } from "./server/stats";
 import { Budget } from "./server/watch/budget";
@@ -41,7 +41,7 @@ import { Watcher, type SeatView, type TimelineView } from "./server/watch/watche
 
 type CreateRequest = PluginBeforeRequests["agent.create"];
 
-const VERSION = "0.19.1";
+const VERSION = "0.19.2";
 const MAIL_DIR = join(ROOM_HOME, "mail");
 const MCP_TOKEN_FILE = join(MAIL_DIR, "token");
 const NONCES_FILE = join(MAIL_DIR, "nonces.json");
@@ -51,16 +51,16 @@ export default function contribute(server: PluginServerContext) {
   server.registerSettings(roomSettings);
   let room: Room | null = isSetUp(ROOM_HOME) ? startRoom(server) : null;
   if (!room) console.log(`seatwork ${VERSION}: no room is set up on this daemon; its setup screen is Seatwork, in the sidebar`);
-  // the folders Remove and Init set aside go once their keep is over, with or without a room
-  const sweepKept = () => {
+  // GC's file sweep also runs when no room is set up
+  const sweepFiles = () => {
     try {
-      for (const folder of sweepRemoved(ROOM_HOME)) console.log(`seatwork: deleted ${folder}, set aside more than ${KEEP_REMOVED_DAYS} days ago`);
+      for (const line of collectFiles(ROOM_HOME, PASEO_HOME)) console.log(`seatwork: gc: ${line}`);
     } catch (error) {
-      console.error("seatwork: could not delete a set-aside folder", error);
+      console.error("seatwork: gc: the file sweep failed", error);
     }
   };
-  sweepKept();
-  const keptSweep = setInterval(sweepKept, 6 * 3_600_000);
+  sweepFiles();
+  const fileSweep = setInterval(sweepFiles, 6 * 3_600_000);
   /** Setting up, removing and re-keying the room happen one at a time. */
   let busy: Promise<unknown> = Promise.resolve();
   const oneAtATime = <T>(work: () => Promise<T>): Promise<T> => {
@@ -95,7 +95,9 @@ export default function contribute(server: PluginServerContext) {
     const pluginDir = await ownFolder(paseo);
     const setup = isSetUp(ROOM_HOME) ? readSetup(ROOM_HOME) : null;
     const seats = setup ? enabledSeats().map((seat) => seat.provider) : [];
-    const harnesses = (await harnessStates(paseo, HARNESSES)).map((h) => ({
+    // the provider list and the checks run side by side
+    const [states, checks] = await Promise.all([harnessStates(paseo, HARNESSES), setupChecks(paseo, pluginDir, setup, seats)]);
+    const harnesses = states.map((h) => ({
       ...h,
       models: Object.entries(h.models).map(([id, m]) => ({ id, label: m.label, thinking: m.thinking, defaultThinking: m.defaultThinking ?? "" })),
     }));
@@ -115,7 +117,7 @@ export default function contribute(server: PluginServerContext) {
       projects: (setup ? projectTables() : []) as never,
       // a watcher that is off asks nothing and spends nothing
       spend: room && room.policy.watcher.mode !== "off" ? room.spend() : null,
-      checks: await setupChecks(paseo, pluginDir, setup, seats),
+      checks,
     };
   });
 
@@ -206,7 +208,7 @@ export default function contribute(server: PluginServerContext) {
   );
 
   return async () => {
-    clearInterval(keptSweep);
+    clearInterval(fileSweep);
     await busy;
     await room?.stop();
   };
@@ -503,12 +505,12 @@ function startRoom(server: Pick<PluginServerContext, "on" | "before">): Room {
   mcp.register(
     {
       name: "seatwork_room_stats",
-      description: "What the mail log says happened in the last N days, per project and per signal (candidates accepted or rejected, reopen requests conceded or held, decisions escalated, questions). Refused for seats that do not keep the registry.",
-      inputSchema: { type: "object", properties: { days: { type: "number", description: "Window in days, default 14." } }, required: [] },
+      description: `What the mail log says happened in the last N days, per project and per signal (candidates accepted or rejected, reopen requests conceded or held, decisions escalated, questions). The log keeps ${KEEP_LOG_DAYS} days. Refused for seats that do not keep the registry.`,
+      inputSchema: { type: "object", properties: { days: { type: "number", description: `Window in days, ${KEEP_LOG_DAYS} at most and by default.` } }, required: [] },
     },
     async (args, context) => {
       registryOwner(context.nonce, "seatwork_room_stats");
-      return roomStats(Number(args.days) > 0 ? Number(args.days) : 14);
+      return roomStats(Number(args.days) > 0 ? Number(args.days) : KEEP_LOG_DAYS);
     },
   );
 
@@ -658,6 +660,8 @@ function startRoom(server: Pick<PluginServerContext, "on" | "before">): Room {
 
   off.push(server.on("agent.archived", async (event, { paseo }) => {
     owed.clear(event.agent.id);
+    mailedUp.delete(event.agent.id);
+    lastSignal.delete(event.agent.id);
     watcher?.forget(event.agent.id);
     await getGc(paseo).onArchived(event.agent.id);
   }));

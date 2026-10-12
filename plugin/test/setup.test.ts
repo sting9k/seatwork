@@ -11,7 +11,8 @@ import { choose, type ChoiceFlags, type Terminal } from "../server/setup/choices
 import { addSeats, setUpRoom } from "../server/setup/init";
 import { applyToConfigFile, applyWithSdk } from "../server/setup/paseo-config";
 import { planRoom, roomModels, type Catalog, type Setup } from "../server/setup/plan";
-import { isSetUp, readSetup, sweepRemoved } from "../server/setup/room-home";
+import { sweepRemoved } from "../server/gc";
+import { isSetUp, readSetup } from "../server/setup/room-home";
 import { changedRoles, chooseSeat, chooseTier, clearRole, dropTier, merge, seatChanged, seatChoice, type Table, tierChoices, tierDiff } from "../shared/model-choices";
 
 // every harness has the same two models, plus the one the room's own table puts HQ on

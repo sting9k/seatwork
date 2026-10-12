@@ -16,7 +16,8 @@ test("mail that was held when the daemon stopped moves once the app is open, bef
 
   // after it every seat is closed and no hook has fired: the app's question reaches the plugin first
   const inbox: string[] = [];
-  const paseo = { agents: { list: async () => ({ entries: [] }), ref: () => ({ refresh: async () => {}, current: () => ({ status: "closed" }), send: async (text: string) => void inbox.push(text) }) } };
+  let listed = 0;
+  const paseo = { agents: { list: async () => ({ entries: [], listed: (listed += 1) }), ref: () => ({ refresh: async () => {}, current: () => ({ status: "closed" }), send: async (text: string) => void inbox.push(text) }) } };
   const paseoSide = fakeServer();
   const dispose = contribute(paseoSide.server);
   try {
@@ -29,6 +30,7 @@ test("mail that was held when the daemon stopped moves once the app is open, bef
 
   assert.equal(inbox.length, 1);
   assert.ok(inbox[0].includes(`#${held.id}`));
+  assert.equal(listed, 0, "the app asks every 15 seconds: with nothing waiting on the Owner, the daemon's agents are not listed");
 });
 
 test("the chime is a WAV file whose header agrees with its samples, and it ends in silence", () => {

@@ -1,12 +1,14 @@
-import { appendFileSync, existsSync, readdirSync, readFileSync } from "node:fs";
-import { join } from "node:path";
+import { appendFileSync, existsSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { basename, dirname, join } from "node:path";
 import type { PaseoApi } from "./paseo";
 import { paseoCli as cli } from "./cli";
 import { waitsOnSomeone, type MailEngine } from "./mail";
 import { PASEO_SCHEDULES, ROOM_HOME } from "./paths";
 import type { GcPolicy } from "./policy";
+import { KEEP_REMOVED_DAYS } from "./setup/room-home";
+import { isVerdict } from "./watch/calibrate";
 
-/** Garbage collection: archives room seats at rest too long, and clears the heartbeats and mail of seats that are gone. */
+/** Garbage collection: idle seats, what gone seats left behind, and old files. */
 
 const GC_LOG = join(ROOM_HOME, "gc.log");
 
@@ -181,4 +183,73 @@ export class Collector {
       this.log(`gc: deleted heartbeat ${schedule.id} (${schedule.name ?? ""}) of archived seat ${target}`);
     }
   }
+}
+
+/* ---------- files ---------- */
+
+export const KEEP_LOG_DAYS = 7;
+
+type Line = Record<string, unknown>;
+
+const LOGS: readonly { file: string; stays?(line: Line): boolean }[] = [
+  // verdicts stay: the watcher's statistics need them
+  { file: join("mail", "log.jsonl"), stays: (line) => line.kind === "queued" && isVerdict(String(line.subject ?? "")) },
+  { file: "gc.log" },
+];
+
+/** Drops a log's lines dated before `before`; returns how many. */
+function trimLines(file: string, before: number, stays: (line: Line) => boolean = () => false): number {
+  if (!existsSync(file)) return 0;
+  const lines = readFileSync(file, "utf8").split("\n").filter((text) => text.trim());
+  const kept = lines.filter((text) => {
+    try {
+      const line = JSON.parse(text) as Line;
+      return Date.parse(String(line.at)) >= before || stays(line);
+    } catch {
+      return false;
+    }
+  });
+  if (kept.length === lines.length) return 0;
+  if (kept.length === 0) rmSync(file, { force: true });
+  else {
+    writeFileSync(`${file}.tmp`, `${kept.join("\n")}\n`, { mode: statSync(file).mode & 0o777 });
+    renameSync(`${file}.tmp`, file);
+  }
+  return lines.length - kept.length;
+}
+
+/** Clears old log lines, old config backups and folders set aside; needs no daemon. */
+export function collectFiles(roomHome: string, paseoHome: string, now = new Date()): string[] {
+  const done: string[] = [];
+  const before = now.getTime() - KEEP_LOG_DAYS * 86_400_000;
+  for (const log of LOGS) {
+    const gone = trimLines(join(roomHome, log.file), before, log.stays);
+    if (gone > 0) done.push(`${gone} lines older than ${KEEP_LOG_DAYS} days left ${log.file}`);
+  }
+  // the newest backup always stays
+  for (const file of dropStamped(paseoHome, ["config.json.bak-"], KEEP_LOG_DAYS, now, 1)) done.push(`deleted ${file}, a backup older than ${KEEP_LOG_DAYS} days`);
+  for (const folder of sweepRemoved(roomHome, KEEP_REMOVED_DAYS, now)) done.push(`deleted ${folder}, set aside more than ${KEEP_REMOVED_DAYS} days ago`);
+  return done;
+}
+
+const STAMP = /^(\d{4})(\d\d)(\d\d)-(\d\d)(\d\d)(\d\d)$/;
+
+/** Deletes entries named `<prefix><stamp>` older than `days`, sparing the `spare` newest. */
+export function dropStamped(dir: string, prefixes: readonly string[], days: number, now = new Date(), spare = 0): string[] {
+  if (!existsSync(dir)) return [];
+  const dated: { path: string; at: number }[] = [];
+  for (const entry of readdirSync(dir)) {
+    const prefix = prefixes.find((known) => entry.startsWith(known));
+    const at = prefix === undefined ? null : STAMP.exec(entry.slice(prefix.length));
+    if (at) dated.push({ path: join(dir, entry), at: new Date(+at[1], +at[2] - 1, +at[3], +at[4], +at[5], +at[6]).getTime() });
+  }
+  dated.sort((a, b) => b.at - a.at);
+  const gone = dated.slice(spare).filter((entry) => now.getTime() - entry.at >= days * 86_400_000).map((entry) => entry.path);
+  for (const path of gone) rmSync(path, { recursive: true, force: true });
+  return gone;
+}
+
+/** Deletes the folders set aside beside a room home after `days`. */
+export function sweepRemoved(roomHome: string, days = KEEP_REMOVED_DAYS, now = new Date()): string[] {
+  return dropStamped(dirname(roomHome), [`${basename(roomHome)}.removed-`, "slp-room.removed-"], days, now);
 }

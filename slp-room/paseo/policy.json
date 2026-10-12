@@ -1,5 +1,5 @@
 {
-  "$comment": "Single source of truth for what each seat may touch. tools/gen-snippet.py turns the paseo part into config.snippet.json; install.sh copies the whole file to ~/.config/slp-room/policy.json where the plugin reads the harness part when it builds runtimes.",
+  "$comment": "Single source of truth for what each seat may touch. tools/gen-snippet.py turns the paseo part into ~/.config/slp-room/config.snippet.json; install.sh copies the whole file to ~/.config/slp-room/policy.json where the plugin reads the harness part when it builds runtimes.",
   "paseoTools": {
     "all": [
       "speak",
@@ -98,7 +98,7 @@
     }
   },
   "claude": {
-    "$comment": "disallowedTools uses Claude Code's permission syntax. Agent/Task/ListAgents/SendMessage are Claude's own sub-agent and messaging tools; ScheduleWakeup/Cron*/Workflow are its own scheduling and orchestration; the Bash rules stop a seat from starting a nested harness or driving Paseo from the shell.",
+    "$comment": "disallowedTools uses Claude Code's permission syntax. Agent/Task/ListAgents/SendMessage are Claude's own sub-agent and messaging tools, TeamCreate/TeamDelete and the Task* tools its agent teams, shared task list and background tasks; ScheduleWakeup/Cron*/Workflow/RemoteTrigger are its own scheduling, orchestration and cloud routines; the Bash rules stop a seat from starting a nested harness or driving Paseo from the shell.",
     "disallowedTools": {
       "hq": [
         "Agent",
@@ -118,7 +118,16 @@
         "CronList",
         "Workflow",
         "SendMessage",
-        "ListAgents"
+        "ListAgents",
+        "TeamCreate",
+        "TeamDelete",
+        "TaskCreate",
+        "TaskGet",
+        "TaskList",
+        "TaskUpdate",
+        "TaskStop",
+        "TaskOutput",
+        "RemoteTrigger"
       ],
       "supervisor": [
         "Agent",
@@ -138,7 +147,16 @@
         "CronList",
         "Workflow",
         "SendMessage",
-        "ListAgents"
+        "ListAgents",
+        "TeamCreate",
+        "TeamDelete",
+        "TaskCreate",
+        "TaskGet",
+        "TaskList",
+        "TaskUpdate",
+        "TaskStop",
+        "TaskOutput",
+        "RemoteTrigger"
       ],
       "lead": [
         "Agent",
@@ -154,7 +172,16 @@
         "CronList",
         "Workflow",
         "SendMessage",
-        "ListAgents"
+        "ListAgents",
+        "TeamCreate",
+        "TeamDelete",
+        "TaskCreate",
+        "TaskGet",
+        "TaskList",
+        "TaskUpdate",
+        "TaskStop",
+        "TaskOutput",
+        "RemoteTrigger"
       ],
       "peer": [
         "Agent",
@@ -170,7 +197,16 @@
         "CronList",
         "Workflow",
         "SendMessage",
-        "ListAgents"
+        "ListAgents",
+        "TeamCreate",
+        "TeamDelete",
+        "TaskCreate",
+        "TaskGet",
+        "TaskList",
+        "TaskUpdate",
+        "TaskStop",
+        "TaskOutput",
+        "RemoteTrigger"
       ],
       "lens": [
         "Agent",
@@ -187,12 +223,36 @@
         "Workflow",
         "SendMessage",
         "ListAgents",
+        "TeamCreate",
+        "TeamDelete",
+        "TaskCreate",
+        "TaskGet",
+        "TaskList",
+        "TaskUpdate",
+        "TaskStop",
+        "TaskOutput",
+        "RemoteTrigger",
         "Edit",
         "Write",
         "MultiEdit",
         "NotebookEdit"
       ]
     },
+    "launch": {
+      "env": {
+        "CLAUDE_CODE_DISABLE_AUTO_MEMORY": "1",
+        "CLAUDE_CODE_DISABLE_ORG_MEMORY": "1",
+        "CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS": "0",
+        "CLAUDE_CODE_DISABLE_AGENT_VIEW": "1",
+        "CLAUDE_CODE_DISABLE_WORKFLOWS": "1",
+        "ENABLE_CLAUDEAI_MCP_SERVERS": "false"
+      },
+      "extraArgs": {
+        "setting-sources": "project,local",
+        "strict-mcp-config": null
+      }
+    },
+    "$comment_launch": "How a seat starts, per harness. Claude seats run on the user's ~/.claude: the flags make them take the sign-in only (no user settings, no personal MCP server), and the env switches off what Claude Code adds of its own: auto memory and organization memory, agent teams, the agent view, workflows, and claude.ai connectors (strict-mcp-config alone still loads those). The other harnesses start on a home of their own: {runtime} is ~/.config/slp-room/runtimes/<harness>/<role>. tools/gen-snippet.py writes each launch block into the harness's providers (env, and extraArgs under options), so a seat starts this way when the plugin is not running; the plugin gives every session it opens the same env.",
     "shareFiles": [
       "CLAUDE.md"
     ],
@@ -216,6 +276,11 @@
     "$comment_deniedSkills": "Claude Code bundled skills that overlap the room (scheduling, orchestration, config editing, sub-agent reviews). Applied as Skill(skill:<name>) deny rules in the provider's disallowedTools."
   },
   "codex": {
+    "launch": {
+      "env": {
+        "CODEX_HOME": "{runtime}"
+      }
+    },
     "runtime": {
       "shareFiles": [
         "auth.json",
@@ -250,8 +315,13 @@
     }
   },
   "pi": {
+    "launch": {
+      "env": {
+        "PI_CODING_AGENT_DIR": "{runtime}"
+      }
+    },
     "runtime": {
-      "$comment": "Pi only receives Paseo tools when the pi-mcp-adapter extension is installed (pi install npm:pi-mcp-adapter). keepPackages lists substrings of user packages to carry into the seat; everything else is dropped.",
+      "$comment": "A Pi seat gets the room's and Paseo's tools through Pi's built-in MCP (Pi 0.99 or later): Paseo registers its servers there. settings is laid over the user's settings.json: no user package or extension reaches the seat, and none can stand in for the built-in MCP.",
       "shareFiles": [
         "auth.json",
         "models.json",
@@ -259,15 +329,19 @@
         "AGENTS.md"
       ],
       "shareDirs": [],
-      "keepPackages": [
-        "pi-mcp-adapter"
-      ],
       "settings": {
-        "extensions": []
+        "extensions": [],
+        "packages": []
       }
     }
   },
   "opencode": {
+    "launch": {
+      "env": {
+        "OPENCODE_CONFIG_DIR": "{runtime}",
+        "OPENCODE_CONFIG": "{runtime}/opencode.json"
+      }
+    },
     "runtime": {
       "shareEntries": [],
       "config": {
@@ -298,9 +372,8 @@
     "bundledSkills": "none"
   },
   "mail": {
-    "$comment": "The room's MCP server (slp_mail, slp_inbox) and delivery rules. Agents never use send_agent_prompt; every message is an envelope the plugin delivers without interrupting anyone. A CANDIDATE, REVIEW or DONE a seat mails its parent waits for that seat's own turn end and is its one report; an ACK, a DONE that repeats itself after mail that asked nothing, and the bounce of a mail that asked nothing start no turn and are read with the recipient's next mail.",
+    "$comment": "The room's MCP server (slp_mail, slp_inbox) and delivery rules. Agents never use send_agent_prompt; every message is an envelope the plugin delivers without interrupting anyone. A CANDIDATE, REVIEW or DONE a seat mails its parent waits for that seat's own turn end and is its one report; an ACK, a DONE that repeats itself after mail that asked nothing, a Lead's STATUS after its first report (only the newest waits), a HOLD or NOTED that asks nothing of a Peer whose candidate is under review, and the bounce of a mail that asked nothing start no turn and are read with the recipient's next mail. A body is delivered whole.",
     "port": 47611,
-    "maxBodyChars": 4000,
     "holdFyiWhileRunning": true,
     "midTurn": {
       "claude": "hold",
@@ -309,6 +382,10 @@
       "opencode": "hold"
     },
     "$comment_midTurn": "Mail to a RUNNING seat. 'steer' hands it to Paseo's steer; observed on 2026-10-07: Claude cancels the running tool ('[Request interrupted by user for tool use]') and Pi aborts it ('Command aborted'), so every harness is 'hold': mail is delivered the moment the recipient's turn ends. Keep 'hold' unless you verify a harness applies steer after the tool call."
+  },
+  "owner": {
+    "$comment": "What the room does for the Owner in the Paseo app. chime: while the app is open, a short sound when a seat nobody above reads by mail (HQ, a Supervisor, a seat you opened yourself) ends a turn with DECISION_NEEDED, BLOCKED, a WAITING ON YOU row, or a failure.",
+    "chime": true
   },
   "gc": {
     "$comment": "Room garbage collection, run by the plugin every everyMinutes and on agent.archived. A seat idle longer than its role's hours (0 = never) is archived unless one of its descendants is still alive; heartbeats whose seat is archived or gone are deleted; mail still held for an archived seat is bounced to its sender. It never kills processes and never touches agents that are not room seats.",
@@ -363,8 +440,9 @@
     },
     "$comment_budget": "What the model may cost, counted from the tokens each reply reports. When a day has spent its share of the plan, only end-of-turn questions are asked; at the cap nothing is asked until the next month.",
     "budget": { "usdPerMillionTokens": 0.042, "monthlyPlanUsd": 6, "monthlyCapUsd": 10 },
-    "state": { "messageChars": 2400, "briefLineChars": 400 },
-    "$comment_calibration": "How a rule that asks earns `raise`: a turn is labelled by what the seat above did with it within labelWindowMinutes (ACCEPT, or REJECT / REVISED BRIEF / HOLD); a rule is fit once it has minLabels labelled turns and separates them with at least minAuroc, at a threshold that flags at most maxFalseRaiseRate of the accepted ones.",
+    "$comment_state": "What of a seat's final message goes to the model: the whole of it up to messageChars (the longest hand-over report seen in a room was 9,500). A longer one is cut to the lines a question reads; a question whose lines do not fit is not asked that turn, and the scan log names it. briefLineChars cuts each line of the brief.",
+    "state": { "messageChars": 12000, "briefLineChars": 400 },
+    "$comment_calibration": "How a rule that asks earns `raise`: a turn is labelled by what the seat above did with it within labelWindowMinutes (ACCEPT, or REJECT / REVISED BRIEF; a HOLD is no verdict). Work comes back for many reasons, so for unverified-completion a returned turn counts against the seat only when the seat above ran a test of its own before its verdict and saw it fail; returned with no such run, the turn is left out. A rule is fit once it has minLabels labelled turns and separates them with at least minAuroc, at a threshold that flags at most maxFalseRaiseRate of the accepted ones.",
     "calibration": { "labelWindowMinutes": 60, "minLabels": 100, "minAuroc": 0.75, "maxFalseRaiseRate": 0.05 }
   },
   "room": {

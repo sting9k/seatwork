@@ -12,6 +12,8 @@ export interface WriteScope {
   readOnly: boolean;
   /** Globs relative to the project root. */
   patterns: string[];
+  /** Globs the line takes back out: `src/** except src/legacy/**`. */
+  except: string[];
 }
 
 /** `{a,b}` alternatives one pattern may expand to before the rest is ignored. */
@@ -19,14 +21,26 @@ const MAX_ALTERNATIVES = 64;
 
 /** Null when the line names no path ("the whole repository"): no scope then means no scope finding. */
 export function parseWriteScope(line: string, root: string): WriteScope | null {
-  if (/\bread[- ]only\b/i.test(line)) return { readOnly: true, patterns: [] };
-  const patterns = line
-    .split(/[\s,;]+|\band\b/)
-    .map((word) => word.replace(/^[`'"(<\[]+|[`'")>\].,:;]+$/g, ""))
-    .filter((word) => /^[\w.@~+\-/*?{}\[\],]+$/.test(word) && /[/.*]/.test(word) && /[A-Za-z0-9]/.test(word))
-    .map((word) => toPattern(word, root))
-    .filter((word): word is string => word !== null);
-  return patterns.length > 0 ? { readOnly: false, patterns: [...new Set(patterns)] } : null;
+  if (/\bread[- ]only\b/i.test(line)) return { readOnly: true, patterns: [], except: [] };
+  const patterns: string[] = [];
+  const except: string[] = [];
+  let excluding = false;
+  for (const raw of line.split(/[\s,;]+|\band\b/)) {
+    const word = raw.replace(/^[`'"(<\[]+|[`'")>\].,:;]+$/g, "");
+    if (/^(?:except|excluding|without|not)$/i.test(word)) {
+      excluding = true;
+      continue;
+    }
+    if (!(/^[\w.@~+\-/*?{}\[\],]+$/.test(word) && /[/.*]/.test(word) && /[A-Za-z0-9]/.test(word))) {
+      // only the path right after "except" is taken out ("except for the", "except anything under" still lead to it)
+      if (!/^(?:for|the|in|under|of|anything|everything|files?)$/i.test(word)) excluding = false;
+      continue;
+    }
+    const pattern = toPattern(word, root);
+    if (pattern !== null) (excluding ? except : patterns).push(pattern);
+    excluding = false;
+  }
+  return patterns.length > 0 ? { readOnly: false, patterns: [...new Set(patterns)], except: [...new Set(except)] } : null;
 }
 
 function toPattern(word: string, root: string): string | null {
@@ -41,7 +55,7 @@ function toPattern(word: string, root: string): string | null {
 }
 
 export function inScope(scope: WriteScope, path: string): boolean {
-  if (scope.readOnly) return false;
+  if (scope.readOnly || scope.except.some((pattern) => matchesPattern(pattern, path))) return false;
   return scope.patterns.some((pattern) => matchesPattern(pattern, path));
 }
 
@@ -179,13 +193,15 @@ function inClass(set: string, c: string): boolean {
 /* ---------- what kind of file a path is ---------- */
 
 /**
- * source: code and configuration, a change makes earlier checks stale. doc: prose. generated: rebuilt from source.
+ * source: code and configuration, a change makes earlier checks stale. doc: prose. generated: rebuilt from source, or left by a run (logs).
  * room: notes under .slp/. vcs: git's own files. scratch: temporary files and harness homes. outside: the rest outside the root.
  */
 export type PathKind = "source" | "doc" | "generated" | "room" | "vcs" | "scratch" | "outside";
 
 const GENERATED = /^(?:.*\/)?(?:node_modules|dist|build|out|target|coverage|\.next|\.nuxt|\.turbo|\.cache|\.venv|venv|__pycache__|\.pytest_cache|\.mypy_cache|\.ruff_cache|\.gradle|\.tox)(?:\/|$)/;
 const DOC = /\.(?:md|mdx|markdown|txt|rst|adoc)$/i;
+/** What a run leaves behind: `npm test > out.log` changes no source. */
+const LEFTOVER = /\.(?:log|out|tmp|temp|bak|orig|rej|pid|tsbuildinfo)$|(?:^|\/)\.DS_Store$/i;
 const SCRATCH_ROOTS = [...new Set([tmpdir(), "/tmp", "/private/tmp", "/var/tmp", "/var/folders", "/private/var/folders", "/dev", CLAUDE_HOME, CODEX_HOME, PI_HOME, OPENCODE_CONFIG_HOME, PASEO_HOME, ROOM_HOME])].map((dir) => normalize(dir));
 
 /** A path relative to the project root with POSIX separators, or null when it lies outside the root. */
@@ -201,6 +217,6 @@ export function pathKind(root: string, path: string): PathKind {
   if (rel === null) return SCRATCH_ROOTS.some((dir) => path === dir || path.startsWith(`${dir}/`)) ? "scratch" : "outside";
   if (rel === ".git" || rel.startsWith(".git/")) return "vcs";
   if (rel === ".slp" || rel.startsWith(".slp/")) return "room";
-  if (GENERATED.test(rel)) return "generated";
+  if (GENERATED.test(rel) || LEFTOVER.test(rel)) return "generated";
   return DOC.test(rel) ? "doc" : "source";
 }

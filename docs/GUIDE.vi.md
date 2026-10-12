@@ -38,8 +38,8 @@ Ba điều cần nhớ:
 
 ## 2. Cài đặt
 
-Cần có Paseo 0.10.3 trở lên, `jq`, `python3` kèm PyYAML, Claude Code và Codex
-(thêm Pi hoặc OpenCode nếu bạn cho vai nào chạy trên đó).
+Cần có Paseo 0.11.2 trở lên, `jq`, `python3` kèm PyYAML, Claude Code và Codex
+(thêm Pi từ 0.99 trở lên, hoặc OpenCode, nếu bạn cho vai nào chạy trên đó).
 
 ```bash
 git clone https://github.com/sting9k/seatwork.git
@@ -78,7 +78,12 @@ claude auth login
 ```
 
 Seatwork không dùng token. Seat cũng không mang theo skill, plugin, hook hay
-MCP server cá nhân của bạn; nó chỉ có skill của vai mình.
+MCP server cá nhân của bạn; nó chỉ có skill của vai mình. Những thứ Claude
+Code tự thêm cũng bị tắt trong seat: memory, agent teams và các công cụ task
+của nó, agent view, workflows, routine trên cloud và connector của claude.ai.
+Các công tắc tách
+seat khỏi cấu hình cá nhân của bạn nằm ngay trong provider của seat ở cấu
+hình Paseo, nên chúng vẫn có hiệu lực cả khi plugin không chạy.
 
 ## 3. Thêm project
 
@@ -147,6 +152,18 @@ Việc cần bạn quyết nằm ở dòng `WAITING ON YOU:` cuối báo cáo. �
 việc về chi phí, phạm vi sản phẩm, hoặc hành động ra ngoài như push và
 deploy. Agent không bao giờ quyết thay bạn mấy việc này.
 
+Khi app Paseo đang mở, nó phát một tiếng ngắn mỗi lần HQ, một Supervisor
+hoặc một seat do chính bạn mở kết thúc lượt bằng `DECISION_NEEDED`,
+`BLOCKED`, một dòng `WAITING ON YOU:`, hoặc bị lỗi. Muốn tắt: đặt
+`owner.chime` thành `false` trong `paseo/policy.json` rồi chạy `./install.sh`.
+
+Dòng **Room** ở chân sidebar của Paseo cho biết còn bao nhiêu lượt như vậy
+đang chờ, và mở một màn hình cho cả room: các lượt đó ở trên cùng, rồi mỗi
+dòng là HQ hoặc một project đang có seat, kèm một chấm cho mỗi seat (xanh
+khi seat đang làm việc). Bấm vào project để xem cây seat của nó, bấm vào
+seat để mở seat đó. Các project chưa có seat nào nằm chung một dòng ở cuối. Một lượt nằm trong danh sách cho tới khi seat đó làm việc
+lại hoặc bị lưu trữ; khởi động lại daemon không xoá nó.
+
 ### Muốn can thiệp một Peer
 
 Nên nói với Supervisor. Nếu bạn chat thẳng với Peer, nó vẫn làm theo, và
@@ -168,8 +185,19 @@ lệnh đến từ HQ.
 Agent gửi thư cho nhau, không ngắt lời nhau. Thư chỉ tới khi người nhận làm
 xong lượt hiện tại. Kết quả đã xong (`CANDIDATE`, `REVIEW`, `DONE`) đi lên
 đúng một lần, khi lượt của chính người gửi kết thúc, để không ai hành động
-trên một seat còn đang làm. Thư xác nhận, hoặc `DONE` chỉ lặp lại chính nó,
-không đánh thức ai: nó được đọc cùng thư kế tiếp.
+trên một seat còn đang làm. Thư dài bao nhiêu cũng tới nơi nguyên vẹn.
+
+Seat không cần đang mở mới nhận được thư. Sau khi daemon khởi động lại, mọi
+agent đều đóng cho tới khi có thứ gì mở nó, và thư sẽ mở nó. Thư đã nằm chờ
+từ trước lúc daemon tắt sẽ đi khi app Paseo đang mở hoặc khi có agent nào chạy. Seat vừa có
+lượt chạy bị lỗi cũng nhận thư như vậy. Thư gửi cho seat đã lưu trữ hoặc đã
+bị xoá sẽ quay về người gửi với tiêu đề `UNDELIVERABLE`.
+
+Có những thư không đánh thức ai, chỉ được đọc cùng thư kế tiếp: thư xác
+nhận, `DONE` chỉ lặp lại chính nó, `STATUS` của Lead sau báo cáo đầu tiên,
+và `HOLD` không cần trả lời gửi cho Peer đang chờ kết quả kiểm tra. Trong các
+`STATUS` của một Lead, room chỉ giữ bản mới nhất; Supervisor đọc nó ở nhịp
+heartbeat.
 
 | Tín hiệu | Ai gửi | Nghĩa |
 |---|---|---|
@@ -243,11 +271,12 @@ Sửa trong repo rồi chạy lại lệnh cài.
 | `slp-room/paseo/policy.json` | Ai gửi thư cho ai, ai tạo ai, thời gian chờ, watcher | `./install.sh` |
 | `slp-room/room/roles/`, `skills/` | Prompt và quy trình của từng vai | `./install.sh --no-plugin` |
 
-Các bậc model của Peer. Bảng đi kèm có hai bậc; muốn thêm bậc `cheap` hay
-`expensive` thì thêm một mục nữa dưới `peer.tiers`:
+Các bậc model của Peer. Bảng đi kèm có ba bậc; muốn thêm bậc `expensive`
+thì thêm một mục nữa dưới `peer.tiers`:
 
 | Bậc | Dùng cho |
 |---|---|
+| `cheap` | Việc máy móc, đã tả rõ: đổi tên, định dạng, lọc log, sửa tài liệu. Chạy Claude Haiku 5.5, cần Claude Code từ 2.1.293 |
 | `default` | Viết code, debug, research |
 | `cross-family` | Review code do họ model khác viết |
 
@@ -315,7 +344,7 @@ Mười luật dựa hoàn toàn vào lệnh gọi công cụ và vào brief, kh
 | `repeating` | làm cùng một việc 4 lần liền, kết quả y như nhau |
 | `shell-wait` | chờ trong shell đủ một phút (`sleep`, vòng lặp có sleep) |
 | `silent` | đang trong lượt mà không hoạt động quá thời gian chờ của vai |
-| `incomplete-brief` | là Peer được Lead tạo bằng một brief thiếu `Outcome`, `Write scope`, `Acceptance evidence`, `Reopen when` hoặc dòng cuối `Reply with slp_mail to: owner` (brief viết tự do thì thiếu cả năm); báo một lần, lúc Peer bắt đầu lượt đầu tiên |
+| `incomplete-brief` | là Peer nhận từ Lead một brief thiếu `Outcome`, `Write scope`, `Acceptance evidence`, `Reopen when` hoặc dòng cuối `Reply with slp_mail to: owner` (brief viết tự do thì thiếu cả năm). Luật xét cả brief lúc tạo Peer lẫn brief gửi sau đó qua thư (thư có chữ `BRIEF` trong tiêu đề); mỗi brief báo một lần, lúc lượt mà nó mở ra bắt đầu |
 
 Bốn luật cần người đọc câu trả lời của seat. Code quyết định lúc nào hỏi (ví
 dụ: câu trả lời báo xong việc, code đã đổi, và không có test nào qua sau lần
@@ -335,14 +364,19 @@ Model phân loại là Jev, gọi qua OpenRouter. Đặt khoá ở
 `~/.config/slp-room/watch/key` (quyền 600) hoặc trong biến môi trường
 `SLP_WATCH_KEY`. Không có khoá thì mười luật dựa vào lệnh vẫn chạy. Thứ được
 gửi đi: các dòng brief mà câu hỏi cần, tên các file đã đổi, và câu trả lời
-cuối của seat sau khi đã che bí mật. Output của công cụ không bao giờ được
-gửi. Chi phí được đếm từ mỗi lần trả lời; `watcher.budget` đặt kế hoạch 6
-USD một tháng và ngừng hỏi ở 10 USD.
+cuối của seat sau khi đã che bí mật. Câu trả lời dài tới 12.000 ký tự được
+gửi nguyên; dài hơn thì chỉ gửi các dòng câu hỏi cần đọc, và câu hỏi nào
+không đủ chỗ cho các dòng của nó thì bị bỏ qua, có ghi tên trong nhật ký.
+Output của công cụ không bao giờ được gửi. Chi phí được đếm từ mỗi lần trả lời; `watcher.budget` đặt kế hoạch 6
+USD một tháng và ngừng hỏi ở 10 USD. Chi phí trong tháng hiện ở mục Usage của
+Paseo, dưới tên "Room watcher".
 
 Muốn bật: để chạy `shadow` một thời gian, nhờ HQ xem số liệu watcher (HQ gọi
-`slp_watch_stats`: chi phí, và với từng luật là nó lên tiếng bao nhiêu lần,
-trong đó bao nhiêu lượt bị seat phía trên trả lại), rồi chạy
-`./install.sh --watcher on`.
+`slp_watch_stats`: chi phí, số lượt đã theo dõi và số lần đọc, và với từng
+luật là nó lên tiếng bao nhiêu lần, trong đó bao nhiêu lượt bị seat phía
+trên trả lại), rồi chạy `./install.sh --watcher on`. Với
+`unverified-completion`, một lượt bị trả lại chỉ được tính khi seat phía trên
+tự chạy test và thấy hỏng: bài còn bị trả lại vì nhiều lý do khác.
 
 Muốn thử luật trên các lượt đã ghi lại mà không đụng tới room nào, chạy
 trong `slp-room/plugin`:
@@ -361,6 +395,7 @@ npm run watch:replay -- --ask ../evals/results/<label>
 | `lists for … only …` | Dùng model có trong bảng, hoặc sửa `.slp/room.json` |
 | `which the room has not enabled` | Sửa `.slp/room.json`, hoặc chạy `./install.sh --seat <seat>` để dựng seat đó |
 | `its runtime could not be built` | Sửa thứ thông báo nêu ra (thường là `~/.codex/config.toml`), rồi tạo lại agent |
+| `is too old: the room needs 0.11.2 or later` | Cập nhật Paseo, chạy `paseo daemon restart`, rồi chạy lại `./install.sh` |
 | Agent báo chưa đăng nhập | Chạy `claude auth login` |
 | Agent không biết quy trình mới | Mở agent mới |
 

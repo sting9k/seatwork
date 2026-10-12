@@ -1,4 +1,4 @@
-import { subjectSignal } from "../signals";
+import { CLOSES_WORK } from "../signals";
 import type { RuleId } from "./rules";
 import type { ScanRecord } from "./scanlog";
 
@@ -15,23 +15,45 @@ export interface MailLine {
 /** What the seat above did with a turn's result: sent it back, or took it. */
 export type Label = "returned" | "accepted";
 
-const RETURNS = /^\W*(?:REJECT|REVISED BRIEF|HOLD)\b/i;
+// HOLD is no verdict: a Lead writes it for "received, under review", and the verdict follows
+const RETURNS = /^\W*(?:REJECT|REVISED BRIEF)\b/i;
 const ACCEPTS = /^\W*ACCEPT\b/i;
 
-/** The label of a finished turn, or null while the seat above has not shown its hand. */
-export function labelOf(scan: ScanRecord, mail: readonly MailLine[], now: number, windowMinutes: number): Label | null {
-  if (scan.moment !== "end" || !scan.parent || !scan.signal) return null;
+/** The first verdict of the seat above on a turn that handed work over, within the window. Null while it has given none. */
+function verdictOf(scan: ScanRecord, mail: readonly MailLine[], now: number, windowMinutes: number): { label: Label; at: number } | null {
+  if (scan.moment !== "end" || !scan.parent || !scan.signal || !CLOSES_WORK.has(scan.signal)) return null;
   const ended = Date.parse(scan.at);
   const until = ended + windowMinutes * 60_000;
   for (const line of mail) {
     const at = Date.parse(line.at);
     if (line.kind !== "queued" || line.from !== scan.parent || line.to !== scan.seat || at <= ended || at > until) continue;
-    if (RETURNS.test(line.subject)) return "returned";
-    if (ACCEPTS.test(line.subject)) return "accepted";
-    // a DONE is taken in silence; any other word back about it is a return
-    if (scan.signal === "DONE" && subjectSignal(line.subject) !== "ACK") return "returned";
+    if (RETURNS.test(line.subject)) return { label: "returned", at };
+    if (ACCEPTS.test(line.subject)) return { label: "accepted", at };
   }
-  return scan.signal === "DONE" && now > until ? "accepted" : null;
+  // a DONE is taken in silence: a question about it is not a verdict
+  return scan.signal === "DONE" && now > until ? { label: "accepted", at: until } : null;
+}
+
+export function labelOf(scan: ScanRecord, mail: readonly MailLine[], now: number, windowMinutes: number): Label | null {
+  return verdictOf(scan, mail, now, windowMinutes)?.label ?? null;
+}
+
+/**
+ * Whether a returned turn bears out a rule's finding. Work comes back for many reasons; a claim of passing checks
+ * was false only when the seat above ran a test of its own before its verdict and saw it fail. Null: nothing shows
+ * which it was, and the turn is left out for this rule.
+ */
+function borneOut(rule: RuleId, scan: ScanRecord, verdictAt: number, scans: readonly ScanRecord[]): boolean | null {
+  if (rule !== "unverified-completion") return true;
+  const ended = Date.parse(scan.at);
+  const above = scans.filter((other) => other.seat === scan.parent && other.moment === "end" && Date.parse(other.at) > ended).sort((a, b) => a.at.localeCompare(b.at));
+  for (const turn of above) {
+    if (turn.ran === "failed") return true;
+    if (turn.ran === "passed") return false;
+    // the turn in which the verdict was written is the last that can show its reason
+    if (Date.parse(turn.at) >= verdictAt) break;
+  }
+  return null;
 }
 
 export interface Scored {
@@ -96,7 +118,7 @@ export interface RuleReport {
   by: "facts" | "model";
   spoke: number;
   raised: number;
-  /** Of the turns it spoke in that have a label: how many were sent back. */
+  /** Of the turns it spoke in that have a label: how many were sent back (for unverified-completion: sent back after a test failed for the seat above). */
   labelled: number;
   returned: number;
   roc: Roc | null;
@@ -113,6 +135,8 @@ export interface CalibrationPolicy {
 
 export interface Calibration {
   turns: number;
+  /** Scans behind those turns, the quiet ones included. */
+  reads: number;
   labelled: number;
   returned: number;
   /** Returned turns that had any finding at all. */
@@ -123,9 +147,15 @@ export interface Calibration {
 export function calibrate(scans: readonly ScanRecord[], mail: readonly MailLine[], policy: CalibrationPolicy, now: number, rev: number): Calibration {
   const turnKey = (scan: ScanRecord) => `${scan.seat}:${scan.turn ?? scan.at}`;
   const labels = new Map<string, Label>();
+  /** Per turn that was sent back: the scan that ended it and when the verdict came. */
+  const returns = new Map<string, { scan: ScanRecord; at: number }>();
+  const reads = new Map<string, number>();
   for (const scan of scans) {
-    const label = labelOf(scan, mail, now, policy.labelWindowMinutes);
-    if (label) labels.set(turnKey(scan), label);
+    if (scan.rev === rev) reads.set(turnKey(scan), Math.max(reads.get(turnKey(scan)) ?? 0, scan.reads ?? 1));
+    const verdict = verdictOf(scan, mail, now, policy.labelWindowMinutes);
+    if (!verdict) continue;
+    labels.set(turnKey(scan), verdict.label);
+    if (verdict.label === "returned") returns.set(turnKey(scan), { scan, at: verdict.at });
   }
   // per turn and rule, the strongest thing the rule said
   const said = new Map<string, Map<string, { score: number; raised: boolean; by: "facts" | "model"; rule: RuleId }>>();
@@ -149,7 +179,9 @@ export function calibrate(scans: readonly ScanRecord[], mail: readonly MailLine[
       const report = rules.get(entry.rule) ?? { by: entry.by, spoke: 0, raised: 0, scored: [] };
       report.spoke += 1;
       if (entry.raised) report.raised += 1;
-      if (label) report.scored.push({ score: entry.score, positive: label === "returned" });
+      const sentBack = returns.get(key);
+      const positive = sentBack ? borneOut(entry.rule, sentBack.scan, sentBack.at, scans) : false;
+      if (label && positive !== null) report.scored.push({ score: entry.score, positive });
       rules.set(entry.rule, report);
     }
   }
@@ -157,6 +189,7 @@ export function calibrate(scans: readonly ScanRecord[], mail: readonly MailLine[
   const returnedTurns = labelledTurns.filter((key) => labels.get(key) === "returned");
   return {
     turns: turns.size,
+    reads: [...reads.values()].reduce((sum, count) => sum + count, 0),
     labelled: labelledTurns.length,
     returned: returnedTurns.length,
     returnedWithFinding: returnedTurns.filter((key) => (said.get(key)?.size ?? 0) > 0).length,
@@ -174,9 +207,9 @@ export function calibrate(scans: readonly ScanRecord[], mail: readonly MailLine[
 }
 
 export function renderCalibration(result: Calibration, policy: CalibrationPolicy): string {
-  const lines = [`watched turns ${result.turns}; labelled by what the seat above did ${result.labelled} (sent back ${result.returned}); sent back with a finding ${result.returnedWithFinding}/${result.returned}`];
+  const lines = [`watched turns ${result.turns}, read ${result.reads} times; labelled by what the seat above did ${result.labelled} (sent back ${result.returned}); sent back with a finding ${result.returnedWithFinding}/${result.returned}`];
   for (const rule of result.rules.sort((a, b) => b.spoke - a.spoke)) {
-    const precision = rule.labelled > 0 ? `${rule.returned}/${rule.labelled} of its labelled turns were sent back` : "no labelled turn yet";
+    const precision = rule.labelled > 0 ? `${rule.returned}/${rule.labelled} of its labelled turns were sent back${rule.rule === "unverified-completion" ? " after a test failed for the seat above" : ""}` : "no labelled turn yet";
     if (rule.by === "facts") {
       lines.push(`${rule.rule} (facts): spoke in ${rule.spoke} turns, mailed ${rule.raised}; ${precision}`);
       continue;

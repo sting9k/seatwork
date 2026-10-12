@@ -4,7 +4,8 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { test } from "node:test";
-import { missingLines, parseBrief } from "../server/watch/brief";
+import { missingLines, namedChecks, parseBrief } from "../server/watch/brief";
+import { readSummary } from "../server/watch/checks";
 import { toEvents, turnStartOf, type TimelineInput } from "../server/watch/events";
 import { turnFacts } from "../server/watch/facts";
 import { gate, type RuleId } from "../server/watch/rules";
@@ -13,14 +14,14 @@ import { matchesPattern, parseWriteScope } from "../server/watch/scope";
 const brief = parseBrief(BRIEF, PROJECT);
 const THRESHOLDS = { sleepSeconds: 60, repeatRun: 4, cycleRepeats: 3, sameFailure: 4, silentMinutes: 6, inFlightMinutes: 18 };
 
-function read_(entries: TimelineInput[], options: { ended?: boolean; changed?: string[]; brief?: typeof brief | null } = {}) {
+function read_(entries: TimelineInput[], options: { ended?: boolean; changed?: string[]; brief?: typeof brief | null; later?: string[]; startedAt?: number } = {}) {
   const events = toEvents(entries, PROJECT);
-  return turnFacts({ events, turnStart: turnStartOf(entries, events, "turn-1"), cwd: PROJECT, root: PROJECT, brief: options.brief === undefined ? brief : options.brief, ended: options.ended ?? true, changed: options.changed ?? null });
+  return turnFacts({ events, turnStart: turnStartOf(entries, events, "turn-1"), cwd: PROJECT, root: PROJECT, brief: options.brief === undefined ? brief : options.brief, ended: options.ended ?? true, changed: options.changed ?? null, later: options.later, startedAt: options.startedAt });
 }
 
 function rulesOf(entries: TimelineInput[], options: Parameters<typeof read_>[1] & { now?: number; pendingPermission?: boolean } = {}): { told: RuleId[]; asked: RuleId[] } {
   const facts = read_(entries, options);
-  const result = gate({ facts, brief: options.brief === undefined ? brief : options.brief, moment: options.ended === false ? "live" : "end", briefGaps: [], now: options.now ?? (facts.lastActivity ?? 0), pendingPermission: options.pendingPermission ?? false, thresholds: THRESHOLDS });
+  const result = gate({ facts, brief: options.brief === undefined ? brief : options.brief, moment: options.ended === false ? "live" : "end", briefGap: null, now: options.now ?? (facts.lastActivity ?? 0), pendingPermission: options.pendingPermission ?? false, thresholds: THRESHOLDS });
   return { told: result.findings.map((f) => f.rule), asked: result.questions.map((q) => q.rule) };
 }
 
@@ -63,7 +64,7 @@ test("a brief is held to five lines, however its labels are dressed; one in free
   assert.deepEqual(missingLines(parseBrief("Project: /work/echo\nMake the duration parser better.\nReply with slp_mail to: owner", PROJECT)), ["Outcome", "Write scope", "Acceptance evidence", "Reopen when"]);
   // the gate tells it from the turn's start on
   const facts = read_([prompt(without("Reopen when"))], { ended: false });
-  assert.deepEqual(gate({ facts, brief, moment: "start", briefGaps: ["Reopen when"], now: 0, pendingPermission: false, thresholds: THRESHOLDS }).findings.map((f) => [f.rule, f.evidence]), [["incomplete-brief", "was briefed without these template lines: Reopen when"]]);
+  assert.deepEqual(gate({ facts, brief, moment: "start", briefGap: { lines: ["Reopen when"] }, now: 0, pendingPermission: false, thresholds: THRESHOLDS }).findings.map((f) => [f.rule, f.evidence]), [["incomplete-brief", "was briefed without these template lines: Reopen when"]]);
 });
 
 test("the tests stand behind the work only when they passed after the last change to source", () => {
@@ -77,11 +78,38 @@ test("the tests stand behind the work only when they passed after the last chang
     ["a doc edited after the run does not unmake it", [edit(src("src/duration.js")), bash("npm test", passing), edit(src("README.md"))], "passed"],
     ["a shell write counts as a change", [bash("npm test", passing), bash("sed -i '' 's/a/b/' src/duration.js")], "none"],
     ["edit and check in one line", [bash("sed -i '' 's/a/b/' src/duration.js && npm test", passing)], "passed"],
+    ["a log the run wrote is not a change to source", [edit(src("src/duration.js")), bash("npm test > out.log 2>&1; tail -3 out.log", passing)], "passed"],
     ["only a typecheck ran", [edit(src("src/duration.js")), bash("npx tsc --noEmit")], "none"],
     ["the brief's own check counts as a test", [edit(src("src/duration.js")), bash("node -e 'require(\"./src/duration\")'"), bash("npm test")], "passed"],
   ];
   for (const [name, entries, expected] of cases) assert.equal(read_([prompt(BRIEF), ...entries, say("CANDIDATE: done")]).tests, expected, name);
   assert.equal(read_([prompt(BRIEF), edit(src("src/duration.js")), bash("npx tsc --noEmit"), say("CANDIDATE")]).statics, "passed");
+});
+
+test("only a quoted check command is a check the brief names: not a branch, a path, a status command or a line of output", () => {
+  const proof = "1. `npm test` passes. 2. `./tools/gate.sh --fast` is green; reconnect.test.ts covers it. 3. `git status --short` shows only `.slp/` untracked on `v2`; the line is `{\"type\":\"unbilled\",\"amount\":0}`, marked `TEMPORARY: G1`.";
+  assert.deepEqual(namedChecks(proof), ["npm test", "./tools/gate.sh --fast", "reconnect.test.ts"]);
+});
+
+test("several test runs in one command: the last one's summary decides, whatever a run before it printed", () => {
+  // a Peer killing a mutant: green, then a run meant to fail, then the restore and a green run, all in one call
+  const mutant = "sed -i '' 's/a/b/' test/duration.test.js\nnpm test 2>&1 | grep -E '✖|ℹ (pass|fail)'\npython3 mutate.py\nnpm test 2>&1 | grep -E '✖|ℹ (pass|fail)'\ngit checkout src/duration.js\nnpm test 2>&1 | grep -E '✖|ℹ (pass|fail)'";
+  const green = "ℹ pass 63\nℹ fail 0";
+  const red = "✖ rounds half up\nℹ pass 62\nℹ fail 1\n✖ failing tests:";
+  const turn = (output: string) => read_([prompt(BRIEF), bash(mutant, { output }), say("CANDIDATE: the mutant is caught; npm test: 63 pass")]);
+  assert.equal(turn(`${green}\n${red}\nUpdated 1 path from the index\n${green}`).tests, "passed");
+  assert.equal(turn(`${green}\n${green}\nUpdated 1 path from the index\n${red}`).tests, "failed");
+  assert.equal(turn("Updated 1 path from the index").tests, "unknown");
+});
+
+test("a runner's summary outranks an error word in the output", () => {
+  assert.equal(readSummary("✔ refuses units that are not a number: TypeError\nℹ pass 12\nℹ fail 0"), "passed");
+  assert.equal(readSummary("ℹ pass 11\nℹ fail 1"), "failed");
+  // three runs in a loop, their summaries joined on one line by `tr`
+  assert.equal(readSummary("ℹ tests 87 ℹ pass 87 ℹ fail 0 \nℹ tests 87 ℹ pass 87 ℹ fail 0 "), "passed");
+  assert.equal(readSummary("ℹ pass 5 ℹ fail 0 ℹ pass 5 ℹ fail 0 ℹ pass 4 ℹ fail 1 "), "failed");
+  assert.equal(readSummary("src/a.ts(3,1): error TS2304: Cannot find name 'x'."), "failed");
+  assert.equal(readSummary("done"), "unknown");
 });
 
 test("a change only git saw is placed at the last command the watcher could not read", () => {
@@ -108,6 +136,30 @@ test("writing outside the write scope is told from the paths, whichever tool wro
   assert.deepEqual(rulesOf([prompt(BRIEF), edit(src(".slp/status.md")), edit("/tmp/scratch.txt"), say("STATUS")]).told, []);
   const review = parseBrief(BRIEF.replace(/Write scope:.*/, "Write scope: read-only — do not modify files"), PROJECT);
   assert.deepEqual(rulesOf([prompt(BRIEF), edit(src("src/duration.js")), say("REVIEW\nNOT YET")], { brief: review }).told, ["outside-scope"]);
+});
+
+test("a scope line can take a path back out, and a file the seat above names later is one it asked about", () => {
+  const scope = parseWriteScope("bin/**, src/** except src/legacy/**, test/**, data/**, README.md (only lines that v2 makes false). Nothing else.", PROJECT)!;
+  assert.deepEqual([scope.patterns, scope.except], [["bin/**", "src/**", "test/**", "data/**", "README.md"], ["src/legacy/**"]]);
+  const scoped = parseBrief(BRIEF.replace(/Write scope:.*/, "Write scope: src/** except for the src/legacy/** files, test/** (not yet there) and README.md"), PROJECT);
+  assert.deepEqual([scoped.scope!.patterns, scoped.scope!.except], [["src/**", "test/**", "README.md"], ["src/legacy/**"]]);
+  assert.deepEqual(rulesOf([prompt(BRIEF), edit(src("src/legacy/month.js")), say("STATUS")], { brief: scoped }).told, ["outside-scope"]);
+  assert.deepEqual(rulesOf([prompt(BRIEF), edit(src("src/duration.js")), edit(src("README.md")), say("STATUS")], { brief: scoped }).told, []);
+
+  // a repair the Lead asked for by mail, in a file its brief did not list
+  const ignored = [prompt(BRIEF), edit(src(".gitignore")), say("STATUS")];
+  assert.deepEqual(rulesOf(ignored).told, ["outside-scope"]);
+  assert.deepEqual(rulesOf(ignored, { later: ["REJECT d78: `.gitignore` lists only node_modules/. The lock files must be ignored by git."] }).told, []);
+  assert.deepEqual(rulesOf(ignored, { later: ["ANSWER: keep going. Do not touch .gitignore."] }).told, ["outside-scope"]);
+});
+
+test("a check whose output went into a file says nothing on the line, unless the line prints the file back", () => {
+  const work = [prompt(BRIEF), edit(src("src/duration.js"))];
+  const table = "88\n0\nR14 | one error: an unknown customer ends with status 2";
+  assert.equal(read_([...work, bash("node --test --test-reporter=tap 2>/dev/null | grep -E '^(not )?ok ' > /tmp/tap.txt; grep -c '^ok' /tmp/tap.txt; grep -c '^not ok' /tmp/tap.txt; cat names.txt", { output: table }), say("DONE")]).tests, "unknown");
+  assert.equal(read_([...work, bash("npm test > /tmp/out.txt 2>&1; tail -5 /tmp/out.txt", { output: "ℹ pass 5\nℹ fail 0" }), say("DONE")]).tests, "passed");
+  assert.equal(read_([...work, bash("npm test 2>/dev/null | tail -3", { output: "ℹ pass 5\nℹ fail 0" }), say("DONE")]).tests, "passed");
+  assert.equal(read_([...work, bash("npm test 2>errors.log | tail -3", { output: "ℹ pass 4\nℹ fail 1" }), say("DONE")]).tests, "failed");
 });
 
 test("a seat may delete what its brief gave it; history rewrites and sweeping deletes are told", () => {
@@ -151,7 +203,7 @@ test("waiting in the shell is told by the clock; a short pause, a refused sleep 
   assert.deepEqual(rulesOf([prompt(BRIEF), bash("sleep 300", { running: true })], { ended: false }).told, ["shell-wait"]);
   const running = [prompt(BRIEF), bash(loop, { running: true })];
   const started = toEvents(running, PROJECT).at(-1)!.at!;
-  const live = (seconds: number) => gate({ facts: turnFacts({ events: toEvents(running, PROJECT), turnStart: 1, cwd: PROJECT, root: PROJECT, brief, ended: false, changed: null, now: started + seconds * 1000 }), brief, moment: "live", briefGaps: [], now: started + seconds * 1000, pendingPermission: false, thresholds: THRESHOLDS }).findings.map((f) => f.rule);
+  const live = (seconds: number) => gate({ facts: turnFacts({ events: toEvents(running, PROJECT), turnStart: 1, cwd: PROJECT, root: PROJECT, brief, ended: false, changed: null, now: started + seconds * 1000 }), brief, moment: "live", briefGap: null, now: started + seconds * 1000, pendingPermission: false, thresholds: THRESHOLDS }).findings.map((f) => f.rule);
   assert.deepEqual(live(20), []);
   assert.deepEqual(live(70), ["shell-wait"]);
   // Claude turns a standalone sleep down, and the seat sends it to the background instead: neither holds the turn
@@ -168,6 +220,14 @@ test("a failed call is read as Claude reports it, and a background check counts 
   assert.equal(read_([...work, background("npm test", "b1"), ended("b1", 1), say("CANDIDATE")]).tests, "failed");
   // a call the harness refused ran nothing
   assert.equal(read_([...work, claudeFailure("npm test", "<tool_use_error>Blocked</tool_use_error>"), say("CANDIDATE")]).tests, "none");
+});
+
+test("silence is counted from the start of the turn, not from what an earlier turn did last", () => {
+  const history = [prompt(BRIEF, "turn-0"), bash("ls", {}, "turn-0"), say("QUESTION: which unit?", "turn-0"), prompt("ANSWER: hours")];
+  const before = toEvents(history, PROJECT).at(-1)!.at!;
+  const startedAt = before + 9 * 60_000;
+  assert.deepEqual(rulesOf(history, { ended: false, startedAt, now: startedAt + 10_000 }).told, []);
+  assert.deepEqual(rulesOf(history, { ended: false, startedAt, now: startedAt + 7 * 60_000 }).told, ["silent"]);
 });
 
 test("silence is told only while nothing explains it", () => {

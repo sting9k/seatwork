@@ -3,18 +3,20 @@ import { randomBytes } from "node:crypto";
 import { join } from "node:path";
 import type { PaseoApi } from "@getpaseo/client";
 import type { PluginBeforeRequests, PluginServerContext } from "@getpaseo/plugin/server";
+import { z } from "zod";
 import { Collector } from "./server/gc";
 import { MailEngine, type Mail, type Priority, type Needs } from "./server/mail";
 import { checkHqPlacement, ensureHqProject } from "./server/hq";
 import { McpHttpServer } from "./server/mcp-http";
 import { REGISTRY_LOG, ROOM_HOME, WATCH_DIR } from "./server/paths";
 import { describeProjects, registerProject } from "./server/onboard";
+import { OwedList, roomStatus as readRoomStatus } from "./server/room-status";
 import { modelAllowed, projectModels, type Models } from "./server/models";
 import { loadPolicy } from "./server/policy";
 import { findProject, findRoomMarker, loadRegistry, projectBlock } from "./server/registry";
-import { CLAUDE_ARGS, claudeRoleDir, describeIsolation, ensureRuntime, envFor, sharedClaudeFiles } from "./server/runtimes";
+import { claudeRoleDir, describeIsolation, ensureRuntime, envFor, sharedClaudeFiles } from "./server/runtimes";
 import { enabledSeats, maySpawn, parseSeat, rolePrompt, specFromTitle, type Role } from "./server/seats";
-import { CLOSES_WORK, signalOf, subjectSignal } from "./server/signals";
+import { asksOwner, CLOSES_WORK, signalOf, subjectSignal } from "./server/signals";
 import { roomStats } from "./server/stats";
 import { Budget } from "./server/watch/budget";
 import { calibrate, renderCalibration, type MailLine } from "./server/watch/calibrate";
@@ -22,18 +24,21 @@ import { snapshot } from "./server/watch/git";
 import { JevEngine } from "./server/watch/jev";
 import { REVISION } from "./server/watch/questions";
 import { ScanLog } from "./server/watch/scanlog";
+import { usageReport } from "./server/watch/usage";
+import { roomStatus, roomWaiting } from "./shared/room";
 import { Watcher, type SeatView, type TimelineView } from "./server/watch/watcher";
 
 type CreateRequest = PluginBeforeRequests["agent.create"];
 
-const VERSION = "0.10.0";
+const VERSION = "0.13.0";
 const MAIL_DIR = join(ROOM_HOME, "mail");
 const MCP_TOKEN_FILE = join(MAIL_DIR, "token");
 const NONCES_FILE = join(MAIL_DIR, "nonces.json");
 
 /**
  * slp-seat: the room's hooks into Paseo. A seat gets its prompt, project block and mail server at
- * agent.create; turn ends and permission requests become mail; archives and GC clean up after it.
+ * agent.create and its own environment each time its session opens; turn ends and permission
+ * requests become mail; archives and GC clean up after it.
  */
 export default function contribute(server: PluginServerContext) {
   // the room home holds mail bodies and copies of the user's harness config: its owner only
@@ -65,12 +70,24 @@ export default function contribute(server: PluginServerContext) {
   const mailedUp = new Map<string, Set<string>>();
   /** seat → the signal its last turn ended with. */
   const lastSignal = new Map<string, string>();
+  /** What the last turn of a seat nobody above reads by mail left for the Owner to answer. */
+  const owed = new OwedList(join(ROOM_HOME, "owed.json"));
   let gc: Collector | null = null;
   const getGc = (paseo: Parameters<typeof getEngine>[0]) => {
     if (!gc) gc = new Collector(paseo, getEngine(paseo), policy.gc, log, forgetAgent);
     return gc;
   };
   const budget = new Budget(join(WATCH_DIR, "usage-{month}.json"), policy.watcher.budget);
+  // what the decision model cost this month, for Paseo's Usage screen; a watcher that is off asks nothing
+  if (policy.watcher.mode !== "off") {
+    server.registerUsageSource({
+      id: "slp-watcher",
+      label: "Room watcher",
+      input: z.object({}),
+      discover: async (scope) => (scope.kind === "global" ? [{ key: "decision-model", label: policy.watcher.engine.model, input: {} }] : []),
+      fetch: async () => usageReport(budget.summary()),
+    });
+  }
   const scans = new ScanLog(join(WATCH_DIR, "scans.jsonl"));
   let watcher: Watcher | null = null;
   const getWatcher = (paseo: Parameters<typeof getEngine>[0]) => {
@@ -174,27 +191,27 @@ export default function contribute(server: PluginServerContext) {
           return `kept #${kept.id} as your report to owner: it is delivered once, when your turn ends. End your turn with ${signal} on the first line; do not send it again.`;
         }
       }
-      // an acknowledgement asks nothing of anyone: it never starts a turn
-      const ack = signal === "ACK";
+      // an acknowledgement asks nothing of anyone, and neither does a receipt for a candidate under review: neither starts a turn
+      const waits = signal === "ACK" || isReceipt({ recipientRole: recipient.role, subject, needs: args.needs, fromAbove: engine.isAncestor(from, to), recipientEndedWith: lastSignal.get(to) });
       const mail = await engine.post({
         from: { agentId: from, role: sender.role },
         to,
-        priority: ack ? "fyi" : priority,
+        priority: waits ? "fyi" : priority,
         subject,
         body,
         needs,
         whyNow: whyNowFor(engine.isAncestor(from, to) ? "owner" : sender.role, needs),
-        ...(ack ? { quiet: true as const } : {}),
+        ...(waits ? { quiet: true as const } : {}),
       });
       const held = engine.held(to).some((m) => m.id === mail.id);
-      return `sent #${mail.id} to ${engine.isAncestor(to, from) ? "owner" : `${recipient.role} ${to}`} as ${mail.priority}; ${ack ? "it is read with the recipient's next mail" : held ? "held until the recipient can take it" : "delivered"}. Continue your work; do not wait for a reply unless needs=decision blocks you.`;
+      return `sent #${mail.id} to ${engine.isAncestor(to, from) ? "owner" : `${recipient.role} ${to}`} as ${mail.priority}; ${waits ? "it is read with the recipient's next mail" : held ? "held until the recipient can take it" : "delivered"}. Continue your work; do not wait for a reply unless needs=decision blocks you.`;
     },
   );
 
   mcp.register(
     {
       name: "slp_inbox",
-      description: "Read the mail the plugin is holding for you (fyi mail that arrived while you were busy). Returns and clears it.",
+      description: "Read the mail the plugin is holding for you: mail that arrived while you were busy, and mail that starts no turn of its own (the newest progress report of a seat you launched, acknowledgements). Returns and clears it.",
       inputSchema: { type: "object", properties: {}, required: [] },
     },
     async (_args, context) => {
@@ -338,7 +355,11 @@ export default function contribute(server: PluginServerContext) {
       nonces[nonce] = request.agentId;
       saveNonces(nonces);
     }
-    return request;
+    const seat = parseSeat(request.provider);
+    if (!seat) return request;
+    // Paseo saves no env with an agent: a seat reopened after a restart would start on the user's own home
+    ensureRuntime(seat);
+    return { ...request, env: { ...request.env, ...envFor(seat, policy) } };
   });
 
   server.on("agent.created", async (event, { paseo }) => {
@@ -375,7 +396,7 @@ export default function contribute(server: PluginServerContext) {
       }
     }
     if (!seat) return;
-    getEngine(paseo).rememberSeat({ agentId: event.agent.id, parentAgentId: event.agent.parentAgentId, role: seat.role, provider: seat.provider, title: event.agent.title });
+    getEngine(paseo).rememberSeat({ agentId: event.agent.id, parentAgentId: event.agent.parentAgentId, role: seat.role, provider: seat.provider, title: event.agent.title, cwd: event.agent.cwd });
     const line = JSON.stringify({
       at: new Date().toISOString(),
       agentId: event.agent.id,
@@ -394,15 +415,35 @@ export default function contribute(server: PluginServerContext) {
 
   // Any turn start wakes the engine and the collector, so both work right after a
   // plugin reload (the API hands us the Paseo client only inside hook contexts).
+  // the app asks this while it is open. After a daemon start it is the first thing to hand the room a Paseo client:
+  // mail held on disk moves without waiting for an agent to run
+  server.handle(roomWaiting, async (_input, { paseo }) => {
+    if (!engine) void getEngine(paseo).sweep();
+    getGc(paseo);
+    return { chime: policy.owner.chime, waiting: await owed.current(paseo) };
+  });
+
+  server.handle(roomStatus, (_input, { paseo }) => readRoomStatus(paseo, getEngine(paseo), owed));
+
   server.on("agent.turn_started", (event, { paseo }) => {
+    owed.clear(event.agent.id);
     getGc(paseo);
     const view = viewOf(paseo, event.agent);
     if (view) getWatcher(paseo).turnStarted(view, event.turnId);
   });
 
   server.on("agent.archived", async (event, { paseo }) => {
+    owed.clear(event.agent.id);
     watcher?.forget(event.agent.id);
     await getGc(paseo).onArchived(event.agent.id);
+  });
+
+  // a runtime that closes (daemon stopping, seat deleted) takes its turn with it, and Paseo sends that turn no end:
+  // what the room kept for the turn goes; held mail stays, and the sweep posts a report the seat had mailed
+  server.on("agent.closed", (event) => {
+    watcher?.cut(event.agent.id);
+    mailedUp.delete(event.agent.id);
+    engine?.takeWake(event.agent.id);
   });
 
   server.on("agent.turn_ended", async (event, { paseo }) => {
@@ -419,23 +460,30 @@ export default function contribute(server: PluginServerContext) {
     // nothing travels up to hq: it reads the Supervisor's final message and .slp/status.md when it looks
     const reportsTo = seat && parentId && parent && parent.role !== "hq" ? parentId : null;
     const canceled = event.outcome.kind === "canceled";
+    // a seat nobody above reads by mail: the Owner reads its final message, and the app is told when it asks something
+    if (seat && !reportsTo && !canceled) {
+      const what = event.outcome.kind === "failed" ? "FAILED" : asksOwner(lastAssistantText(event.timeline));
+      if (what) owed.set({ key: `${id}:${Date.now()}`, agentId: id, title: event.agent.title, what, at: new Date().toISOString() });
+    }
     // the turn's own report; it stays null when the parent has this turn's signal from the seat's own mail
     let report: Parameters<MailEngine["post"]>[0] | null = null;
     if (seat && reportsTo && !canceled) {
       const text = lastAssistantText(event.timeline);
       const signal = signalOf(text);
       const repeats = signal !== undefined && lastSignal.get(id) === signal;
+      // a Lead's first report carries its plan; a STATUS after it asks nothing of the seat above
+      let progress = signal === "STATUS" && seat.role === "lead" && lastSignal.has(id);
       if (signal) lastSignal.set(id, signal);
       let priority: Priority = "fyi";
       let subject = `${signal ?? "turn ended"}: ${seat.role} ${event.agent.title ?? event.agent.id}`;
       let needs: Needs = "nothing";
-      let quiet = signal === "ACK";
+      let quiet = signal === "ACK" || progress;
       let send = true;
       if (event.outcome.kind === "failed") {
         priority = "blocking";
         subject = `FAILED: ${event.outcome.error.message.slice(0, 120)}`;
         needs = "decision";
-        quiet = false;
+        quiet = progress = false;
       } else if (signal ? mailed.has(signal) : kept) {
         // one report per turn
         log(`turn end of ${id} not mailed again: the seat mailed ${signal ?? "its report"} to its parent itself`);
@@ -459,8 +507,9 @@ export default function contribute(server: PluginServerContext) {
           subject,
           body: text || `(no final message; outcome ${event.outcome.kind})`,
           needs,
-          whyNow: event.outcome.kind === "failed" ? "the seat's turn failed; its work is stopped" : quiet ? `nothing new: the seat ended its turn with ${signal === "ACK" ? "an acknowledgement" : "DONE again, after mail that asked nothing"}` : `the seat ended its turn with ${signal ?? "a progress message"}`,
+          whyNow: event.outcome.kind === "failed" ? "the seat's turn failed; its work is stopped" : progress ? "progress only: the seat ended its turn with STATUS and asks nothing of you" : quiet ? `nothing new: the seat ended its turn with ${signal === "ACK" ? "an acknowledgement" : "DONE again, after mail that asked nothing"}` : `the seat ended its turn with ${signal ?? "a progress message"}`,
           ...(quiet ? { quiet: true as const } : {}),
+          ...(progress ? { progress: true as const } : {}),
         };
       }
     }
@@ -472,6 +521,8 @@ export default function contribute(server: PluginServerContext) {
     // whoever finished a turn may now take held mail; the watcher has read the turn, so the next one may start
     await eng.deliver(id);
     if (!reportsTo) return;
+    // a newer report takes the place of this seat's progress report that still waits unread
+    if (kept || report) eng.dropProgress(id, reportsTo);
     // the report the seat mailed before its turn ended goes out now, however the turn ended
     if (kept) await eng.post({ ...kept, to: reportsTo });
     if (report) await eng.post(report);
@@ -519,6 +570,8 @@ export default function contribute(server: PluginServerContext) {
     clearInterval(sweep);
     clearInterval(collect);
     clearInterval(watch);
+    // a mail server still binding would stay open behind a close that came first
+    await starting;
     await mcp.close();
   };
 
@@ -562,18 +615,15 @@ export default function contribute(server: PluginServerContext) {
     }
 
     // without its own home a seat would start on the user's, with the user's MCP servers and plugins
-    let dir: string | null;
     try {
-      dir = ensureRuntime(seat);
+      ensureRuntime(seat);
     } catch (error) {
       throw new Error(`slp-seat: ${seat.provider} refused: its runtime could not be built (${error instanceof Error ? error.message : String(error)}). Fix that and create the seat again.`);
     }
 
-    const env: Record<string, string> = { ...(request.env ?? {}), ...envFor(seat.harness, dir) };
-
-    // the room's MCP server; agent.session_open ties this nonce to the agent id
+    // the room's MCP server; agent.session_open ties this nonce to the agent id and adds the seat's own environment
     const nonce = randomBytes(9).toString("base64url");
-    env.SLP_NONCE = nonce;
+    const env: Record<string, string> = { ...(request.env ?? {}), SLP_NONCE: nonce };
     const mcpServers = {
       ...(request.config.mcpServers ?? {}),
       slp: { type: "http" as const, url: mcp.urlFor(port, nonce), alwaysLoad: true },
@@ -593,7 +643,7 @@ export default function contribute(server: PluginServerContext) {
     if (seat.harness === "claude") {
       const current = (providerOptions ?? {}) as { additionalDirectories?: unknown; extraArgs?: Record<string, string | null> };
       const dirs = Array.isArray(current.additionalDirectories) ? current.additionalDirectories.filter((d): d is string => typeof d === "string") : [];
-      providerOptions = { ...current, additionalDirectories: [...new Set([...dirs, claudeRoleDir(seat.role)])], extraArgs: { ...(current.extraArgs ?? {}), ...CLAUDE_ARGS } };
+      providerOptions = { ...current, additionalDirectories: [...new Set([...dirs, claudeRoleDir(seat.role)])], extraArgs: { ...(current.extraArgs ?? {}), ...policy.launch.claude.extraArgs } };
     }
     return { ...request, env, config: { ...request.config, systemPrompt, mcpServers, ...(providerOptions ? { providerOptions } : {}) } };
   }
@@ -616,6 +666,16 @@ export default function contribute(server: PluginServerContext) {
 /** True when a turn was started by mail and none of it asked the seat for anything. */
 function askedNothing(wake: readonly Mail[]): boolean {
   return wake.length > 0 && wake.every((mail) => mail.needs === "nothing" && (mail.priority === "fyi" || mail.from.role === "system"));
+}
+
+/**
+ * A receipt: the seat above writes HOLD or NOTED, says it needs nothing, and the Peer's last turn handed its work
+ * over. That Peer waits for the verdict and has nothing to do with a receipt; a Peer stopped on a challenge is
+ * waiting for exactly this mail.
+ */
+function isReceipt(input: { recipientRole: Role; subject: string; needs: unknown; fromAbove: boolean; recipientEndedWith: string | undefined }): boolean {
+  if (input.recipientRole !== "peer" || !input.fromAbove || input.needs !== "nothing") return false;
+  return /^\W*(?:HOLD|NOTED)\b/.test(input.subject) && input.recipientEndedWith !== undefined && CLOSES_WORK.has(input.recipientEndedWith);
 }
 
 function classifyAgentMail(input: { senderRole: Role; recipientRole: Role; subject: string; needs: Needs; suggested?: Priority }): Priority {

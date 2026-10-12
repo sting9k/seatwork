@@ -1,4 +1,6 @@
+import { effectsOf } from "./effects";
 import { parseWriteScope, type WriteScope } from "./scope";
+import { parseShell } from "./shell";
 
 /** A brief as the room writes it: `Key: value` lines from a fixed template. */
 
@@ -97,16 +99,41 @@ const NEEDED: readonly [BriefField, string][] = [
   ["replyTo", "Reply with slp_mail to: owner"],
 ];
 
-/** The needed lines a brief lacks; a brief in free prose lacks them all. */
-export function missingLines(brief: Brief): string[] {
-  const has = (field: BriefField) => (field === "replyTo" ? /^[\s`*_"']*owner\b/i.test(brief.fields.replyTo ?? "") : !!brief.fields[field]?.trim());
+/** A needed label near the start of a line, behind whatever a REVISED BRIEF puts there to mark a changed line. */
+const marked = (label: string) => new RegExp(`^.{0,30}\\b${label}\\b[^:\\n]{0,30}:`, "im");
+const MARKED: Partial<Record<BriefField, RegExp>> = {
+  outcome: marked("Outcome"),
+  writeScope: marked("Write scope"),
+  acceptance: marked("Acceptance(?: evidence)?"),
+  reopenWhen: marked("Reopen when"),
+  replyTo: /^.{0,30}\bReply with slp_mail to\b\s*:\s*[`*_"']*owner\b/im,
+};
+
+/**
+ * The needed lines a brief lacks; a brief in free prose lacks them all. `mailed` is the text of a brief that came
+ * as mail: there a line also counts when its label is found behind the marks of a revision.
+ */
+export function missingLines(brief: Brief, mailed?: string): string[] {
+  const written = (field: BriefField) => (field === "replyTo" ? /^[\s`*_"']*owner\b/i.test(brief.fields.replyTo ?? "") : !!brief.fields[field]?.trim());
+  const has = (field: BriefField) => written(field) || (mailed !== undefined && MARKED[field]?.test(mailed) === true);
   return NEEDED.filter(([field]) => !has(field)).map(([, label]) => label);
 }
 
-/** The commands a brief quotes in backticks and the test files it names. */
+/** A quoted string names a check when it is one command that verifies something: a known runner, or a script of the project run by its path. */
+function runsACheck(quoted: string): boolean {
+  const line = parseShell(quoted);
+  if (!line.complete || line.commands.length !== 1) return false;
+  const [command] = line.commands;
+  return effectsOf(command, { namedChecks: [] }).some((effect) => effect.kind === "check") || /^\.{1,2}\//.test(command.argv[0] ?? "");
+}
+
+/** The check commands a brief quotes in backticks and the test files it names; other quoted words (a branch, a path, a line of output) are not checks. */
 export function namedChecks(text: string): string[] {
   const found = new Set<string>();
-  for (const [, quoted] of text.matchAll(/`([^`\n]{2,120})`/g)) found.add(quoted.trim().replace(/\s+/g, " "));
+  for (const [, quoted] of text.matchAll(/`([^`\n]{2,120})`/g)) {
+    const command = quoted.trim().replace(/\s+/g, " ");
+    if (runsACheck(command)) found.add(command);
+  }
   for (const [file] of text.matchAll(/[\w./-]*(?:[._-](?:test|spec)\.[cm]?[jt]sx?|_test\.(?:go|py|rb)|test_\w+\.py)\b/g)) found.add(file);
   return [...found];
 }

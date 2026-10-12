@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # slp-room installer: room files, policy, Paseo providers and profiles, the slp-seat plugin.
-# Flags: --no-plugin  --no-reload  --no-daemon-policy  --no-pi-adapter
+# Flags: --no-plugin  --no-reload  --no-daemon-policy
 #   --hq default|ask|<harness>/<model> [--hq-thinking <id>]   what HQ runs on; asked once, on a first install from a terminal
 #   --seat <harness>-<role>   set up a seat paseo/seats.yml does not list (repeatable; kept in setup.json)
 #   --watcher off|shadow|on|ask   the watcher on this machine; asked once, on a first install from a terminal
@@ -11,14 +11,13 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOM_HOME="${SLP_ROOM_HOME:-$HOME/.config/slp-room}"
 PASEO_HOME="${PASEO_HOME:-$HOME/.paseo}"
 CONFIG="$PASEO_HOME/config.json"
-DO_PLUGIN=1; DO_RELOAD=1; DO_DAEMON_POLICY=1; DO_PI_ADAPTER=1; DO_ROOM=1
+DO_PLUGIN=1; DO_RELOAD=1; DO_DAEMON_POLICY=1; DO_ROOM=1
 CHOICES=()
 while [ $# -gt 0 ]; do
   case "$1" in
     --no-plugin) DO_PLUGIN=0 ;;
     --no-reload) DO_RELOAD=0 ;;
     --no-daemon-policy) DO_DAEMON_POLICY=0 ;;
-    --no-pi-adapter) DO_PI_ADAPTER=0 ;;
     --seats-only) DO_ROOM=0; DO_PLUGIN=0 ;;
     --hq|--hq-thinking|--seat|--watcher)
       [ $# -ge 2 ] || { echo "$1 needs a value" >&2; exit 2; }
@@ -28,6 +27,13 @@ while [ $# -gt 0 ]; do
   shift
 done
 for bin in jq paseo python3; do command -v "$bin" >/dev/null || { echo "$bin is required" >&2; exit 1; }; done
+# the daemon runs the plugin: its agent.closed hook and the providers' options need Paseo 0.11.2
+PASEO_VERSION="$(paseo daemon status --json 2>/dev/null | jq -r '.daemonVersion // empty' 2>/dev/null || true)"
+[ -n "$PASEO_VERSION" ] || PASEO_VERSION="$(paseo --version 2>/dev/null | head -n 1)"
+if ! jq -en --arg v "$PASEO_VERSION" '($v | split("-")[0] | split(".") | map(tonumber)) >= [0, 11, 2]' >/dev/null 2>&1; then
+  echo "Paseo ${PASEO_VERSION:-(unknown version)} is too old: the room needs 0.11.2 or later. Update it (npm install -g @getpaseo/cli@latest), run 'paseo daemon restart', then this again." >&2
+  exit 1
+fi
 python3 -c "import yaml" 2>/dev/null || { echo "python3 needs PyYAML (pip3 install pyyaml) to read paseo/seats.yml" >&2; exit 1; }
 
 # the room home holds mail and copies of your harness config: its owner only, also when it already exists
@@ -35,8 +41,9 @@ umask 077
 mkdir -p "$ROOM_HOME"
 chmod 700 "$ROOM_HOME"
 
-# --- 0. this machine's choices ($ROOM_HOME/setup.json), then paseo/config.snippet.json and
+# --- 0. this machine's choices ($ROOM_HOME/setup.json), then $ROOM_HOME/config.snippet.json and
 #        $ROOM_HOME/seats.json from seats.yml + setup.json + policy + models ----
+SNIPPET="$ROOM_HOME/config.snippet.json"
 SLP_ROOM_HOME="$ROOM_HOME" python3 "$HERE/tools/choices.py" ${CHOICES[@]+"${CHOICES[@]}"}
 SLP_ROOM_HOME="$ROOM_HOME" python3 "$HERE/tools/gen-snippet.py"
 
@@ -81,13 +88,11 @@ if [ "$(jq -r '.watcher // "off"' "$ROOM_HOME/setup.json")" != off ] && [ -z "${
   echo "Watcher: no key in $ROOM_HOME/watch/key (or SLP_WATCH_KEY): the rules that read tool calls work, the four that ask a model only log their facts."
 fi
 
-# --- 1b. Pi MCP adapter: without it Pi seats get no Paseo tools -----------------------
-if [ "$DO_PI_ADAPTER" = 1 ] && command -v pi >/dev/null; then
-  if pi list 2>/dev/null | grep -q "pi-mcp-adapter"; then
-    echo "Pi MCP adapter: already installed"
-  else
-    pi install npm:pi-mcp-adapter && echo "Pi MCP adapter: installed" || echo "WARNING: 'pi install npm:pi-mcp-adapter' failed; Pi seats will have no Paseo tools" >&2
-    rm -rf "$ROOM_HOME/runtimes/pi"   # rebuilt by the plugin with the adapter package kept
+# --- 1b. Pi seats: Paseo hands them the room's tools through Pi's built-in MCP (Pi 0.99 or later) ---
+if jq -e '.providers | any(startswith("pi-"))' "$ROOM_HOME/seats.json" >/dev/null; then
+  PI_VERSION="$(pi --version 2>/dev/null | head -n 1 || true)"
+  if ! jq -en --arg v "$PI_VERSION" '($v | split("-")[0] | split(".") | map(tonumber)) >= [0, 99]' >/dev/null 2>&1; then
+    echo "WARNING: a Pi seat needs Pi 0.99 or later to get the room's tools; found ${PI_VERSION:-no pi on PATH}." >&2
   fi
 fi
 
@@ -97,7 +102,7 @@ mkdir -p "$PASEO_HOME"
 chmod 600 "$CONFIG"
 cp "$CONFIG" "$CONFIG.bak-$(date +%Y%m%d%H%M%S)"
 TMP="$(mktemp "$CONFIG.XXXXXX")"
-jq --slurpfile snip "$HERE/paseo/config.snippet.json" --slurpfile pol "$HERE/paseo/policy.json" --argjson daemonPolicy "$DO_DAEMON_POLICY" '
+jq --slurpfile snip "$SNIPPET" --slurpfile pol "$HERE/paseo/policy.json" --argjson daemonPolicy "$DO_DAEMON_POLICY" '
   ($snip[0].daemon.agentProfiles) as $new
   | ($new | map(.id)) as $ownedIds
   # every profile the room ever wrote (id prefix agent_profile_slp_) is replaced by the current set; user profiles are kept
@@ -121,8 +126,8 @@ jq --slurpfile snip "$HERE/paseo/config.snippet.json" --slurpfile pol "$HERE/pas
 mv "$TMP" "$CONFIG"
 chmod 600 "$CONFIG"
 echo "Paseo config updated: $CONFIG (backup alongside)"
-echo "  profiles:  $(jq -r '[.daemon.agentProfiles[].name] | join(", ")' "$HERE/paseo/config.snippet.json")"
-echo "  providers: $(jq -r '.agents.providers | keys | join(", ")' "$HERE/paseo/config.snippet.json")"
+echo "  profiles:  $(jq -r '[.daemon.agentProfiles[].name] | join(", ")' "$SNIPPET")"
+echo "  providers: $(jq -r '.agents.providers | keys | join(", ")' "$SNIPPET")"
 [ "$DO_DAEMON_POLICY" = 1 ] && echo "  daemon:    browserTools=$(jq -c .daemon.browserTools.enabled "$CONFIG") terminalHooks=$(jq -c .daemon.enableTerminalAgentHooks "$CONFIG") bundledSkills=$(jq -c .agents.skills.selection "$CONFIG")"
 
 # --- 3. plugin ----------------------------------------------------------------------

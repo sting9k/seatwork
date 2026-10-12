@@ -59,8 +59,7 @@ export async function enableSeats(providers: string[]): Promise<void> {
     throw new Error(`slp-seat: install.sh is not where the last install left it (${installer ?? "unknown"}); run \`./install.sh ${flags.join(" ")}\` in slp-room, then repeat`);
   }
   await new Promise<void>((resolve, reject) => {
-    // it may install the Pi MCP adapter on the way, hence the long timeout
-    execFile("bash", [installer, "--seats-only", ...flags], { env: { ...process.env, SLP_ROOM_HOME: ROOM_HOME }, timeout: 300_000, maxBuffer: 8 * 1024 * 1024 }, (error, _stdout, stderr) => {
+    execFile("bash", [installer, "--seats-only", ...flags], { env: { ...process.env, SLP_ROOM_HOME: ROOM_HOME }, timeout: 60_000, maxBuffer: 8 * 1024 * 1024 }, (error, _stdout, stderr) => {
       if (error) reject(new Error(`install.sh --seats-only ${flags.join(" ")}: ${stderr.trim() || error.message}`));
       else resolve();
     });

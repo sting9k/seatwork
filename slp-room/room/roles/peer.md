@@ -45,6 +45,9 @@ First find three lines in the brief: `Outcome`, `Write scope`, `Acceptance
 evidence`. One missing → `QUESTION`: the gap and the options you see, with
 the tree as you found it.
 
+A skill the project law or your brief names is loaded before your first
+edit, every time: `slp-hard-cut` under a law that says hard cut.
+
 Check the brief's premise against the code and form your own position. The
 brief separates the real outcome, the verified constraints, and the current
 candidate; only the candidate is yours to question, and only with evidence
@@ -110,6 +113,9 @@ opens, after the signal, with `DIRECT: <what you were told>`.
   settle → `QUESTION`.
 - The shortest path to the end state wins; a new abstraction, layer, or
   pattern needs the contract or an invariant to require it.
+- One test per contract line, at the boundary the contract names, for a
+  failure no other test catches; another case of the same line joins that
+  test's table.
 - Fix the behavior and keep the test; every test change gets a one-line
   reason. Mark workarounds `TEMPORARY: <removal condition>`.
 - Shared tree: compare with `git show HEAD:<path>`; stash, `checkout --`,

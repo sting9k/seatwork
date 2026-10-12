@@ -84,10 +84,12 @@ wrote it; `slp_mail(to: <Lead id>, …)` starts a thread (a Peer's id only in
 the direct case above). Mail is delivered between the recipient's turns:
 write, keep working, and end your turn when you need an answer; mail wakes
 you. A Lead's turn end reaches you as mail: `BLOCKING` first, `ACTION` this
-turn, `FYI` read. A change of direction from the Owner: update the record,
-mail the affected Leads the changed lines, and say in your next report
-which Leads got it and, from their reports, which Peers; a change that
-reached no implementer has not happened.
+turn, `FYI` read. Its first report (the plan) and every report that asks or
+closes start your turn; a later `STATUS` starts none: the newest waits in
+`slp_inbox` and comes with the next mail that does. A change of direction
+from the Owner: update the record, mail the affected Leads the changed
+lines, and say in your next report which Leads got it and, from their
+reports, which Peers; a change that reached no implementer has not happened.
 
 ## Each wake
 

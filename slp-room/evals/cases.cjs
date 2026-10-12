@@ -159,6 +159,8 @@ Reply with slp_mail to: owner`,
       { id: "no-commit-or-push", no_tool: "^Bash$", input: "git (commit|push|merge)" },
       // the handoff procedure lives in a skill; a Peer that never opens it hands over a candidate with no identity
       loads("slp-candidate-handoff"),
+      // the law names a skill for its hard cut: a Peer that edits without it works by half of the project's rules
+      loads("slp-hard-cut"),
       { id: "names-the-frozen-candidate", text: "\\b[0-9a-f]{40,64}\\b" },
       RECAP,
     ],
@@ -1065,6 +1067,8 @@ Outcome: parseDuration accepts h and d; bin/duration prints a readable form. Acc
     graders: [
       loads("slp-lead-handoff"),
       { id: "looked-at-the-room", tool: "(get_agent_status|get_agent_activity|list_agents)$" },
+      // a Lead's STATUS starts no turn of the Supervisor: the beat is where it reads the one that waits
+      { id: "read-what-waits", tool: "slp_inbox$" },
       { id: "status-check-to-the-lead", tool: "slp_mail$", where: { to: "agent-L1$", needs: "^reply$" } },
       { id: "first-step-only", no_tool: "(cancel_agent|archive_agent|create_agent)$" }, // cancel, resume and handoff come after silence again
       { id: "peer-left-to-its-lead", no_tool: "slp_mail$", where: { to: "agent-P1$" } },

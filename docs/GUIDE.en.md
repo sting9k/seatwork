@@ -39,8 +39,8 @@ Three things to remember:
 
 ## 2. Install
 
-You need Paseo 0.10.3 or later, `jq`, `python3` with PyYAML, Claude Code and Codex
-(plus Pi or OpenCode if you put a role on one of them).
+You need Paseo 0.11.2 or later, `jq`, `python3` with PyYAML, Claude Code and Codex
+(plus Pi 0.99 or later, or OpenCode, if you put a role on one of them).
 
 ```bash
 git clone https://github.com/sting9k/seatwork.git
@@ -79,7 +79,12 @@ claude auth login
 ```
 
 Seatwork uses no token. A seat does not carry your personal skills, plugins,
-hooks or MCP servers either; it has only its role's skills.
+hooks or MCP servers either; it has only its role's skills. Claude Code's
+own extras are off in a seat as well: memory, agent teams and their task
+tools, the agent view, workflows, cloud routines and claude.ai connectors.
+The switches
+that keep a seat off your personal setup are part of its provider in Paseo's
+config, so they hold even while the plugin is not running.
 
 ## 3. Add a project
 
@@ -149,6 +154,19 @@ What you have to decide is in the `WAITING ON YOU:` row at the end: cost,
 product scope, or an outside action such as push and deploy. Agents never
 decide these for you.
 
+While the Paseo app is open it plays a short sound when HQ, a Supervisor or
+a seat you opened yourself ends a turn with `DECISION_NEEDED`, `BLOCKED`, a
+`WAITING ON YOU:` row, or a failure. Set `owner.chime` to `false` in
+`paseo/policy.json` and run `./install.sh` to switch it off.
+
+The **Room** row at the bottom of Paseo's sidebar says how many of those
+turns still wait, and opens a screen for the whole room: those turns on
+top, then one line for HQ and for every project that has a seat open, with
+a dot per seat (green while it works). Press a project to see its seats as
+a tree, and a seat to open it. Projects with no seat open share one line at
+the end. A turn stays on the list until its seat works again or is
+archived; a daemon restart does not clear it.
+
 ### Steering a Peer
 
 Tell the Supervisor. If you write to a Peer directly it still obeys, and its
@@ -170,9 +188,20 @@ does not know it came from HQ.
 Agents send mail; they do not interrupt each other. Mail arrives when the
 recipient has finished its current turn. A finished result (`CANDIDATE`,
 `REVIEW`, `DONE`) goes up once, when its sender's own turn has ended, so
-nobody acts on a seat that is still working. An acknowledgement, or a
-`DONE` that only repeats itself, wakes nobody: it is read with the next
-mail.
+nobody acts on a seat that is still working. A mail is delivered whole,
+whatever its length.
+
+A seat does not have to be open to get mail. After the daemon restarts,
+every agent is closed until something opens it, and mail opens it. Mail that
+was already waiting when the daemon stopped moves once the Paseo app is open
+or any agent runs. A seat whose last turn failed takes mail the same way. Mail to an archived or
+deleted seat comes back to its sender as `UNDELIVERABLE`.
+
+Some mail wakes nobody and is read with the next mail: an acknowledgement,
+a `DONE` that only repeats itself, a Lead's `STATUS` after its first report,
+and a `HOLD` that asks nothing of a Peer whose result is being checked. Of a
+Lead's `STATUS` reports only the newest is kept; the Supervisor reads it on
+its heartbeat.
 
 | Signal | Sent by | Meaning |
 |---|---|---|
@@ -247,11 +276,12 @@ Edit in the repo, then run the installer again.
 | `slp-room/paseo/policy.json` | Who mails whom, who creates whom, waiting times, the watcher | `./install.sh` |
 | `slp-room/room/roles/`, `skills/` | Each role's prompt and procedures | `./install.sh --no-plugin` |
 
-A Peer's model tiers. The shipped table has two; a `cheap` or an `expensive`
-tier is added the same way, as one more entry under `peer.tiers`:
+A Peer's model tiers. The shipped table has three; an `expensive` tier is
+added the same way, as one more entry under `peer.tiers`:
 
 | Tier | Used for |
 |---|---|
+| `cheap` | Mechanical, fully specified work: renames, formatting, log triage, doc edits. Claude Haiku 5.5, which needs Claude Code 2.1.293 or later |
 | `default` | Writing code, debugging, research |
 | `cross-family` | Reviewing code another model family wrote |
 
@@ -319,7 +349,7 @@ Ten rules stand on what the tool calls and the brief show, at no cost:
 | `repeating` | did the same thing 4 times in a row with the same result |
 | `shell-wait` | waited in the shell for a minute (`sleep`, a loop that sleeps) |
 | `silent` | has been in its turn with no activity past the role's stall time |
-| `incomplete-brief` | is a Peer a Lead created with a brief that lacks `Outcome`, `Write scope`, `Acceptance evidence`, `Reopen when` or the last line `Reply with slp_mail to: owner` (a brief in free prose lacks them all); told once, when the Peer's first turn starts |
+| `incomplete-brief` | is a Peer whose Lead gave it a brief that lacks `Outcome`, `Write scope`, `Acceptance evidence`, `Reopen when` or the last line `Reply with slp_mail to: owner` (a brief in free prose lacks them all). This covers the brief the Peer was created with and a brief mailed to it later (a mail whose subject says `BRIEF`); told once per brief, when the turn it opens starts |
 
 Four rules need a reader for the seat's message. Code decides when to ask
 (for example: the message closes the work, source changed, and no test
@@ -339,14 +369,19 @@ The decision model is Jev, reached through OpenRouter. Put the key in
 `~/.config/slp-room/watch/key` (mode 600) or in the environment variable
 `SLP_WATCH_KEY`. Without a key the ten fact rules still work. What is sent:
 the lines of the brief a question reads, the names of changed files, and the
-seat's final message with secrets blanked. Tool output is never sent.
+seat's final message with secrets blanked (whole up to 12,000 characters; a
+longer one is cut to the lines a question reads, and a question whose lines
+do not fit is skipped and named in the log). Tool output is never sent.
 Spending is counted from each reply; `watcher.budget` plans 6 USD a month
-and stops asking at 10.
+and stops asking at 10. The month's spending is in Paseo's Usage view, under
+"Room watcher".
 
 To switch it on: let it run in `shadow` for a while, ask HQ for the watcher
-stats (it calls `slp_watch_stats`: spending, and per rule how often it spoke
-and how many of those turns the seat above sent back), then run
-`./install.sh --watcher on`.
+stats (it calls `slp_watch_stats`: spending, how many turns were watched and
+how often they were read, and per rule how often it spoke and how many of
+those turns the seat above sent back), then run `./install.sh --watcher on`.
+For `unverified-completion` a returned turn counts only when the seat above
+ran a test itself and saw it fail: work also comes back for other reasons.
 
 To try rules on recorded turns without touching a room, run in
 `slp-room/plugin`:
@@ -365,6 +400,7 @@ npm run watch:replay -- --ask ../evals/results/<label>
 | `lists for … only …` | Use a model from the table, or edit `.slp/room.json` |
 | `which the room has not enabled` | Fix `.slp/room.json`, or run `./install.sh --seat <seat>` to set that seat up |
 | `its runtime could not be built` | Fix what the message names (often `~/.codex/config.toml`), then create the agent again |
+| `is too old: the room needs 0.11.2 or later` | Update Paseo, run `paseo daemon restart`, then `./install.sh` again |
 | An agent says it is not signed in | Run `claude auth login` |
 | An agent does not know a new procedure | Open a new agent |
 

@@ -12,7 +12,7 @@ import { formatToml, parseToml, type TomlTable } from "./toml";
  */
 
 /** Bump when the way a runtime is built changes. Policy and user config changes rebuild on their own. */
-const RUNTIME_VERSION = 12;
+const RUNTIME_VERSION = 13;
 const MARKER = ".slp-runtime.json";
 
 function ensureDir(path: string): void {
@@ -101,20 +101,11 @@ function buildCodex(runtime: string, policy: RuntimePolicy["codex"]): void {
 
 function buildPi(runtime: string, policy: RuntimePolicy["pi"]): void {
   // Pi reads everything from the agent dir. Credentials and the model catalog
-  // are shared; settings are copied with packages/extensions emptied so a seat
-  // loads no user extension; sessions stay private to the seat.
-  const user = readJsonObject(join(PI_HOME, "settings.json"));
-  const userPackages = Array.isArray(user.packages) ? (user.packages as unknown[]) : [];
-  const packages = userPackages.filter((entry) => {
-    const text = typeof entry === "string" ? entry : JSON.stringify(entry);
-    return policy.keepPackages.some((keep) => text.includes(keep));
-  });
-  const settings = { ...user, ...policy.settings, packages };
-  writeJson(join(runtime, "settings.json"), settings);
+  // are shared; settings are copied with the policy's laid over them, which
+  // empties packages and extensions; sessions stay private to the seat.
+  writeJson(join(runtime, "settings.json"), { ...readJsonObject(join(PI_HOME, "settings.json")), ...policy.settings });
   for (const name of policy.shareFiles) share(runtime, PI_HOME, name);
   for (const name of policy.shareDirs) share(runtime, PI_HOME, name);
-  // Kept packages are installed under <agent-dir>/npm; share it so they resolve.
-  if (packages.length > 0) share(runtime, PI_HOME, "npm");
   ensureDir(join(runtime, "sessions"));
 }
 
@@ -192,27 +183,16 @@ export function ensureRuntime(seat: Pick<Seat, "harness" | "role">, policy: Runt
   return dir;
 }
 
-/** Flags of every Claude seat: from ~/.claude it takes the sign-in only, no user settings and no personal MCP server. */
-export const CLAUDE_ARGS: Record<string, string | null> = { "setting-sources": "project,local", "strict-mcp-config": null };
-
 /** The files of ~/.claude the policy shares (CLAUDE.md), as text for the seat's prompt. */
 export function sharedClaudeFiles(policy: RuntimePolicy = loadPolicy()): string | null {
   const texts = policy.claude.shareFiles.map((name) => join(CLAUDE_HOME, name)).filter((file) => existsSync(file)).map((file) => readFileSync(file, "utf8").trim());
   return texts.filter(Boolean).join("\n\n") || null;
 }
 
-/** The environment a seat starts with: its isolated home, or for Claude the switch that keeps it from writing auto-memory into ~/.claude. */
-export function envFor(harness: Harness, dir: string | null): Record<string, string> {
-  if (harness === "claude") return { CLAUDE_CODE_DISABLE_AUTO_MEMORY: "1" };
-  if (!dir) return {};
-  switch (harness) {
-    case "codex":
-      return { CODEX_HOME: dir };
-    case "pi":
-      return { PI_CODING_AGENT_DIR: dir };
-    case "opencode":
-      return { OPENCODE_CONFIG_DIR: dir, OPENCODE_CONFIG: join(dir, "opencode.json") };
-  }
+/** The environment every session of a seat opens with (policy `launch.env`): its own home, or for Claude the switch that keeps auto-memory out of ~/.claude. */
+export function envFor(seat: Pick<Seat, "harness" | "role">, policy: RuntimePolicy = loadPolicy()): Record<string, string> {
+  const home = seat.harness === "claude" ? "" : runtimeDir(seat);
+  return Object.fromEntries(Object.entries(policy.launch[seat.harness].env).map(([name, value]) => [name, value.replaceAll("{runtime}", home)]));
 }
 
 
@@ -221,7 +201,7 @@ export function describeIsolation(policy: RuntimePolicy = loadPolicy()): string 
   return [
     `claude: user home, personal settings off; shares ${policy.claude.shareFiles.join(",") || "nothing"}; denied skills ${policy.claude.deniedSkills.length}`,
     `codex: strips [${policy.codex.stripTables.join(",")}], features off ${policy.codex.featuresOff.length}`,
-    `pi: shares ${policy.pi.shareFiles.join(",")}; packages kept only if matching [${policy.pi.keepPackages.join(",")}]`,
+    `pi: shares ${policy.pi.shareFiles.join(",")}; no user package or extension`,
     `opencode: task denied, built-in subagents disabled`,
   ].join(" | ");
 }

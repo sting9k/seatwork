@@ -1,6 +1,6 @@
 {
   "id": "slp-seat",
   "requirements": {
-    "paseo": ">=0.10.3"
+    "paseo": ">=0.11.2"
   }
 }

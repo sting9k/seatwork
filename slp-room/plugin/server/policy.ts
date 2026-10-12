@@ -11,6 +11,12 @@ export interface ClaudeRuntimePolicy {
   shareFiles: string[];
 }
 
+/** How a harness's seats start. In an env value `{runtime}` is the seat's own home; `extraArgs` are launch flags (Claude). */
+export interface LaunchPolicy {
+  env: Record<string, string>;
+  extraArgs?: Record<string, string | null>;
+}
+
 export interface CodexRuntimePolicy {
   shareFiles: string[];
   shareSkills: string[];
@@ -23,11 +29,16 @@ export interface CodexRuntimePolicy {
   agentsOff: boolean;
 }
 
+/** What the room does for the Owner in the app. */
+export interface OwnerPolicy {
+  /** Play a short sound in the open app when a turn leaves something for the Owner to answer. */
+  chime: boolean;
+}
+
 export interface PiRuntimePolicy {
   shareFiles: string[];
   shareDirs: string[];
-  /** Substrings of user `packages` entries to keep (e.g. the MCP adapter); all others are dropped. */
-  keepPackages: string[];
+  /** Laid over the user's settings.json: it empties `packages` and `extensions`. */
   settings: Record<string, unknown>;
 }
 
@@ -41,8 +52,6 @@ export type MidTurnDelivery = "steer" | "hold";
 export interface MailPolicy {
   /** Fixed port for the room's MCP server, so seat URLs survive plugin reloads. */
   port: number;
-  /** Longest body delivered verbatim; longer bodies are cut with a marker. */
-  maxBodyChars: number;
   /** With midTurn "steer": FYI mail still waits for the turn to end. */
   holdFyiWhileRunning: boolean;
   /** "steer" hands mail to Paseo's steer while the recipient runs (cancels its tool on Claude and Pi); "hold" waits for the turn to end. */
@@ -103,7 +112,9 @@ export interface RuntimePolicy {
   room: RoomPolicy;
   mail: MailPolicy;
   gc: GcPolicy;
+  owner: OwnerPolicy;
   watcher: WatcherPolicy;
+  launch: Record<"claude" | "codex" | "pi" | "opencode", LaunchPolicy>;
   claude: ClaudeRuntimePolicy;
   codex: CodexRuntimePolicy;
   pi: PiRuntimePolicy;
@@ -130,7 +141,14 @@ export function loadPolicy(): RuntimePolicy {
     },
     mail: need(parsed.mail, "mail"),
     gc: need(parsed.gc, "gc"),
+    owner: need(parsed.owner, "owner"),
     watcher: need(parsed.watcher, "watcher"),
+    launch: {
+      claude: need(claude.launch, "claude.launch"),
+      codex: need(parsed.codex?.launch, "codex.launch"),
+      pi: need(parsed.pi?.launch, "pi.launch"),
+      opencode: need(parsed.opencode?.launch, "opencode.launch"),
+    },
     claude: { shareFiles: need(claude.shareFiles, "claude.shareFiles"), deniedSkills: claude.deniedSkills ?? [] },
     codex: need(parsed.codex?.runtime, "codex.runtime"),
     pi: need(parsed.pi?.runtime, "pi.runtime"),

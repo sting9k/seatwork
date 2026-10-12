@@ -278,6 +278,9 @@ function prepare(c, run) {
 async function runClaude(c, run, p) {
   writeFileSync(join(p.dir, "mcp.json"), JSON.stringify({ mcpServers: p.servers }, null, 2));
   const disallowed = [...plugin.rawPolicy.claude.disallowedTools[c.role], ...plugin.rawPolicy.claude.deniedSkills.map((s) => `Skill(skill:${s})`)];
+  // the flags and the env a real Claude seat starts with (policy `claude.launch`)
+  const launch = plugin.rawPolicy.claude.launch;
+  const launchFlags = Object.entries(launch.extraArgs).flatMap(([flag, value]) => (value === null ? [`--${flag}`] : [`--${flag}`, value]));
   const argv = [
     "-p", p.prompt,
     "--model", run.model,
@@ -289,13 +292,13 @@ async function runClaude(c, run, p) {
     "--allowedTools", [...BASE_ALLOW, ...(c.allow ?? [])].join(","),
     "--disallowedTools", [...disallowed, ...(c.deny ?? [])].join(","), // `deny`: what this case's seat is refused, whatever its mode allows
     "--append-system-prompt", p.system,
-    "--setting-sources", "project,local",
-    "--strict-mcp-config", "--mcp-config", join(p.dir, "mcp.json"),
+    ...launchFlags,
+    "--mcp-config", join(p.dir, "mcp.json"),
     "--add-dir", skillsDirFor(c.role),
     "--no-session-persistence",
     "--max-budget-usd", String(args.budget ?? 4),
   ];
-  const { events, code } = await harnessProcess("claude", argv, p.cwd, p.dir, { CLAUDE_CODE_DISABLE_AUTO_MEMORY: "1" });
+  const { events, code } = await harnessProcess("claude", argv, p.cwd, p.dir, launch.env);
   const tools = [];
   let result = null;
   let init = null;

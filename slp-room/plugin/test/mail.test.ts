@@ -11,15 +11,11 @@ interface Handle {
 
 const idle = { refresh: async () => {}, current: () => ({ status: "idle" }) };
 
-/** An engine over these agents; any other id is one the daemon no longer has. */
-function engineFor(handles: Record<string, Partial<Handle>>): MailEngine {
-  const missing = (id: string) => ({
-    refresh: async () => {
-      throw new Error(`Agent not found: ${id}`);
-    },
-  });
-  const paseo = { agents: { ref: (id: string) => handles[id] ?? missing(id) } };
-  return new MailEngine(paseo as never, MAIL_POLICY, { routes: {}, spawn: {} } as never, () => {});
+/** An engine over these agents; any other id is one the daemon no longer has: it answers, with no agent. */
+function engineFor(handles: Record<string, Partial<Handle>>, spawn: Record<string, string[]> = {}): MailEngine {
+  const missing = { refresh: async () => null, current: () => null };
+  const paseo = { agents: { ref: (id: string) => handles[id] ?? missing } };
+  return new MailEngine(paseo as never, MAIL_POLICY, { routes: {}, spawn } as never, () => {});
 }
 
 function lead(agentId: string): SeatRecord {
@@ -103,6 +99,24 @@ test("a failed status read holds the mail until the daemon answers again", async
   await engine.sweep();
   assert.equal(sent.length, 1);
   assert.ok(sent[0].includes(posted.id));
+});
+
+test("a seat that a message can start takes its mail, whatever left it at rest; one still opening does not", async () => {
+  const cases = [
+    ["closed", true], // no runtime: every seat after a daemon restart
+    ["error", true], // its last turn failed
+    ["initializing", false],
+  ] as const;
+  for (const [status, taken] of cases) {
+    const sent: string[] = [];
+    const id = `seat-${status}`;
+    const engine = engineFor({ [id]: { refresh: async () => {}, current: () => ({ status }), send: async (text) => void sent.push(text) } });
+
+    const posted = await engine.post(mail(id, "QUESTION"));
+
+    assert.equal(sent.length, taken ? 1 : 0, status);
+    assert.deepEqual(engine.held(id).map((m) => m.id), taken ? [] : [posted.id], status);
+  }
 });
 
 test("mail to a seat the daemon no longer has is dropped and its sender told", async () => {
@@ -194,6 +208,20 @@ test("mail whose delivery was cut off is still there for the next engine, marked
   assert.deepEqual(after.held("r3"), []);
 });
 
+test("a handover still holds for the engine that starts after a reload", async () => {
+  const spawn = { lead: ["peer"] };
+  const peer: SeatRecord = { agentId: "peer10", parentAgentId: "deleted10", role: "peer", provider: "claude-peer", title: null };
+  const before = engineFor({ peer10: idle }, spawn);
+  before.rememberSeat(lead("lead10"));
+  before.rememberSeat(peer);
+  assert.deepEqual(await before.adopt("lead10", "peer10"), { ok: true, previous: "deleted10" });
+
+  // the plugin reloads: the registry it reads the seats from still names the Peer's first owner
+  const after = engineFor({}, spawn);
+  after.rememberSeat(peer);
+  assert.equal(after.parentOf("peer10"), "lead10");
+});
+
 test("a refused delivery keeps the mail for the next attempt, as a first delivery", async () => {
   let refuse = true;
   const sent: string[] = [];
@@ -239,4 +267,16 @@ test("the inbox does not hand out mail that is being delivered", async () => {
 
   assert.equal(sent.length, 1);
   assert.deepEqual(engine.held("r5"), []);
+});
+
+test("a long body reaches its recipient whole", async () => {
+  const sent: string[] = [];
+  const engine = engineFor({ r9: { ...idle, send: async (text) => void sent.push(text) } });
+  // five times the length the room used to cut at
+  const brief = `${"Contract / invariants: one line of the contract.\n".repeat(400)}Reply with slp_mail to: owner`;
+
+  await engine.post({ ...mail("r9", "BRIEF: the lock"), body: brief });
+
+  assert.equal(sent.length, 1);
+  assert.ok(sent[0].includes(brief), "the body was cut on its way");
 });

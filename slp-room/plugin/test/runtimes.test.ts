@@ -1,4 +1,4 @@
-import { USER_CODEX } from "./support/room";
+import { installRoom, USER_CODEX, USER_PI } from "./support/room";
 import assert from "node:assert/strict";
 import { readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -119,4 +119,15 @@ test("a Codex runtime is left alone when neither the policy nor the user's confi
   writeFileSync(seatConfig, "# untouched\n");
   ensureRuntime(seat, policyWith());
   assert.equal(readFileSync(seatConfig, "utf8"), "# untouched\n");
+});
+
+test("a Pi seat's home takes the user's settings without their packages and extensions", () => {
+  installRoom(["pi-peer"]);
+  const pi = { harness: "pi", role: "peer" } as const;
+  writeFileSync(join(USER_PI, "settings.json"), JSON.stringify({ theme: "dark", packages: ["npm:pi-mcp-adapter", "npm:mine"], extensions: ["-builtin:mcp"] }));
+
+  ensureRuntime(pi);
+
+  // nothing of the user's may stand in for Pi's own MCP: that is where Paseo puts the room's servers
+  assert.deepEqual(JSON.parse(readFileSync(join(runtimeDir(pi), "settings.json"), "utf8")), { theme: "dark", packages: [], extensions: [] });
 });

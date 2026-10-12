@@ -5,14 +5,15 @@ import { join } from "node:path";
 import { test } from "node:test";
 import { parseBrief } from "../server/watch/brief";
 import { Budget } from "../server/watch/budget";
-import { auroc, calibrate, labelOf, operatingPoint, type MailLine } from "../server/watch/calibrate";
+import { auroc, calibrate, labelOf, operatingPoint, renderCalibration, type MailLine } from "../server/watch/calibrate";
 import { toEvents, turnStartOf } from "../server/watch/events";
 import { turnFacts } from "../server/watch/facts";
 import { JevEngine, type DecisionRequest } from "../server/watch/jev";
 import { inquiryFor, REVISION } from "../server/watch/questions";
 import { redact } from "../server/watch/redact";
 import type { ScanRecord } from "../server/watch/scanlog";
-import { buildRequest, excerpt } from "../server/watch/state";
+import { buildRequest, excerpt, fitting } from "../server/watch/state";
+import { usageReport } from "../server/watch/usage";
 
 const REQUEST: DecisionRequest = { state: { final_message: "CANDIDATE" }, questions: { q: { type: "choice", instructions: "?", criteria: { a: "a", b: "b" } }, n: { type: "noul", instructions: "?" } } };
 const REPLY = { model: "jev-x", answers: { q: { type: "choice", choice: "b", probabilities: { a: 0.1, b: 0.9 }, confidence: 0.8 }, n: { type: "noul", noul: 0.7 } }, usage: { input_tokens: 411, output_tokens: 60 } };
@@ -79,6 +80,20 @@ test("a long message is cut to the lines that bear on the question; one too long
   assert.equal(excerpt(dense, /\btest\b/, 400).whole, false);
 });
 
+test("a question whose lines of a long message do not fit is left out, and the others are still asked", () => {
+  const limits = { messageChars: 600, briefLineChars: 400 };
+  const completion = inquiryFor("unverified-completion")!;
+  const reopen = inquiryFor("reopen-condition")!; // reads every line
+  const table = Array.from({ length: 40 }, (_, i) => `| R${i} | invoice.js | holds rule ${i} |`);
+  const long = ["CANDIDATE: v2 on branch v2", "Verification: npm test → 60 passing", ...table, "RECAP: built v2 → 8842031"].join("\n");
+
+  assert.deepEqual(fitting([reopen, completion], long, limits).map((inquiry) => inquiry.rule), ["unverified-completion"]);
+  assert.deepEqual(fitting([reopen, completion], "CANDIDATE: v2. npm test → 60 passing.", limits).map((inquiry) => inquiry.rule), ["reopen-condition", "unverified-completion"]);
+  // a rule that reads no message always fits; one whose own lines are too many does not
+  assert.deepEqual(fitting([inquiryFor("external-action")!, reopen], long, limits).map((inquiry) => inquiry.rule), ["external-action"]);
+  assert.deepEqual(fitting([completion], table.map((row) => `${row} test passed`).join("\n"), limits), []);
+});
+
 test("the state holds only what the asked questions read, in a fixed order, and equal situations hash equally", () => {
   const entries = [prompt(BRIEF), edit(join(PROJECT, "src/duration.js")), say("CANDIDATE: hours added. npm test: 14 passing. API_KEY=sk-ant-abcdefghijklmnop1234")];
   const events = toEvents(entries, PROJECT);
@@ -105,6 +120,26 @@ test("an inquiry's score is the weakest of what must hold", () => {
   assert.equal(inquiry.score(answers(0.95, 0.9)), 0.9);
   assert.equal(inquiry.score(answers(0.95, 0.2)), 0.2);
   assert.equal(inquiry.score({ report_on_checks: answers(1, 1).report_on_checks }), null);
+});
+
+test("the month's spending is reported to Paseo's Usage screen against the cap", () => {
+  const now = new Date("2026-10-11T08:00:00Z");
+  const budget = new Budget(join(ROOM_HOME, "watch-usage", "usage-{month}.json"), { usdPerMillionTokens: 1, monthlyPlanUsd: 21, monthlyCapUsd: 30 }, () => now);
+  budget.record("end", 900_000);
+  budget.record("live", 600_000); // $1.50 today, past today's $1.00 share of the plan
+
+  assert.deepEqual(usageReport(budget.summary()), {
+    status: "available",
+    planLabel: "plan $21 a month",
+    windows: [{ id: "month", label: "Cap for 2026-10", shortLabel: "mo", summary: true, usedPct: 5 }],
+    balances: [{ id: "month", label: "Spent this month", used: 1.5, limit: 30, unit: "usd" }],
+    details: [
+      { id: "calls", label: "Questions asked", value: "2" },
+      { id: "tokens", label: "Tokens read", value: "1500000" },
+      { id: "today", label: "Spent today", value: "$1.5000" },
+      { id: "pace", label: "Asking", value: "saving", tone: "warning" },
+    ],
+  });
 });
 
 test("the budget counts what replies report, saves the day's share, and closes at the cap", () => {
@@ -138,26 +173,49 @@ test("AUROC by ranks, with ties and with its operating point", () => {
   assert.deepEqual(operatingPoint(items([0.9, 0.8, 0.3], [0.85, 0.2, 0.1, 0.05]), 0), { threshold: 0.9, recall: 1 / 3, falseRate: 0 });
 });
 
-test("a turn is labelled by what the seat above did with it, and rules are scored against those labels", () => {
+test("a turn is labelled by what the seat above did with it; a claim of passing checks was false only when a test failed for the seat above", () => {
   const at = (minute: number) => new Date(Date.parse("2026-10-11T10:00:00Z") + minute * 60_000).toISOString();
-  const scan = (seat: string, minute: number, findings: ScanRecord["findings"], signal = "CANDIDATE"): ScanRecord => ({ at: at(minute), seat, role: "peer", parent: "lead", turn: `t-${seat}`, moment: "end", rev: REVISION, signal, tests: "none", statics: "none", findings });
+  const scan = (seat: string, minute: number, findings: ScanRecord["findings"], signal = "CANDIDATE"): ScanRecord => ({ at: at(minute), seat, role: "peer", parent: "lead", turn: `t-${seat}`, moment: "end", rev: REVISION, signal, tests: "none", statics: "none", reads: 2, findings });
+  /** A turn of the Lead, and what the first test it ran in it said. */
+  const above = (minute: number, ran?: ScanRecord["ran"]): ScanRecord => ({ ...scan("lead", minute, [], "STATUS"), role: "lead", parent: "sup", turn: `t-lead-${minute}`, ...(ran ? { ran } : {}) });
   const mailed = (to: string, minute: number, subject: string, from = "lead"): MailLine => ({ at: at(minute), kind: "queued", from, to, subject });
   const model = (score: number) => [{ rule: "unverified-completion" as const, key: "k", by: "model" as const, score, evidence: "e", outcome: "logged" as const }];
-  const scans = [scan("p1", 0, model(0.95)), scan("p2", 0, model(0.9)), scan("p3", 0, model(0.2)), scan("p4", 0, model(0.1)), scan("p5", 0, []), scan("p6", 0, model(0.5))];
-  const mail = [mailed("p1", 5, "REJECT p1: tests were not run"), mailed("p2", 5, "REVISED BRIEF"), mailed("p3", 5, "ACCEPT p3: fine"), mailed("p4", 5, "ACCEPT p4"), mailed("p5", 5, "REJECT p5"), mailed("p6", 90, "REJECT p6: too late to count"), mailed("p1", 6, "ACCEPT", "someone-else")];
-  const now = Date.parse(at(200));
+  const now = Date.parse(at(300));
   const policy = { labelWindowMinutes: 60, minLabels: 2, minAuroc: 0.75, maxFalseRaiseRate: 0.05 };
 
-  assert.deepEqual(scans.map((s) => labelOf(s, mail, now, 60)), ["returned", "returned", "accepted", "accepted", "returned", null]);
-  // a DONE is taken in silence: no word back within the window is an acceptance, any word back is a return
+  // the verdict: the first REJECT, REVISED BRIEF or ACCEPT of the seat above within the window
+  const one = scan("p0", 0, []);
+  assert.equal(labelOf(one, [mailed("p0", 5, "REJECT p0: one repair"), mailed("p0", 9, "ACCEPT p0")], now, 60), "returned");
+  assert.equal(labelOf(one, [mailed("p0", 5, "ACCEPT", "someone-else"), mailed("p0", 9, "REVISED BRIEF")], now, 60), "returned");
+  assert.equal(labelOf(one, [mailed("p0", 90, "REJECT p0: too late to count")], now, 60), null);
+  // a DONE is taken in silence: no verdict within the window is an acceptance, and a question about it is no verdict
   assert.equal(labelOf(scan("l1", 0, [], "DONE"), [], now, 60), "accepted");
-  assert.equal(labelOf(scan("l1", 0, [], "DONE"), [mailed("l1", 3, "DONE came with a Peer still running")], now, 60), "returned");
+  assert.equal(labelOf(scan("l1", 0, [], "DONE"), [mailed("l1", 3, "QUESTION: DONE arrived cut, send the rest")], now, 60), "accepted");
+  assert.equal(labelOf(scan("l1", 0, [], "DONE"), [mailed("l1", 3, "REJECT: a Peer is still running")], now, 60), "returned");
   assert.equal(labelOf(scan("l1", 0, [], "DONE"), [], Date.parse(at(10)), 60), null);
+  // HOLD means "received, under review": the verdict is what follows it
+  assert.equal(labelOf(scan("p7", 0, []), [mailed("p7", 1, "HOLD abc: inspected, with two lenses"), mailed("p7", 9, "ACCEPT abc")], now, 60), "accepted");
+  assert.equal(labelOf(scan("p7", 0, []), [mailed("p7", 1, "HOLD abc: inspected, with two lenses"), mailed("p7", 9, "REJECT abc: one defect")], now, 60), "returned");
+  // a turn that handed nothing over has nothing to be judged
+  assert.equal(labelOf(scan("p8", 0, [], "STATUS"), [mailed("p8", 2, "REJECT: wrong direction")], now, 60), null);
+
+  const scans = [
+    scan("p1", 0, model(0.95)), above(3, "failed"), // sent back, and the Lead's own run had failed
+    scan("p2", 10, model(0.9)), above(12, "passed"), // sent back for something else: the Lead's run passed
+    scan("p3", 20, model(0.2)),
+    scan("p4", 30, model(0.1)),
+    scan("p5", 40, []),
+    scan("p6", 50, model(0.5)),
+    scan("p7", 60, model(0.7)), above(66), // sent back, and the Lead ran no test: nothing shows why
+    above(80, "failed"), // a later turn of the Lead, after that verdict: it says nothing of p7
+  ];
+  const mail = [mailed("p1", 5, "REJECT p1: npm test fails"), mailed("p2", 15, "REVISED BRIEF"), mailed("p3", 25, "ACCEPT p3: fine"), mailed("p4", 35, "ACCEPT p4"), mailed("p5", 45, "REJECT p5"), mailed("p6", 140, "REJECT p6: too late to count"), mailed("p7", 65, "REJECT p7: one repair")];
 
   const result = calibrate(scans, mail, policy, now, REVISION);
-  assert.deepEqual([result.turns, result.labelled, result.returned, result.returnedWithFinding], [6, 5, 3, 2]);
+  assert.deepEqual([result.turns, result.reads, result.labelled, result.returned, result.returnedWithFinding], [11, 22, 6, 4, 3]);
   const rule = result.rules.find((r) => r.rule === "unverified-completion")!;
-  assert.deepEqual([rule.spoke, rule.labelled, rule.returned, rule.roc?.auroc, rule.operating?.threshold], [5, 4, 2, 1, 0.9]);
+  assert.deepEqual([rule.spoke, rule.labelled, rule.returned, rule.roc?.auroc, rule.operating?.threshold], [6, 4, 1, 1, 0.95]);
+  assert.match(renderCalibration(result, policy), /^watched turns 11, read 22 times; .*\nunverified-completion \(model\): asked in 6 turns, mailed 0; 1\/4 of its labelled turns were sent back after a test failed for the seat above/);
   // scores given under another revision of the questions are not mixed in
   assert.equal(calibrate(scans.map((s) => ({ ...s, rev: REVISION + 1 })), mail, policy, now, REVISION).turns, 0);
 });

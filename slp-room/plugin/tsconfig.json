@@ -5,11 +5,12 @@
     "moduleResolution": "Bundler",
     "lib": ["ES2023"],
     "types": ["node"],
+    "jsx": "react-jsx",
     "strict": true,
     "skipLibCheck": true,
     "noEmit": true,
     "esModuleInterop": true,
     "allowSyntheticDefaultImports": true
   },
-  "include": ["index.server.ts", "server/**/*.ts", "test/**/*.ts", "tools/**/*.ts"]
+  "include": ["index.server.ts", "index.client.tsx", "server/**/*.ts", "client/**/*.ts", "client/**/*.tsx", "shared/**/*.ts", "test/**/*.ts", "tools/**/*.ts"]
 }

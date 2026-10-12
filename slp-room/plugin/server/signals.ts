@@ -13,6 +13,13 @@ export function signalOf(text: string): string | undefined {
   return SIGNAL.exec(firstLine)?.[1] ?? SIGNAL.exec(text)?.[1];
 }
 
+/** What a final message leaves for the Owner to answer: its opening DECISION_NEEDED or BLOCKED, or a WAITING ON YOU row. Null when it asks nothing. */
+export function asksOwner(text: string): string | null {
+  const opening = SIGNAL.exec(text.split("\n").find((line) => line.trim()) ?? "")?.[1];
+  if (opening === "DECISION_NEEDED" || opening === "BLOCKED") return opening;
+  return /^\s*WAITING ON YOU:\s*\S/m.test(text) ? "WAITING ON YOU" : null;
+}
+
 /** The signal a mail's subject opens with, if any; a signal word further in is part of a sentence. */
 export function subjectSignal(subject: string): string | undefined {
   return ACK.test(subject) ? "ACK" : new RegExp(`^\\W*${SIGNAL.source}`).exec(subject)?.[1];

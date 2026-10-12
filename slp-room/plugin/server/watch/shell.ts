@@ -11,6 +11,8 @@ export interface Redirect {
   /** ">" truncates, ">>" appends, "<" reads. Descriptor copies such as 2>&1 are dropped. */
   op: ">" | ">>" | "<";
   target: string;
+  /** The descriptor, when the command names one: 2 for `2>file`. */
+  fd?: number;
 }
 
 export interface SimpleCommand {
@@ -43,7 +45,7 @@ const MAX_DEPTH = 6;
 type Token =
   | { t: "word"; value: string; subs: string[] }
   | { t: "op"; value: Joiner | "(" | ")" | "\n" }
-  | { t: "redirect"; op: Redirect["op"]; target: string; subs: string[] }
+  | { t: "redirect"; op: Redirect["op"]; target: string; subs: string[]; fd?: number }
   | { t: "heredoc"; body: string };
 
 const SHELLS = new Set(["bash", "sh", "zsh", "dash", "ksh"]);
@@ -206,7 +208,7 @@ function lex(src: string, state: { complete: boolean }): Token[] {
   };
 
   /** Reads the redirection whose operator starts at `at`; returns the index after it. */
-  const lexRedirect = (at: number): number => {
+  const lexRedirect = (at: number, fd?: number): number => {
     i = at;
     if (src.startsWith("<<<", i)) {
       // a here-string is data for the command, not a file
@@ -231,12 +233,12 @@ function lex(src: string, state: { complete: boolean }): Token[] {
       i += 1;
       skipBlanks();
       const word = readWord();
-      if (!/^[0-9]+-?$|^-$/.test(word.value) && op !== "<") tokens.push({ t: "redirect", op, target: word.value, subs: word.subs });
+      if (!/^[0-9]+-?$|^-$/.test(word.value) && op !== "<") tokens.push({ t: "redirect", op, target: word.value, subs: word.subs, ...(fd === undefined ? {} : { fd }) });
       return i;
     }
     skipBlanks();
     const word = readWord();
-    if (word.value) tokens.push({ t: "redirect", op, target: word.value, subs: word.subs });
+    if (word.value) tokens.push({ t: "redirect", op, target: word.value, subs: word.subs, ...(fd === undefined ? {} : { fd }) });
     return i;
   };
 
@@ -296,8 +298,9 @@ function lex(src: string, state: { complete: boolean }): Token[] {
       i = lexRedirect(i);
     } else if (/[0-9]/.test(c) && /^[0-9]+[<>]/.test(src.slice(i, i + 4))) {
       // a descriptor number glued to a redirection: 2>file, 2>&1
+      const from = i;
       while (/[0-9]/.test(src[i])) i += 1;
-      i = lexRedirect(i);
+      i = lexRedirect(i, Number(src.slice(from, i)));
     } else {
       const word = readWord();
       tokens.push({ t: "word", value: word.value, subs: word.subs });
@@ -369,7 +372,7 @@ function parse(source: string, depth: number, state: { complete: boolean }): Sim
     }
     groupClosed = false;
     if (token.t === "redirect") {
-      draft.redirects.push({ op: token.op, target: token.target });
+      draft.redirects.push({ op: token.op, target: token.target, ...(token.fd === undefined ? {} : { fd: token.fd }) });
       draft.subs.push(...token.subs);
       continue;
     }

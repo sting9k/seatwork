@@ -37,7 +37,7 @@ export interface Models {
 export const MODELS_FILE = join(ROOM_DIR, "models.json");
 
 export function loadModels(): Models {
-  if (!existsSync(MODELS_FILE)) throw new Error(`slp-seat: ${MODELS_FILE} not found; set the room up again`);
+  if (!existsSync(MODELS_FILE)) throw new Error(`seatwork: ${MODELS_FILE} not found; set the room up again`);
   return JSON.parse(readFileSync(MODELS_FILE, "utf8")) as Models;
 }
 

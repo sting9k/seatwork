@@ -37,7 +37,7 @@ function readIfExists(path: string): string | null {
 
 /** The seats the room has on this machine, read from the seats.json written when it was set up. */
 export function enabledSeats(): Seat[] {
-  if (!existsSync(SEATS_FILE)) throw new Error(`slp-seat: ${SEATS_FILE} not found; set the room up again`);
+  if (!existsSync(SEATS_FILE)) throw new Error(`seatwork: ${SEATS_FILE} not found; set the room up again`);
   const parsed = JSON.parse(readFileSync(SEATS_FILE, "utf8")) as { providers?: string[] };
   return (parsed.providers ?? []).map(parseSeat).filter((s): s is Seat => s !== null);
 }
@@ -89,14 +89,14 @@ export interface PromptContext {
 export function rolePrompt(role: Role, context: PromptContext): string {
   const roleText = readIfExists(join(ROOM_DIR, "roles", `${role}.md`));
   if (!roleText) {
-    throw new Error(`slp-seat: missing role prompt ${join(ROOM_DIR, "roles", `${role}.md`)} (set the room up again)`);
+    throw new Error(`seatwork: missing role prompt ${join(ROOM_DIR, "roles", `${role}.md`)} (set the room up again)`);
   }
   const spec = specSheet(context.spec);
   const sheet = harnessSheet(context.harness);
   const vars = promptVars(context.models ?? loadModels(), context.params);
   const missing: string[] = [];
   const rendered = render(roleText.trim(), vars, (name) => missing.push(name));
-  if (missing.length) console.error(`slp-seat: roles/${role}.md uses unknown placeholders: ${missing.join(", ")}`);
+  if (missing.length) console.error(`seatwork: roles/${role}.md uses unknown placeholders: ${missing.join(", ")}`);
   const needsRoomDir = role === "hq"; // the model table, the registry log and the room notebook live there; a project seat is shown none of it
   const parts = [
     `# Seat: ${role}${context.spec ? ` (specialization: ${context.spec})` : ""}`,

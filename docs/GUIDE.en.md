@@ -137,7 +137,7 @@ room's folder was filled from the clone: two copies that can differ. To
 move a machine to a clone, remove the plugin, then run the script:
 
 ```bash
-paseo plugin remove slp-seat
+paseo plugin remove seatwork
 ```
 
 ```bash
@@ -216,6 +216,7 @@ that are ready here.
 | Room files | The plugin and the room's files are from different versions. Apply. |
 | Pi | A Pi seat is set up and Pi is missing or older than 0.99. |
 | Dictation, Voice mode | One is on. It is on for every agent on this machine; turn it off in Paseo's settings. |
+| Two copies of this plugin | `slp-seat`, the plugin's id until 0.18.0, is still installed beside `seatwork`. Remove it: `paseo plugin remove slp-seat`. |
 
 ### Remove the room
 
@@ -590,7 +591,7 @@ stats, then set its Mode to On and apply.
 ### Updating
 
 ```bash
-paseo plugin update slp-seat
+paseo plugin update seatwork
 ```
 
 Then press **Apply** on the Seatwork screen. Until you do, the room refuses
@@ -598,6 +599,13 @@ new seats, and the error says so.
 
 That is for a plugin installed from Paseo's settings. A room set up from a
 clone is updated in the clone: `git pull`, then `./install.sh`.
+
+Until 0.18.0 the plugin's id was `slp-seat`. An install from that time
+keeps that id through updates and goes on working; `paseo plugin` commands
+then take `slp-seat` where this guide says `seatwork`. To move to the new
+id, run `paseo plugin remove slp-seat`, install the plugin again (section
+2, step 1) and press **Apply**. The room's folder is kept. In a clone,
+`./install.sh` makes the move by itself.
 
 ### Automatic cleanup
 
@@ -635,7 +643,7 @@ Claude seats keep their sessions in `~/.claude/projects`, next to yours.
 ### Logs
 
 ```bash
-paseo plugin logs slp-seat
+paseo plugin logs seatwork
 ```
 
 Mail is logged in `~/.config/slp-room/mail/log.jsonl`, cleanup in
@@ -656,6 +664,6 @@ Mail is logged in `~/.config/slp-room/mail/log.jsonl`, cleanup in
 | `its runtime could not be built` | Fix what the message names (often `~/.codex/config.toml`), then create the agent again |
 | `still open … archive them first` | Archive the room's agents, then remove the room |
 | `is too old: the room needs 0.11.2 or later` | Update Paseo, run `paseo daemon restart`, then install again |
-| `already runs from …, not from this clone` | `install.sh` met a plugin installed from somewhere else. Change that room on the Seatwork screen, or run `paseo plugin remove slp-seat` and then the script |
+| `already runs from …, not from this clone` | `install.sh` met a plugin installed from somewhere else. Change that room on the Seatwork screen, or run the `paseo plugin remove` command the message gives and then the script |
 | An agent says it is not signed in | Sign its agent CLI in, in your terminal |
 | An agent does not know a new procedure | Open a new agent: a seat gets its prompt when it is created |

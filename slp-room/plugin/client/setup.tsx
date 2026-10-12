@@ -15,7 +15,7 @@ type State = RpcOutput<typeof setupState>;
 type Project = State["projects"][number];
 type Choices = Record<string, unknown>;
 
-const STATE_KEY = ["slp-seat", "setup.state"];
+const STATE_KEY = ["seatwork", "setup.state"];
 const ROOM_ROLES = [...SEAT_ROLES, ...TIER_ROLES] as const;
 const WATCHER_DOES = { off: "Nothing is read.", shadow: "Reads the turns of Leads and Peers and logs what it finds. Nobody is mailed.", on: "Reads the turns of Leads and Peers. What it finds is mailed to the seat above." } as const;
 const MONO = { dataSet: { pmono: "true" }, style: { fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace" } };

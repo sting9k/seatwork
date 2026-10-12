@@ -97,7 +97,7 @@ safe to run again. The flags are in the guide.
 The script refuses to run over a plugin installed from Paseo's settings:
 Paseo would keep running its own copy while the room's folder was filled
 from the clone, two copies that can differ. To move a machine to a clone,
-run `paseo plugin remove slp-seat` first, then the script.
+run `paseo plugin remove seatwork` first, then the script.
 
 ## What it changes on your machine
 
@@ -119,7 +119,7 @@ every agent runs under your account.
 ```text
 slp-room/
 ├── install.sh           the terminal setup
-├── plugin/              the Paseo plugin (id slp-seat)
+├── plugin/              the Paseo plugin (id seatwork)
 │   ├── room/            role prompts, skills, the model table
 │   ├── paseo/           policy.json, seats.json, profiles.json
 │   ├── server/          setup, mail, cleanup, the watcher
@@ -135,7 +135,7 @@ slp-room/
 - A prompt change: run `node evals/run.cjs --label <name>` in `slp-room/`
   before and after. It opens real model sessions and costs tokens; see
   [slp-room/evals/README.md](slp-room/evals/README.md).
-- Logs: `paseo plugin logs slp-seat`.
+- Logs: `paseo plugin logs seatwork`.
 
 ## Sources
 

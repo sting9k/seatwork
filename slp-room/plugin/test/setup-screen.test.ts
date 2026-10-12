@@ -13,7 +13,7 @@ let dispose: () => Promise<void>;
 
 /** A daemon as the setup screen meets it: its config, its harnesses, its workspaces and its open agents. */
 const daemon = {
-  config: { providers: { "my-own": { extends: "claude" } } as Record<string, unknown>, agentProfiles: [{ id: "mine" }] as { id: string }[], mcp: { enabled: true }, plugins: { "slp-seat": { path: PLUGIN_DIR } } },
+  config: { providers: { "my-own": { extends: "claude" } } as Record<string, unknown>, agentProfiles: [{ id: "mine" }] as { id: string }[], mcp: { enabled: true }, plugins: { seatwork: { path: PLUGIN_DIR } } as Record<string, { path: string }> },
   workspaces: [] as string[],
   open: [] as { id: string; provider: string; title: string }[],
 };
@@ -141,6 +141,11 @@ test("after an update of the plugin the room takes no new seat until its files a
 
   await assert.rejects(createPeer(), /set up by version 0\.1\.0 of the plugin.*Press Apply on the Seatwork screen/);
   assert.ok((await state()).checks.some((check) => check.id === "version" && check.ok === false));
+  // an install from before 0.18.0, under the old id, beside this one: the screen says there are two copies
+  daemon.config.plugins["slp-seat"] = { path: "/an/old/checkout" };
+  assert.ok((await state()).checks.some((check) => check.id === "two-copies" && check.ok === false));
+  delete daemon.config.plugins["slp-seat"];
+  assert.ok(!(await state()).checks.some((check) => check.id === "two-copies"));
 
   await init({ models: { seats: { lead: { provider: "pi-lead/m", thinking: "high" } } }, watcher: "on" });
   assert.match((await createPeer()).config.systemPrompt, /^# Seat: peer/);

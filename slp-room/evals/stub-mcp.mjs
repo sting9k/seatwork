@@ -108,7 +108,7 @@ const TOOLS = {
       const role = /-(hq|supervisor|lead|peer|lens)(\/|$)/.exec(String(a.provider))?.[1];
       const listed = state.table?.[role];
       if (listed && !listed.includes(a.provider)) {
-        throw new Error(`Plugin slp-seat before agent.create failed: slp-seat: ${a.provider} refused: the room's table lists for ${role} only ${listed.join(", ")} (the Seatwork screen sets it). Create the seat again on one of these.`);
+        throw new Error(`Plugin seatwork before agent.create failed: seatwork: ${a.provider} refused: the room's table lists for ${role} only ${listed.join(", ")} (the Seatwork screen sets it). Create the seat again on one of these.`);
       }
       const id = next("agent-new-");
       agents.push({ id, title: a.title, provider: a.provider, status: "running", parentAgentId: state.self ?? null });

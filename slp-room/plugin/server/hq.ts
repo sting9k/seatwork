@@ -13,8 +13,8 @@ export function hqDir(): string {
 export function checkHqPlacement(role: string, provider: string, cwd: string): void {
   const dir = hqDir();
   const inside = isInside(realOrSelf(cwd), dir);
-  if (role === "hq" && !inside) throw new Error(`slp-seat: ${provider} may only be created in the ${HQ_PROJECT} project (${dir}), not in ${cwd}`);
-  if (role !== "hq" && inside) throw new Error(`slp-seat: ${provider} refused: ${dir} is the ${HQ_PROJECT} project, it holds only hq seats`);
+  if (role === "hq" && !inside) throw new Error(`seatwork: ${provider} may only be created in the ${HQ_PROJECT} project (${dir}), not in ${cwd}`);
+  if (role !== "hq" && inside) throw new Error(`seatwork: ${provider} refused: ${dir} is the ${HQ_PROJECT} project, it holds only hq seats`);
 }
 
 const dirOf = (workspace: { workspaceDirectory?: string; projectRootPath: string }) => realOrSelf(workspace.workspaceDirectory ?? workspace.projectRootPath);

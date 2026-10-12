@@ -40,19 +40,19 @@ import { Watcher, type SeatView, type TimelineView } from "./server/watch/watche
 
 type CreateRequest = PluginBeforeRequests["agent.create"];
 
-const VERSION = "0.17.0";
+const VERSION = "0.18.0";
 const MAIL_DIR = join(ROOM_HOME, "mail");
 const MCP_TOKEN_FILE = join(MAIL_DIR, "token");
 const NONCES_FILE = join(MAIL_DIR, "nonces.json");
 
 /**
- * slp-seat. A daemon that only downloaded the plugin gets the setup screen and nothing else: no
+ * seatwork. A daemon that only downloaded the plugin gets the setup screen and nothing else: no
  * folder, no seat, no port. The room starts once it is set up, from that screen or by install.sh.
  */
 export default function contribute(server: PluginServerContext) {
   server.registerSettings(roomSettings);
   let room: Room | null = isSetUp(ROOM_HOME) ? startRoom(server) : null;
-  if (!room) console.log(`slp-seat ${VERSION}: no room is set up on this daemon; its setup screen is Seatwork, in the sidebar`);
+  if (!room) console.log(`seatwork ${VERSION}: no room is set up on this daemon; its setup screen is Seatwork, in the sidebar`);
   /** Setting up, removing and re-keying the room happen one at a time. */
   let busy: Promise<unknown> = Promise.resolve();
   const oneAtATime = <T>(work: () => Promise<T>): Promise<T> => {
@@ -64,7 +64,7 @@ export default function contribute(server: PluginServerContext) {
   // a seat created while no room runs would start with no role, no isolation and no mail
   server.before("agent.create", ({ request }) => {
     if (!room && parseSeat(request.config.provider)) {
-      throw new Error(`slp-seat: ${request.config.provider} is a room seat and no room is set up on this daemon; set it up on the Seatwork screen (in the sidebar)`);
+      throw new Error(`seatwork: ${request.config.provider} is a room seat and no room is set up on this daemon; set it up on the Seatwork screen (in the sidebar)`);
     }
   });
 
@@ -138,7 +138,7 @@ export default function contribute(server: PluginServerContext) {
       if (firstWatch && choices.watcher !== "off") notes.push("The watcher's spending shows in Paseo's Usage once the plugin is reloaded.");
       await room?.stop();
       room = startRoom(server);
-      await ensureHqProject(paseo, (message) => console.log(`slp-seat: ${message}`));
+      await ensureHqProject(paseo, (message) => console.log(`seatwork: ${message}`));
       return { seats: Object.keys(plan.providers), removed, notes };
     }),
   );
@@ -207,7 +207,7 @@ async function ownFolder(paseo: PaseoApi): Promise<string> {
   const { config } = await paseo.config.get();
   const listed = Object.values((config.plugins ?? {}) as Record<string, { path?: unknown }>).map((plugin) => plugin.path);
   const found = listed.find(holdsRoom) ?? sourceOf(ROOM_HOME);
-  if (!found) throw new Error("slp-seat: Paseo's plugin list does not say where this plugin's folder is");
+  if (!found) throw new Error("seatwork: Paseo's plugin list does not say where this plugin's folder is");
   return found;
 }
 
@@ -231,6 +231,11 @@ async function setupChecks(paseo: PaseoApi, pluginDir: string, setup: Setup | nu
   if (seats.some((seat) => seat.startsWith("pi-"))) {
     const problem = await piProblem();
     checks.push({ id: "pi", label: "Pi", ok: !problem, detail: problem ?? "Recent enough to give a Pi seat the room's tools." });
+  }
+  // until 0.18.0 the plugin's id was slp-seat: both ids installed are two copies running one room
+  const ids = Object.keys((config.plugins ?? {}) as object);
+  if (ids.includes("slp-seat") && ids.includes("seatwork")) {
+    checks.push({ id: "two-copies", label: "Two copies of this plugin", ok: false, detail: "slp-seat is this plugin under its old name, still installed beside it. Remove it: paseo plugin remove slp-seat." });
   }
   for (const [id, label, on] of [["dictation", "Dictation", switches.dictation], ["voice", "Voice mode", switches.voiceMode]] as const) {
     if (on) checks.push({ id, label, ok: false, detail: "On for every agent on this host; the room keeps it off. Turn it off in Paseo's settings." });
@@ -268,10 +273,10 @@ function startRoom(server: Pick<PluginServerContext, "on" | "before">): Room {
   try {
     const seats = enabledSeats();
     for (const seat of seats) ensureRuntime(seat, policy);
-    console.log(`slp-seat ${VERSION}: ${seats.length} seats enabled (${seats.map((s) => s.provider).join(", ")}); runtimes under ${ROOM_HOME}/runtimes`);
-    console.log(`slp-seat: isolation: ${describeIsolation()}`);
+    console.log(`seatwork ${VERSION}: ${seats.length} seats enabled (${seats.map((s) => s.provider).join(", ")}); runtimes under ${ROOM_HOME}/runtimes`);
+    console.log(`seatwork: isolation: ${describeIsolation()}`);
   } catch (error) {
-    console.error("slp-seat: building runtimes failed; they will be retried per seat", error);
+    console.error("seatwork: building runtimes failed; they will be retried per seat", error);
   }
 
   // ---- mail engine + MCP server (one per daemon, fixed port so URLs survive reloads)
@@ -279,16 +284,16 @@ function startRoom(server: Pick<PluginServerContext, "on" | "before">): Room {
   /** The Paseo client of the last hook or app call; the room is handed one only there. */
   let client: PaseoApi | null = null;
   const token = loadOrCreateToken();
-  const mcp = new McpHttpServer(token, "slp-seat", VERSION);
+  const mcp = new McpHttpServer(token, "seatwork", VERSION);
   let port = policy.mail.port;
   const nonces = loadNonces();
-  const log = (m: string) => console.log(`slp-seat: ${m}`);
+  const log = (m: string) => console.log(`seatwork: ${m}`);
   const getEngine = (paseo: PaseoApi) => {
     client = paseo;
     if (!engine) {
       engine = new MailEngine(paseo, policy.mail, policy.room, log);
       // the first Paseo client the room is handed: the HQ project gets its place in Paseo
-      void ensureHqProject(paseo, log).catch((error) => console.error("slp-seat: the hq-seatwork project could not be opened", error));
+      void ensureHqProject(paseo, log).catch((error) => console.error("seatwork: the hq-seatwork project could not be opened", error));
     }
     return engine;
   };
@@ -296,7 +301,7 @@ function startRoom(server: Pick<PluginServerContext, "on" | "before">): Room {
   const setUpSeats = async (providers: string[]) => {
     const paseo = client;
     const pluginDir = sourceOf(ROOM_HOME);
-    if (!paseo || !pluginDir) throw new Error("slp-seat: the room cannot set a seat up right now; apply the room's setup screen once, then repeat");
+    if (!paseo || !pluginDir) throw new Error("seatwork: the room cannot set a seat up right now; apply the room's setup screen once, then repeat");
     const plan = await addSeats({ pluginDir, roomHome: ROOM_HOME, catalog: catalogFrom(await harnessStates(paseo, HARNESSES)), version: VERSION }, providers);
     await applyWithSdk(paseo, plan, { daemonPolicy: false });
   };
@@ -562,7 +567,7 @@ function startRoom(server: Pick<PluginServerContext, "on" | "before">): Room {
       log(`mail MCP server on 127.0.0.1:${port}`);
     })
     .catch((error) => {
-      console.error(`slp-seat: mail MCP server failed to listen on ${port}; slp_mail unavailable`, error);
+      console.error(`seatwork: mail MCP server failed to listen on ${port}; slp_mail unavailable`, error);
     });
 
   // ---- hooks
@@ -633,7 +638,7 @@ function startRoom(server: Pick<PluginServerContext, "on" | "before">): Room {
     try {
       appendFileSync(REGISTRY_LOG, `${line}\n`);
     } catch (error) {
-      console.error("slp-seat: cannot append registry log", error);
+      console.error("seatwork: cannot append registry log", error);
     }
   }));
 
@@ -800,11 +805,11 @@ function startRoom(server: Pick<PluginServerContext, "on" | "before">): Room {
     const seat = parseSeat(request.config.provider);
     if (!seat) return request;
     if (!enabledSeats().some((s) => s.provider === seat.provider)) {
-      throw new Error(`slp-seat: ${seat.provider} is not a seat the room has set up (the room's setup screen gives a role its seats; HQ sets one up when a project's model table names it)`);
+      throw new Error(`seatwork: ${seat.provider} is not a seat the room has set up (the room's setup screen gives a role its seats; HQ sets one up when a project's model table names it)`);
     }
 
     if (filesFrom !== VERSION) {
-      throw new Error(`slp-seat: ${seat.provider} refused: the room's files were set up by ${filesFrom ? `version ${filesFrom}` : "an earlier version"} of the plugin and this is ${VERSION}. Press Apply on the Seatwork screen (in the sidebar) or run install.sh, then create the seat again`);
+      throw new Error(`seatwork: ${seat.provider} refused: the room's files were set up by ${filesFrom ? `version ${filesFrom}` : "an earlier version"} of the plugin and this is ${VERSION}. Press Apply on the Seatwork screen (in the sidebar) or run install.sh, then create the seat again`);
     }
 
     const registry = loadRegistry();
@@ -817,7 +822,7 @@ function startRoom(server: Pick<PluginServerContext, "on" | "before">): Room {
         const match = findProject(registry, cwd);
         if (!match) {
           const names = registry.projects.map((p) => `${p.name} (${p.cwd})`).join(", ") || "none";
-          throw new Error(`slp-seat: ${seat.provider} refused: ${cwd} is not a registered SLP project. Registered: ${names}`);
+          throw new Error(`seatwork: ${seat.provider} refused: ${cwd} is not a registered SLP project. Registered: ${names}`);
         }
         project = { name: match.entry.name, root: match.root, room: match.room, mission: match.mission, law: match.law };
       }
@@ -828,11 +833,11 @@ function startRoom(server: Pick<PluginServerContext, "on" | "before">): Room {
 
     // the table in force where this seat starts: the room's, with its project's own differences laid over it
     const own = project?.room.models !== undefined ? `${project.root}/.slp/room.json` : null;
-    const models: Models = own ? projectModels(project!.room.models, enabledSeats().map((s) => s.provider), `slp-seat: ${own}`) : loadModels();
+    const models: Models = own ? projectModels(project!.room.models, enabledSeats().map((s) => s.provider), `seatwork: ${own}`) : loadModels();
     const fit = fitSeat(models, seat.role, seat.provider, request.config.model ?? undefined);
     if (!fit.ok) {
       const table = own ? `project ${project!.name} lists` : "the room's table lists";
-      throw new Error(`slp-seat: ${seat.provider}/${request.config.model ?? "(default model)"} refused: ${table} for ${seat.role} only ${fit.listed.join(", ")} (${own ?? "the Seatwork screen sets it"}). Create the seat again on one of these.`);
+      throw new Error(`seatwork: ${seat.provider}/${request.config.model ?? "(default model)"} refused: ${table} for ${seat.role} only ${fit.listed.join(", ")} (${own ?? "the Seatwork screen sets it"}). Create the seat again on one of these.`);
     }
     // a seat asked for on a model the table has since replaced starts on the table's
     const onTable: Partial<CreateRequest["config"]> = {};
@@ -846,7 +851,7 @@ function startRoom(server: Pick<PluginServerContext, "on" | "before">): Room {
     try {
       ensureRuntime(seat);
     } catch (error) {
-      throw new Error(`slp-seat: ${seat.provider} refused: its runtime could not be built (${error instanceof Error ? error.message : String(error)}). Fix that and create the seat again.`);
+      throw new Error(`seatwork: ${seat.provider} refused: its runtime could not be built (${error instanceof Error ? error.message : String(error)}). Fix that and create the seat again.`);
     }
 
     // the room's MCP server; agent.session_open ties this nonce to the agent id and adds the seat's own environment

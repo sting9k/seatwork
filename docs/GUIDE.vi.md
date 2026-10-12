@@ -138,7 +138,7 @@ từ bản clone: hai bản có thể khác nhau. Muốn chuyển máy sang bả
 gỡ plugin, rồi chạy script:
 
 ```bash
-paseo plugin remove slp-seat
+paseo plugin remove seatwork
 ```
 
 ```bash
@@ -216,6 +216,7 @@ agent CLI đã sẵn sàng trên máy.
 | Room files | Plugin và file của room thuộc hai phiên bản khác nhau. Hãy áp dụng. |
 | Pi | Có seat Pi mà máy không có Pi, hoặc Pi cũ hơn 0.99. |
 | Dictation, Voice mode | Một trong hai đang bật. Nó bật cho mọi agent trên máy; tắt trong phần cài đặt của Paseo. |
+| Two copies of this plugin | `slp-seat`, id của plugin trước 0.18.0, vẫn còn cài bên cạnh `seatwork`. Gỡ nó: `paseo plugin remove slp-seat`. |
 
 ### Remove the room
 
@@ -583,7 +584,7 @@ Muốn bật: cho nó chạy Shadow một thời gian, hỏi HQ thống kê watc
 ### Cập nhật
 
 ```bash
-paseo plugin update slp-seat
+paseo plugin update seatwork
 ```
 
 Sau đó bấm **Apply** trên màn hình Seatwork. Chưa bấm thì room từ chối
@@ -591,6 +592,13 @@ seat mới, và lỗi nói rõ điều đó.
 
 Cách trên dành cho plugin cài từ phần cài đặt của Paseo. Room dựng từ bản
 clone thì cập nhật ngay trong bản clone: `git pull`, rồi `./install.sh`.
+
+Trước 0.18.0, id của plugin là `slp-seat`. Bản cài từ thời đó giữ id ấy qua
+các lần cập nhật và vẫn chạy bình thường; khi đó các lệnh `paseo plugin`
+dùng `slp-seat` ở chỗ guide này ghi `seatwork`. Muốn chuyển sang id mới thì
+chạy `paseo plugin remove slp-seat`, cài lại plugin (mục 2, bước 1) rồi bấm
+**Apply**. Thư mục của room được giữ nguyên. Với bản clone, `./install.sh`
+tự chuyển.
 
 ### Tự dọn dẹp
 
@@ -628,7 +636,7 @@ Seat Claude lưu session trong `~/.claude/projects`, cạnh session của bạn.
 ### Log
 
 ```bash
-paseo plugin logs slp-seat
+paseo plugin logs seatwork
 ```
 
 Thư được ghi ở `~/.config/slp-room/mail/log.jsonl`, việc dọn dẹp ở
@@ -649,6 +657,6 @@ Thư được ghi ở `~/.config/slp-room/mail/log.jsonl`, việc dọn dẹp �
 | `its runtime could not be built` | Sửa thứ mà thông báo nêu (thường là `~/.codex/config.toml`), rồi tạo lại agent |
 | `still open … archive them first` | Lưu trữ các agent của room, rồi gỡ room |
 | `is too old: the room needs 0.11.2 or later` | Cập nhật Paseo, chạy `paseo daemon restart`, rồi cài lại |
-| `already runs from …, not from this clone` | `install.sh` gặp plugin cài từ nơi khác. Đổi room đó trên màn hình Seatwork, hoặc chạy `paseo plugin remove slp-seat` rồi chạy lại script |
+| `already runs from …, not from this clone` | `install.sh` gặp plugin cài từ nơi khác. Đổi room đó trên màn hình Seatwork, hoặc chạy lệnh `paseo plugin remove` mà thông báo đưa ra rồi chạy lại script |
 | Agent báo chưa đăng nhập | Đăng nhập agent CLI đó trong terminal |
 | Agent không biết một quy trình mới | Mở agent mới: seat nhận prompt lúc nó được tạo |

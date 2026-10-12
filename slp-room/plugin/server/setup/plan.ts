@@ -79,7 +79,7 @@ const ISOLATION: Record<Harness, string> = {
 };
 
 function readJson(file: string): any {
-  if (!existsSync(file)) throw new Error(`slp-seat: ${file} is missing from the plugin`);
+  if (!existsSync(file)) throw new Error(`seatwork: ${file} is missing from the plugin`);
   return JSON.parse(readFileSync(file, "utf8"));
 }
 

@@ -8,7 +8,7 @@ import { roomWaiting } from "./shared/room";
 const EVERY_MS = 15_000;
 
 /**
- * slp-seat in the app: the Seatwork screen (the room's setup) and the Room screen, each with a row in the
+ * seatwork in the app: the Seatwork screen (the room's setup) and the Room screen, each with a row in the
  * sidebar, and a short sound for each turn that newly waits on the Owner. Asking the room is also what lets it move held mail after a
  * daemon restart.
  */

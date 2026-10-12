@@ -196,7 +196,7 @@ export function envFor(seat: Pick<Seat, "harness" | "role">, policy: RuntimePoli
 }
 
 
-/** Everything in the shared homes that a runtime deliberately does not see; for `slp-seat` logs. */
+/** Everything in the shared homes that a runtime deliberately does not see; for `seatwork` logs. */
 export function describeIsolation(policy: RuntimePolicy = loadPolicy()): string {
   return [
     `claude: user home, personal settings off; shares ${policy.claude.shareFiles.join(",") || "nothing"}; denied skills ${policy.claude.deniedSkills.length}`,

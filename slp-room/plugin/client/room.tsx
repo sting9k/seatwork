@@ -28,7 +28,7 @@ const DOTS = 8;
 
 export function RoomScreen({ theme, layout, navigation }: PluginScreenProps) {
   const read = useRpc(roomStatus);
-  const room = useQuery({ queryKey: ["slp-seat", "room.status"], queryFn: () => read({}), refetchInterval: 10_000 });
+  const room = useQuery({ queryKey: ["seatwork", "room.status"], queryFn: () => read({}), refetchInterval: 10_000 });
   // every project starts as one line; a press opens its seats
   const [opened, setOpened] = useState({} as Record<string, boolean>);
   const c = theme.colors;
@@ -113,7 +113,7 @@ export function RoomScreen({ theme, layout, navigation }: PluginScreenProps) {
 /** The sidebar row: it opens the screen, and says how many turns wait on the Owner. */
 export function RoomItem({ theme, currentScreen, openScreen }: PluginSidebarItemProps) {
   const read = useRpc(roomWaiting);
-  const waiting = useQuery({ queryKey: ["slp-seat", "room.waiting"], queryFn: () => read({}), refetchInterval: 15_000 });
+  const waiting = useQuery({ queryKey: ["seatwork", "room.waiting"], queryFn: () => read({}), refetchInterval: 15_000 });
   const count = waiting.data?.waiting.length ?? 0;
   return (
     <SidebarRow

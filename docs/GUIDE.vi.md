@@ -79,7 +79,8 @@ Init tạo ra:
 - bốn profile: **HQ Supervisor**, **Supervisor**, **Lead**, **Peer**;
 - project `hq-seatwork`, nơi HQ làm việc.
 
-Không cần khởi động lại gì.
+Không cần khởi động lại gì. Room đã dựng xong: cách cài từ terminal bên
+dưới dành cho trường hợp khác, và sau Init bạn không cần chạy nó.
 
 ### Đăng nhập
 
@@ -92,7 +93,11 @@ claude auth login
 
 ### Cài từ terminal
 
-Dùng cách này trên máy không có app, hoặc khi bạn sửa chính các file của
+`install.sh` làm cùng việc với bước 1 đến 3, thay cho ba bước đó. Chọn một
+trong hai: plugin cài ở bước 1 thì dựng bằng Init, không bao giờ bằng
+script.
+
+Dùng script trên máy không có app, hoặc khi bạn sửa chính các file của
 room. Cần có `node`, `npm` và `paseo`.
 
 ```bash
@@ -103,9 +108,9 @@ git clone https://github.com/sting9k/seatwork.git
 cd seatwork/slp-room && ./install.sh
 ```
 
-Nó làm đúng việc của Init và chạy lại bao nhiêu lần cũng được. Lần đầu nó
-hỏi hai câu: HQ chạy trên gì, và có bật watcher không. Dùng cờ để trả lời
-sẵn:
+Nó cài plugin từ thư mục của bản clone, làm đúng việc của Init, và chạy lại
+bao nhiêu lần cũng được. Lần đầu nó hỏi hai câu: HQ chạy trên gì, và có bật
+watcher không. Dùng cờ để trả lời sẵn:
 
 | Cờ | Ý nghĩa |
 |---|---|
@@ -114,10 +119,32 @@ sẵn:
 | `--watcher off\|shadow\|on` | Chế độ của watcher (mục 10) |
 | `--seat <harness>-<role>` | Dựng thêm một seat; dùng được nhiều lần |
 | `--mail-port <cổng>` | Cổng của máy chủ thư, khi cổng mặc định đã có chương trình khác dùng |
-| `--seats-only` | Chỉ dựng seat; giữ nguyên file của room và plugin |
 
 Room cài theo cách này vẫn hiện trên màn hình Seatwork, với đúng các lựa
-chọn nó đang chạy.
+chọn nó đang chạy, và đổi ở đó cũng được.
+
+Hai điểm khác với Init:
+
+- Script còn tắt Dictation và Voice mode của Paseo, và bật bộ công cụ Paseo
+  dành cho agent. Init không đụng tới ba thứ đó, chỉ báo ở phần **This
+  host**.
+- Dictation và Voice mode chỉ đổi sau khi khởi động lại daemon. Khi script
+  kết thúc bằng dòng Paseo báo có thay đổi cần restart, hãy chạy
+  `paseo daemon restart`.
+
+Đừng chạy script đè lên plugin đã cài ở bước 1. Paseo vẫn chạy bản plugin
+của riêng nó, còn script ghi thư mục của room từ bản clone: hai bản có thể
+khác nhau. Muốn chuyển máy sang bản clone thì gỡ plugin, rồi chạy script:
+
+```bash
+paseo plugin remove slp-seat
+```
+
+```bash
+./install.sh
+```
+
+Thư mục của room, thư và các lựa chọn của bạn được giữ nguyên.
 
 ## 3. Màn hình Seatwork
 
@@ -542,8 +569,10 @@ paseo plugin update slp-seat
 ```
 
 Sau đó bấm **Apply** trên màn hình Seatwork. Chưa bấm thì room từ chối
-seat mới, và lỗi nói rõ điều đó. Nếu dùng bản clone: `git pull`, rồi
-`./install.sh`.
+seat mới, và lỗi nói rõ điều đó.
+
+Cách trên dành cho plugin cài từ phần cài đặt của Paseo. Room dựng từ bản
+clone thì cập nhật ngay trong bản clone: `git pull`, rồi `./install.sh`.
 
 ### Tự dọn dẹp
 

@@ -79,7 +79,8 @@ Init creates:
 - four profiles: **HQ Supervisor**, **Supervisor**, **Lead**, **Peer**;
 - the `hq-seatwork` project, where HQ lives.
 
-Nothing needs a restart.
+Nothing needs a restart. The room is set up: the terminal way below is for
+other cases, and you do not run it after Init.
 
 ### Signing in
 
@@ -92,8 +93,11 @@ claude auth login
 
 ### From a terminal instead
 
-Use this on a machine without the app, or when you work on the room's own
-files. It needs `node`, `npm` and `paseo`.
+`install.sh` does the same setup as steps 1 to 3, in their place. Pick one:
+a plugin installed in step 1 is set up with Init, never with the script.
+
+Use the script on a machine without the app, or when you work on the room's
+own files. It needs `node`, `npm` and `paseo`.
 
 ```bash
 git clone https://github.com/sting9k/seatwork.git
@@ -103,9 +107,9 @@ git clone https://github.com/sting9k/seatwork.git
 cd seatwork/slp-room && ./install.sh
 ```
 
-It does what Init does and is safe to run again. A first run asks two
-questions: what HQ runs on, and whether to turn the watcher on. Flags
-answer without the question:
+It installs the plugin from the clone's folder, does what Init does, and is
+safe to run again. A first run asks two questions: what HQ runs on, and
+whether to turn the watcher on. Flags answer without the question:
 
 | Flag | Meaning |
 |---|---|
@@ -114,10 +118,33 @@ answer without the question:
 | `--watcher off\|shadow\|on` | The watcher's mode (section 10) |
 | `--seat <harness>-<role>` | Set up one more seat; may be repeated |
 | `--mail-port <port>` | The port of the room's mail server, when the default is taken |
-| `--seats-only` | Only the seats; the room's files and the plugin stay as they are |
 
 A room set up this way shows on the Seatwork screen with the choices it runs
-on.
+on, and may be changed there too.
+
+Two things differ from Init:
+
+- The script also turns Paseo's Dictation and Voice mode off, and Paseo's
+  tools for agents on. Init leaves those three alone and reports them under
+  **This host**.
+- Dictation and Voice mode change only after a restart of the daemon. When
+  the script ends with Paseo's note that changes require a restart, run
+  `paseo daemon restart`.
+
+Do not run the script over a plugin installed in step 1. Paseo keeps
+running its own copy of the plugin, and the script fills the room's folder
+from the clone: two copies that can differ. To move a machine to a clone,
+remove the plugin, then run the script:
+
+```bash
+paseo plugin remove slp-seat
+```
+
+```bash
+./install.sh
+```
+
+The room's folder, its mail and your choices are kept.
 
 ## 3. The Seatwork screen
 
@@ -549,8 +576,10 @@ paseo plugin update slp-seat
 ```
 
 Then press **Apply** on the Seatwork screen. Until you do, the room refuses
-new seats, and the error says so. In a clone: `git pull`, then
-`./install.sh`.
+new seats, and the error says so.
+
+That is for a plugin installed from Paseo's settings. A room set up from a
+clone is updated in the clone: `git pull`, then `./install.sh`.
 
 ### Automatic cleanup
 

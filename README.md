@@ -57,6 +57,8 @@ You need Paseo 0.11.2 or later, and at least one of Claude Code, Codex, Pi
    room's providers and four profiles in Paseo, and the `hq-seatwork`
    project.
 
+That is the whole setup. Nothing is left to run in a terminal.
+
 To change a choice later, change it on the same screen and press **Apply**:
 it reaches every project that has no models of its own, for the seats
 opened from then on. A project gets models of its own on the same screen,
@@ -73,8 +75,12 @@ folder aside.
 
 ## From a terminal
 
-For a machine without the app, or to work on the room's own files. It needs
-`node`, `npm` and `paseo`.
+`install.sh` is a second way to do the same setup, in place of the three
+steps above. Pick one: a plugin installed from Paseo's settings is set up
+with Init, never with the script.
+
+Use the script on a machine without the app, or to work on the room's own
+files. It needs `node`, `npm` and `paseo`.
 
 ```bash
 git clone https://github.com/sting9k/seatwork.git
@@ -84,7 +90,13 @@ git clone https://github.com/sting9k/seatwork.git
 cd seatwork/slp-room && ./install.sh
 ```
 
-It does what Init does and is safe to run again. The flags are in the guide.
+It installs the plugin from the clone's folder, does what Init does, and is
+safe to run again. The flags are in the guide.
+
+Do not run it over a plugin installed from Paseo's settings. Paseo keeps
+running its own copy of the plugin, and the script fills the room's folder
+from the clone: two copies that can differ. To move a machine to a clone,
+run `paseo plugin remove slp-seat` first, then the script.
 
 ## What it changes on your machine
 
@@ -92,7 +104,8 @@ It does what Init does and is safe to run again. The flags are in the guide.
   gives agents Paseo's tools.
 - Three switches for every agent on the machine, not only the room's:
   Paseo's browser tools off, terminal agent hooks off, Paseo's bundled
-  skills kept out of agents.
+  skills kept out of agents. `install.sh` also turns dictation and voice
+  mode off; Init only reports them.
 - A mail server on `127.0.0.1` for the agents' mail tool.
 - `~/.config/slp-room`: mail, logs and copies of your agent CLI config,
   readable by your user only.
@@ -115,7 +128,8 @@ slp-room/
 ```
 
 - After an edit, run `./install.sh` in `slp-room/`. It copies the room's
-  files into `~/.config/slp-room` and reloads the plugin.
+  files into `~/.config/slp-room` and reloads the plugin. This needs a room
+  set up from this clone: see [From a terminal](#from-a-terminal).
 - Tests: `npm test` in `slp-room/plugin` (Node 22.15 or later).
 - A prompt change: run `node evals/run.cjs --label <name>` in `slp-room/`
   before and after. It opens real model sessions and costs tokens; see

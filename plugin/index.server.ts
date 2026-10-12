@@ -608,10 +608,11 @@ function startRoom(server: Pick<PluginServerContext, "on" | "before">): Room {
   );
 
   // the registry is the top seat's; tool descriptions stay neutral because every seat can read them
-  const registryOwner = (nonce: string, tool: string) => {
+  const registryOwner = (nonce: string, tool: string): PaseoApi => {
     const me = resolveCaller(nonce);
-    if (!me || engine?.seat(me)?.role !== "hq")
+    if (!me || !client || engine?.seat(me)?.role !== "hq")
       throw new Error(`${tool} refused: your seat does not keep the project registry`);
+    return client;
   };
 
   mcp.register(
@@ -622,8 +623,7 @@ function startRoom(server: Pick<PluginServerContext, "on" | "before">): Room {
       inputSchema: { type: "object", properties: {}, required: [] },
     },
     async (_args, context) => {
-      registryOwner(context.nonce, "seatwork_projects");
-      return describeProjects();
+      return describeProjects(registryOwner(context.nonce, "seatwork_projects"));
     },
   );
 
@@ -651,8 +651,8 @@ function startRoom(server: Pick<PluginServerContext, "on" | "before">): Room {
       },
     },
     async (args, context) => {
-      registryOwner(context.nonce, "seatwork_register_project");
       return registerProject(
+        registryOwner(context.nonce, "seatwork_register_project"),
         {
           path: String(args.path ?? ""),
           name: args.name ? String(args.name) : undefined,

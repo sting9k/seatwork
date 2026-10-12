@@ -4,6 +4,7 @@ import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { beforeEach, test } from "node:test";
 import { registerProject } from "../server/onboard";
+import type { PaseoApi } from "../server/paseo";
 
 const ROOM_SEATS = [
   "claude-hq",
@@ -24,10 +25,11 @@ const setUpSeats = async (providers: string[]) => {
 };
 
 // Paseo knows one project, the test's
-writeFileSync(
-  process.env.SEATWORK_PASEO_BIN!,
-  `#!/bin/sh\n[ "$1 $2" = "project ls" ] || exit 1\necho '${JSON.stringify([{ projectId: "p1", name: "demo", path: PROJECT }])}'\n`,
-);
+const paseo = {
+  projects: {
+    list: async () => ({ projects: [{ projectId: "p1", projectDisplayName: "demo", projectRootPath: PROJECT }] }),
+  },
+} as unknown as PaseoApi;
 
 beforeEach(() => {
   installRoom(ROOM_SEATS);
@@ -38,8 +40,9 @@ beforeEach(() => {
 test("a project's table may put a role on a harness the room has no seat for: the seat is set up, then the table is written", async () => {
   const models = { seats: { supervisor: { provider: "pi-supervisor/zai/glm-5" } } };
 
-  const result = await registerProject({ path: PROJECT, models }, setUpSeats);
+  const result = await registerProject(paseo, { path: PROJECT, models }, setUpSeats);
 
+  assert.match(result, /registered: demo at /);
   assert.deepEqual(asked, [["pi-supervisor"]]);
   assert.deepEqual(JSON.parse(readFileSync(marker, "utf8")).models, models);
   assert.match(result, /Seats set up for this table: pi-supervisor\./);
@@ -50,6 +53,7 @@ test("a table the room refuses sets up no seat and is not written", async () => 
   // a Peer seat in the Supervisor's slot
   await assert.rejects(
     registerProject(
+      paseo,
       { path: PROJECT, models: { seats: { supervisor: { provider: "pi-peer/zai/glm-5" } } } },
       setUpSeats,
     ),

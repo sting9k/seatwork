@@ -1,8 +1,8 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { paseoCli } from "./cli";
 import { hqDir } from "./hq";
 import { missingSeats, projectModels } from "./models";
+import type { PaseoApi } from "./paseo";
 import { REGISTRY_FILE } from "./paths";
 import { loadRegistry, readLaw, realOrSelf } from "./registry";
 import { enabledSeats } from "./seats";
@@ -13,11 +13,13 @@ interface PaseoProject {
   path: string;
 }
 
-/** Paseo's projects, without the room's own hq-seatwork. */
-async function paseoProjects(): Promise<PaseoProject[]> {
+/** Paseo's projects by display name, without the room's own hq-seatwork. */
+async function paseoProjects(paseo: PaseoApi): Promise<PaseoProject[]> {
   const hq = hqDir();
-  const all = JSON.parse(await paseoCli(["project", "ls", "--json"])) as PaseoProject[];
-  return all.map((p) => ({ ...p, path: realOrSelf(p.path) })).filter((p) => p.path !== hq);
+  const { projects } = await paseo.projects.list();
+  return projects
+    .map((p) => ({ projectId: p.projectId, name: p.projectDisplayName, path: realOrSelf(p.projectRootPath) }))
+    .filter((p) => p.path !== hq);
 }
 
 /** A registry name: lower-case letters, digits and dashes, as it appears in `.seatwork/<name>-law.md`. */
@@ -142,9 +144,9 @@ function modelsLine(root: string): string {
 }
 
 /** Every Paseo project with what the room knows about it, one line each. */
-export async function describeProjects(): Promise<string> {
+export async function describeProjects(paseo: PaseoApi): Promise<string> {
   const registry = loadRegistry();
-  const projects = await paseoProjects();
+  const projects = await paseoProjects(paseo);
   if (projects.length === 0)
     return "Paseo has no project besides the room's own. Ask for the project to be added to Paseo first.";
   return projects
@@ -159,11 +161,12 @@ export async function describeProjects(): Promise<string> {
 
 /** Registers a project Paseo already knows: its marker, mission, own table and registry line. Safe to repeat. */
 export async function registerProject(
+  paseo: PaseoApi,
   args: { path: string; name?: string; mission?: string; models?: unknown },
   setUpSeats: (providers: string[]) => Promise<void>,
 ): Promise<string> {
   const wanted = realOrSelf(args.path.trim());
-  const project = (await paseoProjects()).find((p) => p.path === wanted || p.name === args.path.trim());
+  const project = (await paseoProjects(paseo)).find((p) => p.path === wanted || p.name === args.path.trim());
   if (!project)
     throw new Error(`${args.path} is not a project in Paseo (or is the room's own); it has to be added to Paseo first`);
   const name = slug(args.name?.trim() || project.name);

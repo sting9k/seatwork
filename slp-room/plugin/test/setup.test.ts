@@ -12,7 +12,7 @@ import { addSeats, setUpRoom } from "../server/setup/init";
 import { applyToConfigFile, applyWithSdk } from "../server/setup/paseo-config";
 import { planRoom, roomModels, type Catalog, type Setup } from "../server/setup/plan";
 import { isSetUp, readSetup } from "../server/setup/room-home";
-import { chooseSeat, chooseTier, dropTier, seatChoice, tierChoices, type Table } from "../shared/model-choices";
+import { changedRoles, chooseSeat, chooseTier, clearRole, dropTier, seatChoice, tierChoices, type Table } from "../shared/model-choices";
 
 // every harness has the same two models, plus the one the room's own table puts HQ on
 const catalog: Catalog = async () => ({
@@ -125,6 +125,16 @@ test("the screen's choices become the table the room runs on: one model for a se
   for (const seat of ["pi-lead", "pi-peer", "opencode-peer", "pi-lens"]) assert.ok(seat in providers, seat);
   // a model the choices added leaves them whole; one of the room's own stays out
   assert.deepEqual(dropTier(choices, room, "peer", "extra").peer, { tiers: { cheap: (choices.peer as { tiers: Record<string, unknown> }).tiers.cheap, "cross-family": null } });
+});
+
+test("a project's own choices name the roles they change, and a role given back leaves nothing of itself behind", () => {
+  let own = chooseSeat({}, "lead", { harness: "claude", model: "m", thinking: "low" });
+  own = chooseTier(own, "peer", "cheap", { harness: "pi", model: "m-one", thinking: "" });
+  assert.deepEqual(changedRoles(own), ["lead", "peer"]);
+
+  own = clearRole(own, "peer");
+  assert.deepEqual(changedRoles(own), ["lead"]);
+  assert.deepEqual(clearRole(own, "lead"), {}, "a project with no role of its own is on the room's table");
 });
 
 test("choices the room cannot run on are refused before anything is written", async () => {

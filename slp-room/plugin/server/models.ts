@@ -153,13 +153,41 @@ export function missingSeats(override: unknown, enabledProviders: string[], wher
   return [...new Set(named)].filter((provider) => !enabledProviders.includes(provider));
 }
 
-/** Whether a seat about to be created runs on a model its project's table lists for its role. */
+const split = (entry: string): [provider: string, model: string] => {
+  const slash = entry.indexOf("/"); // the model id may hold slashes of its own
+  return [entry.slice(0, slash), entry.slice(slash + 1)];
+};
+
+/** Whether a seat about to be created runs on a model the table lists for its role. */
 export function modelAllowed(m: Models, role: string, provider: string, model: string | undefined): { ok: boolean; listed: string[] } {
   const listed = allowed(m)[role] ?? [];
   const ok = listed.some((entry) => {
-    const slash = entry.indexOf("/"); // the model id may hold slashes of its own
-    const id = entry.slice(slash + 1);
-    return entry.slice(0, slash) === provider && (!model || model === id || model.startsWith(`${id}-`));
+    const [seat, id] = split(entry);
+    return seat === provider && (!model || model === id || model.startsWith(`${id}-`));
   });
   return { ok, listed };
+}
+
+/** What the table in force makes of a seat about to be created. */
+export type SeatFit =
+  | { ok: true; /** The model to start on instead of the one asked for. */ model?: string; /** With it, the thinking level; "default" is none. */ thinking?: string }
+  | { ok: false; listed: string[] };
+
+/**
+ * Holds a seat about to be created to the table in force. The table decides, not the prompt of
+ * whoever creates the seat: that prompt may be older than the table. A role with one model is put
+ * on it; a Peer or a Lens on a model that left the table is refused, for its creator to pick again.
+ */
+export function fitSeat(m: Models, role: string, provider: string, model: string | undefined): SeatFit {
+  const listed = allowed(m)[role] ?? [];
+  const mine = listed.filter((entry) => split(entry)[0] === provider);
+  if (mine.length === 0) return { ok: false, listed };
+  if (model && modelAllowed(m, role, provider, model).ok) return { ok: true };
+  const seat = role === "hq" || role === "supervisor" || role === "lead" ? m.seats[role] : null;
+  if (seat) {
+    const [first, id] = split(seat.provider);
+    return first === provider ? { ok: true, model: id, thinking: seat.thinking } : { ok: true, model: split(mine[0])[1] };
+  }
+  // a Peer or a Lens asked for by seat alone starts on that seat's first model in the table
+  return model ? { ok: false, listed } : { ok: true, model: split(mine[0])[1] };
 }

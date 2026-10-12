@@ -66,9 +66,9 @@ yet.
 
 ### Step 2: choose what each role runs on
 
-On the plugin's **…** menu choose **Seatwork**. The screen lists the five
-roles with the shipped choice for each. Change what you want or leave it
-as it is. Section 3 explains every part of the screen.
+**Seatwork** is now a row at the top of Paseo's sidebar. Press it. The
+screen lists the five roles with the shipped choice for each. Change what
+you want or leave it as it is. Section 3 explains every part of the screen.
 
 ### Step 3: press Init
 
@@ -116,21 +116,28 @@ answer without the question:
 | `--mail-port <port>` | The port of the room's mail server, when the default is taken |
 | `--seats-only` | Only the seats; the room's files and the plugin stay as they are |
 
-A room set up this way shows on the setup screen with the choices it runs
+A room set up this way shows on the Seatwork screen with the choices it runs
 on.
 
-## 3. The setup screen
+## 3. The Seatwork screen
 
-**Settings → Plugins → … → Seatwork**. The Command Center has it too, as
-"Seatwork: set up the room".
+Press **Seatwork** at the top of Paseo's sidebar. The Command Center has it
+too, as "Seatwork: set up the room". The row says "Set up" while no room
+exists and "Needs you" when a check of this machine fails.
 
-Your choices are saved as you make them. The room changes only when you
-press **Init** (the first time) or **Apply** (afterwards). While the two
-differ, the top line says "changes not applied".
+The screen has seven parts, from top to bottom.
 
-### What each role runs on
+### The room
 
-One line per role. Press a line to open it.
+One card with the state of the room and one button: **Init** the first
+time, **Apply** afterwards. Your choices below are saved as you make them,
+but the room changes only when you press that button. Until then the card
+names what is not applied yet.
+
+### Models
+
+The room's table: one line per role. Press a role to choose what it runs
+on.
 
 - **HQ, Supervisor, Lead** run on one model each. Choose the agent CLI,
   the model and the thinking level. The model list has a search box. The
@@ -139,18 +146,30 @@ One line per role. Press a line to open it.
 - **Peer and Lens** are one role with several models. Each model has a
   name (`cheap`, `default`, `high`…) and a line saying what it is for. The
   Lead reads the names and the lines and picks one for each task. You can
-  change a model, **Remove** it, or add one under **One more model**: give
-  it a name (lower-case letters, digits, dashes) and a "Use for" line.
-- **Reset** drops all your choices and goes back to the room's own table.
+  change a model, **Remove** it, or add one more: give it a name
+  (lower-case letters, digits, dashes) and a "Use for" line.
+- **Back to the shipped table** drops all your choices.
+
+HQ runs on this table, and so does every project that has no table of its
+own. The part says how many projects that is.
 
 A seat is set up when a choice needs it. Put the Lead on Codex, press
 Apply, and `codex-lead` exists.
 
-### Watcher and sound
+### Projects
 
-- **Watcher**: Off, Shadow or On. See section 10.
-- **Watcher key**: shown after Init. Optional.
-- **Chime**: a short sound in the open app when a seat waits on you.
+One line per project of the room: "the room's table", or "own" with the
+roles it changes. Press a project to give it models of its own, for that
+project only. Section 7 has the details.
+
+### Watcher
+
+- **Mode**: Off, Shadow or On. See section 10.
+- **Key**: shown after Init. Optional.
+
+### Sound
+
+**Chime**: a short sound in the open app when a seat waits on you.
 
 ### This host
 
@@ -165,8 +184,8 @@ Checks of this machine. Each says **OK**, **Needs you** or **Unknown**.
 
 ### Remove the room
 
-Press it twice. It refuses while a seat of the room is still open: archive
-those agents first. Then it:
+Press **Remove** twice. It refuses while a seat of the room is still open:
+archive those agents first. Then it:
 
 - takes the seats and profiles out of Paseo;
 - archives the `hq-seatwork` workspace;
@@ -307,7 +326,7 @@ not know it came from HQ. HQ creates Supervisors and nothing else.
 ### The room's table
 
 The plugin ships one table. It is one author's setup, not a recommendation.
-The setup screen starts from it.
+The Seatwork screen starts from it.
 
 | Role | Name | Model | The Lead picks it for |
 |---|---|---|---|
@@ -330,13 +349,21 @@ How the Lead uses it:
   `cross-family`. Keep those three names and change the models under them.
   Add other names freely.
 
-Change the table on the setup screen, then press Apply.
+Change the table on the Seatwork screen, then press Apply.
 
 ### A project's own table
 
-HQ writes it when it registers the project. After that, edit the `models`
-object in `.slp/room.json` by hand. Write only what differs from the room's
-table:
+On the Seatwork screen, press the project under **Projects**. You see the
+room's table for Supervisor, Lead, Peer and Lens. Change a role and press
+**Save**: that role is now the project's own, and the rest still follows
+the room's table. **Same as the room's table** gives one role back;
+**Use the room's table** gives them all back.
+
+HQ can also write the table when it registers the project.
+
+The project's own choices are kept in the project, in the `models` object
+of `.slp/room.json`. It holds only what differs from the room's table, and
+you can edit it by hand:
 
 ```json
 {
@@ -356,12 +383,24 @@ This makes the Lead and the `default` Peer model think at medium, and takes
 `cross-family` out.
 
 - `null` removes an entry. Delete `models` to go back to the room's table.
-- A change applies to agents created afterwards. Nothing to reinstall.
-- An agent on a model the table does not list is refused.
-- A wrong entry stops the agent from starting; the error names the entry.
-- A model is written `<harness>-<role>/<model>`. If the table names a seat
-  the room does not have, ask HQ to register the table again: it sets the
-  seat up.
+- A wrong entry stops the project's agents from starting; the error names
+  the entry, and the screen marks the project "Needs you".
+- A model is written `<harness>-<role>/<model>`. A seat the table names
+  that the room does not have is set up when you press Save.
+
+### When a change takes effect
+
+The table decides at the moment a seat is opened. So:
+
+- A change reaches every seat opened after you press Apply (the room's
+  table) or Save (a project's). Nothing to reinstall.
+- A seat that is already open keeps its model until it is archived.
+- You do not have to replace a Supervisor or a Lead that is already open.
+  Its prompt still shows the old table, but the plugin holds each seat it
+  opens to the new one. A Supervisor, a Lead or HQ asked for on an old
+  model starts on the table's model. A Peer or a Lens asked for on a model
+  the table no longer lists is refused, with the models it lists now, and
+  its Lead picks again.
 
 ## 8. How seats talk
 
@@ -477,7 +516,8 @@ two. The first one mails; the other three only log until you set them to
 | `reopen-condition` | the brief has a `Reopen when` line and the seat did not ask to reopen |
 
 These four need a key. The decision model is Jev, reached through
-OpenRouter. Paste the key into **Watcher key** on the setup screen. It is
+OpenRouter. Paste the key into **Key** in the Watcher part of the Seatwork
+screen. It is
 stored in `~/.config/slp-room/watch/key`, readable by your user only, and
 is never shown again. The environment variable `SLP_WATCH_KEY` works too.
 Without a key the ten rules above still work and nothing leaves the
@@ -490,7 +530,7 @@ Tool output is never sent. Spending is counted from each reply: the plan is
 "Room watcher".
 
 To switch it on, let it run in Shadow for a while, ask HQ for the watcher
-stats, then set Watcher to On and press Apply.
+stats, then set its Mode to On and press Apply.
 
 ## 11. Upkeep
 
@@ -500,7 +540,7 @@ stats, then set Watcher to On and press Apply.
 paseo plugin update slp-seat
 ```
 
-Then press **Apply** on the setup screen. Until you do, the room refuses
+Then press **Apply** on the Seatwork screen. Until you do, the room refuses
 new seats, and the error says so. In a clone: `git pull`, then
 `./install.sh`.
 
@@ -550,14 +590,14 @@ Mail is logged in `~/.config/slp-room/mail/log.jsonl`, cleanup in
 
 | Message | What to do |
 |---|---|
-| `is a room seat and no room is set up on this daemon` | Open the setup screen and press Init |
-| `the room's files were set up by version …` | Press Apply on the setup screen |
-| `is not a seat the room has set up` | Choose that agent CLI for the role on the setup screen, then Apply |
+| `is a room seat and no room is set up on this daemon` | Open the Seatwork screen and press Init |
+| `the room's files were set up by version …` | Press Apply on the Seatwork screen |
+| `is not a seat the room has set up` | Choose that agent CLI for the role on the Seatwork screen, then Apply |
 | `may only be created in the hq-seatwork project` | Open HQ in the `hq-seatwork` project |
 | `it holds only hq seats` | Open this role in its own project |
 | `is not a registered SLP project` | Ask HQ to set the project up first |
-| `lists for … only …` | Use a model from the project's table, or edit `.slp/room.json` |
-| `which the room has not enabled` | Ask HQ to register the project's table again, or fix `.slp/room.json` |
+| `lists for … only …` | The seat was asked for on a model its table does not list. Use one it lists, or change the table on the Seatwork screen |
+| `which the room has not enabled` | Open the project on the Seatwork screen and press Save, or fix `.slp/room.json` |
 | `its runtime could not be built` | Fix what the message names (often `~/.codex/config.toml`), then create the agent again |
 | `still open … archive them first` | Archive the room's agents, then remove the room |
 | `is too old: the room needs 0.11.2 or later` | Update Paseo, run `paseo daemon restart`, then install again |

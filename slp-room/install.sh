@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# seatwork from a terminal: the setup the plugin's own screen does (Settings, Plugins, Seatwork), without the app.
+# seatwork from a terminal: the setup the plugin's own screen does (Seatwork, in Paseo's sidebar), without the app.
 # Flags: --no-plugin  --no-reload  --no-daemon-policy
 #   --hq default|ask|<harness>/<model> [--hq-thinking <id>]   what HQ runs on; asked once, on a first install from a terminal
 #   --seat <harness>-<role>   set up one more seat (repeatable; kept in setup.json)

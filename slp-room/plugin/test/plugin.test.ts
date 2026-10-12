@@ -16,8 +16,13 @@ let dispose: () => Promise<void>;
 
 before(() => {
   // the watcher mails in these tests; a room as installed only logs what it finds
-  installRoom(["claude-hq", "claude-supervisor", "claude-lead", "claude-peer", "pi-peer"], (policy) => void (policy.watcher.mode = "on"));
+  installRoom(["claude-hq", "claude-supervisor", "claude-lead", "claude-peer", "pi-peer", "codex-peer", "codex-lens", "claude-lens"], (policy) => void (policy.watcher.mode = "on"));
   chmodSync(ROOM_HOME, 0o755); // as a room home made under the usual umask
+  // this room's owner gave the Peer one more model, on Pi
+  const table = join(ROOM_HOME, "room", "models.json");
+  const models = JSON.parse(readFileSync(table, "utf8"));
+  models.peer.tiers.long = { providers: ["pi-peer/m-one"], thinking: "default", use: "the long jobs", never: "—" };
+  writeFileSync(table, JSON.stringify(models));
   mkdirSync(runtimes);
   writeFileSync(join(runtimes, "pi"), ""); // no Pi runtime can be built while this file is in the way
   console.log = console.error = () => {};
@@ -54,7 +59,7 @@ test("Paseo's Usage screen is offered one account, the watcher's month against t
 });
 
 test("a seat whose runtime cannot be built is refused, and created on its own home once it can", async () => {
-  await assert.rejects(async () => call("before agent.create", createRequest("pi-peer")), /pi-peer/);
+  await assert.rejects(async () => call("before agent.create", createRequest("pi-peer")), /pi-peer refused: its runtime could not be built/);
   await assert.rejects(async () => opened("pi-peer", "resume"), "a seat without its home was reopened, on the user's");
 
   rmSync(join(runtimes, "pi"));
@@ -71,6 +76,26 @@ test("a Claude seat is created with the policy's launch flags and its role's ski
 
   assert.deepEqual(created.config.providerOptions.extraArgs, { debug: null, "setting-sources": "project,local", "strict-mcp-config": null });
   assert.deepEqual(created.config.providerOptions.additionalDirectories, ["/elsewhere", join(ROOM_HOME, "role-skills", "claude", "peer")]);
+});
+
+test("a new seat is held to the model table in force, whatever its creator's prompt still says", async () => {
+  const create = async (provider: string, model: string | undefined, cwd = PROJECT) =>
+    ((await call("before agent.create", { request: { config: { provider, cwd, title: "[Lead] work", model, thinkingOptionId: "low" }, env: {} } })) as { config: { model?: string; thinkingOptionId?: string } }).config;
+  const onto = async (provider: string, model: string | undefined, cwd?: string) => (({ model: m, thinkingOptionId: t }) => [m, t])(await create(provider, model, cwd));
+
+  // a role with one model starts on it; a Peer on a model the table lists is left as asked
+  assert.deepEqual(await onto("claude-lead", "claude-haiku-5-5"), ["claude-opus-5-5", "high"]);
+  assert.deepEqual(await onto("claude-lead", "claude-opus-5-5"), ["claude-opus-5-5", "low"]);
+  assert.deepEqual(await onto("claude-peer", "claude-sonnet-5-5"), ["claude-sonnet-5-5", "low"]);
+  await assert.rejects(create("claude-peer", "claude-opus-5-5"), /claude-peer\/claude-opus-5-5 refused: the room's table lists for peer only claude-peer\/claude-haiku-5-5, .*Create the seat again/);
+
+  // a project with a table of its own: its differences decide there, and only there
+  const shop = join(PROJECT, "..", "shop");
+  mkdirSync(join(shop, ".slp"), { recursive: true });
+  writeFileSync(join(shop, ".slp", "room.json"), JSON.stringify({ models: { seats: { lead: { provider: "claude-lead/claude-sonnet-5-5", thinking: "medium" } }, peer: { tiers: { default: null } } } }));
+  assert.deepEqual(await onto("claude-lead", "claude-opus-5-5", shop), ["claude-sonnet-5-5", "medium"]);
+  await assert.rejects(create("claude-peer", "claude-sonnet-5-5", shop), /project shop lists for peer only .*\.slp\/room\.json/);
+  assert.deepEqual(await onto("claude-lead", "claude-opus-5-5"), ["claude-opus-5-5", "low"]);
 });
 
 /** What a Claude seat starts with so that Claude Code adds nothing of its own: memory, teams, agent view, workflows, claude.ai connectors. */

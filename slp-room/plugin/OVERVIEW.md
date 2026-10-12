@@ -10,7 +10,7 @@ A seat does not run on your personal agent setup. Claude seats use your sign-in 
 
 ## Setup
 
-Installing the plugin creates nothing. Open Settings, Plugins, Seatwork, choose what each role runs on, and press Init. Init creates the room's folder (`~/.config/slp-room`), the seats and four profiles in Paseo, and a project named `hq-seatwork` for the HQ Supervisor. Press Apply after changing a choice.
+Installing the plugin creates nothing. Press Seatwork at the top of Paseo's sidebar, choose what each role runs on, and press Init. Init creates the room's folder (`~/.config/slp-room`), the seats and four profiles in Paseo, and a project named `hq-seatwork` for the HQ Supervisor. Press Apply after changing a choice.
 
 - Paseo 0.11.2 or later, on macOS or Linux.
 - At least one of Claude Code, Codex, Pi (0.99 or later) or OpenCode, signed in. The screen lists what it finds on the host.
@@ -20,7 +20,7 @@ Removing the plugin does not undo Init. Use "Remove the room" on the same screen
 
 ## What you can set
 
-- **What each role runs on.** The agent CLI, the model and the thinking level for HQ, Supervisor, Lead, Peer and Lens. A Peer and a Lens are one role with several models, each under a name of your choice with a line on what it is for; the Lead reads them and picks. A role's seat is set up when you choose a model for it.
+- **What each role runs on.** The agent CLI, the model and the thinking level for HQ, Supervisor, Lead, Peer and Lens. A Peer and a Lens are one role with several models, each under a name of your choice with a line on what it is for; the Lead reads them and picks. A role's seat is set up when you choose a model for it. The choice holds for every project; a project can be given models of its own on the same screen.
 - **Watcher.** Off, shadow or on. It reads the turns of Leads and Peers and looks for a turn going wrong: a brief missing its parts, repeated failing commands, work outside the task. In shadow it only logs. On, it mails the seat above.
 - **Watcher key.** Optional. With a key, four of the watcher's rules send a seat's final message to a decision model at the endpoint named in the room's policy. Without one nothing leaves the host. The key is stored in the room's folder, readable by your user only, and is never sent back to the app.
 - **Chime.** A short sound in the open app when a seat waits on you.

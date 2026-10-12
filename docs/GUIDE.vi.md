@@ -39,7 +39,7 @@ Ba điều cần nhớ:
 ## 2. Cài đặt
 
 Cần có Paseo 0.11.2 trở lên, `jq`, `python3` kèm PyYAML, Claude Code và Codex
-(thêm Pi hoặc OpenCode nếu bạn cho vai nào chạy trên đó).
+(thêm Pi từ 0.99 trở lên, hoặc OpenCode, nếu bạn cho vai nào chạy trên đó).
 
 ```bash
 git clone https://github.com/sting9k/seatwork.git

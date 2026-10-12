@@ -40,7 +40,7 @@ Three things to remember:
 ## 2. Install
 
 You need Paseo 0.11.2 or later, `jq`, `python3` with PyYAML, Claude Code and Codex
-(plus Pi or OpenCode if you put a role on one of them).
+(plus Pi 0.99 or later, or OpenCode, if you put a role on one of them).
 
 ```bash
 git clone https://github.com/sting9k/seatwork.git

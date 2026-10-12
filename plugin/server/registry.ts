@@ -67,14 +67,21 @@ export function findProject(registry: Registry, cwd: string): ProjectMatch | nul
 }
 
 /** Walks up from cwd looking for a .seatwork/room.json, for open mode (no registry). */
-export function findRoomMarker(cwd: string): { root: string; room: Record<string, unknown>; mission: string | null; law: string | null } | null {
+export function findRoomMarker(
+  cwd: string,
+): { root: string; room: Record<string, unknown>; mission: string | null; law: string | null } | null {
   let dir = realOrSelf(cwd);
   for (let i = 0; i < 64; i += 1) {
     if (existsSync(join(dir, ".seatwork", "room.json"))) {
       const missionFile = join(dir, ".seatwork", "mission.md");
       const name = dir.split("/").pop() ?? dir;
       const room = JSON.parse(readFileSync(join(dir, ".seatwork", "room.json"), "utf8")) as Record<string, unknown>;
-      return { root: dir, room, mission: existsSync(missionFile) ? readFileSync(missionFile, "utf8").trim() : null, law: readLaw(dir, name) };
+      return {
+        root: dir,
+        room,
+        mission: existsSync(missionFile) ? readFileSync(missionFile, "utf8").trim() : null,
+        law: readLaw(dir, name),
+      };
     }
     const parent = dirname(dir);
     if (parent === dir) break;

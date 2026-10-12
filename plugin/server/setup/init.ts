@@ -12,7 +12,11 @@ export interface RoomSource {
 }
 
 /** Sets the room up in a room home for these choices, or again after they changed. Paseo is told separately. */
-export async function setUpRoom(source: RoomSource, setup: Setup, options: { seatsOnly?: boolean } = {}): Promise<RoomPlan> {
+export async function setUpRoom(
+  source: RoomSource,
+  setup: Setup,
+  options: { seatsOnly?: boolean } = {},
+): Promise<RoomPlan> {
   const plan = await planRoom({ ...source, setup });
   writeRoomHome({ ...source, plan, setup, seatsOnly: options.seatsOnly });
   return plan;
@@ -28,7 +32,8 @@ export function sourceOf(roomHome: string): string | null {
 
 /** Adds seats to a room that is set up; they are kept in setup.json, so every later setup keeps them. */
 export async function addSeats(source: RoomSource, providers: string[]): Promise<RoomPlan> {
-  for (const provider of providers) if (!parseSeat(provider)) throw new Error(`"${provider}" is not a seat: a seat is <harness>-<role>`);
+  for (const provider of providers)
+    if (!parseSeat(provider)) throw new Error(`"${provider}" is not a seat: a seat is <harness>-<role>`);
   const setup = readSetup(source.roomHome);
   const seats = [...new Set([...(setup.seats ?? []), ...providers])];
   return setUpRoom(source, { ...setup, seats }, { seatsOnly: true });

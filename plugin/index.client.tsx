@@ -29,10 +29,26 @@ export default function contribute(client: PluginClientContext) {
   const screen = client.addScreen({ id: "room", title: "Room", Component: RoomScreen });
   const item = client.addSidebarFooterItem({ id: "room", title: "Room", Component: RoomItem });
   // a project's own models and a part of the room screen open as the same screen, by its params
-  const open: Open = (to) => client.openScreen({ screenId: "setup", ...(to?.project || to?.part ? { params: { ...(to.project ? { project: to.project } : {}), ...(to.part ? { part: to.part } : {}) } } : {}) });
-  const setup = client.addScreen({ id: "setup", title: ({ project }) => (project ? `Seatwork · ${project}` : "Seatwork"), Component: (props: PluginScreenProps) => <SetupScreen {...props} open={open} /> });
+  const open: Open = (to) =>
+    client.openScreen({
+      screenId: "setup",
+      ...(to?.project || to?.part
+        ? { params: { ...(to.project ? { project: to.project } : {}), ...(to.part ? { part: to.part } : {}) } }
+        : {}),
+    });
+  const setup = client.addScreen({
+    id: "setup",
+    title: ({ project }) => (project ? `Seatwork · ${project}` : "Seatwork"),
+    Component: (props: PluginScreenProps) => <SetupScreen {...props} open={open} />,
+  });
   const setupItem = client.addSidebarHeaderItem({ id: "setup", title: "Seatwork", Component: SetupItem });
-  const command = client.addCommandCenterItem({ id: "setup", title: "Seatwork: set up the room", icon: "Armchair", context: "global", onSelect: ({ openScreen }) => openScreen({ screenId: "setup" }) });
+  const command = client.addCommandCenterItem({
+    id: "setup",
+    title: "Seatwork: set up the room",
+    icon: "Armchair",
+    context: "global",
+    onSelect: ({ openScreen }) => openScreen({ screenId: "setup" }),
+  });
   return () => {
     stopped = true;
     clearInterval(timer);

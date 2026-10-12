@@ -21,8 +21,10 @@ export interface EffectContext {
 const flags = (argv: readonly string[]) => argv.slice(1).filter((a) => a.startsWith("-"));
 const operands = (argv: readonly string[]) => argv.slice(1).filter((a) => !a.startsWith("-"));
 /** Short flags may be clustered: `-rf` has both `r` and `f`. */
-const hasShort = (argv: readonly string[], letter: string) => flags(argv).some((f) => !f.startsWith("--") && f.includes(letter));
-const hasLong = (argv: readonly string[], ...names: string[]) => flags(argv).some((f) => names.includes(f.split("=")[0]));
+const hasShort = (argv: readonly string[], letter: string) =>
+  flags(argv).some((f) => !f.startsWith("--") && f.includes(letter));
+const hasLong = (argv: readonly string[], ...names: string[]) =>
+  flags(argv).some((f) => names.includes(f.split("=")[0]));
 
 const SCRIPT_KIND: readonly [RegExp, CheckKind][] = [
   [/(?:^|[:_-])(?:type-?check|types|tsc)(?:$|[:_-])/, "types"],
@@ -37,15 +39,74 @@ function scriptKind(name: string): CheckKind | null {
 }
 
 /** Package-manager verbs that are not scripts. */
-const PM_VERBS = new Set(["install", "i", "ci", "add", "remove", "rm", "uninstall", "update", "upgrade", "up", "link", "unlink", "init", "create", "dlx", "exec", "x", "run", "why", "list", "ls", "outdated", "audit", "publish", "pack", "config", "cache", "store", "import", "dedupe", "prune", "rebuild", "version", "login", "logout", "whoami", "info", "view", "pm"]);
-const PM_WRITES = new Set(["install", "i", "ci", "add", "remove", "rm", "uninstall", "update", "upgrade", "up", "dedupe", "prune", "rebuild", "link", "unlink", "import"]);
+const PM_VERBS = new Set([
+  "install",
+  "i",
+  "ci",
+  "add",
+  "remove",
+  "rm",
+  "uninstall",
+  "update",
+  "upgrade",
+  "up",
+  "link",
+  "unlink",
+  "init",
+  "create",
+  "dlx",
+  "exec",
+  "x",
+  "run",
+  "why",
+  "list",
+  "ls",
+  "outdated",
+  "audit",
+  "publish",
+  "pack",
+  "config",
+  "cache",
+  "store",
+  "import",
+  "dedupe",
+  "prune",
+  "rebuild",
+  "version",
+  "login",
+  "logout",
+  "whoami",
+  "info",
+  "view",
+  "pm",
+]);
+const PM_WRITES = new Set([
+  "install",
+  "i",
+  "ci",
+  "add",
+  "remove",
+  "rm",
+  "uninstall",
+  "update",
+  "upgrade",
+  "up",
+  "dedupe",
+  "prune",
+  "rebuild",
+  "link",
+  "unlink",
+  "import",
+]);
 
 /** Runners that only start another program. */
 function unwrapRunner(argv: readonly string[]): readonly string[] {
   const [program, first, second] = argv;
   if (["npx", "pnpx", "bunx", "uvx", "pipx"].includes(program)) return operandsFrom(argv, 1);
-  if (["pnpm", "yarn", "npm", "bun"].includes(program) && ["exec", "dlx", "x"].includes(first)) return operandsFrom(argv, 2);
-  if (["uv", "poetry", "pdm", "hatch", "pipenv", "rye"].includes(program) && first === "run") return operandsFrom(argv, 2);
+  if (["pnpm", "yarn", "npm", "bun"].includes(program) && ["exec", "dlx", "x"].includes(first))
+    return operandsFrom(argv, 2);
+  if (["uv", "poetry", "pdm", "hatch", "pipenv", "rye"].includes(program) && first === "run")
+    return operandsFrom(argv, 2);
   if (program === "bundle" && first === "exec") return argv.slice(2);
   if (/^python[0-9.]*$/.test(program) && first === "-m" && second) return argv.slice(2);
   if (program === "dotenv" || program === "cross-env") return operandsFrom(argv, 1);
@@ -105,7 +166,8 @@ const CHECK_PROGRAMS: Record<string, (argv: readonly string[]) => CheckKind | nu
   mypy: () => "types",
   pyright: () => "types",
   eslint: () => "lint",
-  biome: (a) => (["check", "lint", "ci"].includes(a[1]) ? "lint" : a[1] === "format" && !hasLong(a, "--write") ? "lint" : null),
+  biome: (a) =>
+    ["check", "lint", "ci"].includes(a[1]) ? "lint" : a[1] === "format" && !hasLong(a, "--write") ? "lint" : null,
   prettier: (a) => (hasLong(a, "--check", "--list-different") || hasShort(a, "c") || hasShort(a, "l") ? "lint" : null),
   ruff: (a) => (a[1] === "check" ? "lint" : a[1] === "format" && hasLong(a, "--check", "--diff") ? "lint" : null),
   flake8: () => "lint",
@@ -114,7 +176,8 @@ const CHECK_PROGRAMS: Record<string, (argv: readonly string[]) => CheckKind | nu
   isort: (a) => (hasLong(a, "--check", "--check-only", "--diff") || hasShort(a, "c") ? "lint" : null),
   "golangci-lint": () => "lint",
   staticcheck: () => "lint",
-  rubocop: (a) => (hasShort(a, "a") || hasShort(a, "A") || hasLong(a, "--autocorrect", "--auto-correct") ? null : "lint"),
+  rubocop: (a) =>
+    hasShort(a, "a") || hasShort(a, "A") || hasLong(a, "--autocorrect", "--auto-correct") ? null : "lint",
   shellcheck: () => "lint",
   stylelint: () => "lint",
   hadolint: () => "lint",
@@ -122,7 +185,27 @@ const CHECK_PROGRAMS: Record<string, (argv: readonly string[]) => CheckKind | nu
 };
 
 /** Programs whose first word after the name says which check runs. */
-const VERBED = new Set(["go", "cargo", "deno", "dotnet", "swift", "mix", "bazel", "make", "just", "task", "rake", "biome", "ruff", "playwright", "cypress", "gradle", "gradlew", "mvn", "mvnw"]);
+const VERBED = new Set([
+  "go",
+  "cargo",
+  "deno",
+  "dotnet",
+  "swift",
+  "mix",
+  "bazel",
+  "make",
+  "just",
+  "task",
+  "rake",
+  "biome",
+  "ruff",
+  "playwright",
+  "cypress",
+  "gradle",
+  "gradlew",
+  "mvn",
+  "mvnw",
+]);
 
 function firstKind(names: readonly string[]): CheckKind | null {
   for (const name of names) {
@@ -134,12 +217,20 @@ function firstKind(names: readonly string[]): CheckKind | null {
 
 function gradleKind(argv: readonly string[]): CheckKind | null {
   const tasks = operands(argv).map((t) => t.split(":").pop() ?? t);
-  return tasks.includes("test") || tasks.includes("check") ? "test" : tasks.some((t) => /^(build|assemble|compile\w*)$/.test(t)) ? "build" : null;
+  return tasks.includes("test") || tasks.includes("check")
+    ? "test"
+    : tasks.some((t) => /^(build|assemble|compile\w*)$/.test(t))
+      ? "build"
+      : null;
 }
 
 function mavenKind(argv: readonly string[]): CheckKind | null {
   const goals = operands(argv);
-  return goals.some((g) => ["test", "verify", "integration-test"].includes(g)) ? "test" : goals.some((g) => ["package", "compile", "install"].includes(g)) ? "build" : null;
+  return goals.some((g) => ["test", "verify", "integration-test"].includes(g))
+    ? "test"
+    : goals.some((g) => ["package", "compile", "install"].includes(g))
+      ? "build"
+      : null;
 }
 
 function normalizeCommand(text: string): string {
@@ -153,7 +244,11 @@ function checkOf(command: SimpleCommand, context: EffectContext): Effect | null 
   for (const named of context.namedChecks) {
     const wanted = plain(named);
     const isFile = !wanted.includes(" ");
-    if (isFile ? command.argv.some((a) => plain(a) === wanted || a.endsWith(`/${wanted}`)) : written === wanted || written.startsWith(`${wanted} `)) {
+    if (
+      isFile
+        ? command.argv.some((a) => plain(a) === wanted || a.endsWith(`/${wanted}`))
+        : written === wanted || written.startsWith(`${wanted} `)
+    ) {
       return { kind: "check", what: "named", label: named };
     }
   }
@@ -172,9 +267,18 @@ function checkOf(command: SimpleCommand, context: EffectContext): Effect | null 
   const known = CHECK_PROGRAMS[program]?.(argv);
   // the label names the check, not this invocation: `go test`, not `go test ./pkg/a -run X`
   const verb = operands(argv)[0] ?? "";
-  if (known) return { kind: "check", what: known, label: /^[a-z][a-z:-]*$/.test(verb) && VERBED.has(program) ? `${program} ${verb}` : program };
+  if (known)
+    return {
+      kind: "check",
+      what: known,
+      label: /^[a-z][a-z:-]*$/.test(verb) && VERBED.has(program) ? `${program} ${verb}` : program,
+    };
   // a script named for what it does: ./scripts/test.sh, python tools/verify.py
-  const script = /^(?:bash|sh|zsh|node|python[0-9.]*|ruby|tsx|ts-node)$/.test(program) ? operands(argv)[0] : argv[0]?.includes("/") ? argv[0] : undefined;
+  const script = /^(?:bash|sh|zsh|node|python[0-9.]*|ruby|tsx|ts-node)$/.test(program)
+    ? operands(argv)[0]
+    : argv[0]?.includes("/")
+      ? argv[0]
+      : undefined;
   if (script && /\.(?:sh|bash|js|cjs|mjs|ts|py|rb)$|^\.{0,2}\//.test(script)) {
     const stem = (script.split("/").pop() ?? "").replace(/\.\w+$/, "");
     const kind = scriptKind(stem.replace(/^run[-_]?/, ""));
@@ -216,32 +320,61 @@ const WRITE_PROGRAMS: Record<string, (argv: readonly string[]) => string[] | nul
   rubocop: (a) => (hasShort(a, "a") || hasShort(a, "A") || hasLong(a, "--autocorrect", "--auto-correct") ? [] : null),
   pip: (a) => (["install", "uninstall"].includes(a[1]) ? [] : null),
   pip3: (a) => (["install", "uninstall"].includes(a[1]) ? [] : null),
-  go: (a) => (a[1] === "fmt" || a[1] === "get" || a[1] === "generate" || (a[1] === "mod" && a[2] !== "verify" && a[2] !== "graph") ? [] : null),
-  cargo: (a) => (["add", "remove", "update", "fix"].includes(operands(a)[0]) || (operands(a)[0] === "fmt" && !hasLong(a, "--check")) ? [] : null),
+  go: (a) =>
+    a[1] === "fmt" || a[1] === "get" || a[1] === "generate" || (a[1] === "mod" && a[2] !== "verify" && a[2] !== "graph")
+      ? []
+      : null,
+  cargo: (a) =>
+    ["add", "remove", "update", "fix"].includes(operands(a)[0]) || (operands(a)[0] === "fmt" && !hasLong(a, "--check"))
+      ? []
+      : null,
   git: (a) => gitWrites(a),
 };
 
 /** sed's operands minus its script (and minus the empty backup suffix macOS wants after -i). */
 function scriptOperands(argv: readonly string[]): string[] {
-  return operands(argv).filter((word) => word !== "").slice(1);
+  return operands(argv)
+    .filter((word) => word !== "")
+    .slice(1);
 }
 
 function gitVerb(argv: readonly string[]): { verb: string; rest: readonly string[] } {
   // `git -C dir -c key=value <verb> …`
   let i = 1;
-  while (i < argv.length && argv[i].startsWith("-")) i += ["-C", "-c", "--git-dir", "--work-tree", "--namespace"].includes(argv[i]) ? 2 : 1;
+  while (i < argv.length && argv[i].startsWith("-"))
+    i += ["-C", "-c", "--git-dir", "--work-tree", "--namespace"].includes(argv[i]) ? 2 : 1;
   return { verb: argv[i] ?? "", rest: argv.slice(i + 1) };
 }
 
 function gitWrites(argv: readonly string[]): string[] | null {
   const { verb, rest } = gitVerb(argv);
-  const changesTree = ["apply", "am", "checkout", "switch", "restore", "reset", "merge", "rebase", "cherry-pick", "revert", "pull", "clean", "rm", "mv"];
-  if (verb === "stash") return ["pop", "apply", "push", "save", undefined].includes(rest.find((r) => !r.startsWith("-"))) ? [] : null;
+  const changesTree = [
+    "apply",
+    "am",
+    "checkout",
+    "switch",
+    "restore",
+    "reset",
+    "merge",
+    "rebase",
+    "cherry-pick",
+    "revert",
+    "pull",
+    "clean",
+    "rm",
+    "mv",
+  ];
+  if (verb === "stash")
+    return ["pop", "apply", "push", "save", undefined].includes(rest.find((r) => !r.startsWith("-"))) ? [] : null;
   if (!changesTree.includes(verb)) return null;
   if (verb === "clean" && rest.some((r) => r === "--dry-run" || /^-[a-zA-Z]*n/.test(r))) return null;
   // `git checkout -- <paths>` and `git restore <paths>` say which files
   const dashes = rest.indexOf("--");
-  return dashes >= 0 ? rest.slice(dashes + 1) : verb === "rm" || verb === "mv" ? rest.filter((r) => !r.startsWith("-")) : [];
+  return dashes >= 0
+    ? rest.slice(dashes + 1)
+    : verb === "rm" || verb === "mv"
+      ? rest.filter((r) => !r.startsWith("-"))
+      : [];
 }
 
 /** Commands after which the whole working tree may differ. */
@@ -250,7 +383,10 @@ function rewritesTree(program: string, argv: readonly string[]): boolean {
   if (program !== "git") return false;
   const { verb, rest } = gitVerb(argv);
   if (verb === "stash") return ["pop", "apply"].includes(rest[0]);
-  return ["apply", "am", "checkout", "switch", "reset", "merge", "rebase", "cherry-pick", "revert", "pull"].includes(verb) && !rest.includes("--");
+  return (
+    ["apply", "am", "checkout", "switch", "reset", "merge", "rebase", "cherry-pick", "revert", "pull"].includes(verb) &&
+    !rest.includes("--")
+  );
 }
 
 function writesOf(command: SimpleCommand): Extract<Effect, { kind: "write" }> | null {
@@ -278,7 +414,8 @@ function writesOf(command: SimpleCommand): Extract<Effect, { kind: "write" }> | 
 /* ---------- destroy, external, wait, look ---------- */
 
 /** Rebuilt or thrown away by design: deleting them loses nothing. */
-const REBUILT = /(?:^|\/)(?:node_modules|dist|build|out|target|coverage|\.next|\.nuxt|\.turbo|\.cache|\.venv|venv|__pycache__|\.pytest_cache|\.mypy_cache|\.ruff_cache|\.gradle|\.tox|tmp|temp|\.tmp)(?:\/[^/]*)*\/?$|^(?:\/private)?\/(?:tmp|var\/folders)\/|^\$\{?\w*(?:tmp|temp|scratch|cache|build|dist|out)\w*\}?(?:\/|$)/i;
+const REBUILT =
+  /(?:^|\/)(?:node_modules|dist|build|out|target|coverage|\.next|\.nuxt|\.turbo|\.cache|\.venv|venv|__pycache__|\.pytest_cache|\.mypy_cache|\.ruff_cache|\.gradle|\.tox|tmp|temp|\.tmp)(?:\/[^/]*)*\/?$|^(?:\/private)?\/(?:tmp|var\/folders)\/|^\$\{?\w*(?:tmp|temp|scratch|cache|build|dist|out)\w*\}?(?:\/|$)/i;
 
 interface Destruction {
   what: string;
@@ -287,8 +424,20 @@ interface Destruction {
 }
 
 /** Names nobody misses: editor and OS droppings, compiled caches, patch leftovers. */
-const LITTER = /^(?:\.DS_Store|Thumbs\.db|__pycache__|\*\.(?:pyc|pyo|orig|rej|bak|tmp|temp|swp|log)|\*~|\.#\*|node_modules|\.pytest_cache|\.mypy_cache|\.ruff_cache)$/;
-const FIND_TESTS = new Set(["-name", "-iname", "-path", "-ipath", "-regex", "-newer", "-mmin", "-mtime", "-size", "-empty"]);
+const LITTER =
+  /^(?:\.DS_Store|Thumbs\.db|__pycache__|\*\.(?:pyc|pyo|orig|rej|bak|tmp|temp|swp|log)|\*~|\.#\*|node_modules|\.pytest_cache|\.mypy_cache|\.ruff_cache)$/;
+const FIND_TESTS = new Set([
+  "-name",
+  "-iname",
+  "-path",
+  "-ipath",
+  "-regex",
+  "-newer",
+  "-mmin",
+  "-mtime",
+  "-size",
+  "-empty",
+]);
 
 function destroys(command: SimpleCommand): Destruction | null {
   const argv = unwrapRunner(command.argv);
@@ -300,39 +449,69 @@ function destroys(command: SimpleCommand): Destruction | null {
     const kept = targets.filter((t) => !REBUILT.test(t.replace(/\/+$/, "")));
     return kept.length > 0 ? { what: `recursive delete of ${kept.slice(0, 3).join(", ")}`, paths: kept } : null;
   }
-  if (program === "find" && (argv.includes("-delete") || argv.some((a, i) => a === "-exec" && /^(?:rm|shred)$/.test(argv[i + 1] ?? "")))) {
+  if (
+    program === "find" &&
+    (argv.includes("-delete") || argv.some((a, i) => a === "-exec" && /^(?:rm|shred)$/.test(argv[i + 1] ?? "")))
+  ) {
     const first = argv.findIndex((word, index) => index > 0 && /^[-(!]/.test(word));
     const roots = argv.slice(1, first < 0 ? argv.length : first).filter((root) => !REBUILT.test(root));
     const names = argv.flatMap((word, index) => (word === "-name" || word === "-iname" ? [argv[index + 1] ?? ""] : []));
-    if ((first === 1 ? false : roots.length === 0) || (names.length > 0 && names.every((name) => LITTER.test(name)))) return null;
+    if ((first === 1 ? false : roots.length === 0) || (names.length > 0 && names.every((name) => LITTER.test(name))))
+      return null;
     const under = roots.length > 0 ? roots : ["."];
-    return { what: `find … -delete under ${under.slice(0, 3).join(", ")}`, paths: under, bounded: argv.some((word) => FIND_TESTS.has(word)) };
+    return {
+      what: `find … -delete under ${under.slice(0, 3).join(", ")}`,
+      paths: under,
+      bounded: argv.some((word) => FIND_TESTS.has(word)),
+    };
   }
   if (program === "git") {
     const { verb, rest } = gitVerb(argv);
     const has = (...names: string[]) => rest.some((r) => names.includes(r.split("=")[0]));
     const short = (letter: string) => rest.some((r) => /^-[a-zA-Z]+$/.test(r) && r.includes(letter));
-    if (verb === "push" && (has("--force", "--force-with-lease", "--mirror", "--delete") || short("f") || short("d") || rest.some((r) => /^\+|^:/.test(r)))) return { what: "git push that rewrites or deletes a remote ref" };
+    if (
+      verb === "push" &&
+      (has("--force", "--force-with-lease", "--mirror", "--delete") ||
+        short("f") ||
+        short("d") ||
+        rest.some((r) => /^\+|^:/.test(r)))
+    )
+      return { what: "git push that rewrites or deletes a remote ref" };
     if (verb === "reset" && has("--hard")) return { what: "git reset --hard" };
-    if (verb === "clean" && (short("f") || has("--force")) && !short("n") && !has("--dry-run")) return { what: "git clean" };
+    if (verb === "clean" && (short("f") || has("--force")) && !short("n") && !has("--dry-run"))
+      return { what: "git clean" };
     const wholeTree = rest.includes(".") || rest.includes(":/");
     const indexOnly = has("--staged") && !has("--worktree");
-    if ((verb === "checkout" || verb === "restore") && wholeTree && !indexOnly) return { what: `git ${verb} that discards uncommitted changes` };
+    if ((verb === "checkout" || verb === "restore") && wholeTree && !indexOnly)
+      return { what: `git ${verb} that discards uncommitted changes` };
     if (verb === "stash" && ["drop", "clear"].includes(rest[0])) return { what: `git stash ${rest[0]}` };
     if (verb === "branch" && (short("D") || (has("--delete") && has("--force")))) return { what: "git branch -D" };
-    if (["filter-branch", "filter-repo"].includes(verb) || (verb === "reflog" && rest[0] === "expire") || (verb === "update-ref" && short("d"))) return { what: `git ${verb}` };
+    if (
+      ["filter-branch", "filter-repo"].includes(verb) ||
+      (verb === "reflog" && rest[0] === "expire") ||
+      (verb === "update-ref" && short("d"))
+    )
+      return { what: `git ${verb}` };
     return null;
   }
   if (["psql", "mysql", "mariadb", "sqlite3", "sqlcmd", "clickhouse-client", "duckdb"].includes(program)) {
     const sql = argv.slice(1).join(" ");
-    if (/\b(?:DROP|TRUNCATE)\s+(?:TABLE|DATABASE|SCHEMA|INDEX)\b/i.test(sql) || /\bDELETE\s+FROM\s+[\w."`]+\s*(?:;|$)/i.test(sql)) return { what: "SQL that drops or empties data" };
+    if (
+      /\b(?:DROP|TRUNCATE)\s+(?:TABLE|DATABASE|SCHEMA|INDEX)\b/i.test(sql) ||
+      /\bDELETE\s+FROM\s+[\w."`]+\s*(?:;|$)/i.test(sql)
+    )
+      return { what: "SQL that drops or empties data" };
     return null;
   }
   if (program === "dd" && argv.some((a) => a.startsWith("of=/dev/"))) return { what: "dd to a device" };
   if (/^mkfs/.test(program) || program === "shred") return { what: program };
   if (program === "kubectl" && argv[1] === "delete") return { what: "kubectl delete" };
   if (program === "terraform" && argv[1] === "destroy") return { what: "terraform destroy" };
-  if (program === "docker" && ((argv[1] === "system" && argv[2] === "prune") || (argv[1] === "volume" && ["rm", "prune"].includes(argv[2])))) return { what: `docker ${argv[1]} ${argv[2]}` };
+  if (
+    program === "docker" &&
+    ((argv[1] === "system" && argv[2] === "prune") || (argv[1] === "volume" && ["rm", "prune"].includes(argv[2])))
+  )
+    return { what: `docker ${argv[1]} ${argv[2]}` };
   if (program === "aws" && argv[1] === "s3" && ["rm", "rb"].includes(argv[2])) return { what: `aws s3 ${argv[2]}` };
   if (program === "gh" && argv[1] === "repo" && argv[2] === "delete") return { what: "gh repo delete" };
   if (program === "npm" && argv[1] === "unpublish") return { what: "npm unpublish" };
@@ -344,12 +523,27 @@ function leavesMachine(command: SimpleCommand): string | null {
   const program = (argv[0] ?? "").split("/").pop() ?? "";
   const verb = operands(argv)[0] ?? "";
   if (program === "git" && gitVerb(argv).verb === "push") return "git push";
-  if (["npm", "pnpm", "yarn", "bun", "cargo", "twine", "gem", "poetry"].includes(program) && (verb === "publish" || verb === "upload" || verb === "push")) return `${program} ${verb}`;
-  if (program === "gh" && ((verb === "pr" && ["create", "merge", "close", "ready"].includes(argv[2])) || (verb === "release" && ["create", "delete", "upload"].includes(argv[2])) || (verb === "workflow" && argv[2] === "run"))) return `gh ${verb} ${argv[2]}`;
+  if (
+    ["npm", "pnpm", "yarn", "bun", "cargo", "twine", "gem", "poetry"].includes(program) &&
+    (verb === "publish" || verb === "upload" || verb === "push")
+  )
+    return `${program} ${verb}`;
+  if (
+    program === "gh" &&
+    ((verb === "pr" && ["create", "merge", "close", "ready"].includes(argv[2])) ||
+      (verb === "release" && ["create", "delete", "upload"].includes(argv[2])) ||
+      (verb === "workflow" && argv[2] === "run"))
+  )
+    return `gh ${verb} ${argv[2]}`;
   if (program === "docker" && verb === "push") return "docker push";
-  if (program === "kubectl" && ["apply", "create", "patch", "replace", "scale", "rollout"].includes(verb)) return `kubectl ${verb}`;
+  if (program === "kubectl" && ["apply", "create", "patch", "replace", "scale", "rollout"].includes(verb))
+    return `kubectl ${verb}`;
   if (program === "terraform" && verb === "apply") return "terraform apply";
-  if (["vercel", "netlify", "fly", "flyctl", "wrangler", "firebase", "railway", "heroku"].includes(program) && /^(?:deploy|publish|--prod)$/.test(verb || argv[1] || "")) return `${program} deploy`;
+  if (
+    ["vercel", "netlify", "fly", "flyctl", "wrangler", "firebase", "railway", "heroku"].includes(program) &&
+    /^(?:deploy|publish|--prod)$/.test(verb || argv[1] || "")
+  )
+    return `${program} deploy`;
   return null;
 }
 
@@ -366,20 +560,115 @@ function waits(command: SimpleCommand): number {
     }, 0);
   }
   if (program === "watch") return Number.POSITIVE_INFINITY;
-  if (program === "tail" && (hasShort(argv, "f") || hasShort(argv, "F") || hasLong(argv, "--follow"))) return Number.POSITIVE_INFINITY;
+  if (program === "tail" && (hasShort(argv, "f") || hasShort(argv, "F") || hasLong(argv, "--follow")))
+    return Number.POSITIVE_INFINITY;
   if (program === "gh" && argv[1] === "run" && argv[2] === "watch") return Number.POSITIVE_INFINITY;
-  if (program === "kubectl" && (argv[1] === "wait" || hasShort(argv, "w") || hasLong(argv, "--watch"))) return Number.POSITIVE_INFINITY;
+  if (program === "kubectl" && (argv[1] === "wait" || hasShort(argv, "w") || hasLong(argv, "--watch")))
+    return Number.POSITIVE_INFINITY;
   return 0;
 }
 
-const LOOK_PROGRAMS = new Set(["ls", "cat", "head", "less", "more", "bat", "wc", "grep", "egrep", "fgrep", "rg", "ag", "fd", "tree", "stat", "file", "du", "df", "pwd", "which", "type", "whoami", "date", "printenv", "uname", "hostname", "id", "ps", "diff", "cmp", "sort", "uniq", "cut", "tr", "jq", "xxd", "basename", "dirname", "realpath", "readlink", "test", "[", "[[", "true", "false", ":", "cd", "pushd", "popd", "echo", "printf", "seq", "nl", "column", "awk", "env", "export", "set", "unset", "command", "exit", "return"]);
-const GIT_LOOKS = new Set(["status", "diff", "log", "show", "rev-parse", "ls-files", "ls-tree", "blame", "describe", "shortlog", "remote", "config", "fetch", "cat-file", "merge-base", "rev-list", "grep", "worktree", "branch", "tag", "reflog", "version", "var", "check-ignore", "diff-tree", "name-rev", "symbolic-ref", "for-each-ref"]);
+const LOOK_PROGRAMS = new Set([
+  "ls",
+  "cat",
+  "head",
+  "less",
+  "more",
+  "bat",
+  "wc",
+  "grep",
+  "egrep",
+  "fgrep",
+  "rg",
+  "ag",
+  "fd",
+  "tree",
+  "stat",
+  "file",
+  "du",
+  "df",
+  "pwd",
+  "which",
+  "type",
+  "whoami",
+  "date",
+  "printenv",
+  "uname",
+  "hostname",
+  "id",
+  "ps",
+  "diff",
+  "cmp",
+  "sort",
+  "uniq",
+  "cut",
+  "tr",
+  "jq",
+  "xxd",
+  "basename",
+  "dirname",
+  "realpath",
+  "readlink",
+  "test",
+  "[",
+  "[[",
+  "true",
+  "false",
+  ":",
+  "cd",
+  "pushd",
+  "popd",
+  "echo",
+  "printf",
+  "seq",
+  "nl",
+  "column",
+  "awk",
+  "env",
+  "export",
+  "set",
+  "unset",
+  "command",
+  "exit",
+  "return",
+]);
+const GIT_LOOKS = new Set([
+  "status",
+  "diff",
+  "log",
+  "show",
+  "rev-parse",
+  "ls-files",
+  "ls-tree",
+  "blame",
+  "describe",
+  "shortlog",
+  "remote",
+  "config",
+  "fetch",
+  "cat-file",
+  "merge-base",
+  "rev-list",
+  "grep",
+  "worktree",
+  "branch",
+  "tag",
+  "reflog",
+  "version",
+  "var",
+  "check-ignore",
+  "diff-tree",
+  "name-rev",
+  "symbolic-ref",
+  "for-each-ref",
+]);
 
 function looksOnly(command: SimpleCommand): boolean {
   const argv = unwrapRunner(command.argv);
   const program = (argv[0] ?? "").split("/").pop() ?? "";
   if (program === "git") return GIT_LOOKS.has(gitVerb(argv).verb);
-  if (program === "gh") return ["view", "list", "diff", "checks", "status"].includes(argv[2] ?? "") || argv[1] === "status";
+  if (program === "gh")
+    return ["view", "list", "diff", "checks", "status"].includes(argv[2] ?? "") || argv[1] === "status";
   if (program === "tail") return waits(command) === 0;
   if (program === "find") return !argv.some((a) => ["-delete", "-exec", "-execdir", "-ok"].includes(a));
   if (program === "sed") return WRITE_PROGRAMS.sed(argv) === null;

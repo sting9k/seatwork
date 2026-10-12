@@ -5,7 +5,15 @@ import { join } from "node:path";
 import { beforeEach, test } from "node:test";
 import { registerProject } from "../server/onboard";
 
-const ROOM_SEATS = ["claude-hq", "claude-supervisor", "claude-lead", "claude-peer", "claude-lens", "codex-peer", "codex-lens"];
+const ROOM_SEATS = [
+  "claude-hq",
+  "claude-supervisor",
+  "claude-lead",
+  "claude-peer",
+  "claude-lens",
+  "codex-peer",
+  "codex-lens",
+];
 const seatsFile = join(ROOM_HOME, "seats.json");
 const marker = join(PROJECT, ".seatwork", "room.json");
 /** The seats the room was asked to set up; setting one up leaves it in seats.json. */
@@ -16,7 +24,10 @@ const setUpSeats = async (providers: string[]) => {
 };
 
 // Paseo knows one project, the test's
-writeFileSync(process.env.SEATWORK_PASEO_BIN!, `#!/bin/sh\n[ "$1 $2" = "project ls" ] || exit 1\necho '${JSON.stringify([{ projectId: "p1", name: "demo", path: PROJECT }])}'\n`);
+writeFileSync(
+  process.env.SEATWORK_PASEO_BIN!,
+  `#!/bin/sh\n[ "$1 $2" = "project ls" ] || exit 1\necho '${JSON.stringify([{ projectId: "p1", name: "demo", path: PROJECT }])}'\n`,
+);
 
 beforeEach(() => {
   installRoom(ROOM_SEATS);
@@ -37,7 +48,13 @@ test("a project's table may put a role on a harness the room has no seat for: th
 
 test("a table the room refuses sets up no seat and is not written", async () => {
   // a Peer seat in the Supervisor's slot
-  await assert.rejects(registerProject({ path: PROJECT, models: { seats: { supervisor: { provider: "pi-peer/zai/glm-5" } } } }, setUpSeats), /not a supervisor seat/);
+  await assert.rejects(
+    registerProject(
+      { path: PROJECT, models: { seats: { supervisor: { provider: "pi-peer/zai/glm-5" } } } },
+      setUpSeats,
+    ),
+    /not a supervisor seat/,
+  );
 
   assert.deepEqual(asked, []);
   assert.ok(!existsSync(marker));

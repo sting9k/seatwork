@@ -60,7 +60,11 @@ export interface TimelineInput {
 }
 
 /** Where the turn being judged starts: at its first event when Paseo names the turn, else after the last prompt. */
-export function turnStartOf(entries: readonly TimelineInput[], events: readonly TurnEvent[], turnId: string | null): number {
+export function turnStartOf(
+  entries: readonly TimelineInput[],
+  events: readonly TurnEvent[],
+  turnId: string | null,
+): number {
   const named = turnId ? events.find((event) => event.turn === turnId) : undefined;
   if (named) return named.seq;
   let lastPrompt = -1;
@@ -73,7 +77,10 @@ export function turnStartOf(entries: readonly TimelineInput[], events: readonly 
 
 /** Every prompt the seat received, oldest first: its brief is among them. */
 export function prompts(entries: readonly TimelineInput[]): string[] {
-  return entries.map((entry) => record(entry.item)).filter((item) => item.type === "user_message").map((item) => text(item.text));
+  return entries
+    .map((entry) => record(entry.item))
+    .filter((item) => item.type === "user_message")
+    .map((item) => text(item.text));
 }
 
 export interface Letter {
@@ -107,7 +114,12 @@ export function letters(prompt: string): Letter[] {
   return found;
 }
 
-const STATUS: Record<string, RunStatus> = { running: "running", completed: "ok", failed: "failed", canceled: "canceled" };
+const STATUS: Record<string, RunStatus> = {
+  running: "running",
+  completed: "ok",
+  failed: "failed",
+  canceled: "canceled",
+};
 
 function record(value: unknown): Record<string, unknown> {
   return value !== null && typeof value === "object" ? (value as Record<string, unknown>) : {};
@@ -123,7 +135,8 @@ function content(value: unknown): string {
 }
 
 /** The harness turned the call down before anything ran (a blocked command, a denied permission). */
-const REFUSED = /^\s*<tool_use_error>|^\s*(?:Blocked:|Permission (?:to use \w+ has been )?denied|The user doesn't want to proceed)/i;
+const REFUSED =
+  /^\s*<tool_use_error>|^\s*(?:Blocked:|Permission (?:to use \w+ has been )?denied|The user doesn't want to proceed)/i;
 const BACKGROUND = /^\s*Command running in background with ID:/;
 
 /** How Claude's background commands ended, by the call that started them. */
@@ -155,7 +168,13 @@ export function toEvents(entries: readonly TimelineInput[], cwd: string): TurnEv
     const item = record(entry.item);
     const seq = events.length + 1;
     const stamp = entry.timestamp ? Date.parse(entry.timestamp) : Number.NaN;
-    const base = { seq, source, ...(Number.isFinite(stamp) ? { at: stamp } : {}), ...(prior === undefined ? {} : { prior }), ...(entry.turnId ? { turn: entry.turnId } : {}) };
+    const base = {
+      seq,
+      source,
+      ...(Number.isFinite(stamp) ? { at: stamp } : {}),
+      ...(prior === undefined ? {} : { prior }),
+      ...(entry.turnId ? { turn: entry.turnId } : {}),
+    };
     if (Number.isFinite(stamp)) prior = stamp;
     if (item.type === "assistant_message") {
       const said = cleanSay(text(item.text));
@@ -172,10 +191,21 @@ export function toEvents(entries: readonly TimelineInput[], cwd: string): TurnEv
         const code = /^\s*Exit code (\d+)\n?/.exec(failure);
         const printed = text(detail.output) || (code ? failure.slice(code[0].length) : failure);
         const ranIn = text(detail.cwd);
-        const shell: ShellEvent = { ...base, kind: "shell", command: text(detail.command), ...(ranIn ? { cwd: ranIn } : {}), status: REFUSED.test(failure) ? "canceled" : status, exitCode: typeof detail.exitCode === "number" ? detail.exitCode : code ? Number(code[1]) : null, output: printed };
+        const shell: ShellEvent = {
+          ...base,
+          kind: "shell",
+          command: text(detail.command),
+          ...(ranIn ? { cwd: ranIn } : {}),
+          status: REFUSED.test(failure) ? "canceled" : status,
+          exitCode: typeof detail.exitCode === "number" ? detail.exitCode : code ? Number(code[1]) : null,
+          output: printed,
+        };
         if (BACKGROUND.test(printed)) {
           const end = settled.get(text(item.callId));
-          Object.assign(shell, end ? { ...end, background: "settled", output: "" } : { background: "pending", output: "" });
+          Object.assign(
+            shell,
+            end ? { ...end, background: "settled", output: "" } : { background: "pending", output: "" },
+          );
         }
         events.push(shell);
         break;

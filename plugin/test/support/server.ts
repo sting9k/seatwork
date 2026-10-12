@@ -11,10 +11,17 @@ export function fakeServer() {
   let usage: UsageSource | undefined;
   const add = (key: string, hook: Hook) => {
     registered.set(key, [...(registered.get(key) ?? []), hook]);
-    return () => void registered.set(key, (registered.get(key) ?? []).filter((kept) => kept !== hook));
+    return () =>
+      void registered.set(
+        key,
+        (registered.get(key) ?? []).filter((kept) => kept !== hook),
+      );
   };
   const server = {
-    registerSettings: () => ({ read: async () => ({ status: "ready", revision: "missing", values: {} }), subscribe: () => () => {} }),
+    registerSettings: () => ({
+      read: async () => ({ status: "ready", revision: "missing", values: {} }),
+      subscribe: () => () => {},
+    }),
     before: (name: string, hook: Hook) => add(`before ${name}`, hook),
     on: (name: string, hook: Hook) => add(`on ${name}`, hook),
     registerUsageSource: (source: UsageSource) => void (usage = source),
@@ -24,7 +31,11 @@ export function fakeServer() {
     server: server as never,
     usage: () => usage,
     /** Every hook the plugin still has registered, by name. */
-    names: () => [...registered].filter(([, hooks]) => hooks.length > 0).map(([name]) => name).sort(),
+    names: () =>
+      [...registered]
+        .filter(([, hooks]) => hooks.length > 0)
+        .map(([name]) => name)
+        .sort(),
     async call(name: string, input: unknown, context: unknown = {}): Promise<unknown> {
       const hooks = registered.get(name) ?? [];
       if (!name.startsWith("before ")) {

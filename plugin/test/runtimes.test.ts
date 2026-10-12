@@ -98,7 +98,10 @@ for (const { name, user, seat: expected, policy } of cases) {
 }
 
 test("a user config that is not TOML refuses the runtime and names the file", () => {
-  assert.throws(() => seatConfigFor('model = "unclosed\n'), (error: Error) => error.message.includes(userConfig));
+  assert.throws(
+    () => seatConfigFor('model = "unclosed\n'),
+    (error: Error) => error.message.includes(userConfig),
+  );
 });
 
 test("a Codex runtime is rebuilt when the policy changes", () => {
@@ -124,10 +127,17 @@ test("a Codex runtime is left alone when neither the policy nor the user's confi
 test("a Pi seat's home takes the user's settings without their packages and extensions", () => {
   installRoom(["pi-peer"]);
   const pi = { harness: "pi", role: "peer" } as const;
-  writeFileSync(join(USER_PI, "settings.json"), JSON.stringify({ theme: "dark", packages: ["npm:pi-mcp-adapter", "npm:mine"], extensions: ["-builtin:mcp"] }));
+  writeFileSync(
+    join(USER_PI, "settings.json"),
+    JSON.stringify({ theme: "dark", packages: ["npm:pi-mcp-adapter", "npm:mine"], extensions: ["-builtin:mcp"] }),
+  );
 
   ensureRuntime(pi);
 
   // nothing of the user's may stand in for Pi's own MCP: that is where Paseo puts the room's servers
-  assert.deepEqual(JSON.parse(readFileSync(join(runtimeDir(pi), "settings.json"), "utf8")), { theme: "dark", packages: [], extensions: [] });
+  assert.deepEqual(JSON.parse(readFileSync(join(runtimeDir(pi), "settings.json"), "utf8")), {
+    theme: "dark",
+    packages: [],
+    extensions: [],
+  });
 });

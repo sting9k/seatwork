@@ -101,8 +101,24 @@ export class Budget {
     renameSync(`${file}.tmp`, file);
   }
 
-  summary(): { month: string; pace: Pace; total: Spend; today: Spend; byKind: Record<string, Spend>; planUsd: number; capUsd: number } {
+  summary(): {
+    month: string;
+    pace: Pace;
+    total: Spend;
+    today: Spend;
+    byKind: Record<string, Spend>;
+    planUsd: number;
+    capUsd: number;
+  } {
     const ledger = this.load();
-    return { month: ledger.month, pace: this.pace(), total: ledger.total, today: ledger.byDay[this.day()] ?? empty(), byKind: ledger.byKind, planUsd: this.policy.monthlyPlanUsd, capUsd: this.policy.monthlyCapUsd };
+    return {
+      month: ledger.month,
+      pace: this.pace(),
+      total: ledger.total,
+      today: ledger.byDay[this.day()] ?? empty(),
+      byKind: ledger.byKind,
+      planUsd: this.policy.monthlyPlanUsd,
+      capUsd: this.policy.monthlyCapUsd,
+    };
   }
 }

@@ -48,7 +48,10 @@ const LABELS: readonly [RegExp, BriefField][] = [
   [/lane/, "lane"],
 ];
 // a label may come as a list item, in bold, in backticks or quoted
-const LABEL_LINE = new RegExp(`^\\s*(?:[-*>]\\s+)?[*_\`"']*(${LABELS.map(([label]) => label.source).join("|")})[*_]*\\s*:\\s*(.*)$`, "i");
+const LABEL_LINE = new RegExp(
+  `^\\s*(?:[-*>]\\s+)?[*_\`"']*(${LABELS.map(([label]) => label.source).join("|")})[*_]*\\s*:\\s*(.*)$`,
+  "i",
+);
 
 export interface Brief {
   fields: Partial<Record<BriefField, string>>;
@@ -111,7 +114,8 @@ const MARKED: Partial<Record<BriefField, RegExp>> = {
 
 /** The needed lines a brief lacks; in `mailed` text a label also counts behind a revision's marks. */
 export function missingLines(brief: Brief, mailed?: string): string[] {
-  const written = (field: BriefField) => (field === "replyTo" ? /^[\s`*_"']*owner\b/i.test(brief.fields.replyTo ?? "") : !!brief.fields[field]?.trim());
+  const written = (field: BriefField) =>
+    field === "replyTo" ? /^[\s`*_"']*owner\b/i.test(brief.fields.replyTo ?? "") : !!brief.fields[field]?.trim();
   const has = (field: BriefField) => written(field) || (mailed !== undefined && MARKED[field]?.test(mailed) === true);
   return NEEDED.filter(([field]) => !has(field)).map(([, label]) => label);
 }
@@ -121,7 +125,10 @@ function runsACheck(quoted: string): boolean {
   const line = parseShell(quoted);
   if (!line.complete || line.commands.length !== 1) return false;
   const [command] = line.commands;
-  return effectsOf(command, { namedChecks: [] }).some((effect) => effect.kind === "check") || /^\.{1,2}\//.test(command.argv[0] ?? "");
+  return (
+    effectsOf(command, { namedChecks: [] }).some((effect) => effect.kind === "check") ||
+    /^\.{1,2}\//.test(command.argv[0] ?? "")
+  );
 }
 
 /** The check commands a brief quotes in backticks and the test files it names. */
@@ -131,6 +138,9 @@ export function namedChecks(text: string): string[] {
     const command = quoted.trim().replace(/\s+/g, " ");
     if (runsACheck(command)) found.add(command);
   }
-  for (const [file] of text.matchAll(/[\w./-]*(?:[._-](?:test|spec)\.[cm]?[jt]sx?|_test\.(?:go|py|rb)|test_\w+\.py)\b/g)) found.add(file);
+  for (const [file] of text.matchAll(
+    /[\w./-]*(?:[._-](?:test|spec)\.[cm]?[jt]sx?|_test\.(?:go|py|rb)|test_\w+\.py)\b/g,
+  ))
+    found.add(file);
   return [...found];
 }

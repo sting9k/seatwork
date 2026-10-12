@@ -1,4 +1,14 @@
-import { cpSync, existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, renameSync, rmdirSync, rmSync } from "node:fs";
+import {
+  cpSync,
+  existsSync,
+  lstatSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  renameSync,
+  rmdirSync,
+  rmSync,
+} from "node:fs";
 import { join } from "node:path";
 import { ROOM_HOME } from "../paths";
 import { isInside, realOrSelf } from "../registry";
@@ -17,10 +27,12 @@ export interface ProjectFiles {
 /** The folders a room worked in: every project in its registry, and the folder of every seat in its log. */
 export function roomFolders(home: string = ROOM_HOME): string[] {
   const folders = new Set<string>();
-  const lines = (file: string) => (existsSync(join(home, file)) ? readFileSync(join(home, file), "utf8").split("\n") : []);
+  const lines = (file: string) =>
+    existsSync(join(home, file)) ? readFileSync(join(home, file), "utf8").split("\n") : [];
   try {
     const registry = JSON.parse(lines("projects.json").join("\n") || "{}") as { projects?: { cwd?: unknown }[] };
-    for (const project of registry.projects ?? []) if (typeof project?.cwd === "string") folders.add(realOrSelf(project.cwd));
+    for (const project of registry.projects ?? [])
+      if (typeof project?.cwd === "string") folders.add(realOrSelf(project.cwd));
   } catch {
     // a registry that cannot be read names no project
   }
@@ -38,7 +50,8 @@ export function roomFolders(home: string = ROOM_HOME): string[] {
 }
 
 /** Where a project's room files go under the folder the room home was moved to. */
-export const keptAt = (movedTo: string, root: string, folder = ".seatwork") => join(movedTo, "projects", root.replace(/[^A-Za-z0-9._-]+/g, "-").replace(/^-+/, ""), folder);
+export const keptAt = (movedTo: string, root: string, folder = ".seatwork") =>
+  join(movedTo, "projects", root.replace(/[^A-Za-z0-9._-]+/g, "-").replace(/^-+/, ""), folder);
 
 /** Moves the room's files out of a project's `folder` into `into`, by name; null when the project has none. */
 export function takeRoomFiles(root: string, into: string, folder = ".seatwork"): ProjectFiles | null {

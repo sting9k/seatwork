@@ -24,11 +24,29 @@ export const roomStatus = defineRpc({
   name: "room.status",
   input: z.object({}),
   output: z.object({
-    waiting: z.array(z.object({ key: z.string(), agentId: z.string(), title: z.string().nullable(), what: z.string(), at: z.string(), project: z.string() })),
+    waiting: z.array(
+      z.object({
+        key: z.string(),
+        agentId: z.string(),
+        title: z.string().nullable(),
+        what: z.string(),
+        at: z.string(),
+        project: z.string(),
+      }),
+    ),
     projects: z.array(
       z.object({
         name: z.string(),
-        seats: z.array(z.object({ agentId: z.string(), role: z.string(), title: z.string().nullable(), status: z.string(), held: z.number(), depth: z.number() })),
+        seats: z.array(
+          z.object({
+            agentId: z.string(),
+            role: z.string(),
+            title: z.string().nullable(),
+            status: z.string(),
+            held: z.number(),
+            depth: z.number(),
+          }),
+        ),
       }),
     ),
   }),

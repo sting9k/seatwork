@@ -11,7 +11,8 @@ const isRoomSeat = (id: string) => parseSeat(id) !== null;
 const NO_BUNDLED_SKILLS = { mode: "custom", skills: [] as string[] };
 
 type Json = Record<string, any>;
-const isRecord = (value: unknown): value is Json => typeof value === "object" && value !== null && !Array.isArray(value);
+const isRecord = (value: unknown): value is Json =>
+  typeof value === "object" && value !== null && !Array.isArray(value);
 
 /** Whether `before` holds a key, at any depth of plain objects, that `after` no longer has. */
 function dropsKeys(before: unknown, after: unknown): boolean {
@@ -26,22 +27,35 @@ const sameDir = (a: string, b: string) => {
 };
 
 /** Writes the plan's seats and profiles into a running daemon through the SDK; the user's own stay. */
-export async function applyWithSdk(paseo: PaseoApi, plan: RoomPlan, options: { daemonPolicy: boolean }): Promise<{ removed: string[] }> {
+export async function applyWithSdk(
+  paseo: PaseoApi,
+  plan: RoomPlan,
+  options: { daemonPolicy: boolean },
+): Promise<{ removed: string[] }> {
   const { config } = await paseo.config.get();
   const current = (config.providers ?? {}) as Record<string, unknown>;
   const removed = Object.keys(current).filter((id) => isRoomSeat(id) && !(id in plan.providers));
   // Paseo merges a patched provider into the one it has: one that dropped a key is removed first
-  const rewritten = Object.keys(current).filter((id) => id in plan.providers && dropsKeys(current[id], plan.providers[id]));
+  const rewritten = Object.keys(current).filter(
+    (id) => id in plan.providers && dropsKeys(current[id], plan.providers[id]),
+  );
   if (removed.length || rewritten.length) await paseo.config.patch({ removeProviders: [...removed, ...rewritten] });
 
   const owned = new Set(plan.profiles.map((profile) => profile.id));
-  const kept = ((config.agentProfiles ?? []) as { id: string }[]).filter((profile) => !isOwnProfile(profile.id) && !owned.has(profile.id));
+  const kept = ((config.agentProfiles ?? []) as { id: string }[]).filter(
+    (profile) => !isOwnProfile(profile.id) && !owned.has(profile.id),
+  );
   const daemon = (plan.policy.daemon ?? {}) as Json;
   await paseo.config.patch({
     providers: plan.providers as never,
     agentProfiles: [...kept, ...plan.profiles] as never,
     mcp: { injectIntoAgents: true },
-    ...(options.daemonPolicy ? { browserTools: { enabled: daemon.browserTools ?? false }, enableTerminalAgentHooks: daemon.enableTerminalAgentHooks ?? false } : {}),
+    ...(options.daemonPolicy
+      ? {
+          browserTools: { enabled: daemon.browserTools ?? false },
+          enableTerminalAgentHooks: daemon.enableTerminalAgentHooks ?? false,
+        }
+      : {}),
   });
   return { removed };
 }
@@ -61,8 +75,16 @@ function mergeIntoConfig(config: Json, plan: RoomPlan): Json {
   const owned = new Set(plan.profiles.map((profile) => profile.id));
   next.daemon ??= {};
   next.agents ??= {};
-  next.daemon.agentProfiles = [...((next.daemon.agentProfiles ?? []) as { id?: string }[]).filter((p) => !isOwnProfile(p.id ?? "") && !owned.has(p.id ?? "")), ...plan.profiles];
-  next.agents.providers = { ...Object.fromEntries(Object.entries((next.agents.providers ?? {}) as Json).filter(([id]) => !isRoomSeat(id))), ...plan.providers };
+  next.daemon.agentProfiles = [
+    ...((next.daemon.agentProfiles ?? []) as { id?: string }[]).filter(
+      (p) => !isOwnProfile(p.id ?? "") && !owned.has(p.id ?? ""),
+    ),
+    ...plan.profiles,
+  ];
+  next.agents.providers = {
+    ...Object.fromEntries(Object.entries((next.agents.providers ?? {}) as Json).filter(([id]) => !isRoomSeat(id))),
+    ...plan.providers,
+  };
   next.daemon.mcp = { ...(next.daemon.mcp ?? {}), enabled: true, injectIntoAgents: true };
   next.pluginsEnabled = true;
   const daemon = (plan.policy.daemon ?? {}) as Json;
@@ -71,7 +93,8 @@ function mergeIntoConfig(config: Json, plan: RoomPlan): Json {
   next.features ??= {};
   next.features.dictation = { ...(next.features.dictation ?? {}), enabled: daemon.dictation ?? false };
   next.features.voiceMode = { ...(next.features.voiceMode ?? {}), enabled: daemon.voiceMode ?? false };
-  if ((daemon.bundledSkills ?? "none") === "none") next.agents.skills = { ...(next.agents.skills ?? {}), selection: NO_BUNDLED_SKILLS };
+  if ((daemon.bundledSkills ?? "none") === "none")
+    next.agents.skills = { ...(next.agents.skills ?? {}), selection: NO_BUNDLED_SKILLS };
   return next;
 }
 
@@ -105,7 +128,9 @@ function ownConfig(paseoHome: string, pluginDir: string): { file: string; config
   if (!existsSync(file)) return null;
   try {
     const config = JSON.parse(readFileSync(file, "utf8")) as Json;
-    const listed = Object.values((config.plugins ?? {}) as Json).some((plugin) => typeof plugin?.path === "string" && sameDir(plugin.path, pluginDir));
+    const listed = Object.values((config.plugins ?? {}) as Json).some(
+      (plugin) => typeof plugin?.path === "string" && sameDir(plugin.path, pluginDir),
+    );
     return listed ? { file, config } : null;
   } catch {
     return null;

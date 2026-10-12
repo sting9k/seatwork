@@ -86,10 +86,24 @@ export interface WatcherPolicy {
   pollSeconds: number;
   historyEntries: number;
   rules: Record<string, "raise" | "log" | "off">;
-  thresholds: { sleepSeconds: number; repeatRun: number; cycleRepeats: number; sameFailure: number; inFlightFactor: number };
+  thresholds: {
+    sleepSeconds: number;
+    repeatRun: number;
+    cycleRepeats: number;
+    sameFailure: number;
+    inFlightFactor: number;
+  };
   scores: Record<string, number>;
   maxMailsPerSeat: number;
-  engine: { url: string; model: string; keyFile: string; keyEnv: string; deadlineMs: number; restAfterFailures: number; restMinutes: number };
+  engine: {
+    url: string;
+    model: string;
+    keyFile: string;
+    keyEnv: string;
+    deadlineMs: number;
+    restAfterFailures: number;
+    restMinutes: number;
+  };
   budget: { usdPerMillionTokens: number; monthlyPlanUsd: number; monthlyCapUsd: number };
   state: { messageChars: number; briefLineChars: number };
   calibration: { labelWindowMinutes: number; minLabels: number; minAuroc: number; maxFalseRaiseRate: number };
@@ -111,7 +125,8 @@ export interface RuntimePolicy {
 export const POLICY_FILE = join(ROOM_HOME, "policy.json");
 
 function need<T>(value: T | undefined, where: string): T {
-  if (value === undefined || value === null) throw new Error(`seatwork: ${POLICY_FILE} is missing "${where}" (set the room up again)`);
+  if (value === undefined || value === null)
+    throw new Error(`seatwork: ${POLICY_FILE} is missing "${where}" (set the room up again)`);
   return value;
 }
 

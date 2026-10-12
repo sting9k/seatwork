@@ -1,4 +1,13 @@
-import { appendFileSync, existsSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
+import {
+  appendFileSync,
+  existsSync,
+  readdirSync,
+  readFileSync,
+  renameSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
 import { basename, dirname, join } from "node:path";
 import type { PaseoApi } from "./paseo";
 import { paseoCli as cli } from "./cli";
@@ -61,7 +70,10 @@ export async function liveAgents(paseo: PaseoApi): Promise<Map<string, LiveAgent
   const out = new Map<string, LiveAgent>();
   let cursor: string | undefined;
   for (let page = 0; page < 20; page += 1) {
-    const result = await paseo.agents.list({ filter: { includeArchived: false }, page: { limit: 200, ...(cursor ? { cursor } : {}) } });
+    const result = await paseo.agents.list({
+      filter: { includeArchived: false },
+      page: { limit: 200, ...(cursor ? { cursor } : {}) },
+    });
     for (const entry of result.entries) {
       const agent = (entry as { agent: LiveAgent }).agent;
       out.set(agent.id, agent);
@@ -113,14 +125,17 @@ export class Collector {
       try {
         await this.deleteHeartbeats((target) => target === agentId);
       } catch (error) {
-        this.log(`gc: heartbeat cleanup for ${agentId} failed: ${error instanceof Error ? error.message : String(error)}`);
+        this.log(
+          `gc: heartbeat cleanup for ${agentId} failed: ${error instanceof Error ? error.message : String(error)}`,
+        );
       }
     }
   }
 
   private async archiveIdleSeats(live: Map<string, LiveAgent>): Promise<void> {
     const seats = this.engine.allSeats();
-    const hasLiveDescendant = (id: string) => seats.some((s) => s.agentId !== id && live.has(s.agentId) && this.engine.isAncestor(id, s.agentId));
+    const hasLiveDescendant = (id: string) =>
+      seats.some((s) => s.agentId !== id && live.has(s.agentId) && this.engine.isAncestor(id, s.agentId));
     for (const seat of seats) {
       const agent = live.get(seat.agentId);
       if (!agent) continue;
@@ -135,7 +150,9 @@ export class Collector {
         await handle.refresh();
         fresh = handle.current() as LiveAgent | null;
       } catch (error) {
-        this.log(`gc: cannot read ${seat.agentId}, left alone: ${error instanceof Error ? error.message : String(error)}`);
+        this.log(
+          `gc: cannot read ${seat.agentId}, left alone: ${error instanceof Error ? error.message : String(error)}`,
+        );
         continue;
       }
       if (!fresh || fresh.archivedAt || !(restMs(fresh) > hours * 3_600_000)) continue;
@@ -200,7 +217,9 @@ const LOGS: readonly { file: string; stays?(line: Line): boolean }[] = [
 /** Drops a log's lines dated before `before`; returns how many. */
 function trimLines(file: string, before: number, stays: (line: Line) => boolean = () => false): number {
   if (!existsSync(file)) return 0;
-  const lines = readFileSync(file, "utf8").split("\n").filter((text) => text.trim());
+  const lines = readFileSync(file, "utf8")
+    .split("\n")
+    .filter((text) => text.trim());
   const kept = lines.filter((text) => {
     try {
       const line = JSON.parse(text) as Line;
@@ -227,24 +246,39 @@ export function collectFiles(roomHome: string, paseoHome: string, now = new Date
     if (gone > 0) done.push(`${gone} lines older than ${KEEP_LOG_DAYS} days left ${log.file}`);
   }
   // the newest backup always stays
-  for (const file of dropStamped(paseoHome, ["config.json.bak-"], KEEP_LOG_DAYS, now, 1)) done.push(`deleted ${file}, a backup older than ${KEEP_LOG_DAYS} days`);
-  for (const folder of sweepRemoved(roomHome, KEEP_REMOVED_DAYS, now)) done.push(`deleted ${folder}, set aside more than ${KEEP_REMOVED_DAYS} days ago`);
+  for (const file of dropStamped(paseoHome, ["config.json.bak-"], KEEP_LOG_DAYS, now, 1))
+    done.push(`deleted ${file}, a backup older than ${KEEP_LOG_DAYS} days`);
+  for (const folder of sweepRemoved(roomHome, KEEP_REMOVED_DAYS, now))
+    done.push(`deleted ${folder}, set aside more than ${KEEP_REMOVED_DAYS} days ago`);
   return done;
 }
 
 const STAMP = /^(\d{4})(\d\d)(\d\d)-(\d\d)(\d\d)(\d\d)$/;
 
 /** Deletes entries named `<prefix><stamp>` older than `days`, sparing the `spare` newest. */
-export function dropStamped(dir: string, prefixes: readonly string[], days: number, now = new Date(), spare = 0): string[] {
+export function dropStamped(
+  dir: string,
+  prefixes: readonly string[],
+  days: number,
+  now = new Date(),
+  spare = 0,
+): string[] {
   if (!existsSync(dir)) return [];
   const dated: { path: string; at: number }[] = [];
   for (const entry of readdirSync(dir)) {
     const prefix = prefixes.find((known) => entry.startsWith(known));
     const at = prefix === undefined ? null : STAMP.exec(entry.slice(prefix.length));
-    if (at) dated.push({ path: join(dir, entry), at: new Date(+at[1], +at[2] - 1, +at[3], +at[4], +at[5], +at[6]).getTime() });
+    if (at)
+      dated.push({
+        path: join(dir, entry),
+        at: new Date(+at[1], +at[2] - 1, +at[3], +at[4], +at[5], +at[6]).getTime(),
+      });
   }
   dated.sort((a, b) => b.at - a.at);
-  const gone = dated.slice(spare).filter((entry) => now.getTime() - entry.at >= days * 86_400_000).map((entry) => entry.path);
+  const gone = dated
+    .slice(spare)
+    .filter((entry) => now.getTime() - entry.at >= days * 86_400_000)
+    .map((entry) => entry.path);
   for (const path of gone) rmSync(path, { recursive: true, force: true });
   return gone;
 }

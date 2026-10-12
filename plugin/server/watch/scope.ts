@@ -34,7 +34,9 @@ export function parseWriteScope(line: string, root: string): WriteScope | null {
     if (pattern !== null) (excluding ? except : patterns).push(pattern);
     excluding = false;
   }
-  return patterns.length > 0 ? { readOnly: false, patterns: [...new Set(patterns)], except: [...new Set(except)] } : null;
+  return patterns.length > 0
+    ? { readOnly: false, patterns: [...new Set(patterns)], except: [...new Set(except)] }
+    : null;
 }
 
 function toPattern(word: string, root: string): string | null {
@@ -75,7 +77,8 @@ export function expandBraces(pattern: string): string[] {
       out.push(current);
       continue;
     }
-    for (const option of splitTopLevel(current.slice(open + 1, close))) queue.push(current.slice(0, open) + option + current.slice(close + 1));
+    for (const option of splitTopLevel(current.slice(open + 1, close)))
+      queue.push(current.slice(0, open) + option + current.slice(close + 1));
   }
   return out;
 }
@@ -186,11 +189,28 @@ function inClass(set: string, c: string): boolean {
 /** What kind of file a path is: only a `source` change makes earlier checks stale. */
 export type PathKind = "source" | "doc" | "generated" | "room" | "vcs" | "scratch" | "outside";
 
-const GENERATED = /^(?:.*\/)?(?:node_modules|dist|build|out|target|coverage|\.next|\.nuxt|\.turbo|\.cache|\.venv|venv|__pycache__|\.pytest_cache|\.mypy_cache|\.ruff_cache|\.gradle|\.tox)(?:\/|$)/;
+const GENERATED =
+  /^(?:.*\/)?(?:node_modules|dist|build|out|target|coverage|\.next|\.nuxt|\.turbo|\.cache|\.venv|venv|__pycache__|\.pytest_cache|\.mypy_cache|\.ruff_cache|\.gradle|\.tox)(?:\/|$)/;
 const DOC = /\.(?:md|mdx|markdown|txt|rst|adoc)$/i;
 /** What a run leaves behind: `npm test > out.log` changes no source. */
 const LEFTOVER = /\.(?:log|out|tmp|temp|bak|orig|rej|pid|tsbuildinfo)$|(?:^|\/)\.DS_Store$/i;
-const SCRATCH_ROOTS = [...new Set([tmpdir(), "/tmp", "/private/tmp", "/var/tmp", "/var/folders", "/private/var/folders", "/dev", CLAUDE_HOME, CODEX_HOME, PI_HOME, OPENCODE_CONFIG_HOME, PASEO_HOME, ROOM_HOME])].map((dir) => normalize(dir));
+const SCRATCH_ROOTS = [
+  ...new Set([
+    tmpdir(),
+    "/tmp",
+    "/private/tmp",
+    "/var/tmp",
+    "/var/folders",
+    "/private/var/folders",
+    "/dev",
+    CLAUDE_HOME,
+    CODEX_HOME,
+    PI_HOME,
+    OPENCODE_CONFIG_HOME,
+    PASEO_HOME,
+    ROOM_HOME,
+  ]),
+].map((dir) => normalize(dir));
 
 /** A path relative to the project root with POSIX separators, or null when it lies outside the root. */
 export function relativeToRoot(root: string, path: string): string | null {
@@ -202,7 +222,8 @@ export function relativeToRoot(root: string, path: string): string | null {
 
 export function pathKind(root: string, path: string): PathKind {
   const rel = relativeToRoot(root, path);
-  if (rel === null) return SCRATCH_ROOTS.some((dir) => path === dir || path.startsWith(`${dir}/`)) ? "scratch" : "outside";
+  if (rel === null)
+    return SCRATCH_ROOTS.some((dir) => path === dir || path.startsWith(`${dir}/`)) ? "scratch" : "outside";
   if (rel === ".git" || rel.startsWith(".git/")) return "vcs";
   if (rel === ".seatwork" || rel.startsWith(".seatwork/")) return "room";
   if (GENERATED.test(rel) || LEFTOVER.test(rel)) return "generated";

@@ -21,7 +21,8 @@ function tone(status: string, colors: PluginTheme["colors"]): string {
 const AT_REST = new Set(["idle", "closed"]);
 
 /** Hour and minute on this device's clock. */
-const clock = (at: string) => new Date(at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hour12: false });
+const clock = (at: string) =>
+  new Date(at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hour12: false });
 
 /** How many seat dots a project's row shows before it counts the rest. */
 const DOTS = 8;
@@ -37,7 +38,13 @@ export function RoomScreen({ theme, layout, navigation }: PluginScreenProps) {
   const muted = { color: c.foregroundMuted, fontSize: 12 };
   const warn = { color: c.statusWarning, fontSize: 12 };
   const card = { backgroundColor: c.surface1, borderColor: c.border, borderWidth: 1, borderRadius: 10 };
-  const row = { flexDirection: "row" as const, alignItems: "center" as const, gap: 10, paddingVertical: 9, paddingHorizontal: 14 };
+  const row = {
+    flexDirection: "row" as const,
+    alignItems: "center" as const,
+    gap: 10,
+    paddingVertical: 9,
+    paddingHorizontal: 14,
+  };
   const line = { borderTopColor: c.border, borderTopWidth: 1 };
   const dot = (status: string) => ({ width: 8, height: 8, borderRadius: 4, backgroundColor: tone(status, c) });
   const open = (agentId: string) => navigation?.openAgent({ agentId });
@@ -59,17 +66,35 @@ export function RoomScreen({ theme, layout, navigation }: PluginScreenProps) {
           <Text style={[muted, { letterSpacing: 0.6 }]}>WAITING ON YOU</Text>
           <View style={[card, { borderColor: c.statusWarning }]}>
             {data.waiting.map((item, index) => (
-              <Pressable key={item.key} accessibilityRole="button" accessibilityLabel={`Open ${item.title ?? item.agentId}`} style={[row, index > 0 ? line : null]} onPress={() => open(item.agentId)}>
+              <Pressable
+                key={item.key}
+                accessibilityRole="button"
+                accessibilityLabel={`Open ${item.title ?? item.agentId}`}
+                style={[row, index > 0 ? line : null]}
+                onPress={() => open(item.agentId)}
+              >
                 <Text style={warn}>{item.what}</Text>
-                <Text style={[text, { flex: 1 }]} numberOfLines={1}>{item.title ?? item.agentId}</Text>
-                <Text style={muted}>{item.project} · {clock(item.at)}</Text>
+                <Text style={[text, { flex: 1 }]} numberOfLines={1}>
+                  {item.title ?? item.agentId}
+                </Text>
+                <Text style={muted}>
+                  {item.project} · {clock(item.at)}
+                </Text>
               </Pressable>
             ))}
           </View>
         </View>
       )}
 
-      {active.length === 0 ? (room.isSuccess ? <Text style={muted}>{data.projects.length === 0 ? "No seat is open. If the room is not set up yet: Seatwork, in the sidebar." : "No seat is open."}</Text> : null) : (
+      {active.length === 0 ? (
+        room.isSuccess ? (
+          <Text style={muted}>
+            {data.projects.length === 0
+              ? "No seat is open. If the room is not set up yet: Seatwork, in the sidebar."
+              : "No seat is open."}
+          </Text>
+        ) : null
+      ) : (
         <View style={card}>
           {active.map((project, index) => {
             const held = project.seats.reduce((sum, seat) => sum + seat.held, 0);
@@ -77,9 +102,16 @@ export function RoomScreen({ theme, layout, navigation }: PluginScreenProps) {
             const shown = opened[project.name] === true;
             return (
               <View key={project.name} style={index > 0 ? line : null}>
-                <Pressable accessibilityRole="button" accessibilityLabel={`${shown ? "Close" : "Open"} ${project.name}`} style={row} onPress={() => setOpened({ ...opened, [project.name]: !shown })}>
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel={`${shown ? "Close" : "Open"} ${project.name}`}
+                  style={row}
+                  onPress={() => setOpened({ ...opened, [project.name]: !shown })}
+                >
                   <Text style={[muted, { width: 10 }]}>{shown ? "▾" : "▸"}</Text>
-                  <Text style={[text, { flex: 1, fontWeight: "600" as const }]} numberOfLines={1}>{project.name}</Text>
+                  <Text style={[text, { flex: 1, fontWeight: "600" as const }]} numberOfLines={1}>
+                    {project.name}
+                  </Text>
                   {waiting > 0 ? <Text style={warn}>{waiting} waiting</Text> : null}
                   {held > 0 ? <Text style={muted}>{held} held</Text> : null}
                   <View style={{ flexDirection: "row" as const, alignItems: "center" as const, gap: 4 }}>
@@ -91,9 +123,17 @@ export function RoomScreen({ theme, layout, navigation }: PluginScreenProps) {
                 </Pressable>
                 {shown
                   ? project.seats.map((seat) => (
-                      <Pressable key={seat.agentId} accessibilityRole="button" accessibilityLabel={`Open ${seat.title ?? seat.role}`} style={[row, { paddingLeft: 34 + seat.depth * 20, paddingVertical: 7 }]} onPress={() => open(seat.agentId)}>
+                      <Pressable
+                        key={seat.agentId}
+                        accessibilityRole="button"
+                        accessibilityLabel={`Open ${seat.title ?? seat.role}`}
+                        style={[row, { paddingLeft: 34 + seat.depth * 20, paddingVertical: 7 }]}
+                        onPress={() => open(seat.agentId)}
+                      >
                         <View style={dot(seat.status)} />
-                        <Text style={[text, { flex: 1 }]} numberOfLines={1}>{seat.title ?? seat.role}</Text>
+                        <Text style={[text, { flex: 1 }]} numberOfLines={1}>
+                          {seat.title ?? seat.role}
+                        </Text>
                         {seat.held > 0 ? <Text style={warn}>{seat.held} held</Text> : null}
                         {AT_REST.has(seat.status) ? null : <Text style={muted}>{seat.status}</Text>}
                       </Pressable>
@@ -105,7 +145,9 @@ export function RoomScreen({ theme, layout, navigation }: PluginScreenProps) {
         </View>
       )}
 
-      {empty.length === 0 ? null : <Text style={muted}>No seat open: {empty.map((project) => project.name).join(", ")}</Text>}
+      {empty.length === 0 ? null : (
+        <Text style={muted}>No seat open: {empty.map((project) => project.name).join(", ")}</Text>
+      )}
     </ScrollView>
   );
 }
@@ -113,7 +155,11 @@ export function RoomScreen({ theme, layout, navigation }: PluginScreenProps) {
 /** The sidebar row: it opens the screen, and says how many turns wait on the Owner. */
 export function RoomItem({ theme, currentScreen, openScreen }: PluginSidebarItemProps) {
   const read = useRpc(roomWaiting);
-  const waiting = useQuery({ queryKey: ["seatwork", "room.waiting"], queryFn: () => read({}), refetchInterval: 15_000 });
+  const waiting = useQuery({
+    queryKey: ["seatwork", "room.waiting"],
+    queryFn: () => read({}),
+    refetchInterval: 15_000,
+  });
   const count = waiting.data?.waiting.length ?? 0;
   return (
     <SidebarRow
@@ -121,7 +167,9 @@ export function RoomItem({ theme, currentScreen, openScreen }: PluginSidebarItem
       label="Room"
       active={currentScreen?.screenId === "room"}
       onPress={() => openScreen({ screenId: "room" })}
-      trailing={count > 0 ? <Text style={{ color: theme.colors.statusWarning, fontSize: 12 }}>{count} waiting</Text> : undefined}
+      trailing={
+        count > 0 ? <Text style={{ color: theme.colors.statusWarning, fontSize: 12 }}>{count} waiting</Text> : undefined
+      }
     />
   );
 }

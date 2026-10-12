@@ -14,7 +14,12 @@ registerHooks({
     const fileName = fileURLToPath(url);
     const { outputText } = ts.transpileModule(readFileSync(fileName, "utf8"), {
       fileName,
-      compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, esModuleInterop: true, inlineSourceMap: true },
+      compilerOptions: {
+        module: ts.ModuleKind.CommonJS,
+        target: ts.ScriptTarget.ES2022,
+        esModuleInterop: true,
+        inlineSourceMap: true,
+      },
     });
     return { format: "commonjs", source: outputText, shortCircuit: true };
   },

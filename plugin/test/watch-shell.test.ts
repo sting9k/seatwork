@@ -4,7 +4,8 @@ import { effectsOf } from "../server/watch/effects";
 import { parseShell, statusCovers } from "../server/watch/shell";
 
 const programs = (command: string) => parseShell(command).commands.map((c) => c.argv.slice(0, 2).join(" "));
-const kinds = (command: string, namedChecks: string[] = []) => parseShell(command).commands.flatMap((c) => effectsOf(c, { namedChecks }).map((e) => e.kind));
+const kinds = (command: string, namedChecks: string[] = []) =>
+  parseShell(command).commands.flatMap((c) => effectsOf(c, { namedChecks }).map((e) => e.kind));
 
 test("a command line is read as the commands the shell would run, never as its quoted text", () => {
   assert.deepEqual(programs(`git commit -m "drop the rm -rf step"`), ["git commit"]);
@@ -26,7 +27,10 @@ test("words that are only data cause no effect", () => {
 test("the line's exit status proves a check only when the check's own status reaches it", () => {
   const covers = (command: string, program: string) => {
     const line = parseShell(command);
-    return statusCovers(line, line.commands.find((c) => c.argv[0] === program)!);
+    return statusCovers(
+      line,
+      line.commands.find((c) => c.argv[0] === program)!,
+    );
   };
   assert.equal(covers("npm test", "npm"), true);
   assert.equal(covers("cd api && npm test", "npm"), true);
@@ -94,5 +98,8 @@ test("a sleep inside a shell loop is seen as a loop, with its length", () => {
 test("an open quote is read as far as it goes and marked incomplete", () => {
   const line = parseShell(`echo "unterminated && rm -rf /`);
   assert.equal(line.complete, false);
-  assert.deepEqual(line.commands.map((c) => c.argv[0]), ["echo"]);
+  assert.deepEqual(
+    line.commands.map((c) => c.argv[0]),
+    ["echo"],
+  );
 });

@@ -7,7 +7,24 @@ import { ROOM_HOME, REGISTRY_LOG } from "./paths";
 /** Better-Seatwork input: what the mail log says happened, counted per project and per signal. */
 
 const MAIL_LOG = join(ROOM_HOME, "mail", "log.jsonl");
-const SIGNALS = ["CANDIDATE", "ACCEPT", "REJECT", "REVIEW", "QUESTION", "ANSWER", "REOPEN_REQUEST", "REVISED BRIEF", "HOLD", "DEPENDENCY_REQUEST", "BLOCKED", "DECISION_NEEDED", "FAILED", "PERMISSION", "GC", "SPAWN REFUSED"] as const;
+const SIGNALS = [
+  "CANDIDATE",
+  "ACCEPT",
+  "REJECT",
+  "REVIEW",
+  "QUESTION",
+  "ANSWER",
+  "REOPEN_REQUEST",
+  "REVISED BRIEF",
+  "HOLD",
+  "DEPENDENCY_REQUEST",
+  "BLOCKED",
+  "DECISION_NEEDED",
+  "FAILED",
+  "PERMISSION",
+  "GC",
+  "SPAWN REFUSED",
+] as const;
 
 interface LogLine {
   at: string;
@@ -41,7 +58,8 @@ export function roomStats(asked: number): string {
   const days = Math.min(Math.max(1, asked), KEEP_LOG_DAYS);
   const since = Date.now() - days * 86_400_000;
   const cwdOf = new Map<string, string>();
-  for (const rec of readJsonl<{ agentId: string; cwd?: string }>(REGISTRY_LOG)) if (rec.cwd) cwdOf.set(rec.agentId, rec.cwd);
+  for (const rec of readJsonl<{ agentId: string; cwd?: string }>(REGISTRY_LOG))
+    if (rec.cwd) cwdOf.set(rec.agentId, rec.cwd);
   const lines = readJsonl<LogLine>(MAIL_LOG).filter((l) => l.kind === "queued" && Date.parse(l.at) >= since);
   if (lines.length === 0) return `no mail in the last ${days} days`;
 
@@ -60,13 +78,21 @@ export function roomStats(asked: number): string {
   const out: string[] = [`mail in the last ${days} days: ${lines.length}`];
   for (const [project, counts] of perProject) {
     const n = (s: string) => counts.get(s) ?? 0;
-    const row = [...counts.entries()].sort((a, b) => b[1] - a[1]).map(([s, c]) => `${s} ${c}`).join(", ");
+    const row = [...counts.entries()]
+      .sort((a, b) => b[1] - a[1])
+      .map(([s, c]) => `${s} ${c}`)
+      .join(", ");
     out.push(`${project}: ${row}`);
     const notes: string[] = [];
-    if (n("REOPEN_REQUEST") > 0) notes.push(`reopen requests ${n("REOPEN_REQUEST")} → revised briefs ${n("REVISED BRIEF")}, holds ${n("HOLD")}`);
-    if (n("CANDIDATE") > 0) notes.push(`candidates ${n("CANDIDATE")} → accepted ${n("ACCEPT")}, rejected ${n("REJECT")}, reviews ${n("REVIEW")}`);
+    if (n("REOPEN_REQUEST") > 0)
+      notes.push(`reopen requests ${n("REOPEN_REQUEST")} → revised briefs ${n("REVISED BRIEF")}, holds ${n("HOLD")}`);
+    if (n("CANDIDATE") > 0)
+      notes.push(
+        `candidates ${n("CANDIDATE")} → accepted ${n("ACCEPT")}, rejected ${n("REJECT")}, reviews ${n("REVIEW")}`,
+      );
     if (n("DECISION_NEEDED") > 0) notes.push(`decisions escalated ${n("DECISION_NEEDED")}`);
-    if (n("QUESTION") >= 3) notes.push(`questions ${n("QUESTION")}: a recurring class means the brief template is the defect`);
+    if (n("QUESTION") >= 3)
+      notes.push(`questions ${n("QUESTION")}: a recurring class means the brief template is the defect`);
     if (notes.length) out.push(`  ${notes.join(" · ")}`);
   }
   return out.join("\n");

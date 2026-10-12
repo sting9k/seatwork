@@ -88,7 +88,9 @@ export class McpHttpServer {
     try {
       parsed = JSON.parse(body) as JsonRpcRequest | JsonRpcRequest[];
     } catch {
-      res.writeHead(400, { "Content-Type": "application/json" }).end(JSON.stringify(rpcError(null, -32700, "Parse error")));
+      res
+        .writeHead(400, { "Content-Type": "application/json" })
+        .end(JSON.stringify(rpcError(null, -32700, "Parse error")));
       return;
     }
     const requests = Array.isArray(parsed) ? parsed : [parsed];
@@ -112,7 +114,8 @@ export class McpHttpServer {
     try {
       switch (method) {
         case "initialize": {
-          const requested = typeof request.params?.protocolVersion === "string" ? request.params.protocolVersion : PROTOCOL_VERSION;
+          const requested =
+            typeof request.params?.protocolVersion === "string" ? request.params.protocolVersion : PROTOCOL_VERSION;
           return rpcResult(id, {
             protocolVersion: requested,
             capabilities: { tools: { listChanged: false } },

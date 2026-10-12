@@ -25,7 +25,9 @@ const harness = z.object({
   label: z.string(),
   available: z.boolean(),
   why: z.string(),
-  models: z.array(z.object({ id: z.string(), label: z.string(), thinking: z.array(z.string()), defaultThinking: z.string() })),
+  models: z.array(
+    z.object({ id: z.string(), label: z.string(), thinking: z.array(z.string()), defaultThinking: z.string() }),
+  ),
 });
 
 const project = z.object({

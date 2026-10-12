@@ -40,7 +40,13 @@ const SAYS_PASSED: readonly RegExp[] = [
 ];
 
 /** Words a broken run prints; a passing suite prints them too, so they count only where no summary speaks. */
-const HINTS_FAILED: readonly RegExp[] = [/\berror TS\d+\b/, /\berror(?:\[E\d+\])?: /, /\bTraceback \(most recent call last\)/, /\b(?:AssertionError|SyntaxError|TypeError|ReferenceError)\b/, /\bnpm ERR!|\bELIFECYCLE\b/];
+const HINTS_FAILED: readonly RegExp[] = [
+  /\berror TS\d+\b/,
+  /\berror(?:\[E\d+\])?: /,
+  /\bTraceback \(most recent call last\)/,
+  /\b(?:AssertionError|SyntaxError|TypeError|ReferenceError)\b/,
+  /\bnpm ERR!|\bELIFECYCLE\b/,
+];
 
 const plain = (output: string) => output.replace(/\x1b\[[0-9;]*[A-Za-z]/g, "");
 const any = (patterns: readonly RegExp[], text: string) => patterns.some((pattern) => pattern.test(text));
@@ -73,7 +79,11 @@ function shown(line: ShellLine, index: number): boolean {
   for (let i = index; i <= end; i += 1) {
     for (const redirect of line.commands[i].redirects) {
       if (redirect.op === "<" || (redirect.fd ?? 1) !== 1 || NOT_A_FILE.test(redirect.target)) continue;
-      const printed = line.commands.slice(end + 1).some((later) => PRINTERS.has((later.argv[0] ?? "").split("/").pop() ?? "") && later.argv.includes(redirect.target));
+      const printed = line.commands
+        .slice(end + 1)
+        .some(
+          (later) => PRINTERS.has((later.argv[0] ?? "").split("/").pop() ?? "") && later.argv.includes(redirect.target),
+        );
       if (!printed) return false;
     }
   }
@@ -86,20 +96,38 @@ export function checkRuns(event: ShellEvent, line: ShellLine, context: EffectCon
     // a check inside $(...) ran, but nothing on the line reports how it went
     if (command.substituted) return;
     for (const effect of effectsOf(command, context)) {
-      if (effect.kind === "check") found.push({ index, covered: statusCovers(line, command), label: effect.label, what: effect.what });
+      if (effect.kind === "check")
+        found.push({ index, covered: statusCovers(line, command), label: effect.label, what: effect.what });
     }
   });
   // checks whose status the line hides share one output: it shows only the last one's verdict
   const hidden = found.filter((check) => !check.covered && shown(line, check.index));
   return found.map((check) => {
-    const read = !hidden.includes(check) ? () => "unknown" as const : hidden.length < 2 ? readSummary : check === hidden[hidden.length - 1] ? readLastRun : () => "unknown" as const;
+    const read = !hidden.includes(check)
+      ? () => "unknown" as const
+      : hidden.length < 2
+        ? readSummary
+        : check === hidden[hidden.length - 1]
+          ? readLastRun
+          : () => "unknown" as const;
     const result = resultOf(event, line, check.covered, read);
     const at = event.seq + (check.index + 1) / (line.commands.length + 1);
-    return { at, label: check.label, what: check.what, result, ...(result === "failed" ? { signature: failureSignature(event.output) } : {}) };
+    return {
+      at,
+      label: check.label,
+      what: check.what,
+      result,
+      ...(result === "failed" ? { signature: failureSignature(event.output) } : {}),
+    };
   });
 }
 
-function resultOf(event: ShellEvent, line: ShellLine, covered: boolean, read: (output: string) => CheckResult): CheckResult {
+function resultOf(
+  event: ShellEvent,
+  line: ShellLine,
+  covered: boolean,
+  read: (output: string) => CheckResult,
+): CheckResult {
   if (event.status === "running" || event.status === "canceled" || event.background === "pending") return "unknown";
   const lineFailed = event.status === "failed" || (event.exitCode !== null && event.exitCode !== 0);
   // the check failed, or the line never got to it: no pass either way

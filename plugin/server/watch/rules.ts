@@ -76,7 +76,8 @@ interface Rule {
   read(situation: Situation): Verdict;
 }
 
-const list = (items: readonly string[], max = 4) => (items.length <= max ? items.join(", ") : `${items.slice(0, max).join(", ")} and ${items.length - max} more`);
+const list = (items: readonly string[], max = 4) =>
+  items.length <= max ? items.join(", ") : `${items.slice(0, max).join(", ")} and ${items.length - max} more`;
 const quote = (command: string) => `\`${command.replace(/\s+/g, " ").trim().slice(0, 200)}\``;
 const minutes = (ms: number) => Math.floor(ms / 60_000);
 
@@ -87,47 +88,75 @@ const RULES: readonly Rule[] = [
     moments: ["live", "end"],
     read: ({ facts }) => {
       const deed = facts.destroyed[0];
-      return deed ? { finding: `ran a command that cannot be undone from inside the task (${deed.what}): ${quote(deed.command)}`, key: deed.what } : null;
+      return deed
+        ? {
+            finding: `ran a command that cannot be undone from inside the task (${deed.what}): ${quote(deed.command)}`,
+            key: deed.what,
+          }
+        : null;
     },
   },
   {
     id: "outside-project",
     moments: ["live", "end"],
-    read: ({ facts }) => (facts.outsideProject.length > 0 ? { finding: `wrote outside the project: ${list(facts.outsideProject)}`, key: facts.outsideProject.join("|") } : null),
+    read: ({ facts }) =>
+      facts.outsideProject.length > 0
+        ? { finding: `wrote outside the project: ${list(facts.outsideProject)}`, key: facts.outsideProject.join("|") }
+        : null,
   },
   {
     id: "outside-scope",
     moments: ["live", "end"],
     read: ({ facts, brief }) => {
       if (facts.outsideScope.length === 0 || !brief?.scope) return null;
-      const scope = brief.scope.readOnly ? "its brief is read-only" : `its write scope is ${list(brief.scope.patterns, 6)}${brief.scope.except.length > 0 ? ` except ${list(brief.scope.except, 3)}` : ""}`;
+      const scope = brief.scope.readOnly
+        ? "its brief is read-only"
+        : `its write scope is ${list(brief.scope.patterns, 6)}${brief.scope.except.length > 0 ? ` except ${list(brief.scope.except, 3)}` : ""}`;
       return { finding: `changed ${list(facts.outsideScope)}; ${scope}`, key: facts.outsideScope.join("|") };
     },
   },
   {
     id: "edit-after-reopen",
     moments: ["live", "end"],
-    read: ({ facts }) => (facts.editedAfterReopen ? { finding: `mailed REOPEN_REQUEST and then changed ${facts.editedAfterReopen.path} in the same turn, before any answer` } : null),
+    read: ({ facts }) =>
+      facts.editedAfterReopen
+        ? {
+            finding: `mailed REOPEN_REQUEST and then changed ${facts.editedAfterReopen.path} in the same turn, before any answer`,
+          }
+        : null,
   },
   {
     id: "review-without-check",
     moments: ["end"],
-    read: ({ facts }) => (facts.signal === "REVIEW" && facts.verdict === "acceptable" && facts.checksThisTurn.length === 0 ? { finding: "gave a REVIEW that says ACCEPTABLE while no check ran in its turn: the verdict rests on reading" } : null),
+    read: ({ facts }) =>
+      facts.signal === "REVIEW" && facts.verdict === "acceptable" && facts.checksThisTurn.length === 0
+        ? { finding: "gave a REVIEW that says ACCEPTABLE while no check ran in its turn: the verdict rests on reading" }
+        : null,
   },
   {
     id: "same-failure",
     moments: ["live", "end"],
     read: ({ facts, thresholds }) => {
       const stuck = facts.sameFailure;
-      return stuck && stuck.count >= thresholds.sameFailure ? { finding: `has run ${stuck.label} ${stuck.count} times in a row with the same failure`, key: stuck.label } : null;
+      return stuck && stuck.count >= thresholds.sameFailure
+        ? { finding: `has run ${stuck.label} ${stuck.count} times in a row with the same failure`, key: stuck.label }
+        : null;
     },
   },
   {
     id: "repeating",
     moments: ["live", "end"],
     read: ({ facts, thresholds }) => {
-      if (facts.repeat && facts.repeat.count >= thresholds.repeatRun) return { finding: `did the same thing ${facts.repeat.count} times in a row with the same result: ${quote(facts.repeat.what)}`, key: facts.repeat.what };
-      if (facts.cycle && facts.cycle.repeats >= thresholds.cycleRepeats) return { finding: `is repeating the same ${facts.cycle.period} actions, ${facts.cycle.repeats} rounds so far`, key: `cycle${facts.cycle.period}` };
+      if (facts.repeat && facts.repeat.count >= thresholds.repeatRun)
+        return {
+          finding: `did the same thing ${facts.repeat.count} times in a row with the same result: ${quote(facts.repeat.what)}`,
+          key: facts.repeat.what,
+        };
+      if (facts.cycle && facts.cycle.repeats >= thresholds.cycleRepeats)
+        return {
+          finding: `is repeating the same ${facts.cycle.period} actions, ${facts.cycle.repeats} rounds so far`,
+          key: `cycle${facts.cycle.period}`,
+        };
       return null;
     },
   },
@@ -136,8 +165,14 @@ const RULES: readonly Rule[] = [
     moments: ["live", "end"],
     read: ({ facts, thresholds }) => {
       if (facts.waited < thresholds.sleepSeconds) return null;
-      const span = Number.isFinite(facts.waited) ? `${Math.round(facts.waited)} s` : "for a time the timeline does not show";
-      if (facts.waitLoop) return { finding: `${facts.ended ? "waited" : "is waiting"} inside the shell (${facts.waitLoop.what}, ${span}): ${quote(facts.waitLoop.command)}`, key: "loop" };
+      const span = Number.isFinite(facts.waited)
+        ? `${Math.round(facts.waited)} s`
+        : "for a time the timeline does not show";
+      if (facts.waitLoop)
+        return {
+          finding: `${facts.ended ? "waited" : "is waiting"} inside the shell (${facts.waitLoop.what}, ${span}): ${quote(facts.waitLoop.command)}`,
+          key: "loop",
+        };
       return { finding: `has slept ${span} in the shell this turn; a seat waits by ending its turn`, key: "sleep" };
     },
   },
@@ -148,9 +183,19 @@ const RULES: readonly Rule[] = [
       if (pendingPermission || facts.lastActivity === undefined) return null;
       const quiet = minutes(now - facts.lastActivity);
       if (facts.inFlight) {
-        return quiet >= thresholds.inFlightMinutes ? { finding: `has had one command running for ${quiet} min with nothing after it: ${quote(facts.inFlight.what)}`, key: "in-flight" } : null;
+        return quiet >= thresholds.inFlightMinutes
+          ? {
+              finding: `has had one command running for ${quiet} min with nothing after it: ${quote(facts.inFlight.what)}`,
+              key: "in-flight",
+            }
+          : null;
       }
-      return quiet >= thresholds.silentMinutes ? { finding: `has been in its turn for ${quiet} min without any activity, with no command running and no permission pending`, key: "idle" } : null;
+      return quiet >= thresholds.silentMinutes
+        ? {
+            finding: `has been in its turn for ${quiet} min without any activity, with no command running and no permission pending`,
+            key: "idle",
+          }
+        : null;
     },
   },
   {
@@ -160,7 +205,10 @@ const RULES: readonly Rule[] = [
       if (!briefGap) return null;
       const lines = briefGap.lines.join("; ");
       if (!briefGap.mail) return { finding: `was briefed without these template lines: ${lines}`, key: CREATED_WITH };
-      return { finding: `was mailed a brief ("${briefGap.mail.subject.slice(0, 80)}") without these template lines: ${lines}`, key: briefGap.mail.id };
+      return {
+        finding: `was mailed a brief ("${briefGap.mail.subject.slice(0, 80)}") without these template lines: ${lines}`,
+        key: briefGap.mail.id,
+      };
     },
   },
   {
@@ -168,7 +216,14 @@ const RULES: readonly Rule[] = [
     id: "unverified-completion",
     moments: ["end"],
     read: ({ facts, brief }) => {
-      if (!facts.closesWork || facts.signal === "REVIEW" || brief?.readOnly || !facts.lastEdit || facts.tests === "passed") return null;
+      if (
+        !facts.closesWork ||
+        facts.signal === "REVIEW" ||
+        brief?.readOnly ||
+        !facts.lastEdit ||
+        facts.tests === "passed"
+      )
+        return null;
       // a message with no word about checks claims nothing about them
       return VERIFICATION_WORDS.test(facts.message) ? { ask: true } : null;
     },
@@ -176,17 +231,27 @@ const RULES: readonly Rule[] = [
   {
     id: "external-action",
     moments: ["live", "end"],
-    read: ({ facts, brief }) => (facts.external.length > 0 && brief ? { ask: true, key: facts.external.map((deed) => deed.what).join("|") } : null),
+    read: ({ facts, brief }) =>
+      facts.external.length > 0 && brief ? { ask: true, key: facts.external.map((deed) => deed.what).join("|") } : null,
   },
   {
     id: "decided-beyond-brief",
     moments: ["end"],
-    read: ({ facts, brief }) => (facts.closesWork && brief && Object.keys(brief.fields).length > 0 && DECISION_WORDS.test(facts.message) ? { ask: true } : null),
+    read: ({ facts, brief }) =>
+      facts.closesWork && brief && Object.keys(brief.fields).length > 0 && DECISION_WORDS.test(facts.message)
+        ? { ask: true }
+        : null,
   },
   {
     id: "reopen-condition",
     moments: ["end"],
-    read: ({ facts, brief }) => (facts.closesWork && facts.signal !== "REVIEW" && brief?.fields.reopenWhen && !facts.mailed.includes("REOPEN_REQUEST") ? { ask: true } : null),
+    read: ({ facts, brief }) =>
+      facts.closesWork &&
+      facts.signal !== "REVIEW" &&
+      brief?.fields.reopenWhen &&
+      !facts.mailed.includes("REOPEN_REQUEST")
+        ? { ask: true }
+        : null,
   },
 ];
 
@@ -208,9 +273,20 @@ export function gate(situation: Situation): GateResult {
 /** What the facts alone say when a question cannot be put to the model. */
 export function unqualified(rule: RuleId, facts: TurnFacts): string | null {
   if (rule === "unverified-completion" && facts.lastEdit) {
-    const evidence = facts.tests === "none" ? "no test ran after it" : facts.tests === "failed" ? `the last run of ${facts.checksSince.filter((run) => run.result === "failed").map((run) => run.label).pop() ?? "its tests"} after it failed` : "the tests that ran after it gave no readable result";
+    const evidence =
+      facts.tests === "none"
+        ? "no test ran after it"
+        : facts.tests === "failed"
+          ? `the last run of ${
+              facts.checksSince
+                .filter((run) => run.result === "failed")
+                .map((run) => run.label)
+                .pop() ?? "its tests"
+            } after it failed`
+          : "the tests that ran after it gave no readable result";
     return `reports ${facts.signal}; its last change was to ${facts.lastEdit.path} and ${evidence}`;
   }
-  if (rule === "external-action" && facts.external[0]) return `acted outside this machine (${facts.external[0].what}): ${quote(facts.external[0].command)}`;
+  if (rule === "external-action" && facts.external[0])
+    return `acted outside this machine (${facts.external[0].what}): ${quote(facts.external[0].command)}`;
   return null;
 }

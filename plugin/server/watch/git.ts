@@ -11,7 +11,9 @@ export interface TreeSnapshot {
 
 function git(cwd: string, args: string[]): Promise<string | null> {
   return new Promise((resolve) => {
-    execFile("git", args, { cwd, timeout: 5000, maxBuffer: 8 * 1024 * 1024 }, (error, stdout) => resolve(error ? null : stdout));
+    execFile("git", args, { cwd, timeout: 5000, maxBuffer: 8 * 1024 * 1024 }, (error, stdout) =>
+      resolve(error ? null : stdout),
+    );
   });
 }
 

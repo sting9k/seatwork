@@ -7,7 +7,16 @@
  */
 "use strict";
 const { spawn, execFileSync } = require("node:child_process");
-const { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } = require("node:fs");
+const {
+  cpSync,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} = require("node:fs");
 const { dirname, join, resolve } = require("node:path");
 
 const EVALS = __dirname;
@@ -20,14 +29,47 @@ const cases = require("./cases.cjs").filter((c) => !args.only || new RegExp(args
 
 // the room's own tools per role; Paseo's come from policy.json
 const SEATWORK_TOOLS = {
-  hq: ["seatwork_mail", "seatwork_inbox", "seatwork_adopt", "seatwork_projects", "seatwork_register_project", "seatwork_room_stats"],
+  hq: [
+    "seatwork_mail",
+    "seatwork_inbox",
+    "seatwork_adopt",
+    "seatwork_projects",
+    "seatwork_register_project",
+    "seatwork_room_stats",
+  ],
   supervisor: ["seatwork_mail", "seatwork_inbox", "seatwork_adopt"],
   lead: ["seatwork_mail", "seatwork_inbox", "seatwork_adopt"],
   peer: ["seatwork_mail", "seatwork_inbox"],
   lens: ["seatwork_mail", "seatwork_inbox"],
 };
 // what a Claude seat may run without asking; cases add Edit/Write when the brief is writable
-const BASE_ALLOW = ["Read", "Grep", "Glob", "Skill", "mcp__seatwork", "mcp__paseo", ...["git", "ls", "cat", "node", "npm", "wc", "head", "tail", "grep", "rg", "find", "sed", "pwd", "mkdir", "chmod", "shasum", "echo"].map((c) => `Bash(${c}:*)`)];
+const BASE_ALLOW = [
+  "Read",
+  "Grep",
+  "Glob",
+  "Skill",
+  "mcp__seatwork",
+  "mcp__paseo",
+  ...[
+    "git",
+    "ls",
+    "cat",
+    "node",
+    "npm",
+    "wc",
+    "head",
+    "tail",
+    "grep",
+    "rg",
+    "find",
+    "sed",
+    "pwd",
+    "mkdir",
+    "chmod",
+    "shasum",
+    "echo",
+  ].map((c) => `Bash(${c}:*)`),
+];
 const TIMEOUT_MS = Number(args.timeout ?? 20) * 60_000;
 
 let plugin = null; // loaded only for real runs
@@ -48,9 +90,24 @@ function parseArgs(argv) {
 function setup() {
   rmSync(OUT, { recursive: true, force: true });
   mkdirSync(HOME, { recursive: true });
-  cpSync(args["room-from"] ? resolve(args["room-from"]) : join(ROOM, "plugin", "room"), join(HOME, "room"), { recursive: true });
+  cpSync(args["room-from"] ? resolve(args["room-from"]) : join(ROOM, "plugin", "room"), join(HOME, "room"), {
+    recursive: true,
+  });
   cpSync(join(ROOM, "plugin", "paseo", "policy.json"), join(HOME, "policy.json"));
-  writeFileSync(join(HOME, "seats.json"), JSON.stringify({ providers: ["claude-hq", "claude-supervisor", "claude-lead", "claude-peer", "claude-lens", "codex-peer", "codex-lens"] }));
+  writeFileSync(
+    join(HOME, "seats.json"),
+    JSON.stringify({
+      providers: [
+        "claude-hq",
+        "claude-supervisor",
+        "claude-lead",
+        "claude-peer",
+        "claude-lens",
+        "codex-peer",
+        "codex-lens",
+      ],
+    }),
+  );
   process.env.SEATWORK_ROOM_HOME = HOME;
   require("../plugin/test/register.cjs");
   const { rolePrompt, specFromTitle } = require("../plugin/server/seats");
@@ -58,7 +115,15 @@ function setup() {
   const { loadPolicy } = require("../plugin/server/policy");
   const { loadModels } = require("../plugin/server/models");
   const { ensureRuntime } = require("../plugin/server/runtimes");
-  plugin = { rolePrompt, specFromTitle, projectBlock, ensureRuntime, policy: loadPolicy(), models: loadModels(), rawPolicy: JSON.parse(readFileSync(join(ROOM, "plugin", "paseo", "policy.json"), "utf8")) };
+  plugin = {
+    rolePrompt,
+    specFromTitle,
+    projectBlock,
+    ensureRuntime,
+    policy: loadPolicy(),
+    models: loadModels(),
+    rawPolicy: JSON.parse(readFileSync(join(ROOM, "plugin", "paseo", "policy.json"), "utf8")),
+  };
 }
 
 /** `codex-peer/gpt-6.1-sol` → { harness: "codex", model: "gpt-6.1-sol" }. */
@@ -72,16 +137,34 @@ function runsFor(c) {
   const { models } = plugin;
   let runs;
   if (c.runs) runs = c.runs;
-  else if (c.role === "peer") runs = (args.tiers ? String(args.tiers).split(",") : ["default", "cheap", "cross-family"]).map((tier) => models.peer.tiers[tier]).filter(Boolean).map((tier) => seat(tier.providers[0], tier.thinking));
+  else if (c.role === "peer")
+    runs = (args.tiers ? String(args.tiers).split(",") : ["default", "cheap", "cross-family"])
+      .map((tier) => models.peer.tiers[tier])
+      .filter(Boolean)
+      .map((tier) => seat(tier.providers[0], tier.thinking));
   // two lenses, two models: the tiers a pair is made of, or every tier of a table that names them otherwise
-  else if (c.role === "lens") runs = (["high", "extra"].every((tier) => models.lens.tiers[tier]) ? ["high", "extra"] : Object.keys(models.lens.tiers)).map((tier) => seat(models.lens.tiers[tier].providers[0], models.lens.tiers[tier].thinking));
+  else if (c.role === "lens")
+    runs = (
+      ["high", "extra"].every((tier) => models.lens.tiers[tier]) ? ["high", "extra"] : Object.keys(models.lens.tiers)
+    ).map((tier) => seat(models.lens.tiers[tier].providers[0], models.lens.tiers[tier].thinking));
   else runs = [seat(models.seats[c.role].provider, models.seats[c.role].thinking)];
   // --codex-model <model>: also run every role on Codex with that model
-  if (args["codex-model"] && !runs.some((run) => run.harness === "codex")) runs.push({ harness: "codex", model: args["codex-model"], effort: runs[0]?.effort ?? "high", note: "not a room seat" });
+  if (args["codex-model"] && !runs.some((run) => run.harness === "codex"))
+    runs.push({
+      harness: "codex",
+      model: args["codex-model"],
+      effort: runs[0]?.effort ?? "high",
+      note: "not a room seat",
+    });
   // --effort <level>: every run at that thinking level, whatever models.json gives the seat
   if (args.effort) runs = runs.map((run) => ({ ...run, effort: String(args.effort) }));
   // a case may name the one harness it means anything on (`harness: "claude"`)
-  return runs.filter((run) => ["claude", "codex"].includes(run.harness) && (!args.harness || run.harness === args.harness) && (!c.harness || run.harness === c.harness));
+  return runs.filter(
+    (run) =>
+      ["claude", "codex"].includes(run.harness) &&
+      (!args.harness || run.harness === args.harness) &&
+      (!c.harness || run.harness === c.harness),
+  );
 }
 
 const skillDirs = new Map();
@@ -170,7 +253,8 @@ function matchesWhere(tool, g) {
   for (const [key, pattern] of Object.entries(g.where ?? {})) {
     const value = tool.input?.[key];
     if (value === undefined) return false;
-    const text = typeof value === "string" ? (key === "command" ? withoutHeredocs(value) : value) : JSON.stringify(value);
+    const text =
+      typeof value === "string" ? (key === "command" ? withoutHeredocs(value) : value) : JSON.stringify(value);
     if (!new RegExp(pattern, "s").test(text)) return false;
   }
   return true;
@@ -182,7 +266,11 @@ function grade(g, ctx) {
   if (g.any_of) return g.any_of.some((inner) => grade(inner, ctx));
   if (g.signal) {
     const re = new RegExp(`^${g.signal}\\b`);
-    const mailed = tools.some((t) => /seatwork_mail$/.test(t.name) && (re.test(String(t.input?.subject ?? "").trim()) || re.test(String(t.input?.body ?? "").trim())));
+    const mailed = tools.some(
+      (t) =>
+        /seatwork_mail$/.test(t.name) &&
+        (re.test(String(t.input?.subject ?? "").trim()) || re.test(String(t.input?.body ?? "").trim())),
+    );
     return re.test(lines[0] ?? "") || mailed;
   }
   if (g.first_line) return new RegExp(g.first_line).test(lines[0] ?? "");
@@ -192,7 +280,8 @@ function grade(g, ctx) {
   if (g.tool) {
     const hits = tools.filter((t) => new RegExp(g.tool).test(t.name) && matchesWhere(t, g));
     // distinct: "<input field>": no two of the matching calls carry the same value there
-    if (g.distinct && new Set(hits.map((t) => JSON.stringify(t.input?.[g.distinct]))).size !== hits.length) return false;
+    if (g.distinct && new Set(hits.map((t) => JSON.stringify(t.input?.[g.distinct]))).size !== hits.length)
+      return false;
     return hits.length >= (g.min ?? 1) && hits.length <= (g.max ?? Infinity);
   }
   if (g.no_tool) return !tools.some((t) => new RegExp(g.no_tool).test(t.name) && matchesWhere(t, g));
@@ -212,7 +301,13 @@ function safeGrade(g, ctx) {
 const plainLines = (text) =>
   text
     .split("\n")
-    .map((l) => l.trim().replace(/^[#>*_` ]+/, "").replace(/[*_`]+$/, "").trim())
+    .map((l) =>
+      l
+        .trim()
+        .replace(/^[#>*_` ]+/, "")
+        .replace(/[*_`]+$/, "")
+        .trim(),
+    )
     .filter((l) => l && !/^-{3,}$/.test(l));
 
 function graded(c, outcome) {
@@ -220,7 +315,12 @@ function graded(c, outcome) {
   const ctx = { text, lines: plainLines(text), tools: outcome.tools ?? [] };
   const graders = c.graders.map((g) => ({ id: g.id, pass: safeGrade(g, ctx) }));
   const finished = outcome.finished ?? outcome.subtype === "success";
-  return { ...outcome, finished, pass: graders.every((g) => g.pass) && finished, failed: graders.filter((g) => !g.pass).map((g) => g.id) };
+  return {
+    ...outcome,
+    finished,
+    pass: graders.every((g) => g.pass) && finished,
+    failed: graders.filter((g) => !g.pass).map((g) => g.id),
+  };
 }
 
 const runDir = (c, run) => join(OUT, "runs", `${c.name}@${run.model}`.replace(/[^a-z0-9@.-]/gi, "_"));
@@ -232,7 +332,10 @@ function prepare(c, run) {
   mkdirSync(cwd, { recursive: true });
   // {{cwd}} is the run's project directory; {{minutes_ago:N}} an ISO time N minutes before the run starts
   const startedAt = Date.now();
-  const fill = (s) => String(s).replace(/\{\{cwd\}\}/g, cwd).replace(/\{\{minutes_ago:(\d+)\}\}/g, (_, m) => new Date(startedAt - Number(m) * 60_000).toISOString());
+  const fill = (s) =>
+    String(s)
+      .replace(/\{\{cwd\}\}/g, cwd)
+      .replace(/\{\{minutes_ago:(\d+)\}\}/g, (_, m) => new Date(startedAt - Number(m) * 60_000).toISOString());
 
   if (c.fixture) cpSync(join(EVALS, "fixtures", c.fixture), cwd, { recursive: true });
   if (c.fixture && c.git !== false) {
@@ -251,17 +354,26 @@ function prepare(c, run) {
   writeFileSync(statePath, fill(JSON.stringify({ cwd, ...(c.state ?? {}) })));
   const servers = {};
   for (const server of ["seatwork", "paseo"]) {
-    const tools = (server === "seatwork" ? SEATWORK_TOOLS[c.role] : plugin.rawPolicy.paseoTools.allow[c.role]).filter((t) => !(c.hide ?? []).includes(t));
+    const tools = (server === "seatwork" ? SEATWORK_TOOLS[c.role] : plugin.rawPolicy.paseoTools.allow[c.role]).filter(
+      (t) => !(c.hide ?? []).includes(t),
+    );
     if (tools.length === 0) continue;
     servers[server] = {
       command: process.execPath,
       args: [join(EVALS, "stub-mcp.mjs")],
-      env: { SEATWORK_EVAL_SERVER: server, SEATWORK_EVAL_TOOLS: tools.join(","), SEATWORK_EVAL_STATE: statePath, SEATWORK_EVAL_LOG: join(dir, "calls.jsonl") },
+      env: {
+        SEATWORK_EVAL_SERVER: server,
+        SEATWORK_EVAL_TOOLS: tools.join(","),
+        SEATWORK_EVAL_STATE: statePath,
+        SEATWORK_EVAL_LOG: join(dir, "calls.jsonl"),
+      },
     };
   }
 
   const spec = c.spec ?? plugin.specFromTitle(c.title);
-  const parts = [plugin.rolePrompt(c.role, { harness: run.harness, spec, params: plugin.policy.room.params, models: plugin.models })];
+  const parts = [
+    plugin.rolePrompt(c.role, { harness: run.harness, spec, params: plugin.policy.room.params, models: plugin.models }),
+  ];
   if (c.project) parts.push(plugin.projectBlock(c.project.name, cwd, c.project.mission ?? null, c.project.law ?? null));
   const system = parts.join("\n\n");
   const prompt = fill(c.prompt);
@@ -273,25 +385,42 @@ function prepare(c, run) {
 /** A Claude seat: `claude -p` with the prompt appended to the claude_code preset, as Paseo does. */
 async function runClaude(c, run, p) {
   writeFileSync(join(p.dir, "mcp.json"), JSON.stringify({ mcpServers: p.servers }, null, 2));
-  const disallowed = [...plugin.rawPolicy.claude.disallowedTools[c.role], ...plugin.rawPolicy.claude.deniedSkills.map((s) => `Skill(skill:${s})`)];
+  const disallowed = [
+    ...plugin.rawPolicy.claude.disallowedTools[c.role],
+    ...plugin.rawPolicy.claude.deniedSkills.map((s) => `Skill(skill:${s})`),
+  ];
   // the flags and the env a real Claude seat starts with (policy `claude.launch`)
   const launch = plugin.rawPolicy.claude.launch;
-  const launchFlags = Object.entries(launch.extraArgs).flatMap(([flag, value]) => (value === null ? [`--${flag}`] : [`--${flag}`, value]));
+  const launchFlags = Object.entries(launch.extraArgs).flatMap(([flag, value]) =>
+    value === null ? [`--${flag}`] : [`--${flag}`, value],
+  );
   const argv = [
-    "-p", p.prompt,
-    "--model", run.model,
-    "--effort", run.effort,
-    "--output-format", "stream-json", "--verbose",
+    "-p",
+    p.prompt,
+    "--model",
+    run.model,
+    "--effort",
+    run.effort,
+    "--output-format",
+    "stream-json",
+    "--verbose",
     // a case that may edit runs in the real seat's mode: the room's procedures write through the shell
-    "--permission-mode", p.writable ? plugin.models.modes.claude : "dontAsk",
-    "--allowedTools", [...BASE_ALLOW, ...(c.allow ?? [])].join(","),
-    "--disallowedTools", [...disallowed, ...(c.deny ?? [])].join(","), // `deny`: what this case's seat is refused, whatever its mode allows
-    "--append-system-prompt", p.system,
+    "--permission-mode",
+    p.writable ? plugin.models.modes.claude : "dontAsk",
+    "--allowedTools",
+    [...BASE_ALLOW, ...(c.allow ?? [])].join(","),
+    "--disallowedTools",
+    [...disallowed, ...(c.deny ?? [])].join(","), // `deny`: what this case's seat is refused, whatever its mode allows
+    "--append-system-prompt",
+    p.system,
     ...launchFlags,
-    "--mcp-config", join(p.dir, "mcp.json"),
-    "--add-dir", skillsDirFor(c.role),
+    "--mcp-config",
+    join(p.dir, "mcp.json"),
+    "--add-dir",
+    skillsDirFor(c.role),
     "--no-session-persistence",
-    "--max-budget-usd", String(args.budget ?? 4),
+    "--max-budget-usd",
+    String(args.budget ?? 4),
   ];
   const { events, code } = await harnessProcess("claude", argv, p.cwd, p.dir, launch.env);
   const tools = [];
@@ -299,14 +428,22 @@ async function runClaude(c, run, p) {
   let init = null;
   for (const e of events) {
     if (e.type === "system" && e.subtype === "init") init = e;
-    if (e.type === "assistant") for (const block of e.message?.content ?? []) if (block.type === "tool_use") tools.push({ name: block.name, input: block.input });
+    if (e.type === "assistant")
+      for (const block of e.message?.content ?? [])
+        if (block.type === "tool_use") tools.push({ name: block.name, input: block.input });
     if (e.type === "result") result = e;
   }
   return {
-    finished: Boolean(result) && !result.is_error, exit: code, subtype: result?.subtype ?? null,
-    turns: result?.num_turns ?? null, cost: result?.total_cost_usd ?? null, tokens: null,
-    denials: (result?.permission_denials ?? []).map((d) => d.tool_name), skills: init?.skills ?? null,
-    tools, text: String(result?.result ?? ""),
+    finished: Boolean(result) && !result.is_error,
+    exit: code,
+    subtype: result?.subtype ?? null,
+    turns: result?.num_turns ?? null,
+    cost: result?.total_cost_usd ?? null,
+    tokens: null,
+    denials: (result?.permission_denials ?? []).map((d) => d.tool_name),
+    skills: init?.skills ?? null,
+    tools,
+    text: String(result?.result ?? ""),
   };
 }
 
@@ -314,11 +451,31 @@ async function runClaude(c, run, p) {
 async function runCodex(c, run, p) {
   const runtime = plugin.ensureRuntime({ harness: "codex", role: c.role }, plugin.policy);
   const toml = (value) => JSON.stringify(value); // a JSON string is a valid TOML basic string
-  const argv = ["exec", "--json", "--ephemeral", "--skip-git-repo-check", "-C", p.cwd, "-m", run.model, "-s", p.writable ? "workspace-write" : "read-only", "-c", `model_reasoning_effort=${toml(run.effort)}`, "-c", `developer_instructions=${toml(p.system)}`];
+  const argv = [
+    "exec",
+    "--json",
+    "--ephemeral",
+    "--skip-git-repo-check",
+    "-C",
+    p.cwd,
+    "-m",
+    run.model,
+    "-s",
+    p.writable ? "workspace-write" : "read-only",
+    "-c",
+    `model_reasoning_effort=${toml(run.effort)}`,
+    "-c",
+    `developer_instructions=${toml(p.system)}`,
+  ];
   for (const [name, server] of Object.entries(p.servers)) {
     argv.push("-c", `mcp_servers.${name}.command=${toml(server.command)}`);
     argv.push("-c", `mcp_servers.${name}.args=[${server.args.map(toml).join(",")}]`);
-    argv.push("-c", `mcp_servers.${name}.env={${Object.entries(server.env).map(([k, v]) => `${k}=${toml(v)}`).join(",")}}`);
+    argv.push(
+      "-c",
+      `mcp_servers.${name}.env={${Object.entries(server.env)
+        .map(([k, v]) => `${k}=${toml(v)}`)
+        .join(",")}}`,
+    );
     argv.push("-c", `mcp_servers.${name}.default_tools_approval_mode="approve"`);
   }
   argv.push(p.prompt);
@@ -333,15 +490,24 @@ async function runCodex(c, run, p) {
     if (e.type === "turn.failed") failed = true; // an `error` event is a transient stream notice; the turn still completes
     if (e.type !== "item.completed") continue;
     const item = e.item ?? {};
-    if (item.type === "mcp_tool_call") tools.push({ name: `mcp__${item.server}__${item.tool}`, input: item.arguments ?? {} });
+    if (item.type === "mcp_tool_call")
+      tools.push({ name: `mcp__${item.server}__${item.tool}`, input: item.arguments ?? {} });
     else if (item.type === "command_execution") tools.push({ name: "Bash", input: { command: item.command } });
-    else if (item.type === "file_change") tools.push({ name: "Edit", input: { file_path: (item.changes ?? []).map((ch) => ch.path).join(" ") } });
+    else if (item.type === "file_change")
+      tools.push({ name: "Edit", input: { file_path: (item.changes ?? []).map((ch) => ch.path).join(" ") } });
     else if (item.type === "agent_message") text = String(item.text ?? "");
   }
   return {
-    finished: Boolean(usage) && !failed, exit: code, subtype: usage ? "success" : "no turn.completed",
-    turns: tools.length, cost: null, tokens: usage ? (usage.input_tokens ?? 0) + (usage.output_tokens ?? 0) : null,
-    denials: [], skills: null, tools, text,
+    finished: Boolean(usage) && !failed,
+    exit: code,
+    subtype: usage ? "success" : "no turn.completed",
+    turns: tools.length,
+    cost: null,
+    tokens: usage ? (usage.input_tokens ?? 0) + (usage.output_tokens ?? 0) : null,
+    denials: [],
+    skills: null,
+    tools,
+    text,
   };
 }
 
@@ -349,24 +515,40 @@ async function runOne(c, run) {
   const started = Date.now();
   const p = prepare(c, run);
   const raw = run.harness === "codex" ? await runCodex(c, run, p) : await runClaude(c, run, p);
-  const outcome = graded(c, { case: c.name, role: c.role, harness: run.harness, model: run.model, effort: run.effort, note: run.note ?? null, minutes: Number(((Date.now() - started) / 60_000).toFixed(1)), ...raw });
+  const outcome = graded(c, {
+    case: c.name,
+    role: c.role,
+    harness: run.harness,
+    model: run.model,
+    effort: run.effort,
+    note: run.note ?? null,
+    minutes: Number(((Date.now() - started) / 60_000).toFixed(1)),
+    ...raw,
+  });
   writeFileSync(join(p.dir, "result.json"), JSON.stringify(outcome, null, 2));
   writeFileSync(join(p.dir, "final.md"), outcome.text);
   console.log(line(outcome));
   return outcome;
 }
 
-const spent = (r) => (r.cost != null ? `$${r.cost.toFixed(2)}` : r.tokens != null ? `${Math.round(r.tokens / 1000)}k tok` : "?");
-const line = (r) => `${r.pass ? "PASS" : "FAIL"}  ${r.case}@${r.model}  ${r.failed.join(",") || "-"}  turns=${r.turns} ${spent(r)} ${r.minutes}min`;
+const spent = (r) =>
+  r.cost != null ? `$${r.cost.toFixed(2)}` : r.tokens != null ? `${Math.round(r.tokens / 1000)}k tok` : "?";
+const line = (r) =>
+  `${r.pass ? "PASS" : "FAIL"}  ${r.case}@${r.model}  ${r.failed.join(",") || "-"}  turns=${r.turns} ${spent(r)} ${r.minutes}min`;
 
 function report(results) {
   const head = execFileSync("git", ["rev-parse", "--short", "HEAD"], { cwd: ROOM, encoding: "utf8" }).trim();
-  const dirty = execFileSync("git", ["status", "--short", "--", "plugin/room"], { cwd: ROOM, encoding: "utf8" }).trim() ? " (room files modified)" : "";
+  const dirty = execFileSync("git", ["status", "--short", "--", "plugin/room"], { cwd: ROOM, encoding: "utf8" }).trim()
+    ? " (room files modified)"
+    : "";
   const passed = results.filter((r) => r.pass).length;
   const cost = results.reduce((sum, r) => sum + (r.cost ?? 0), 0);
   const rows = results
     .sort((a, b) => a.case.localeCompare(b.case) || a.model.localeCompare(b.model))
-    .map((r) => `| ${r.case} | ${r.harness ?? "claude"} ${r.model} ${r.effort}${r.note ? ` (${r.note})` : ""} | ${r.pass ? "pass" : "FAIL"} | ${r.failed.join(", ")} | ${r.turns ?? "?"} | ${spent(r)} | ${r.minutes} |`)
+    .map(
+      (r) =>
+        `| ${r.case} | ${r.harness ?? "claude"} ${r.model} ${r.effort}${r.note ? ` (${r.note})` : ""} | ${r.pass ? "pass" : "FAIL"} | ${r.failed.join(", ")} | ${r.turns ?? "?"} | ${spent(r)} | ${r.minutes} |`,
+    )
     .join("\n");
   const md = [
     `# Eval report: ${label}`,
@@ -381,7 +563,22 @@ function report(results) {
     "",
   ].join("\n");
   writeFileSync(join(OUT, "report.md"), md);
-  writeFileSync(join(OUT, "summary.json"), JSON.stringify({ label, head, dirty: Boolean(dirty), passed, total: results.length, cost, results: results.map(({ text, tools, skills, ...r }) => r) }, null, 2));
+  writeFileSync(
+    join(OUT, "summary.json"),
+    JSON.stringify(
+      {
+        label,
+        head,
+        dirty: Boolean(dirty),
+        passed,
+        total: results.length,
+        cost,
+        results: results.map(({ text, tools, skills, ...r }) => r),
+      },
+      null,
+      2,
+    ),
+  );
   console.log(`\n${passed}/${results.length} pass · Claude $${cost.toFixed(2)} · ${join(OUT, "report.md")}`);
 }
 
@@ -424,7 +621,20 @@ async function main() {
           results.push(await runOne(job.c, job.run));
         } catch (error) {
           console.log(`FAIL  ${job.c.name}@${job.run.model}  harness: ${error.message}`);
-          results.push({ case: job.c.name, role: job.c.role, harness: job.run.harness, model: job.run.model, effort: job.run.effort, note: null, pass: false, failed: [`harness: ${error.message}`], turns: null, cost: 0, tokens: null, minutes: 0 });
+          results.push({
+            case: job.c.name,
+            role: job.c.role,
+            harness: job.run.harness,
+            model: job.run.model,
+            effort: job.run.effort,
+            note: null,
+            pass: false,
+            failed: [`harness: ${error.message}`],
+            turns: null,
+            cost: 0,
+            tokens: null,
+            minutes: 0,
+          });
         }
       }
     }),

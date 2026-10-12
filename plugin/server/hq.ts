@@ -13,11 +13,14 @@ export function hqDir(): string {
 export function checkHqPlacement(role: string, provider: string, cwd: string): void {
   const dir = hqDir();
   const inside = isInside(realOrSelf(cwd), dir);
-  if (role === "hq" && !inside) throw new Error(`seatwork: ${provider} may only be created in the ${HQ_PROJECT} project (${dir}), not in ${cwd}`);
-  if (role !== "hq" && inside) throw new Error(`seatwork: ${provider} refused: ${dir} is the ${HQ_PROJECT} project, it holds only hq seats`);
+  if (role === "hq" && !inside)
+    throw new Error(`seatwork: ${provider} may only be created in the ${HQ_PROJECT} project (${dir}), not in ${cwd}`);
+  if (role !== "hq" && inside)
+    throw new Error(`seatwork: ${provider} refused: ${dir} is the ${HQ_PROJECT} project, it holds only hq seats`);
 }
 
-const dirOf = (workspace: { workspaceDirectory?: string; projectRootPath: string }) => realOrSelf(workspace.workspaceDirectory ?? workspace.projectRootPath);
+const dirOf = (workspace: { workspaceDirectory?: string; projectRootPath: string }) =>
+  realOrSelf(workspace.workspaceDirectory ?? workspace.projectRootPath);
 /** One opening at a time: two that both find no workspace would both make one. */
 let opening: Promise<void> = Promise.resolve();
 
@@ -47,7 +50,8 @@ export async function deleteProjectAt(dir: string): Promise<boolean> {
   const real = realOrSelf(dir);
   try {
     const projects = JSON.parse(await paseoCli(["project", "ls", "--json"])) as { projectId: string; path: string }[];
-    for (const project of projects) if (realOrSelf(project.path) === real) await paseoCli(["project", "delete", project.projectId]);
+    for (const project of projects)
+      if (realOrSelf(project.path) === real) await paseoCli(["project", "delete", project.projectId]);
     return true;
   } catch {
     return false;

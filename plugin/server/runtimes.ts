@@ -1,7 +1,24 @@
 import { createHash } from "node:crypto";
-import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  lstatSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  symlinkSync,
+  unlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { join } from "node:path";
-import { CLAUDE_HOME, CODEX_HOME, OPENCODE_CONFIG_HOME, PI_HOME, ROLE_SKILLS_DIR, ROOM_DIR, RUNTIMES_DIR } from "./paths";
+import {
+  CLAUDE_HOME,
+  CODEX_HOME,
+  OPENCODE_CONFIG_HOME,
+  PI_HOME,
+  ROLE_SKILLS_DIR,
+  ROOM_DIR,
+  RUNTIMES_DIR,
+} from "./paths";
 import { loadPolicy, type RuntimePolicy } from "./policy";
 import type { Harness, Role, Seat } from "./seats";
 import { formatToml, parseToml, type TomlTable } from "./toml";
@@ -56,7 +73,6 @@ function writeJson(path: string, value: unknown): void {
   writeFileSync(path, `${JSON.stringify(value, null, 2)}\n`);
 }
 
-
 /* ---------- Codex: CODEX_HOME ---------- */
 
 function buildCodex(runtime: string, policy: RuntimePolicy["codex"]): void {
@@ -66,7 +82,9 @@ function buildCodex(runtime: string, policy: RuntimePolicy["codex"]): void {
   try {
     config = parseToml(existsSync(file) ? readFileSync(file, "utf8") : "");
   } catch (error) {
-    throw new Error(`${file} is not TOML the room can read (${error instanceof Error ? error.message : String(error)})`);
+    throw new Error(
+      `${file} is not TOML the room can read (${error instanceof Error ? error.message : String(error)})`,
+    );
   }
   for (const name of [...policy.stripTables, ...policy.stripKeys]) config.delete(name);
   /** The top-level table `name`, replacing anything there that is not a table. */
@@ -149,13 +167,19 @@ function build(seat: Pick<Seat, "harness" | "role">, dir: string, policy: Runtim
 
 /** What a build is made from: the build logic, the harness's policy and the user file it copies. */
 function fingerprint(harness: Exclude<Harness, "claude">, policy: RuntimePolicy): string {
-  const copied = harness === "codex" ? join(CODEX_HOME, "config.toml") : harness === "pi" ? join(PI_HOME, "settings.json") : null;
+  const copied =
+    harness === "codex" ? join(CODEX_HOME, "config.toml") : harness === "pi" ? join(PI_HOME, "settings.json") : null;
   const text = copied && existsSync(copied) ? readFileSync(copied, "utf8") : "";
-  return createHash("sha256").update(JSON.stringify([RUNTIME_VERSION, policy[harness], text])).digest("hex");
+  return createHash("sha256")
+    .update(JSON.stringify([RUNTIME_VERSION, policy[harness], text]))
+    .digest("hex");
 }
 
 /** Links the seat's role skills and returns its home, rebuilt whenever its fingerprint changes; null for Claude. */
-export function ensureRuntime(seat: Pick<Seat, "harness" | "role">, policy: RuntimePolicy = loadPolicy()): string | null {
+export function ensureRuntime(
+  seat: Pick<Seat, "harness" | "role">,
+  policy: RuntimePolicy = loadPolicy(),
+): string | null {
   if (seat.harness === "claude") {
     installRoleSkills("", seat);
     return null;
@@ -167,7 +191,12 @@ export function ensureRuntime(seat: Pick<Seat, "harness" | "role">, policy: Runt
     ensureDir(dir);
     pruneLinks(dir);
     build(seat, dir, policy);
-    writeJson(marker, { fingerprint: print, harness: seat.harness, role: seat.role, builtAt: new Date().toISOString() });
+    writeJson(marker, {
+      fingerprint: print,
+      harness: seat.harness,
+      role: seat.role,
+      builtAt: new Date().toISOString(),
+    });
   }
   installRoleSkills(dir, seat);
   return dir;
@@ -175,16 +204,23 @@ export function ensureRuntime(seat: Pick<Seat, "harness" | "role">, policy: Runt
 
 /** The files of ~/.claude the policy shares (CLAUDE.md), as text for the seat's prompt. */
 export function sharedClaudeFiles(policy: RuntimePolicy = loadPolicy()): string | null {
-  const texts = policy.claude.shareFiles.map((name) => join(CLAUDE_HOME, name)).filter((file) => existsSync(file)).map((file) => readFileSync(file, "utf8").trim());
+  const texts = policy.claude.shareFiles
+    .map((name) => join(CLAUDE_HOME, name))
+    .filter((file) => existsSync(file))
+    .map((file) => readFileSync(file, "utf8").trim());
   return texts.filter(Boolean).join("\n\n") || null;
 }
 
 /** The environment every session of a seat opens with (policy `launch.env`). */
-export function envFor(seat: Pick<Seat, "harness" | "role">, policy: RuntimePolicy = loadPolicy()): Record<string, string> {
+export function envFor(
+  seat: Pick<Seat, "harness" | "role">,
+  policy: RuntimePolicy = loadPolicy(),
+): Record<string, string> {
   const home = seat.harness === "claude" ? "" : runtimeDir(seat);
-  return Object.fromEntries(Object.entries(policy.launch[seat.harness].env).map(([name, value]) => [name, value.replaceAll("{runtime}", home)]));
+  return Object.fromEntries(
+    Object.entries(policy.launch[seat.harness].env).map(([name, value]) => [name, value.replaceAll("{runtime}", home)]),
+  );
 }
-
 
 /** Everything in the shared homes that a runtime deliberately does not see; for `seatwork` logs. */
 export function describeIsolation(policy: RuntimePolicy = loadPolicy()): string {

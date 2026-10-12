@@ -36,26 +36,47 @@ export function loadModels(): Models {
 
 /** A role's models as the Lead reads them: one row a tier, in the table's order. */
 function tierTable(tiers: Record<string, Tier>): string {
-  const rows = Object.entries(tiers).map(([tier, t]) => `| ${tier} | ${t.providers.map((p) => `\`${p}\``).join(" · ")} | ${t.thinking} | ${t.use ?? "—"} | ${t.never ?? "—"} |`);
-  return ["| Tier | `provider` for `create_agent` | thinking | Use for | Never for |", "|---|---|---|---|---|", ...rows].join("\n");
+  const rows = Object.entries(tiers).map(
+    ([tier, t]) =>
+      `| ${tier} | ${t.providers.map((p) => `\`${p}\``).join(" · ")} | ${t.thinking} | ${t.use ?? "—"} | ${t.never ?? "—"} |`,
+  );
+  return [
+    "| Tier | `provider` for `create_agent` | thinking | Use for | Never for |",
+    "|---|---|---|---|---|",
+    ...rows,
+  ].join("\n");
 }
 
 function lensTable(m: Models): string {
   const models = new Set(Object.values(m.lens.tiers).flatMap((tier) => tier.providers)).size;
-  const several = models > 1 ? "Two lenses are two different models, always. More lenses: another model for each while the table has one; after that a model sits twice only on two different angles." : "The table has one lens model: open one lens.";
+  const several =
+    models > 1
+      ? "Two lenses are two different models, always. More lenses: another model for each while the table has one; after that a model sits twice only on two different angles."
+      : "The table has one lens model: open one lens.";
   return `${tierTable(m.lens.tiers)}\n\n${several}`;
 }
 
 /** The placeholder map for role prompts. */
 export function promptVars(m: Models, params: RoomParams): Record<string, string> {
-  const withMode = Object.entries(m.modes).filter(([, mode]) => mode).map(([h, mode]) => `${h} \`${mode}\``);
-  const without = Object.entries(m.modes).filter(([, mode]) => !mode).map(([h]) => h);
-  const modes = [withMode.join(", "), without.length ? `${without.join(", ")}: none, omit \`modeId\`` : ""].filter(Boolean).join("; ");
+  const withMode = Object.entries(m.modes)
+    .filter(([, mode]) => mode)
+    .map(([h, mode]) => `${h} \`${mode}\``);
+  const without = Object.entries(m.modes)
+    .filter(([, mode]) => !mode)
+    .map(([h]) => h);
+  const modes = [withMode.join(", "), without.length ? `${without.join(", ")}: none, omit \`modeId\`` : ""]
+    .filter(Boolean)
+    .join("; ");
   return {
     peer_table: tierTable(m.peer.tiers),
     review_thinking: m.peer.reviewThinking,
     // read-only research never runs on the cheap tier
-    research_providers: Object.entries(m.peer.tiers).filter(([tier]) => tier !== "cheap").flatMap(([, t]) => t.providers).map((p) => `\`${p}\``).join(", ") || "none",
+    research_providers:
+      Object.entries(m.peer.tiers)
+        .filter(([tier]) => tier !== "cheap")
+        .flatMap(([, t]) => t.providers)
+        .map((p) => `\`${p}\``)
+        .join(", ") || "none",
     lens_table: lensTable(m),
     modes,
     lead_provider: m.seats.lead.provider,
@@ -114,12 +135,16 @@ export function layModels(base: Models, override: unknown, where: string): Model
     if (entries.length === 0) throw new Error(`${where}: "models" leaves the ${role} role without a model`);
     for (const entry of entries) {
       if (!String(entry).includes("/")) throw new Error(`${where}: "${entry}" must be <harness>-<role>/<model>`);
-      if (!providerOf(entry).endsWith(`-${role}`)) throw new Error(`${where}: "${entry}" is listed for ${role} but is not a ${role} seat`);
+      if (!providerOf(entry).endsWith(`-${role}`))
+        throw new Error(`${where}: "${entry}" is listed for ${role} but is not a ${role} seat`);
     }
   }
   // a table from before the lenses were listed like Peers would read as unchanged
   const old = ["oracle", "hard", "pair", "pool"].find((key) => key in merged.lens);
-  if (old) throw new Error(`${where}: lens.${old} is not a place in the table: lenses are listed under lens.tiers, as Peers are under peer.tiers`);
+  if (old)
+    throw new Error(
+      `${where}: lens.${old} is not a place in the table: lenses are listed under lens.tiers, as Peers are under peer.tiers`,
+    );
   return merged;
 }
 
@@ -129,7 +154,10 @@ export function projectModels(override: unknown, enabledProviders: string[], whe
   const merged = laidOver(override, where);
   for (const entry of Object.values(allowed(merged)).flat()) {
     const provider = providerOf(entry);
-    if (!enabledProviders.includes(provider)) throw new Error(`${where}: "${entry}" names ${provider}, which the room has not enabled (enabled: ${enabledProviders.join(", ")})`);
+    if (!enabledProviders.includes(provider))
+      throw new Error(
+        `${where}: "${entry}" names ${provider}, which the room has not enabled (enabled: ${enabledProviders.join(", ")})`,
+      );
   }
   return merged;
 }
@@ -137,7 +165,9 @@ export function projectModels(override: unknown, enabledProviders: string[], whe
 /** The seats a project's `models` names that the room does not have yet. */
 export function missingSeats(override: unknown, enabledProviders: string[], where: string): string[] {
   if (override === undefined) return [];
-  const named = Object.values(allowed(laidOver(override, where))).flat().map(providerOf);
+  const named = Object.values(allowed(laidOver(override, where)))
+    .flat()
+    .map(providerOf);
   return [...new Set(named)].filter((provider) => !enabledProviders.includes(provider));
 }
 
@@ -147,7 +177,12 @@ const split = (entry: string): [provider: string, model: string] => {
 };
 
 /** Whether a seat about to be created runs on a model the table lists for its role. */
-export function modelAllowed(m: Models, role: string, provider: string, model: string | undefined): { ok: boolean; listed: string[] } {
+export function modelAllowed(
+  m: Models,
+  role: string,
+  provider: string,
+  model: string | undefined,
+): { ok: boolean; listed: string[] } {
   const listed = allowed(m)[role] ?? [];
   const ok = listed.some((entry) => {
     const [seat, id] = split(entry);
@@ -157,9 +192,7 @@ export function modelAllowed(m: Models, role: string, provider: string, model: s
 }
 
 /** What the table in force makes of a seat about to be created. */
-export type SeatFit =
-  | { ok: true; model?: string; thinking?: string }
-  | { ok: false; listed: string[] };
+export type SeatFit = { ok: true; model?: string; thinking?: string } | { ok: false; listed: string[] };
 
 /** Holds a new seat to the table in force, not to its creator's prompt, which may be older than the table. */
 export function fitSeat(m: Models, role: string, provider: string, model: string | undefined): SeatFit {
@@ -170,7 +203,9 @@ export function fitSeat(m: Models, role: string, provider: string, model: string
   const seat = role === "hq" || role === "supervisor" || role === "lead" ? m.seats[role] : null;
   if (seat) {
     const [first, id] = split(seat.provider);
-    return first === provider ? { ok: true, model: id, thinking: seat.thinking } : { ok: true, model: split(mine[0])[1] };
+    return first === provider
+      ? { ok: true, model: id, thinking: seat.thinking }
+      : { ok: true, model: split(mine[0])[1] };
   }
   // a Peer or a Lens asked for by seat alone starts on that seat's first model in the table
   return model ? { ok: false, listed } : { ok: true, model: split(mine[0])[1] };

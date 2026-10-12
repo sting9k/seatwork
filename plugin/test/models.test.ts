@@ -7,7 +7,17 @@ test("a project's model table matches a model id whole, slashes included", () =>
   const seat = { provider: "claude-lead/opus", thinking: "high" };
   const table: Models = {
     seats: { hq: seat, supervisor: seat, lead: seat },
-    peer: { reviewThinking: "high", tiers: { default: { providers: ["opencode-peer/anthropic/claude-x", "codex-peer/gpt-6"], thinking: "medium", use: "", never: "" } } },
+    peer: {
+      reviewThinking: "high",
+      tiers: {
+        default: {
+          providers: ["opencode-peer/anthropic/claude-x", "codex-peer/gpt-6"],
+          thinking: "medium",
+          use: "",
+          never: "",
+        },
+      },
+    },
     lens: { tiers: {} },
     modes: {},
   };
@@ -31,7 +41,14 @@ test("the Lead is shown the lenses as one role's models with what each is for, a
     lens: { tiers: { default: tier("codex-lens/sol", "one lens"), high: tier("codex-lens/astra", "a hard question") } },
     modes: {},
   };
-  const params = { heartbeatCron: "*/15 * * * *", peerStallMinutes: 6, reviewStallMinutes: 30, leadStallMinutes: 30, readBudgetTokens: 80000, cheapReadBudgetTokens: 40000 };
+  const params = {
+    heartbeatCron: "*/15 * * * *",
+    peerStallMinutes: 6,
+    reviewStallMinutes: 30,
+    leadStallMinutes: 30,
+    readBudgetTokens: 80000,
+    cheapReadBudgetTokens: 40000,
+  };
 
   const shown = promptVars(table, params).lens_table;
   assert.match(shown, /\| default \| `codex-lens\/sol` \| high \| one lens \|/);
@@ -53,7 +70,14 @@ test("a harness without session modes is one a seat is told to create with no mo
     lens: { tiers: {} },
     modes: { claude: "bypassPermissions", pi: null, opencode: "build" },
   };
-  const params = { heartbeatCron: "*/15 * * * *", peerStallMinutes: 6, reviewStallMinutes: 30, leadStallMinutes: 30, readBudgetTokens: 80000, cheapReadBudgetTokens: 40000 };
+  const params = {
+    heartbeatCron: "*/15 * * * *",
+    peerStallMinutes: 6,
+    reviewStallMinutes: 30,
+    leadStallMinutes: 30,
+    readBudgetTokens: 80000,
+    cheapReadBudgetTokens: 40000,
+  };
 
   const shown = promptVars(table, params).modes;
   assert.match(shown, /claude `bypassPermissions`, opencode `build`/);

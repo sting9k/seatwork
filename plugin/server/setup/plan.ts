@@ -60,7 +60,13 @@ export interface RoomPlan {
 }
 
 const LABEL: Record<Harness, string> = { claude: "Claude", codex: "Codex", pi: "Pi", opencode: "OpenCode" };
-const ROLE_LABEL: Record<Role, string> = { hq: "HQ Supervisor", supervisor: "Supervisor", lead: "Lead", peer: "Peer", lens: "Lens" };
+const ROLE_LABEL: Record<Role, string> = {
+  hq: "HQ Supervisor",
+  supervisor: "Supervisor",
+  lead: "Lead",
+  peer: "Peer",
+  lens: "Lens",
+};
 /** How each harness is kept apart from the user's own setup (shown in the provider description). */
 const ISOLATION: Record<Harness, string> = {
   claude: "on the user's Claude sign-in with personal settings switched off",
@@ -76,7 +82,8 @@ function readJson(file: string): any {
 
 /** setup.json, checked: it may have been edited by hand. */
 export function checkSetup(setup: unknown, where: string): Setup {
-  if (typeof setup !== "object" || setup === null || Array.isArray(setup)) throw new Error(`${where} must hold an object`);
+  if (typeof setup !== "object" || setup === null || Array.isArray(setup))
+    throw new Error(`${where} must hold an object`);
   const { hq = "default", seats = [], watcher = "off", models, chime, mailPort } = setup as Record<string, unknown>;
   if (hq !== "default") {
     const provider = typeof hq === "object" && hq !== null ? String((hq as { provider?: unknown }).provider ?? "") : "";
@@ -86,12 +93,20 @@ export function checkSetup(setup: unknown, where: string): Setup {
     }
   }
   if (!Array.isArray(seats) || !seats.every((seat) => parseSeat(String(seat)))) {
-    throw new Error(`${where}: "seats" must list <harness>-<role> ids; harnesses are ${HARNESSES.join(", ")}, roles are ${ROLES.join(", ")}`);
+    throw new Error(
+      `${where}: "seats" must list <harness>-<role> ids; harnesses are ${HARNESSES.join(", ")}, roles are ${ROLES.join(", ")}`,
+    );
   }
-  if (!(WATCHER_MODES as readonly unknown[]).includes(watcher)) throw new Error(`${where}: "watcher" must be one of ${WATCHER_MODES.join(", ")}`);
-  if (models !== undefined && (typeof models !== "object" || models === null || Array.isArray(models))) throw new Error(`${where}: "models" must be an object shaped like room/models.json`);
+  if (!(WATCHER_MODES as readonly unknown[]).includes(watcher))
+    throw new Error(`${where}: "watcher" must be one of ${WATCHER_MODES.join(", ")}`);
+  if (models !== undefined && (typeof models !== "object" || models === null || Array.isArray(models)))
+    throw new Error(`${where}: "models" must be an object shaped like room/models.json`);
   if (chime !== undefined && typeof chime !== "boolean") throw new Error(`${where}: "chime" must be true or false`);
-  if (mailPort !== undefined && !(Number.isInteger(mailPort) && (mailPort as number) >= 0 && (mailPort as number) <= 65535)) throw new Error(`${where}: "mailPort" must be a port number`);
+  if (
+    mailPort !== undefined &&
+    !(Number.isInteger(mailPort) && (mailPort as number) >= 0 && (mailPort as number) <= 65535)
+  )
+    throw new Error(`${where}: "mailPort" must be a port number`);
   return setup as Setup;
 }
 
@@ -107,7 +122,9 @@ function machineModels(base: Models, setup: Setup): Models {
     // a model without thinking options carries none: "default" tells the prompts to leave it out
     models = merge(models, { seats: { hq: { thinking: "default", ...setup.hq } } }) as Models;
   }
-  return setup.models === undefined ? layModels(models, {}, "the model table") : layModels(models, setup.models, "this machine's model choices");
+  return setup.models === undefined
+    ? layModels(models, {}, "the model table")
+    : layModels(models, setup.models, "this machine's model choices");
 }
 
 const splitModel = (entry: string): [provider: string, model: string] => {
@@ -128,7 +145,8 @@ function modelsByProvider(models: Models): Map<string, Set<string>> {
 
 /** The seat a profile opens, taken from the table so a machine's own choice shows in the profile it uses. */
 function profileSeat(models: Models, role: Role): { entry: string; thinking: string } | null {
-  if (role === "hq" || role === "supervisor" || role === "lead") return { entry: models.seats[role].provider, thinking: models.seats[role].thinking };
+  if (role === "hq" || role === "supervisor" || role === "lead")
+    return { entry: models.seats[role].provider, thinking: models.seats[role].thinking };
   if (role === "peer") {
     const tier = models.peer.tiers.default ?? Object.values(models.peer.tiers)[0];
     return tier ? { entry: tier.providers[0], thinking: tier.thinking } : null;
@@ -137,9 +155,17 @@ function profileSeat(models: Models, role: Role): { entry: string; thinking: str
 }
 
 /** Works out the seats, providers, profiles, model table and policy for this machine; writes nothing. */
-export async function planRoom(input: { pluginDir: string; roomHome: string; setup: Setup; catalog: Catalog }): Promise<RoomPlan> {
+export async function planRoom(input: {
+  pluginDir: string;
+  roomHome: string;
+  setup: Setup;
+  catalog: Catalog;
+}): Promise<RoomPlan> {
   const { pluginDir, roomHome, setup, catalog } = input;
-  const seatsFile = readJson(join(pluginDir, "paseo", "seats.json")) as { seats?: Record<string, string[]>; restrictModels?: boolean };
+  const seatsFile = readJson(join(pluginDir, "paseo", "seats.json")) as {
+    seats?: Record<string, string[]>;
+    restrictModels?: boolean;
+  };
   const policy = readJson(join(pluginDir, "paseo", "policy.json")) as Record<string, any>;
   const profiles = readJson(join(pluginDir, "paseo", "profiles.json")) as Profile[];
   const models = machineModels(roomModels(pluginDir), setup);
@@ -148,13 +174,16 @@ export async function planRoom(input: { pluginDir: string; roomHome: string; set
   const seats: Record<string, string[]> = {};
   const enabled: string[] = [];
   const enable = (harness: string, role: string, where: string) => {
-    if (!(ROLES as readonly string[]).includes(role)) throw new Error(`${where}: unknown role ${role}; roles are ${ROLES.join(", ")}`);
-    if (!(HARNESSES as readonly string[]).includes(harness)) throw new Error(`${where}: unknown harness ${harness}; harnesses are ${HARNESSES.join(", ")}`);
+    if (!(ROLES as readonly string[]).includes(role))
+      throw new Error(`${where}: unknown role ${role}; roles are ${ROLES.join(", ")}`);
+    if (!(HARNESSES as readonly string[]).includes(harness))
+      throw new Error(`${where}: unknown harness ${harness}; harnesses are ${HARNESSES.join(", ")}`);
     if (enabled.includes(`${harness}-${role}`)) return;
     enabled.push(`${harness}-${role}`);
     (seats[role] ??= []).push(harness);
   };
-  for (const [role, harnesses] of Object.entries(seatsFile.seats ?? {})) for (const harness of harnesses ?? []) enable(harness, role, "paseo/seats.json");
+  for (const [role, harnesses] of Object.entries(seatsFile.seats ?? {}))
+    for (const harness of harnesses ?? []) enable(harness, role, "paseo/seats.json");
   // a seat the table names is a seat the room has
   const used = modelsByProvider(models);
   for (const provider of used.keys()) {
@@ -171,7 +200,8 @@ export async function planRoom(input: { pluginDir: string; roomHome: string; set
   const tools = policy.paseoTools as { all: string[]; allow: Record<string, string[]> };
   for (const [role, names] of Object.entries(tools.allow)) {
     const unknown = names.filter((name) => !tools.all.includes(name)).sort();
-    if (unknown.length) throw new Error(`paseo/policy.json: role ${role} allows unknown Paseo tools: ${unknown.join(", ")}`);
+    if (unknown.length)
+      throw new Error(`paseo/policy.json: role ${role} allows unknown Paseo tools: ${unknown.join(", ")}`);
   }
 
   const catalogs = new Map<Harness, Record<string, CatalogModel> | null>();
@@ -192,7 +222,9 @@ export async function planRoom(input: { pluginDir: string; roomHome: string; set
       description: `${ROLE_LABEL[role]} seat ${ISOLATION[harness]}; Paseo tools: ${allow.join(", ") || "none"}`,
       paseoTools: { enabled: true, disabledTools: tools.all.filter((tool) => !allow.includes(tool)) },
       // the seat's isolation is part of its provider: it holds for a session the plugin did not open
-      env: Object.fromEntries(Object.entries(launch.env).map(([name, value]) => [name, value.replaceAll("{runtime}", runtime)])),
+      env: Object.fromEntries(
+        Object.entries(launch.env).map(([name, value]) => [name, value.replaceAll("{runtime}", runtime)]),
+      ),
     };
     if (launch.extraArgs && Object.keys(launch.extraArgs).length) entry.options = { extraArgs: launch.extraArgs };
     if (harness === "claude") {
@@ -215,7 +247,15 @@ export async function planRoom(input: { pluginDir: string; roomHome: string; set
             id: model,
             label: found.label || model,
             ...(found.description ? { description: found.description } : {}),
-            ...(found.thinking.length ? { thinkingOptions: found.thinking.map((t) => ({ id: t, label: t, ...(t === found.defaultThinking ? { isDefault: true } : {}) })) } : {}),
+            ...(found.thinking.length
+              ? {
+                  thinkingOptions: found.thinking.map((t) => ({
+                    id: t,
+                    label: t,
+                    ...(t === found.defaultThinking ? { isDefault: true } : {}),
+                  })),
+                }
+              : {}),
           });
         }
         if (rows.length) {
@@ -236,13 +276,22 @@ export async function planRoom(input: { pluginDir: string; roomHome: string; set
       Object.assign(profile, { provider, model });
       const known = (await catalogOf(harness))?.[model];
       // a harness without session modes, or a model without that thinking option, takes no such setting
-      const thinking = seat.thinking && seat.thinking !== "default" && (!known || known.thinking.includes(seat.thinking)) ? seat.thinking : undefined;
-      for (const [key, value] of [["modeId", models.modes[harness]], ["thinkingOptionId", thinking]] as const) {
+      const thinking =
+        seat.thinking && seat.thinking !== "default" && (!known || known.thinking.includes(seat.thinking))
+          ? seat.thinking
+          : undefined;
+      for (const [key, value] of [
+        ["modeId", models.modes[harness]],
+        ["thinkingOptionId", thinking],
+      ] as const) {
         delete profile[key];
         if (value) profile[key] = value;
       }
     }
-    if (!(profile.provider in providers)) throw new Error(`paseo/profiles.json: profile ${profile.id} uses provider ${profile.provider}, which is not a seat the room sets up`);
+    if (!(profile.provider in providers))
+      throw new Error(
+        `paseo/profiles.json: profile ${profile.id} uses provider ${profile.provider}, which is not a seat the room sets up`,
+      );
   }
 
   policy.watcher.mode = setup.watcher ?? "off";

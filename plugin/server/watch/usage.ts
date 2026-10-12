@@ -16,7 +16,12 @@ export function usageReport(spend: ReturnType<Budget["summary"]>): UsageReport {
       { id: "calls", label: "Questions asked", value: String(spend.total.calls) },
       { id: "tokens", label: "Tokens read", value: String(spend.total.tokens) },
       { id: "today", label: "Spent today", value: `$${spend.today.usd.toFixed(4)}` },
-      { id: "pace", label: "Asking", value: spend.pace, ...(spend.pace === "open" ? {} : { tone: PACE_TONE[spend.pace] }) },
+      {
+        id: "pace",
+        label: "Asking",
+        value: spend.pace,
+        ...(spend.pace === "open" ? {} : { tone: PACE_TONE[spend.pace] }),
+      },
     ],
   };
 }

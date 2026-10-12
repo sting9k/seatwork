@@ -81,7 +81,12 @@ const MAIL = /^\s*SEATWORK MAIL\b/;
 const isPrompt = (entry: TimelineInput) => (entry.item as { type?: unknown } | null)?.type === "user_message";
 
 /** What the brief that opened a Peer's turn lacks: its creation prompt, or a brief in the mail that started it. */
-function briefGapOf(entries: readonly TimelineInput[], received: readonly string[], turnId: string | null, cwd: string): BriefGap | null {
+function briefGapOf(
+  entries: readonly TimelineInput[],
+  received: readonly string[],
+  turnId: string | null,
+  cwd: string,
+): BriefGap | null {
   const last = received.at(-1);
   if (last === undefined) return null;
   if (!MAIL.test(last)) {
@@ -111,12 +116,28 @@ export class Watcher {
   }
 
   private open(seat: SeatView, turnId: string | null): Turn {
-    return { id: turnId, startedAt: this.deps.now(), reads: 0, before: this.deps.snapshot(seat.cwd).catch(() => null), told: new Set(), mailed: false, carried: false };
+    return {
+      id: turnId,
+      startedAt: this.deps.now(),
+      reads: 0,
+      before: this.deps.snapshot(seat.cwd).catch(() => null),
+      told: new Set(),
+      mailed: false,
+      carried: false,
+    };
   }
 
   turnStarted(seat: SeatView, turnId: string | null): void {
     if (!this.watches(seat)) return;
-    const watched = this.seats.get(seat.agentId) ?? { seat, brief: null, mails: 0, briefsTold: new Set(), turn: null, ending: null, busy: Promise.resolve() };
+    const watched = this.seats.get(seat.agentId) ?? {
+      seat,
+      brief: null,
+      mails: 0,
+      briefsTold: new Set(),
+      turn: null,
+      ending: null,
+      busy: Promise.resolve(),
+    };
     watched.seat = seat;
     watched.ending = watched.turn ?? watched.ending;
     const turn = (watched.turn = this.open(seat, turnId));
@@ -126,13 +147,23 @@ export class Watcher {
   }
 
   async tick(): Promise<void> {
-    await Promise.all([...this.seats.values()].flatMap((watched) => (watched.turn ? [this.queue(watched, watched.turn, "live")] : [])));
+    await Promise.all(
+      [...this.seats.values()].flatMap((watched) => (watched.turn ? [this.queue(watched, watched.turn, "live")] : [])),
+    );
   }
 
   /** `carried`: the seat's report follows at once, so a notice may wait for it. */
   async turnEnded(seat: SeatView, turnId: string | null, carried: boolean): Promise<void> {
     if (!this.watches(seat)) return;
-    const watched = this.seats.get(seat.agentId) ?? { seat, brief: null, mails: 0, briefsTold: new Set(), turn: null, ending: null, busy: Promise.resolve() };
+    const watched = this.seats.get(seat.agentId) ?? {
+      seat,
+      brief: null,
+      mails: 0,
+      briefsTold: new Set(),
+      turn: null,
+      ending: null,
+      busy: Promise.resolve(),
+    };
     this.seats.set(seat.agentId, watched);
     // a turn that started before the plugin did is still read at its end
     const turn = [watched.turn, watched.ending].find((known) => known?.id === turnId) ?? this.open(seat, turnId);
@@ -153,13 +184,21 @@ export class Watcher {
   }
 
   private queue(watched: Watched, turn: Turn, moment: Moment): Promise<void> {
-    watched.busy = watched.busy.then(() => this.scan(watched, turn, moment)).catch((error) => this.deps.log(`watch: scan of ${watched.seat.agentId} failed: ${error instanceof Error ? error.message : String(error)}`));
+    watched.busy = watched.busy
+      .then(() => this.scan(watched, turn, moment))
+      .catch((error) =>
+        this.deps.log(
+          `watch: scan of ${watched.seat.agentId} failed: ${error instanceof Error ? error.message : String(error)}`,
+        ),
+      );
     return watched.busy;
   }
 
   private silentMinutes(seat: SeatView): number {
     if (seat.role === "lead") return this.deps.params.leadStallMinutes;
-    return READ_ONLY_TITLE.test(seat.title ?? "") ? this.deps.params.reviewStallMinutes : this.deps.params.peerStallMinutes;
+    return READ_ONLY_TITLE.test(seat.title ?? "")
+      ? this.deps.params.reviewStallMinutes
+      : this.deps.params.peerStallMinutes;
   }
 
   private async scan(watched: Watched, turn: Turn, moment: Moment): Promise<void> {
@@ -167,13 +206,19 @@ export class Watcher {
     const { policy } = this.deps;
     const view = await this.deps.timeline(seat.agentId);
     if (!view) {
-      if (moment === "end") this.deps.log(`watch: the turn of ${seat.agentId} was not read: the daemon gave no timeline`);
+      if (moment === "end")
+        this.deps.log(`watch: the turn of ${seat.agentId} was not read: the daemon gave no timeline`);
       return;
     }
     turn.reads += 1;
     // the next turn may have begun already: the history stops where this turn does
     const last = turn.id === null ? -1 : view.entries.findLastIndex((entry) => entry.turnId === turn.id);
-    const next = last < 0 ? -1 : view.entries.findIndex((entry, index) => index > last && entry.turnId !== undefined && entry.turnId !== turn.id);
+    const next =
+      last < 0
+        ? -1
+        : view.entries.findIndex(
+            (entry, index) => index > last && entry.turnId !== undefined && entry.turnId !== turn.id,
+          );
     const entries = next < 0 ? view.entries : view.entries.slice(0, next);
     const events = toEvents(entries, seat.cwd);
     const received = prompts(entries);
@@ -185,21 +230,58 @@ export class Watcher {
       watched.brief = parsed;
       briefAt = index;
     });
-    const briefGap = seat.role === "peer" && seat.parentRole === "lead" ? briefGapOf(entries, received, turn.id, seat.cwd) : null;
+    const briefGap =
+      seat.role === "peer" && seat.parentRole === "lead" ? briefGapOf(entries, received, turn.id, seat.cwd) : null;
     const before = await turn.before;
     const after = before && moment === "end" ? await this.deps.snapshot(seat.cwd).catch(() => null) : null;
     const changed = before && after ? await changedBetween(before, after) : null;
-    const facts = turnFacts({ events, turnStart: turnStartOf(entries, events, turn.id), cwd: seat.cwd, root: before?.root ?? seat.cwd, brief: watched.brief, ended: moment === "end", changed, now: this.deps.now(), startedAt: turn.startedAt, later: briefAt < 0 ? [] : received.slice(briefAt + 1) });
+    const facts = turnFacts({
+      events,
+      turnStart: turnStartOf(entries, events, turn.id),
+      cwd: seat.cwd,
+      root: before?.root ?? seat.cwd,
+      brief: watched.brief,
+      ended: moment === "end",
+      changed,
+      now: this.deps.now(),
+      startedAt: turn.startedAt,
+      later: briefAt < 0 ? [] : received.slice(briefAt + 1),
+    });
     const silent = this.silentMinutes(seat);
-    const result = gate({ facts, brief: watched.brief, moment, briefGap, now: this.deps.now(), pendingPermission: view.pendingPermission, thresholds: { ...policy.thresholds, silentMinutes: silent, inFlightMinutes: silent * policy.thresholds.inFlightFactor } });
+    const result = gate({
+      facts,
+      brief: watched.brief,
+      moment,
+      briefGap,
+      now: this.deps.now(),
+      pendingPermission: view.pendingPermission,
+      thresholds: {
+        ...policy.thresholds,
+        silentMinutes: silent,
+        inFlightMinutes: silent * policy.thresholds.inFlightFactor,
+      },
+    });
 
     const modeOf = (rule: RuleId) => policy.rules[rule] ?? "log";
     const findings: ScanFinding[] = [];
     for (const finding of result.findings) {
-      if (modeOf(finding.rule) === "off" || turn.told.has(finding.key) || (ABOUT_BRIEF.has(finding.rule) && watched.briefsTold.has(finding.key))) continue;
-      findings.push({ rule: finding.rule, key: finding.key, by: "facts", evidence: finding.evidence, outcome: "logged" });
+      if (
+        modeOf(finding.rule) === "off" ||
+        turn.told.has(finding.key) ||
+        (ABOUT_BRIEF.has(finding.rule) && watched.briefsTold.has(finding.key))
+      )
+        continue;
+      findings.push({
+        rule: finding.rule,
+        key: finding.key,
+        by: "facts",
+        evidence: finding.evidence,
+        outcome: "logged",
+      });
     }
-    const asked = result.questions.filter((question) => modeOf(question.rule) !== "off" && !turn.told.has(question.key));
+    const asked = result.questions.filter(
+      (question) => modeOf(question.rule) !== "off" && !turn.told.has(question.key),
+    );
     const engine = asked.length > 0 ? await this.ask(asked, facts, watched.brief, moment, findings) : undefined;
     if (findings.length === 0 && !engine && moment !== "end") return;
 
@@ -210,14 +292,38 @@ export class Watcher {
       turn.told.add(finding.key);
       if (ABOUT_BRIEF.has(finding.rule)) watched.briefsTold.add(finding.key);
     }
-    const record: ScanRecord = { at: new Date(this.deps.now()).toISOString(), seat: seat.agentId, role: seat.role, parent: seat.parent, turn: turn.id, moment, rev: REVISION, ...(facts.signal ? { signal: facts.signal } : {}), tests: facts.lastEdit ? facts.tests : "nothing-to-verify", statics: facts.lastEdit ? facts.statics : "nothing-to-verify", reads: turn.reads, ...(moment === "end" && ran ? { ran } : {}), findings, ...(engine ? { engine } : {}), ...(mail ? { mail } : {}) };
+    const record: ScanRecord = {
+      at: new Date(this.deps.now()).toISOString(),
+      seat: seat.agentId,
+      role: seat.role,
+      parent: seat.parent,
+      turn: turn.id,
+      moment,
+      rev: REVISION,
+      ...(facts.signal ? { signal: facts.signal } : {}),
+      tests: facts.lastEdit ? facts.tests : "nothing-to-verify",
+      statics: facts.lastEdit ? facts.statics : "nothing-to-verify",
+      reads: turn.reads,
+      ...(moment === "end" && ran ? { ran } : {}),
+      findings,
+      ...(engine ? { engine } : {}),
+      ...(mail ? { mail } : {}),
+    };
     this.deps.scans.append(record);
   }
 
   /** Puts the questions of the opened rules to the model and adds what it found to `findings`. */
-  private async ask(asked: readonly { rule: RuleId; key: string }[], facts: TurnFacts, brief: Brief | null, moment: Moment, findings: ScanFinding[]): Promise<ScanRecord["engine"]> {
+  private async ask(
+    asked: readonly { rule: RuleId; key: string }[],
+    facts: TurnFacts,
+    brief: Brief | null,
+    moment: Moment,
+    findings: ScanFinding[],
+  ): Promise<ScanRecord["engine"]> {
     const { policy, engine, budget } = this.deps;
-    const inquiries = asked.map((question) => inquiryFor(question.rule)).filter((inquiry): inquiry is Inquiry => inquiry !== undefined);
+    const inquiries = asked
+      .map((question) => inquiryFor(question.rule))
+      .filter((inquiry): inquiry is Inquiry => inquiry !== undefined);
     // what the facts alone say of a rule whose question could not be put
     const logFacts = (rules: readonly RuleId[] = asked.map((question) => question.rule)) => {
       for (const { rule, key } of asked) {
@@ -261,19 +367,37 @@ export class Watcher {
       if (score === null) continue;
       // below the bar the reading is kept as a score only: calibration needs the quiet cases too
       const holds = score >= (policy.scores[inquiry.rule] ?? 1);
-      findings.push({ rule: inquiry.rule, key, by: "model", score, evidence: holds ? inquiry.finding(facts, brief) : `asked; score ${score.toFixed(2)} is under the bar`, outcome: "logged" });
+      findings.push({
+        rule: inquiry.rule,
+        key,
+        by: "model",
+        score,
+        evidence: holds ? inquiry.finding(facts, brief) : `asked; score ${score.toFixed(2)} is under the bar`,
+        outcome: "logged",
+      });
     }
     return outcome;
   }
 
   /** Mails the seat above the turn's weightiest finding (one mail per turn, urgent ones excepted). */
-  private async tell(watched: Watched, turn: Turn, findings: ScanFinding[], facts: TurnFacts): Promise<string | undefined> {
+  private async tell(
+    watched: Watched,
+    turn: Turn,
+    findings: ScanFinding[],
+    facts: TurnFacts,
+  ): Promise<string | undefined> {
     const { policy } = this.deps;
     const { seat } = watched;
     if (!seat.parent) return undefined;
     const ready = findings
       // a rule that needs a reader is mailed only on a reading: its bare facts also fit an honest report
-      .filter((finding) => policy.rules[finding.rule] === "raise" && (finding.by === "facts" ? !inquiryFor(finding.rule) : (finding.score ?? 0) >= (policy.scores[finding.rule] ?? 1)))
+      .filter(
+        (finding) =>
+          policy.rules[finding.rule] === "raise" &&
+          (finding.by === "facts"
+            ? !inquiryFor(finding.rule)
+            : (finding.score ?? 0) >= (policy.scores[finding.rule] ?? 1)),
+      )
       .sort((a, b) => RULE_ORDER.indexOf(a.rule) - RULE_ORDER.indexOf(b.rule));
     const ofTurn = ready.filter((finding) => !ABOUT_BRIEF.has(finding.rule));
     const pick = ofTurn.find((finding) => URGENT.has(finding.rule)) ?? (turn.mailed ? undefined : ofTurn[0]);
@@ -283,12 +407,25 @@ export class Watcher {
     if (told.length === 0 || watched.mails >= policy.maxMailsPerSeat) return undefined;
     const who = `${seat.role} ${seat.title ?? seat.agentId}`;
     const basis = (finding: ScanFinding) => {
-      if (ABOUT_BRIEF.has(finding.rule)) return finding.key.endsWith(`:${CREATED_WITH}`) ? "This is read from the brief it was created with." : "This is read from the mail as it reached the Peer.";
-      return finding.by === "model" ? `The reading of its message is a model's (score ${finding.score?.toFixed(2)}); the rest is read from its tool calls.` : "This is read from its tool calls, not from what it says.";
+      if (ABOUT_BRIEF.has(finding.rule))
+        return finding.key.endsWith(`:${CREATED_WITH}`)
+          ? "This is read from the brief it was created with."
+          : "This is read from the mail as it reached the Peer.";
+      return finding.by === "model"
+        ? `The reading of its message is a model's (score ${finding.score?.toFixed(2)}); the rest is read from its tool calls.`
+        : "This is read from its tool calls, not from what it says.";
     };
     const advice = [
-      ...(pick ? ["Check it in one step (get_agent_activity for that seat, or git status and git diff in its directory). If it holds, deal with it as you would had you seen it yourself; if it does not, carry on."] : []),
-      ...(ofBrief ? ["A brief that lacks a line is mended with a REVISED BRIEF: the whole brief again, with the line. The last line is needed word for word: without it a Peer stops asking and guesses. For another line, carry on if the brief says it in other words."] : []),
+      ...(pick
+        ? [
+            "Check it in one step (get_agent_activity for that seat, or git status and git diff in its directory). If it holds, deal with it as you would had you seen it yourself; if it does not, carry on.",
+          ]
+        : []),
+      ...(ofBrief
+        ? [
+            "A brief that lacks a line is mended with a REVISED BRIEF: the whole brief again, with the line. The last line is needed word for word: without it a Peer stops asking and guesses. For another line, carry on if the brief says it in other words.",
+          ]
+        : []),
     ];
     const id = await this.deps.notify({
       to: seat.parent,

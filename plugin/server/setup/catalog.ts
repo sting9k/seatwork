@@ -6,8 +6,24 @@ import type { Catalog, CatalogModel } from "./plan";
 /** The catalogs as the `paseo` CLI lists them; null when the daemon does not answer. */
 export const cliCatalog: Catalog = async (harness) => {
   try {
-    const rows = JSON.parse(await paseoCli(["provider", "models", harness, "--json"])) as { id: string; model?: string; description?: string; thinkingOptionIds?: string[]; defaultThinkingOptionId?: string | null }[];
-    return Object.fromEntries(rows.map((row) => [row.id, { label: row.model ?? row.id, description: row.description, thinking: row.thinkingOptionIds ?? [], defaultThinking: row.defaultThinkingOptionId ?? undefined }]));
+    const rows = JSON.parse(await paseoCli(["provider", "models", harness, "--json"])) as {
+      id: string;
+      model?: string;
+      description?: string;
+      thinkingOptionIds?: string[];
+      defaultThinkingOptionId?: string | null;
+    }[];
+    return Object.fromEntries(
+      rows.map((row) => [
+        row.id,
+        {
+          label: row.model ?? row.id,
+          description: row.description,
+          thinking: row.thinkingOptionIds ?? [],
+          defaultThinking: row.defaultThinkingOptionId ?? undefined,
+        },
+      ]),
+    );
   } catch {
     return null;
   }
@@ -27,7 +43,15 @@ export async function harnessStates(paseo: PaseoApi, harnesses: readonly Harness
   return harnesses.map((id) => {
     const entry = snapshot.entries.find((e) => e.provider === id);
     const models = Object.fromEntries(
-      (entry?.models ?? []).map((m) => [m.id, { label: m.label, description: m.description, thinking: (m.thinkingOptions ?? []).map((o) => o.id), defaultThinking: m.defaultThinkingOptionId }]),
+      (entry?.models ?? []).map((m) => [
+        m.id,
+        {
+          label: m.label,
+          description: m.description,
+          thinking: (m.thinkingOptions ?? []).map((o) => o.id),
+          defaultThinking: m.defaultThinkingOptionId,
+        },
+      ]),
     );
     return {
       id,

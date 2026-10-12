@@ -88,7 +88,10 @@ export async function roomStatus(paseo: PaseoApi, engine: MailEngine, owed: Owed
     groups.get(key)!.members.push(seat);
   }
   const projects = [...groups.entries()]
-    .filter(([key, group]) => group.members.length > 0 || (registry?.projects.some((project) => project.name === key) ?? false))
+    .filter(
+      ([key, group]) =>
+        group.members.length > 0 || (registry?.projects.some((project) => project.name === key) ?? false),
+    )
     .map(([, group]) => {
       const inGroup = new Set(group.members.map((seat) => seat.agentId));
       // a project's own tree: its Supervisor is at the top, whoever opened it
@@ -96,12 +99,26 @@ export async function roomStatus(paseo: PaseoApi, engine: MailEngine, owed: Owed
         const parent = engine.parentOf(id);
         return parent && inGroup.has(parent) ? parent : null;
       };
-      const seats: { agentId: string; role: string; title: string | null; status: string; held: number; depth: number }[] = [];
+      const seats: {
+        agentId: string;
+        role: string;
+        title: string | null;
+        status: string;
+        held: number;
+        depth: number;
+      }[] = [];
       const walk = (parent: string | null, depth: number) => {
         for (const seat of group.members) {
           if (above(seat.agentId) !== parent) continue;
           const agent = live.get(seat.agentId)!;
-          seats.push({ agentId: seat.agentId, role: seat.role, title: seat.title, status: waitsOnSomeone(agent) ? "waiting" : agent.status, held: engine.held(seat.agentId).length, depth });
+          seats.push({
+            agentId: seat.agentId,
+            role: seat.role,
+            title: seat.title,
+            status: waitsOnSomeone(agent) ? "waiting" : agent.status,
+            held: engine.held(seat.agentId).length,
+            depth,
+          });
           walk(seat.agentId, depth + 1);
         }
       };

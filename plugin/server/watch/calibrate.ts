@@ -39,7 +39,12 @@ function sentMail(mail: readonly MailLine[]): Sent {
 }
 
 /** The first verdict of the seat above on a turn that handed work over; null while there is none. */
-function verdictOf(scan: ScanRecord, sent: Sent, now: number, windowMinutes: number): { label: Label; at: number } | null {
+function verdictOf(
+  scan: ScanRecord,
+  sent: Sent,
+  now: number,
+  windowMinutes: number,
+): { label: Label; at: number } | null {
   if (scan.moment !== "end" || !scan.parent || !scan.signal || !CLOSES_WORK.has(scan.signal)) return null;
   const ended = Date.parse(scan.at);
   const until = ended + windowMinutes * 60_000;
@@ -70,7 +75,12 @@ function turnEnds(scans: readonly ScanRecord[]): Map<string, ScanRecord[]> {
 }
 
 /** Whether a returned turn bears out a rule's finding; null when nothing shows why the work came back. */
-function borneOut(rule: RuleId, scan: ScanRecord, verdictAt: number, ends: ReadonlyMap<string, ScanRecord[]>): boolean | null {
+function borneOut(
+  rule: RuleId,
+  scan: ScanRecord,
+  verdictAt: number,
+  ends: ReadonlyMap<string, ScanRecord[]>,
+): boolean | null {
   if (rule !== "unverified-completion") return true;
   const ended = Date.parse(scan.at);
   for (const turn of (scan.parent && ends.get(scan.parent)) || []) {
@@ -103,7 +113,7 @@ export function auroc(items: readonly Scored[]): Roc | null {
   if (positives === 0 || negatives === 0) return null;
   const sorted = [...items].sort((a, b) => a.score - b.score);
   let rankSum = 0;
-  for (let i = 0; i < sorted.length; ) {
+  for (let i = 0; i < sorted.length;) {
     let j = i;
     while (j < sorted.length && sorted[j].score === sorted[i].score) j += 1;
     const meanRank = (i + 1 + j) / 2;
@@ -113,7 +123,8 @@ export function auroc(items: readonly Scored[]): Roc | null {
   const a = (rankSum - (positives * (positives + 1)) / 2) / (positives * negatives);
   const q1 = a / (2 - a);
   const q2 = (2 * a * a) / (1 + a);
-  const variance = (a * (1 - a) + (positives - 1) * (q1 - a * a) + (negatives - 1) * (q2 - a * a)) / (positives * negatives);
+  const variance =
+    (a * (1 - a) + (positives - 1) * (q1 - a * a) + (negatives - 1) * (q2 - a * a)) / (positives * negatives);
   return { auroc: a, se: Math.sqrt(Math.max(0, variance)), positives, negatives };
 }
 
@@ -133,7 +144,7 @@ export function operatingPoint(items: readonly Scored[], maxFalseRate: number): 
   let hits = 0;
   let falseHits = 0;
   // from the highest score down: all read so far is flagged
-  for (let i = 0; i < sorted.length; ) {
+  for (let i = 0; i < sorted.length;) {
     const threshold = sorted[i].score;
     for (; i < sorted.length && sorted[i].score === threshold; i += 1) {
       if (sorted[i].positive) hits += 1;
@@ -173,7 +184,13 @@ export interface Calibration {
   rules: RuleReport[];
 }
 
-export function calibrate(scans: readonly ScanRecord[], mail: readonly MailLine[], policy: CalibrationPolicy, now: number, rev: number): Calibration {
+export function calibrate(
+  scans: readonly ScanRecord[],
+  mail: readonly MailLine[],
+  policy: CalibrationPolicy,
+  now: number,
+  rev: number,
+): Calibration {
   const turnKey = (scan: ScanRecord) => `${scan.seat}:${scan.turn ?? scan.at}`;
   const labels = new Map<string, Label>();
   /** Per turn that was sent back: the scan that ended it and when the verdict came. */
@@ -197,9 +214,14 @@ export function calibrate(scans: readonly ScanRecord[], mail: readonly MailLine[
     turns.add(key);
     for (const finding of scan.findings) {
       const perRule = said.get(key) ?? new Map();
-      const score = finding.by === "facts" ? 1 : finding.score ?? 0;
+      const score = finding.by === "facts" ? 1 : (finding.score ?? 0);
       const before = perRule.get(finding.rule);
-      perRule.set(finding.rule, { rule: finding.rule, by: finding.by, score: Math.max(score, before?.score ?? 0), raised: finding.outcome === "raised" || before?.raised === true });
+      perRule.set(finding.rule, {
+        rule: finding.rule,
+        by: finding.by,
+        score: Math.max(score, before?.score ?? 0),
+        raised: finding.outcome === "raised" || before?.raised === true,
+      });
       said.set(key, perRule);
     }
   }
@@ -238,17 +260,28 @@ export function calibrate(scans: readonly ScanRecord[], mail: readonly MailLine[
 }
 
 export function renderCalibration(result: Calibration, policy: CalibrationPolicy): string {
-  const lines = [`watched turns ${result.turns}, read ${result.reads} times; labelled by what the seat above did ${result.labelled} (sent back ${result.returned}); sent back with a finding ${result.returnedWithFinding}/${result.returned}`];
+  const lines = [
+    `watched turns ${result.turns}, read ${result.reads} times; labelled by what the seat above did ${result.labelled} (sent back ${result.returned}); sent back with a finding ${result.returnedWithFinding}/${result.returned}`,
+  ];
   for (const rule of result.rules.sort((a, b) => b.spoke - a.spoke)) {
-    const precision = rule.labelled > 0 ? `${rule.returned}/${rule.labelled} of its labelled turns were sent back${rule.rule === "unverified-completion" ? " after a test failed for the seat above" : ""}` : "no labelled turn yet";
+    const precision =
+      rule.labelled > 0
+        ? `${rule.returned}/${rule.labelled} of its labelled turns were sent back${rule.rule === "unverified-completion" ? " after a test failed for the seat above" : ""}`
+        : "no labelled turn yet";
     if (rule.by === "facts") {
       lines.push(`${rule.rule} (facts): spoke in ${rule.spoke} turns, mailed ${rule.raised}; ${precision}`);
       continue;
     }
-    const roc = rule.roc ? `AUROC ${rule.roc.auroc.toFixed(2)} ±${(1.96 * rule.roc.se).toFixed(2)}` : "AUROC needs both kinds of label";
+    const roc = rule.roc
+      ? `AUROC ${rule.roc.auroc.toFixed(2)} ±${(1.96 * rule.roc.se).toFixed(2)}`
+      : "AUROC needs both kinds of label";
     const ready = rule.roc && rule.labelled >= policy.minLabels && rule.roc.auroc >= policy.minAuroc && rule.operating;
-    const advice = ready ? `fit to mail at ${rule.operating!.threshold.toFixed(2)} (catches ${(rule.operating!.recall * 100).toFixed(0)}% at ${(rule.operating!.falseRate * 100).toFixed(0)}% false)` : `keep logging until ${policy.minLabels} labels and AUROC ${policy.minAuroc}`;
-    lines.push(`${rule.rule} (model): asked in ${rule.spoke} turns, mailed ${rule.raised}; ${precision}; ${roc}; ${advice}`);
+    const advice = ready
+      ? `fit to mail at ${rule.operating!.threshold.toFixed(2)} (catches ${(rule.operating!.recall * 100).toFixed(0)}% at ${(rule.operating!.falseRate * 100).toFixed(0)}% false)`
+      : `keep logging until ${policy.minLabels} labels and AUROC ${policy.minAuroc}`;
+    lines.push(
+      `${rule.rule} (model): asked in ${rule.spoke} turns, mailed ${rule.raised}; ${precision}; ${roc}; ${advice}`,
+    );
   }
   return lines.join("\n");
 }

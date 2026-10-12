@@ -192,7 +192,8 @@ function lex(src: string, state: { complete: boolean }): Token[] {
   };
 
   const skipBlanks = () => {
-    while (i < src.length && (src[i] === " " || src[i] === "\t" || (src[i] === "\\" && src[i + 1] === "\n"))) i += src[i] === "\\" ? 2 : 1;
+    while (i < src.length && (src[i] === " " || src[i] === "\t" || (src[i] === "\\" && src[i + 1] === "\n")))
+      i += src[i] === "\\" ? 2 : 1;
   };
 
   /** Reads the redirection whose operator starts at `at`; returns the index after it. */
@@ -221,12 +222,14 @@ function lex(src: string, state: { complete: boolean }): Token[] {
       i += 1;
       skipBlanks();
       const word = readWord();
-      if (!/^[0-9]+-?$|^-$/.test(word.value) && op !== "<") tokens.push({ t: "redirect", op, target: word.value, subs: word.subs, ...(fd === undefined ? {} : { fd }) });
+      if (!/^[0-9]+-?$|^-$/.test(word.value) && op !== "<")
+        tokens.push({ t: "redirect", op, target: word.value, subs: word.subs, ...(fd === undefined ? {} : { fd }) });
       return i;
     }
     skipBlanks();
     const word = readWord();
-    if (word.value) tokens.push({ t: "redirect", op, target: word.value, subs: word.subs, ...(fd === undefined ? {} : { fd }) });
+    if (word.value)
+      tokens.push({ t: "redirect", op, target: word.value, subs: word.subs, ...(fd === undefined ? {} : { fd }) });
     return i;
   };
 
@@ -296,7 +299,6 @@ function lex(src: string, state: { complete: boolean }): Token[] {
   }
   if (pending.length > 0) state.complete = false;
   return tokens;
-
 }
 
 /* ---------- parser ---------- */
@@ -324,7 +326,8 @@ function parse(source: string, depth: number, state: { complete: boolean }): Sim
     const current = draft;
     draft = { words: [], redirects: [], subs: [] };
     for (const sub of current.subs) {
-      for (const inner of parse(sub, depth + 1, state)) out.push({ ...inner, substituted: true, joiner: inner.joiner ?? ";" });
+      for (const inner of parse(sub, depth + 1, state))
+        out.push({ ...inner, substituted: true, joiner: inner.joiner ?? ";" });
     }
     out.push(...build(current, joiner, loops > 0, depth, state));
   };
@@ -407,7 +410,13 @@ function peel(words: string[], count: number, valued: readonly string[]): string
 }
 
 /** One drafted command → its simple commands (more than one when it wraps a `-c` script). */
-function build(draft: Draft, joiner: Joiner | null, inLoop: boolean, depth: number, state: { complete: boolean }): SimpleCommand[] {
+function build(
+  draft: Draft,
+  joiner: Joiner | null,
+  inLoop: boolean,
+  depth: number,
+  state: { complete: boolean },
+): SimpleCommand[] {
   let words = draft.words;
   let viaXargs = false;
   for (let guard = 0; guard < 12; guard += 1) {
@@ -427,7 +436,11 @@ function build(draft: Draft, joiner: Joiner | null, inLoop: boolean, depth: numb
   if (words.length === 0) return [];
   const program = basename(words[0]);
   // a script handed to a shell as text is read as if it had been typed
-  const scriptAt = SHELLS.has(program) ? words.findIndex((w, i) => i > 0 && /^-[a-zA-Z]*c[a-zA-Z]*$/.test(w)) : program === "eval" ? 0 : -1;
+  const scriptAt = SHELLS.has(program)
+    ? words.findIndex((w, i) => i > 0 && /^-[a-zA-Z]*c[a-zA-Z]*$/.test(w))
+    : program === "eval"
+      ? 0
+      : -1;
   if (scriptAt >= 0 && words[scriptAt + 1] !== undefined) {
     const script = program === "eval" ? words.slice(1).join(" ") : words[scriptAt + 1];
     const inner = parse(script, depth + 1, state);
@@ -467,5 +480,7 @@ function alwaysFails(command: SimpleCommand | undefined): boolean {
   if (!command) return false;
   const [program, code] = command.argv;
   if (program === "false") return true;
-  return (program === "exit" || program === "return") && code !== undefined && /^[0-9]+$/.test(code) && Number(code) !== 0;
+  return (
+    (program === "exit" || program === "return") && code !== undefined && /^[0-9]+$/.test(code) && Number(code) !== 0
+  );
 }

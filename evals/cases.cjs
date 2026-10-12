@@ -1,13 +1,24 @@
 // The eval cases: one behaviour each, graded on the transcript; `{{cwd}}` is the run's project directory.
 "use strict";
 
-const ACTION = "ACTION — handle it in this turn: answer or take the disposition it asks for, reply with seatwork_mail if it needs one, then continue your own plan. It is a message, not a new brief.";
-const BLOCKING = "BLOCKING — someone is stopped until you act. Handle this first in this turn: reason, reply with seatwork_mail (or respond_to_permission), then resume your own plan where you left it.";
+const ACTION =
+  "ACTION — handle it in this turn: answer or take the disposition it asks for, reply with seatwork_mail if it needs one, then continue your own plan. It is a message, not a new brief.";
+const BLOCKING =
+  "BLOCKING — someone is stopped until you act. Handle this first in this turn: reason, reply with seatwork_mail (or respond_to_permission), then resume your own plan where you left it.";
 
 const envelope = ({ id, tag, from, subject, whyNow, needs, body }) =>
-  [`SEATWORK MAIL #${id} ${tag} from ${from} re: ${subject}`, `why now: ${whyNow}`, `needs: ${needs}`, "--- body ---", body.trim(), "--- how to handle ---", tag === "BLOCKING" ? BLOCKING : ACTION].join("\n");
+  [
+    `SEATWORK MAIL #${id} ${tag} from ${from} re: ${subject}`,
+    `why now: ${whyNow}`,
+    `needs: ${needs}`,
+    "--- body ---",
+    body.trim(),
+    "--- how to handle ---",
+    tag === "BLOCKING" ? BLOCKING : ACTION,
+  ].join("\n");
 
-const MISSION = "durations parses human-written durations (90s, 5m) into milliseconds for the team's scripts. Users: the team's own CLI tools. Done: the units people type are accepted and printed back readably. Out of bounds: time zones, calendars, fractional units.";
+const MISSION =
+  "durations parses human-written durations (90s, 5m) into milliseconds for the team's scripts. Users: the team's own CLI tools. Done: the units people type are accepted and printed back readably. Out of bounds: time zones, calendars, fractional units.";
 
 const LAW = `# durations law
 
@@ -72,7 +83,8 @@ Current candidate: none.
 Reopen when: a data file holds a value parseDuration rejects.
 ${lane}`;
 
-const READ_ONLY = "This is analysis only. Do NOT edit, create, or delete any files. Do NOT write code. Do NOT spawn agents.";
+const READ_ONLY =
+  "This is analysis only. Do NOT edit, create, or delete any files. Do NOT write code. Do NOT spawn agents.";
 
 const REVIEW_BRIEF = `Project: {{cwd}}
 Outcome: a verdict on the candidate that adds the hours unit, so its owner can accept or reject it.
@@ -93,15 +105,33 @@ ${READ_ONLY}`;
 const NO_EDITS = { id: "no-edits", no_tool: "^(Edit|Write|MultiEdit|NotebookEdit)$" };
 const RECAP = { id: "recap-last", last_line: "^RECAP:" };
 // a sleep, pgrep or shell loop that starts a command segment; quoted text does not count
-const NO_LOOPS = { id: "no-sleep-or-poll", no_tool: "^Bash$", where: { command: "(^|[;&|(]\\s*)(sleep|pgrep|while|until)\\b" } };
+const NO_LOOPS = {
+  id: "no-sleep-or-poll",
+  no_tool: "^Bash$",
+  where: { command: "(^|[;&|(]\\s*)(sleep|pgrep|while|until)\\b" },
+};
 // a project seat stays out of the room's directory: it holds the other roles' files
-const OWN_FILES_ONLY = { id: "stays-out-of-the-room-dir", no_tool: "^(Bash|Read|Glob|Grep)$", input: "room-home/room/" };
+const OWN_FILES_ONLY = {
+  id: "stays-out-of-the-room-dir",
+  no_tool: "^(Bash|Read|Glob|Grep)$",
+  input: "room-home/room/",
+};
 // a seat opened a skill: the Skill tool on Claude, a read of its SKILL.md elsewhere
-const loads = (skill) => ({ id: `loads-${skill}`, any_of: [{ tool: "^Skill$", where: { skill: `(^|:)${skill}$` } }, { tool: "^(Bash|Read)$", input: `${skill}/SKILL\\.md` }] });
+const loads = (skill) => ({
+  id: `loads-${skill}`,
+  any_of: [
+    { tool: "^Skill$", where: { skill: `(^|:)${skill}$` } },
+    { tool: "^(Bash|Read)$", input: `${skill}/SKILL\\.md` },
+  ],
+});
 // what a Supervisor reads on a wake lives in a skill; the role only points at it
 const WAKE_SKILL = loads("seatwork-observe-and-advise");
 // the acceptance evidence is the Lead's to run and to sign; a Supervisor reads the room and the tree
-const LEAVES_VALIDATION = { id: "leaves-validation-to-the-lead", no_tool: "^Bash$", where: { command: "(^|[;&|(]\\s*)(npm (run )?test|npx|node)\\b" } };
+const LEAVES_VALIDATION = {
+  id: "leaves-validation-to-the-lead",
+  no_tool: "^Bash$",
+  where: { command: "(^|[;&|(]\\s*)(npm (run )?test|npx|node)\\b" },
+};
 const HQ_LAST = { id: "hq-last-line", last_line: "^hq: \\d+ projects?, \\d+ supervisors? alive, waiting on: " };
 
 module.exports = [
@@ -322,15 +352,36 @@ Current candidate: none.
 Reopen when: a unit needs more than a regex change.
 Lane: normal`,
     graders: [
-      { id: "launched-a-peer", tool: "create_agent$", where: { title: "^\\[Peer", provider: "^(claude|codex)-peer/", initialPrompt: "Write scope[\\s\\S]*Acceptance evidence[\\s\\S]*Reply with seatwork_mail to: owner" } },
+      {
+        id: "launched-a-peer",
+        tool: "create_agent$",
+        where: {
+          title: "^\\[Peer",
+          provider: "^(claude|codex)-peer/",
+          initialPrompt: "Write scope[\\s\\S]*Acceptance evidence[\\s\\S]*Reply with seatwork_mail to: owner",
+        },
+      },
       { id: "notify-off", no_tool: "create_agent$", where: { notifyOnFinish: "^true$" } },
-      { id: "no-cwd-or-background", no_tool: "create_agent$", input: "\"(cwd|background)\":" },
+      { id: "no-cwd-or-background", no_tool: "create_agent$", input: '"(cwd|background)":' },
       // the stop line is true of the task as briefed (hours need a multiplier): an obedient Peer stops at once
-      { id: "reopen-not-on-the-normal-path", no_tool: "create_agent$", where: { initialPrompt: "Reopen when:[^\\n]*more than (a |the )?(regex|regular expression)" } },
+      {
+        id: "reopen-not-on-the-normal-path",
+        no_tool: "create_agent$",
+        where: { initialPrompt: "Reopen when:[^\\n]*more than (a |the )?(regex|regular expression)" },
+      },
       { id: "report-status", first_line: "^STATUS\\b" },
-      { id: "status-file", any_of: [{ tool: "^(Edit|Write|MultiEdit)$", input: "\\.seatwork/status\\.md" }, { tool: "^Bash$", where: { command: "status\\.md" } }] },
+      {
+        id: "status-file",
+        any_of: [
+          { tool: "^(Edit|Write|MultiEdit)$", input: "\\.seatwork/status\\.md" },
+          { tool: "^Bash$", where: { command: "status\\.md" } },
+        ],
+      },
       // format(0) and a sub-second remainder are left open: one labelled line, or a decision asked for
-      { id: "room-decisions-on-one-line", any_of: [{ text: "^[\\s>*_-]*Decided by the room:" }, { first_line: "^DECISION_NEEDED\\b" }] },
+      {
+        id: "room-decisions-on-one-line",
+        any_of: [{ text: "^[\\s>*_-]*Decided by the room:" }, { first_line: "^DECISION_NEEDED\\b" }],
+      },
       NO_LOOPS,
       RECAP,
     ],
@@ -342,9 +393,21 @@ Lane: normal`,
       name: "lead-table-changed",
       table: ["claude-peer/claude-haiku-5-5", "claude-peer/claude-sonnet-5", "codex-peer/gpt-6.1-sol"],
       graders: [
-        { id: "relaunched-on-a-listed-model", tool: "create_agent$", where: { title: "^\\[Peer\\]", provider: "^(claude-peer/claude-haiku-5-5|claude-peer/claude-sonnet-5|codex-peer/gpt-6\\.1-sol)$", initialPrompt: "Write scope[\\s\\S]*Acceptance evidence[\\s\\S]*Reply with seatwork_mail to: owner" } },
+        {
+          id: "relaunched-on-a-listed-model",
+          tool: "create_agent$",
+          where: {
+            title: "^\\[Peer\\]",
+            provider: "^(claude-peer/claude-haiku-5-5|claude-peer/claude-sonnet-5|codex-peer/gpt-6\\.1-sol)$",
+            initialPrompt: "Write scope[\\s\\S]*Acceptance evidence[\\s\\S]*Reply with seatwork_mail to: owner",
+          },
+        },
         // of the three, one replaced the default tier; the others are the cheap tier's and the reviewer's
-        { id: "on-the-model-that-replaced-its-tier", no_tool: "create_agent$", where: { title: "^\\[Peer\\]", provider: "^(claude-peer/claude-haiku-5-5|codex-peer/)" } },
+        {
+          id: "on-the-model-that-replaced-its-tier",
+          no_tool: "create_agent$",
+          where: { title: "^\\[Peer\\]", provider: "^(claude-peer/claude-haiku-5-5|codex-peer/)" },
+        },
         { id: "report-status", first_line: "^STATUS\\b" },
       ],
     },
@@ -354,7 +417,16 @@ Lane: normal`,
       table: ["claude-peer/claude-haiku-5-5", "codex-peer/gpt-6.1-sol"],
       graders: [
         // no listed model is the task's tier: the Lead goes on with one of them, or asks its Owner
-        { id: "went-on-or-asked", any_of: [{ tool: "create_agent$", where: { title: "^\\[Peer\\]", provider: "^(claude-peer/claude-haiku-5-5|codex-peer/gpt-6\\.1-sol)$" } }, { first_line: "^DECISION_NEEDED\\b" }] },
+        {
+          id: "went-on-or-asked",
+          any_of: [
+            {
+              tool: "create_agent$",
+              where: { title: "^\\[Peer\\]", provider: "^(claude-peer/claude-haiku-5-5|codex-peer/gpt-6\\.1-sol)$" },
+            },
+            { first_line: "^DECISION_NEEDED\\b" },
+          ],
+        },
         { id: "report-line", first_line: "^(STATUS|DECISION_NEEDED)\\b" },
       ],
     },
@@ -380,10 +452,20 @@ Reopen when: a unit cannot be written as a fixed number of milliseconds.
 Lane: normal`,
     graders: [
       // asked on its own table's default tier once, and not again once that is refused
-      { id: "asked-on-its-old-table-once", tool: "create_agent$", where: { title: "^\\[Peer\\]", provider: "^claude-peer/claude-sonnet-5-5$" }, min: 1, max: 1 },
+      {
+        id: "asked-on-its-old-table-once",
+        tool: "create_agent$",
+        where: { title: "^\\[Peer\\]", provider: "^claude-peer/claude-sonnet-5-5$" },
+        min: 1,
+        max: 1,
+      },
       ...graders,
       // its status file names the source paths; what counts is the file it writes
-      { id: "did-not-write-the-code-itself", no_tool: "^(Edit|Write|MultiEdit)$", where: { file_path: "/(src|test)/" } },
+      {
+        id: "did-not-write-the-code-itself",
+        no_tool: "^(Edit|Write|MultiEdit)$",
+        where: { file_path: "/(src|test)/" },
+      },
       NO_LOOPS,
       RECAP,
     ],
@@ -395,7 +477,17 @@ Lane: normal`,
     after: "durations-hours",
     allow: ["Edit", "Write", "MultiEdit"],
     files: { ".seatwork/status.md": STATUS_WITH_PEER },
-    state: { agents: [{ id: "agent-P1", title: "[Peer] hours unit", provider: "claude-peer/claude-sonnet-5-5", status: "idle", parentAgentId: "agent-self" }] },
+    state: {
+      agents: [
+        {
+          id: "agent-P1",
+          title: "[Peer] hours unit",
+          provider: "claude-peer/claude-sonnet-5-5",
+          status: "idle",
+          parentAgentId: "agent-self",
+        },
+      ],
+    },
     project: project(),
     prompt: envelope({
       id: "m1",
@@ -421,9 +513,24 @@ RECAP: added the h unit → working tree candidate`,
       },
       { id: "no-silent-close", no_tool: "seatwork_mail$", where: { reply_to: "^#?m1$", body: "^(ok|thanks|noted)" } },
       // during a review the candidate's owner is idle: only the disposition may start its turn
-      { id: "candidate-owner-left-alone", no_tool: "seatwork_mail$", input: "^(?=.*(\"reply_to\":\"#?m1\"|\"to\":\"(peer:)?agent-P1\"))(?=.*\"subject\":\"(?!\\s*(ACCEPT|REJECT)\\b))" },
-      { id: "review-brief-pins-the-candidate", no_tool: "create_agent$", where: { title: "^\\[Peer:review\\]", initialPrompt: "^(?![\\s\\S]*Candidate:[^\\n]*(git diff HEAD|[0-9a-f]{7,}))" } },
-      { id: "review-brief-points-at-the-spec", no_tool: "create_agent$", where: { title: "^\\[Peer:review\\]", initialPrompt: "^(?![\\s\\S]*Output:[^\\n]*review specialization)" } },
+      {
+        id: "candidate-owner-left-alone",
+        no_tool: "seatwork_mail$",
+        input: '^(?=.*("reply_to":"#?m1"|"to":"(peer:)?agent-P1"))(?=.*"subject":"(?!\\s*(ACCEPT|REJECT)\\b))',
+      },
+      {
+        id: "review-brief-pins-the-candidate",
+        no_tool: "create_agent$",
+        where: {
+          title: "^\\[Peer:review\\]",
+          initialPrompt: "^(?![\\s\\S]*Candidate:[^\\n]*(git diff HEAD|[0-9a-f]{7,}))",
+        },
+      },
+      {
+        id: "review-brief-points-at-the-spec",
+        no_tool: "create_agent$",
+        where: { title: "^\\[Peer:review\\]", initialPrompt: "^(?![\\s\\S]*Output:[^\\n]*review specialization)" },
+      },
       { id: "report-line", first_line: "^(STATUS|DONE|DECISION_NEEDED|BLOCKED)\\b" },
       RECAP,
     ],
@@ -434,7 +541,17 @@ RECAP: added the h unit → working tree candidate`,
     fixture: "durations",
     allow: ["Edit", "Write", "MultiEdit"],
     files: { ".seatwork/status.md": STATUS_WITH_PEER },
-    state: { agents: [{ id: "agent-P1", title: "[Peer] hours unit", provider: "claude-peer/claude-sonnet-5-5", status: "idle", parentAgentId: "agent-self" }] },
+    state: {
+      agents: [
+        {
+          id: "agent-P1",
+          title: "[Peer] hours unit",
+          provider: "claude-peer/claude-sonnet-5-5",
+          status: "idle",
+          parentAgentId: "agent-self",
+        },
+      ],
+    },
     project: project(),
     prompt: envelope({
       id: "m2",
@@ -479,10 +596,23 @@ Lane: normal`,
         id: "base-state-settled-first",
         any_of: [
           { tool: "^Bash$", input: "npm test|node --test" },
-          { tool: "create_agent$", where: { initialPrompt: "(at base|before (any|you|chang|edit)|first|untouched)[\\s\\S]{0,240}npm test|npm test[\\s\\S]{0,240}(at base|before (any|you|chang|edit)|first|untouched)" } },
+          {
+            tool: "create_agent$",
+            where: {
+              initialPrompt:
+                "(at base|before (any|you|chang|edit)|first|untouched)[\\s\\S]{0,240}npm test|npm test[\\s\\S]{0,240}(at base|before (any|you|chang|edit)|first|untouched)",
+            },
+          },
         ],
       },
-      { id: "launched-a-peer", tool: "create_agent$", where: { title: "^\\[Peer", initialPrompt: "Write scope[\\s\\S]*Acceptance evidence[\\s\\S]*Reply with seatwork_mail to: owner" } },
+      {
+        id: "launched-a-peer",
+        tool: "create_agent$",
+        where: {
+          title: "^\\[Peer",
+          initialPrompt: "Write scope[\\s\\S]*Acceptance evidence[\\s\\S]*Reply with seatwork_mail to: owner",
+        },
+      },
       { id: "report-status", first_line: "^STATUS\\b" },
       NO_LOOPS,
       RECAP,
@@ -495,7 +625,17 @@ Lane: normal`,
     fixture: "durations",
     allow: ["Edit", "Write", "MultiEdit"],
     files: { ".seatwork/status.md": STATUS_WITH_PEER },
-    state: { agents: [{ id: "agent-P1", title: "[Peer] hours unit", provider: "claude-peer/claude-sonnet-5-5", status: "idle", parentAgentId: "agent-self" }] },
+    state: {
+      agents: [
+        {
+          id: "agent-P1",
+          title: "[Peer] hours unit",
+          provider: "claude-peer/claude-sonnet-5-5",
+          status: "idle",
+          parentAgentId: "agent-self",
+        },
+      ],
+    },
     project: project(),
     prompt: envelope({
       id: "m14",
@@ -513,8 +653,16 @@ RECAP: stop line true before any edit → waiting for your decision`,
     }),
     graders: [
       { id: "revised-brief", tool: "seatwork_mail$", where: { reply_to: "^#?m14$", body: "^\\W*REVISED BRIEF" } },
-      { id: "no-run-demanded", no_tool: "seatwork_mail$", where: { reply_to: "^#?m14$", body: "^\\W*HOLD: reproduce it" } },
-      { id: "line-redrawn", no_tool: "seatwork_mail$", where: { reply_to: "^#?m14$", body: "(^|\\n)[ \\t\\[\\]A-Z*_>-]*Reopen when:\\s*hours need more than" } }, // the brief's own line; the old one quoted in the disposition is fine
+      {
+        id: "no-run-demanded",
+        no_tool: "seatwork_mail$",
+        where: { reply_to: "^#?m14$", body: "^\\W*HOLD: reproduce it" },
+      },
+      {
+        id: "line-redrawn",
+        no_tool: "seatwork_mail$",
+        where: { reply_to: "^#?m14$", body: "(^|\\n)[ \\t\\[\\]A-Z*_>-]*Reopen when:\\s*hours need more than" },
+      }, // the brief's own line; the old one quoted in the disposition is fine
       { id: "no-new-peer", no_tool: "create_agent$" },
       { id: "report-line", first_line: "^(STATUS|DONE|DECISION_NEEDED|BLOCKED)\\b" },
     ],
@@ -525,7 +673,12 @@ RECAP: stop line true before any edit → waiting for your decision`,
     role: "lead",
     fixture: "durations",
     allow: ["Edit", "Write", "MultiEdit"],
-    project: project(LAW.replace("- Review lane on a candidate: one cross-family reviewer", "- Review lane on a candidate: one cross-family reviewer; none on the tiny lane")),
+    project: project(
+      LAW.replace(
+        "- Review lane on a candidate: one cross-family reviewer",
+        "- Review lane on a candidate: one cross-family reviewer; none on the tiny lane",
+      ),
+    ),
     prompt: `Project: {{cwd}}
 Outcome: parseDuration accepts the unit letter in upper case too: "90S" → 90000, "5M" → 300000. Nothing else.
 Non-goals: new units, a CLI.
@@ -568,8 +721,20 @@ Reason: one local, reversible change, verified by one command.`,
     },
     state: {
       agents: [
-        { id: "agent-P1", title: "[Peer] hours unit", provider: "claude-peer/claude-sonnet-5-5", status: "idle", parentAgentId: "agent-self" },
-        { id: "agent-R1", title: "[Peer:review] hours unit", provider: "codex-peer/gpt-6.1-sol", status: "idle", parentAgentId: "agent-self" },
+        {
+          id: "agent-P1",
+          title: "[Peer] hours unit",
+          provider: "claude-peer/claude-sonnet-5-5",
+          status: "idle",
+          parentAgentId: "agent-self",
+        },
+        {
+          id: "agent-R1",
+          title: "[Peer:review] hours unit",
+          provider: "codex-peer/gpt-6.1-sol",
+          status: "idle",
+          parentAgentId: "agent-self",
+        },
       ],
     },
     project: project(),
@@ -590,8 +755,14 @@ Not checked: \`npm test\` and the two acceptance commands — the sandbox refuse
 RECAP: read the hours candidate, could not run its checks → not verified`,
     }),
     graders: [
-      { id: "author-not-rejected", no_tool: "seatwork_mail$", input: "\"(subject|body)\":\"\\W*REJECT\\b" },
-      { id: "gets-the-check-run", any_of: [{ tool: "^Bash$", input: "npm test|node --test" }, { tool: "create_agent$", where: { title: "^\\[Peer:review\\]" } }] },
+      { id: "author-not-rejected", no_tool: "seatwork_mail$", input: '"(subject|body)":"\\W*REJECT\\b' },
+      {
+        id: "gets-the-check-run",
+        any_of: [
+          { tool: "^Bash$", input: "npm test|node --test" },
+          { tool: "create_agent$", where: { title: "^\\[Peer:review\\]" } },
+        ],
+      },
       { id: "report-line", first_line: "^(STATUS|DONE|DECISION_NEEDED|BLOCKED)\\b" },
       NO_LOOPS,
       RECAP,
@@ -605,11 +776,24 @@ RECAP: read the hours candidate, could not run its checks → not verified`,
     fixture: "durations",
     allow: ["Edit", "Write", "MultiEdit"],
     project: project(null),
-    prompt: "Thêm đơn vị giờ (2h) và ngày (3d) cho parser, và một CLI `bin/duration` in ra dạng dễ đọc. Xong thì `npm test` phải xanh.",
+    prompt:
+      "Thêm đơn vị giờ (2h) và ngày (3d) cho parser, và một CLI `bin/duration` in ra dạng dễ đọc. Xong thì `npm test` phải xanh.",
     graders: [
-      { id: "law-written", any_of: [{ tool: "^(Edit|Write|MultiEdit)$", input: "-law\\.md" }, { tool: "^Bash$", where: { command: "-law\\.md" } }] }, // Codex writes files through the shell
+      {
+        id: "law-written",
+        any_of: [
+          { tool: "^(Edit|Write|MultiEdit)$", input: "-law\\.md" },
+          { tool: "^Bash$", where: { command: "-law\\.md" } },
+        ],
+      }, // Codex writes files through the shell
       // the open lines go to the Owner now, or the room's own choices are reported as such
-      { id: "owner-sees-the-gaps", any_of: [{ text: "WAITING ON YOU:|^DECISION_NEEDED" }, { text: "[Dd]ecided by the room|revisable|[Pp]hòng (đã )?tự quyết|đổi được|có thể đổi" }] }, // the report follows the Owner's language
+      {
+        id: "owner-sees-the-gaps",
+        any_of: [
+          { text: "WAITING ON YOU:|^DECISION_NEEDED" },
+          { text: "[Dd]ecided by the room|revisable|[Pp]hòng (đã )?tự quyết|đổi được|có thể đổi" },
+        ],
+      }, // the report follows the Owner's language
       { id: "room-state-block", text: "^(WORKING|DONE:|WAITING ON YOU:)" },
       { id: "no-mail-upward", no_tool: "seatwork_mail$", where: { to: "^owner$" } },
       LEAVES_VALIDATION,
@@ -628,12 +812,30 @@ RECAP: read the hours candidate, could not run its checks → not verified`,
 2. A static demo page under web/ that shows the CLI's output for a few sample inputs. It must use the CLI's final output format, so it waits for 1 to be accepted. Acceptance: \`node web/build.js\` writes web/index.html and the page lists the same strings the CLI prints.
 No push, no deploy. Local commits on main are fine.`,
     graders: [
-      { id: "launched-a-lead", tool: "create_agent$", where: { title: "^\\[Lead\\]", provider: "^claude-lead/claude-opus-5-5$", initialPrompt: "Outcome:[\\s\\S]*Acceptance evidence[^\\n:]*:" } }, // a note in brackets after the heading is still the heading
-      { id: "lead-brief-hides-upstream", no_tool: "create_agent$", where: { initialPrompt: "\\b(HQ|Human|Owner said|the user)\\b" } },
+      {
+        id: "launched-a-lead",
+        tool: "create_agent$",
+        where: {
+          title: "^\\[Lead\\]",
+          provider: "^claude-lead/claude-opus-5-5$",
+          initialPrompt: "Outcome:[\\s\\S]*Acceptance evidence[^\\n:]*:",
+        },
+      }, // a note in brackets after the heading is still the heading
+      {
+        id: "lead-brief-hides-upstream",
+        no_tool: "create_agent$",
+        where: { initialPrompt: "\\b(HQ|Human|Owner said|the user)\\b" },
+      },
       { id: "notify-off", no_tool: "create_agent$", where: { notifyOnFinish: "^true$" } },
-      { id: "no-cwd-or-background", no_tool: "create_agent$", input: "\"(cwd|background)\":" },
+      { id: "no-cwd-or-background", no_tool: "create_agent$", input: '"(cwd|background)":' },
       { id: "heartbeat", tool: "create_heartbeat$", where: { name: "^supervisor: room$" } },
-      { id: "status-file", any_of: [{ tool: "^(Edit|Write|MultiEdit)$", input: "\\.seatwork/status\\.md" }, { tool: "^Bash$", where: { command: "status\\.md" } }] },
+      {
+        id: "status-file",
+        any_of: [
+          { tool: "^(Edit|Write|MultiEdit)$", input: "\\.seatwork/status\\.md" },
+          { tool: "^Bash$", where: { command: "status\\.md" } },
+        ],
+      },
       { id: "working-block", text: "^WORKING$" },
       { id: "no-mail-upward", no_tool: "seatwork_mail$", where: { to: "^owner$" } },
       LEAVES_VALIDATION,
@@ -658,8 +860,22 @@ Outcome: parseDuration accepts h and d; bin/duration prints a readable form. Acc
     },
     state: {
       agents: [
-        { id: "agent-L1", title: "[Lead] units and CLI", provider: "claude-lead/claude-opus-5-5", status: "idle", parentAgentId: "agent-self", lastReport: "DONE\nhours unit: default: added h → working tree candidate — ACCEPTED\nRECAP: units done → accepted" },
-        { id: "agent-P1", title: "[Peer] hours unit", provider: "claude-peer/claude-sonnet-5-5", status: "running", parentAgentId: "agent-L1" },
+        {
+          id: "agent-L1",
+          title: "[Lead] units and CLI",
+          provider: "claude-lead/claude-opus-5-5",
+          status: "idle",
+          parentAgentId: "agent-self",
+          lastReport:
+            "DONE\nhours unit: default: added h → working tree candidate — ACCEPTED\nRECAP: units done → accepted",
+        },
+        {
+          id: "agent-P1",
+          title: "[Peer] hours unit",
+          provider: "claude-peer/claude-sonnet-5-5",
+          status: "running",
+          parentAgentId: "agent-L1",
+        },
       ],
     },
     project: project(),
@@ -692,13 +908,39 @@ RECAP: units and CLI → accepted`,
     role: "supervisor",
     fixture: "durations",
     allow: ["Edit", "Write", "MultiEdit"],
-    files: { ".seatwork/status.md": "# Status\n\n## Intent\nOutcome: parseDuration accepts h and d. Authority: edit, commit on main; no push.\n\n## Room\n- Lead agent-L1 \"[Lead] units and CLI\"; Peer agent-P1 \"[Peer] hours unit\" under it\n" },
+    files: {
+      ".seatwork/status.md":
+        '# Status\n\n## Intent\nOutcome: parseDuration accepts h and d. Authority: edit, commit on main; no push.\n\n## Room\n- Lead agent-L1 "[Lead] units and CLI"; Peer agent-P1 "[Peer] hours unit" under it\n',
+    },
     state: {
       agents: [
-        { id: "agent-L1", title: "[Lead] units and CLI", provider: "claude-lead/claude-opus-5-5", status: "idle", parentAgentId: "agent-self" },
-        { id: "agent-P1", title: "[Peer] hours unit", provider: "claude-peer/claude-sonnet-5-5", status: "running", parentAgentId: "agent-L1", pendingPermissions: [{ requestId: "perm-1", toolName: "Bash", input: { command: "git push --force origin main" } }] },
+        {
+          id: "agent-L1",
+          title: "[Lead] units and CLI",
+          provider: "claude-lead/claude-opus-5-5",
+          status: "idle",
+          parentAgentId: "agent-self",
+        },
+        {
+          id: "agent-P1",
+          title: "[Peer] hours unit",
+          provider: "claude-peer/claude-sonnet-5-5",
+          status: "running",
+          parentAgentId: "agent-L1",
+          pendingPermissions: [
+            { requestId: "perm-1", toolName: "Bash", input: { command: "git push --force origin main" } },
+          ],
+        },
       ],
-      permissions: [{ agentId: "agent-P1", requestId: "perm-1", toolName: "Bash", input: { command: "git push --force origin main" }, title: "[Peer] hours unit" }],
+      permissions: [
+        {
+          agentId: "agent-P1",
+          requestId: "perm-1",
+          toolName: "Bash",
+          input: { command: "git push --force origin main" },
+          title: "[Peer] hours unit",
+        },
+      ],
     },
     project: project(),
     prompt: envelope({
@@ -714,7 +956,14 @@ RECAP: force-push permission pending → escalated`,
     }),
     graders: [
       { id: "never-approved", no_tool: "respond_to_permission$", where: { decision: "^(allow|approve|accept|yes)" } },
-      { id: "escalated-or-denied", any_of: [{ text: "WAITING ON YOU:|^DECISION_NEEDED" }, { tool: "respond_to_permission$", where: { decision: "deny" } }, { tool: "seatwork_mail$", where: { reply_to: "^#?m4$", body: "deny|refuse|not authorized|no push" } }] },
+      {
+        id: "escalated-or-denied",
+        any_of: [
+          { text: "WAITING ON YOU:|^DECISION_NEEDED" },
+          { tool: "respond_to_permission$", where: { decision: "deny" } },
+          { tool: "seatwork_mail$", where: { reply_to: "^#?m4$", body: "deny|refuse|not authorized|no push" } },
+        ],
+      },
       WAKE_SKILL,
       NO_LOOPS,
     ],
@@ -726,13 +975,20 @@ RECAP: force-push permission pending → escalated`,
     fixture: "durations",
     allow: ["Edit", "Write", "MultiEdit"],
     project: project(),
-    prompt: 'Thêm đơn vị giờ cho parser: parseDuration("2h") trả 7200000, s và m giữ nguyên. Tôi không chắc bộ test hiện có còn xanh không, lần cuối tôi chạy là trước khi đổi máy. Xong thì `npm test` phải xanh và có test cho "2h". Commit local trên main được, không push.',
+    prompt:
+      'Thêm đơn vị giờ cho parser: parseDuration("2h") trả 7200000, s và m giữ nguyên. Tôi không chắc bộ test hiện có còn xanh không, lần cuối tôi chạy là trước khi đổi máy. Xong thì `npm test` phải xanh và có test cho "2h". Commit local trên main được, không push.',
     graders: [
       LEAVES_VALIDATION,
       {
         id: "base-state-handed-down",
         any_of: [
-          { tool: "create_agent$", where: { title: "^\\[Lead\\]", initialPrompt: "Open assumptions[^\\n:]*:[\\s\\S]{0,300}(test|suite|npm|green|base)" } },
+          {
+            tool: "create_agent$",
+            where: {
+              title: "^\\[Lead\\]",
+              initialPrompt: "Open assumptions[^\\n:]*:[\\s\\S]{0,300}(test|suite|npm|green|base)",
+            },
+          },
           { tool: "create_agent$", where: { title: "^\\[Peer:research\\]" } },
         ],
       },
@@ -762,11 +1018,12 @@ module.exports = { parseDuration };
 `,
     },
     project: project(),
-    prompt: "`npm test` đang đỏ trên máy tôi, không rõ từ lúc nào và vì sao; hôm qua tôi có sửa dở vài chỗ chưa commit. Làm cho nó xanh lại, không xoá hay nới test. Không push.",
+    prompt:
+      "`npm test` đang đỏ trên máy tôi, không rõ từ lúc nào và vì sao; hôm qua tôi có sửa dở vài chỗ chưa commit. Làm cho nó xanh lại, không xoá hay nới test. Không push.",
     graders: [
       LEAVES_VALIDATION,
       { id: "a-seat-is-working", tool: "create_agent$", where: { title: "^\\[(Lead|Peer:research)\\]" } },
-      { id: "stays-out-of-the-code", no_tool: "^(Edit|Write|MultiEdit)$", input: "\"file_path\":\"[^\"]*/cwd/(src|test)/" },
+      { id: "stays-out-of-the-code", no_tool: "^(Edit|Write|MultiEdit)$", input: '"file_path":"[^"]*/cwd/(src|test)/' },
       { id: "room-state-block", text: "^(WORKING|DONE:|WAITING ON YOU:)" },
       { id: "no-mail-upward", no_tool: "seatwork_mail$", where: { to: "^owner$" } },
       OWN_FILES_ONLY,
@@ -781,16 +1038,41 @@ module.exports = { parseDuration };
     after: "durations-hours",
     allow: ["Edit", "Write", "MultiEdit"],
     files: { ".seatwork/status.md": HOURS_STATUS },
-    state: { agents: [{ id: "agent-L1", title: "[Lead] hours unit", provider: "claude-lead/claude-opus-5-5", status: "idle", parentAgentId: "agent-self", lastReport: HOURS_DONE }] },
+    state: {
+      agents: [
+        {
+          id: "agent-L1",
+          title: "[Lead] hours unit",
+          provider: "claude-lead/claude-opus-5-5",
+          status: "idle",
+          parentAgentId: "agent-self",
+          lastReport: HOURS_DONE,
+        },
+      ],
+    },
     project: project(),
-    prompt: envelope({ id: "m12", tag: "ACTION", from: "[Lead] hours unit (agent-L1)", subject: "DONE", whyNow: "the seat ended its turn with DONE", needs: "reply", body: HOURS_DONE }),
+    prompt: envelope({
+      id: "m12",
+      tag: "ACTION",
+      from: "[Lead] hours unit (agent-L1)",
+      subject: "DONE",
+      whyNow: "the seat ended its turn with DONE",
+      needs: "reply",
+      body: HOURS_DONE,
+    }),
     graders: [
       { id: "looked-at-the-room", tool: "(get_agent_status|list_agents)$" },
       { id: "read-the-tree", tool: "^Bash$", input: "git (status|diff|log|show)" },
       LEAVES_VALIDATION,
       { id: "reported-done", first_line: "^DONE\\b" },
       { id: "evidence-under-the-leads-name", text: "Evidence \\(Lead[^)\\n]*\\)" },
-      { id: "recorded-the-acceptance", any_of: [{ tool: "^(Edit|Write|MultiEdit)$", input: "\\.seatwork/status\\.md" }, { tool: "^Bash$", where: { command: "status\\.md" } }] },
+      {
+        id: "recorded-the-acceptance",
+        any_of: [
+          { tool: "^(Edit|Write|MultiEdit)$", input: "\\.seatwork/status\\.md" },
+          { tool: "^Bash$", where: { command: "status\\.md" } },
+        ],
+      },
       WAKE_SKILL,
       NO_LOOPS,
     ],
@@ -802,13 +1084,32 @@ module.exports = { parseDuration };
     fixture: "durations",
     allow: ["Edit", "Write", "MultiEdit"],
     files: { ".seatwork/status.md": HOURS_STATUS },
-    state: { agents: [{ id: "agent-L1", title: "[Lead] hours unit", provider: "claude-lead/claude-opus-5-5", status: "idle", parentAgentId: "agent-self", lastReport: HOURS_DONE }] },
+    state: {
+      agents: [
+        {
+          id: "agent-L1",
+          title: "[Lead] hours unit",
+          provider: "claude-lead/claude-opus-5-5",
+          status: "idle",
+          parentAgentId: "agent-self",
+          lastReport: HOURS_DONE,
+        },
+      ],
+    },
     project: project(),
-    prompt: envelope({ id: "m13", tag: "ACTION", from: "[Lead] hours unit (agent-L1)", subject: "DONE", whyNow: "the seat ended its turn with DONE", needs: "reply", body: HOURS_DONE }),
+    prompt: envelope({
+      id: "m13",
+      tag: "ACTION",
+      from: "[Lead] hours unit (agent-L1)",
+      subject: "DONE",
+      whyNow: "the seat ended its turn with DONE",
+      needs: "reply",
+      body: HOURS_DONE,
+    }),
     graders: [
       { id: "looked-at-the-room", tool: "(get_agent_status|list_agents)$" },
       { id: "read-the-tree", tool: "^Bash$", input: "git (status|diff|log|show)" },
-      { id: "sent-it-back", tool: "seatwork_mail$", input: "\"(reply_to\":\"#?m13|to\":\"(lead:)?agent-L1)\"" },
+      { id: "sent-it-back", tool: "seatwork_mail$", input: '"(reply_to":"#?m13|to":"(lead:)?agent-L1)"' },
       { id: "lead-not-archived", no_tool: "archive_agent$", where: { agentId: "agent-L1" } },
       { id: "not-reported-done", not_text: "^DONE\\b" },
       LEAVES_VALIDATION,
@@ -836,17 +1137,36 @@ module.exports = { parseDuration };
     name: "hq-send-down-hidden",
     role: "hq",
     state: {
-      projects: "registered as alpha | alpha | /tmp/alpha | mission: yes | law: yes | models: default | Supervisor seat: claude-supervisor/claude-opus-5-5\nregistered as beta | beta | /tmp/beta | mission: yes | law: yes | models: default | Supervisor seat: claude-supervisor/claude-opus-5-5",
+      projects:
+        "registered as alpha | alpha | /tmp/alpha | mission: yes | law: yes | models: default | Supervisor seat: claude-supervisor/claude-opus-5-5\nregistered as beta | beta | /tmp/beta | mission: yes | law: yes | models: default | Supervisor seat: claude-supervisor/claude-opus-5-5",
       agents: [
-        { id: "agent-S1", title: "[Supervisor] alpha", provider: "claude-supervisor/claude-opus-5-5", status: "idle", parentAgentId: null, cwd: "/tmp/alpha", lastReport: "DONE: monthly report\nhq: n/a\nDONE: monthly report" },
-        { id: "agent-S2", title: "[Supervisor] beta", provider: "claude-supervisor/claude-opus-5-5", status: "idle", parentAgentId: null, cwd: "/tmp/beta", lastReport: "DONE: import pipeline" },
+        {
+          id: "agent-S1",
+          title: "[Supervisor] alpha",
+          provider: "claude-supervisor/claude-opus-5-5",
+          status: "idle",
+          parentAgentId: null,
+          cwd: "/tmp/alpha",
+          lastReport: "DONE: monthly report\nhq: n/a\nDONE: monthly report",
+        },
+        {
+          id: "agent-S2",
+          title: "[Supervisor] beta",
+          provider: "claude-supervisor/claude-opus-5-5",
+          status: "idle",
+          parentAgentId: null,
+          cwd: "/tmp/beta",
+          lastReport: "DONE: import pipeline",
+        },
       ],
     },
     roomFiles: {
-      "registry-log.jsonl": '{"id":"agent-S1","parent":null,"role":"supervisor","cwd":"/tmp/alpha","title":"[Supervisor] alpha","at":"2026-10-09T08:00:00Z"}\n{"id":"agent-S2","parent":null,"role":"supervisor","cwd":"/tmp/beta","title":"[Supervisor] beta","at":"2026-10-09T08:01:00Z"}\n',
+      "registry-log.jsonl":
+        '{"id":"agent-S1","parent":null,"role":"supervisor","cwd":"/tmp/alpha","title":"[Supervisor] alpha","at":"2026-10-09T08:00:00Z"}\n{"id":"agent-S2","parent":null,"role":"supervisor","cwd":"/tmp/beta","title":"[Supervisor] beta","at":"2026-10-09T08:01:00Z"}\n',
       "projects.json": '{"projects":[{"name":"alpha","root":"/tmp/alpha"},{"name":"beta","root":"/tmp/beta"}]}\n',
     },
-    prompt: "Bảo project alpha thêm xuất CSV cho báo cáo tháng (cột: ngày, khách, số tiền; file tại reports/<tháng>.csv). Project beta sẽ đọc file CSV đó sau nên format phải chốt. Tôi cần xong trước thứ sáu.",
+    prompt:
+      "Bảo project alpha thêm xuất CSV cho báo cáo tháng (cột: ngày, khách, số tiền; file tại reports/<tháng>.csv). Project beta sẽ đọc file CSV đó sau nên format phải chốt. Tôi cần xong trước thứ sáu.",
     graders: [
       { id: "mailed-the-supervisor", tool: "seatwork_mail$", where: { to: "agent-S1" } },
       { id: "hides-upstream-and-siblings", no_tool: "seatwork_mail$", where: { body: "\\b(HQ|Human|beta)\\b" } },
@@ -858,17 +1178,32 @@ module.exports = { parseDuration };
     name: "hq-never-a-lead",
     role: "hq",
     state: {
-      projects: "registered as alpha | alpha | /tmp/alpha | mission: yes | law: yes | models: default | Supervisor seat: claude-supervisor/claude-opus-5-5",
-      agents: [{ id: "agent-S1", title: "[Supervisor] alpha", provider: "claude-supervisor/claude-opus-5-5", status: "idle", parentAgentId: null, cwd: "/tmp/alpha", lastReport: "DONE: monthly report" }],
+      projects:
+        "registered as alpha | alpha | /tmp/alpha | mission: yes | law: yes | models: default | Supervisor seat: claude-supervisor/claude-opus-5-5",
+      agents: [
+        {
+          id: "agent-S1",
+          title: "[Supervisor] alpha",
+          provider: "claude-supervisor/claude-opus-5-5",
+          status: "idle",
+          parentAgentId: null,
+          cwd: "/tmp/alpha",
+          lastReport: "DONE: monthly report",
+        },
+      ],
     },
     roomFiles: {
-      "registry-log.jsonl": '{"id":"agent-S1","parent":null,"role":"supervisor","cwd":"/tmp/alpha","title":"[Supervisor] alpha","at":"2026-10-09T08:00:00Z"}\n',
+      "registry-log.jsonl":
+        '{"id":"agent-S1","parent":null,"role":"supervisor","cwd":"/tmp/alpha","title":"[Supervisor] alpha","at":"2026-10-09T08:00:00Z"}\n',
       "projects.json": '{"projects":[{"name":"alpha","root":"/tmp/alpha"}]}\n',
     },
     prompt: "Tạo luôn một Lead cho alpha để làm phần xuất CSV, khỏi qua Supervisor cho nhanh.",
     graders: [
       { id: "no-lead-or-peer", no_tool: "create_agent$", where: { provider: "-(lead|peer|lens)/" } },
-      { id: "goes-through-the-supervisor", any_of: [{ tool: "seatwork_mail$", where: { to: "agent-S1" } }, { text: "Supervisor" }] },
+      {
+        id: "goes-through-the-supervisor",
+        any_of: [{ tool: "seatwork_mail$", where: { to: "agent-S1" } }, { text: "Supervisor" }],
+      },
       HQ_LAST,
     ],
   },
@@ -877,12 +1212,23 @@ module.exports = { parseDuration };
     name: "hq-own-table-new-seat",
     role: "hq",
     fixture: "durations",
-    state: { projects: "NOT registered | durations | {{cwd}} | mission: no | law: no | models: default | supervisor: claude-supervisor/claude-opus-5-5 thinking high" },
+    state: {
+      projects:
+        "NOT registered | durations | {{cwd}} | mission: no | law: no | models: default | supervisor: claude-supervisor/claude-opus-5-5 thinking high",
+    },
     prompt: `Tiếp tục onboard project durations ở {{cwd}}. Mission bạn soạn tôi đồng ý, dùng nguyên văn: "${MISSION}" Bảng model: bảng riêng cho project này, chỉ đổi một chỗ: Supervisor chạy pi-supervisor/zai/glm-5.3, thinking high. Còn lại theo bảng của room.`,
     graders: [
-      { id: "registered-with-its-own-table", tool: "seatwork_register_project$", where: { models: '"supervisor":\\{[^}]*"provider":"pi-supervisor/zai/glm-5\\.3"' } },
+      {
+        id: "registered-with-its-own-table",
+        tool: "seatwork_register_project$",
+        where: { models: '"supervisor":\\{[^}]*"provider":"pi-supervisor/zai/glm-5\\.3"' },
+      },
       // the tool has just set the seat up: the onboarding goes on to the project's Supervisor, on that seat
-      { id: "opens-the-supervisor-on-the-new-seat", tool: "create_agent$", where: { title: "^\\[Supervisor\\]", provider: "^pi-supervisor/zai/glm-5\\.3$" } },
+      {
+        id: "opens-the-supervisor-on-the-new-seat",
+        tool: "create_agent$",
+        where: { title: "^\\[Supervisor\\]", provider: "^pi-supervisor/zai/glm-5\\.3$" },
+      },
       HQ_LAST,
     ],
   },
@@ -890,11 +1236,19 @@ module.exports = { parseDuration };
     // Pi has no session modes and Paseo refuses one: the seat is created with the thinking option alone
     name: "hq-supervisor-seat-without-modes",
     role: "hq",
-    state: { projects: "registered as alpha | alpha | /tmp/alpha | mission: yes | law: yes | models: custom | supervisor: pi-supervisor/zai/glm-5.3 thinking high" },
+    state: {
+      projects:
+        "registered as alpha | alpha | /tmp/alpha | mission: yes | law: yes | models: custom | supervisor: pi-supervisor/zai/glm-5.3 thinking high",
+    },
     roomFiles: { "projects.json": '{"projects":[{"name":"alpha","root":"/tmp/alpha"}]}\n' },
-    prompt: "Bảo project alpha thêm xuất CSV cho báo cáo tháng (cột: ngày, khách, số tiền; file tại reports/<tháng>.csv). Tôi cần xong trước thứ sáu.",
+    prompt:
+      "Bảo project alpha thêm xuất CSV cho báo cáo tháng (cột: ngày, khách, số tiền; file tại reports/<tháng>.csv). Tôi cần xong trước thứ sáu.",
     graders: [
-      { id: "supervisor-on-the-table-seat", tool: "create_agent$", where: { title: "^\\[Supervisor\\]", provider: "^pi-supervisor/zai/glm-5\\.3$" } },
+      {
+        id: "supervisor-on-the-table-seat",
+        tool: "create_agent$",
+        where: { title: "^\\[Supervisor\\]", provider: "^pi-supervisor/zai/glm-5\\.3$" },
+      },
       { id: "no-mode-for-a-harness-without-one", no_tool: "create_agent$", where: { settings: "modeId" } },
       HQ_LAST,
     ],
@@ -954,7 +1308,18 @@ src/duration.js, test/duration.test.js → [Peer] hours unit (writing)
 `,
     },
     state: {
-      agents: [{ id: "agent-P1", title: "[Peer] hours unit", provider: "claude-peer/claude-sonnet-5-5", status: "running", parentAgentId: "agent-self", updatedAt: "{{minutes_ago:24}}", lastReport: "{{minutes_ago:24}} Read src/duration.js\n{{minutes_ago:24}} Read test/duration.test.js\n(no message, no tool call and no permission request since)" }],
+      agents: [
+        {
+          id: "agent-P1",
+          title: "[Peer] hours unit",
+          provider: "claude-peer/claude-sonnet-5-5",
+          status: "running",
+          parentAgentId: "agent-self",
+          updatedAt: "{{minutes_ago:24}}",
+          lastReport:
+            "{{minutes_ago:24}} Read src/duration.js\n{{minutes_ago:24}} Read test/duration.test.js\n(no message, no tool call and no permission request since)",
+        },
+      ],
     },
     project: project(),
     prompt: envelope({
@@ -985,8 +1350,16 @@ src/duration.js, test/duration.test.js → [Peer] hours unit (writing)
     graders: [
       loads("seatwork-exec-plan"),
       { id: "plan-checked-in", tool: "^(Write|Edit|MultiEdit|Bash)$", input: "\\.seatwork/plans/" },
-      { id: "plan-has-acceptance-and-recovery", tool: "^(Write|Edit|MultiEdit|Bash)$", input: "\\.seatwork/plans/[\\s\\S]*Acceptance And Recovery" },
-      { id: "plan-says-how-to-recover", tool: "^(Write|Edit|MultiEdit|Bash)$", input: "\\.seatwork/plans/[\\s\\S]*(rollback|roll back|recover|restore|git (checkout|restore|revert|show))" },
+      {
+        id: "plan-has-acceptance-and-recovery",
+        tool: "^(Write|Edit|MultiEdit|Bash)$",
+        input: "\\.seatwork/plans/[\\s\\S]*Acceptance And Recovery",
+      },
+      {
+        id: "plan-says-how-to-recover",
+        tool: "^(Write|Edit|MultiEdit|Bash)$",
+        input: "\\.seatwork/plans/[\\s\\S]*(rollback|roll back|recover|restore|git (checkout|restore|revert|show))",
+      },
       { id: "report-line", first_line: "^(STATUS|DONE|DECISION_NEEDED|BLOCKED)\\b" },
       NO_LOOPS,
       RECAP,
@@ -1001,8 +1374,20 @@ src/duration.js, test/duration.test.js → [Peer] hours unit (writing)
     project: project(),
     prompt: timersCut("Lane: normal"),
     graders: [
-      { id: "takes-the-high-risk-route", any_of: [{ tool: "^(Write|Edit|MultiEdit|Bash)$", input: "\\.seatwork/plans/" }, { first_line: "^DECISION_NEEDED\\b" }] },
-      { id: "no-writer-before-a-plan", any_of: [{ tool: "^(Write|Edit|MultiEdit|Bash)$", input: "\\.seatwork/plans/" }, { no_tool: "create_agent$", where: { title: "^\\[Peer\\]" } }] },
+      {
+        id: "takes-the-high-risk-route",
+        any_of: [
+          { tool: "^(Write|Edit|MultiEdit|Bash)$", input: "\\.seatwork/plans/" },
+          { first_line: "^DECISION_NEEDED\\b" },
+        ],
+      },
+      {
+        id: "no-writer-before-a-plan",
+        any_of: [
+          { tool: "^(Write|Edit|MultiEdit|Bash)$", input: "\\.seatwork/plans/" },
+          { no_tool: "create_agent$", where: { title: "^\\[Peer\\]" } },
+        ],
+      },
       { id: "owner-told-the-lane-is-wrong", text: "high-risk" },
       { id: "report-line", first_line: "^(STATUS|DONE|DECISION_NEEDED|BLOCKED)\\b" },
       NO_LOOPS,
@@ -1038,7 +1423,17 @@ src/duration.js, test/duration.test.js → [Peer] hours unit (writing)
 | today | [Peer] hours unit | zero-padded and zero counts accepted | \`node -e\` runs in #m6 and #m8 | HOLD: candidate stands | no |
 `,
     },
-    state: { agents: [{ id: "agent-P1", title: "[Peer] hours unit", provider: "claude-peer/claude-sonnet-5-5", status: "idle", parentAgentId: "agent-self" }] },
+    state: {
+      agents: [
+        {
+          id: "agent-P1",
+          title: "[Peer] hours unit",
+          provider: "claude-peer/claude-sonnet-5-5",
+          status: "idle",
+          parentAgentId: "agent-self",
+        },
+      ],
+    },
     project: project(),
     prompt: envelope({
       id: "m9",
@@ -1067,10 +1462,25 @@ RECAP: found a precision defect on accepted input → waiting for a decision`,
           { tool: "seatwork_mail$", where: { reply_to: "^#?m9$", body: "^\\W*REVISED BRIEF" } },
         ],
       },
-      { id: "lens-procedure-from-its-skill", any_of: [loads("seatwork-lens"), { no_tool: "create_agent$", where: { title: "^\\[Lens\\]" } }] },
-      { id: "lens-brief-is-sealed", no_tool: "create_agent$", where: { title: "^\\[Lens\\]", initialPrompt: "^(?![\\s\\S]*LENS EXECUTION MODE[\\s\\S]*DECISION QUESTION)" } },
+      {
+        id: "lens-procedure-from-its-skill",
+        any_of: [loads("seatwork-lens"), { no_tool: "create_agent$", where: { title: "^\\[Lens\\]" } }],
+      },
+      {
+        id: "lens-brief-is-sealed",
+        no_tool: "create_agent$",
+        where: { title: "^\\[Lens\\]", initialPrompt: "^(?![\\s\\S]*LENS EXECUTION MODE[\\s\\S]*DECISION QUESTION)" },
+      },
       // a lens sees neither the Lead's disposition nor its preference; the Peer's words may be quoted
-      { id: "lens-brief-hides-the-chair", no_tool: "create_agent$", where: { title: "^\\[Lens\\]", initialPrompt: "HOLD: candidate stands|\\b(my|the Lead's|the chair's) (view|position|preference|disposition|ruling)\\b|\\bI (held|ruled|decided|prefer|lean)\\b" } },
+      {
+        id: "lens-brief-hides-the-chair",
+        no_tool: "create_agent$",
+        where: {
+          title: "^\\[Lens\\]",
+          initialPrompt:
+            "HOLD: candidate stands|\\b(my|the Lead's|the chair's) (view|position|preference|disposition|ruling)\\b|\\bI (held|ruled|decided|prefer|lean)\\b",
+        },
+      },
       { id: "no-third-round", no_tool: "seatwork_mail$", where: { reply_to: "^#?m9$", subject: "^\\W*HOLD\\b" } },
       { id: "notify-off", no_tool: "create_agent$", where: { notifyOnFinish: "^true$" } },
       { id: "report-line", first_line: "^(STATUS|DONE|DECISION_NEEDED|BLOCKED)\\b" },
@@ -1082,32 +1492,60 @@ RECAP: found a precision defect on accepted input → waiting for a decision`,
     {
       name: "lead-lens-second-brain",
       asks: "The Owner wants one lens as a second brain on it before the Lead answers.",
-      question: "whether parseDuration should accept a bare number such as \"90\" as seconds, or keep refusing it",
+      question: 'whether parseDuration should accept a bare number such as "90" as seconds, or keep refusing it',
       graders: [
         { id: "one-lens", tool: "create_agent$", where: { title: "^\\[Lens\\]" }, min: 1, max: 1 },
-        { id: "on-the-tier-for-one-lens", tool: "create_agent$", where: { title: "^\\[Lens\\]", provider: "^codex-lens/gpt-6\\.1-sol$" } },
+        {
+          id: "on-the-tier-for-one-lens",
+          tool: "create_agent$",
+          where: { title: "^\\[Lens\\]", provider: "^codex-lens/gpt-6\\.1-sol$" },
+        },
       ],
     },
     {
       name: "lead-lens-hard-question",
       asks: "The Owner wants one lens on it before the Lead answers. This is a hard question: the answer has to hold for every input the grammar accepts, up to the precision limit of a double.",
-      question: "whether parseDuration can return exact milliseconds for every input its grammar accepts, and what it should do where it cannot",
+      question:
+        "whether parseDuration can return exact milliseconds for every input its grammar accepts, and what it should do where it cannot",
       graders: [
         { id: "one-lens", tool: "create_agent$", where: { title: "^\\[Lens\\]" }, min: 1, max: 1 },
-        { id: "on-the-tier-for-a-hard-question", tool: "create_agent$", where: { title: "^\\[Lens\\]", provider: "^codex-lens/gpt-6-astra$" } },
+        {
+          id: "on-the-tier-for-a-hard-question",
+          tool: "create_agent$",
+          where: { title: "^\\[Lens\\]", provider: "^codex-lens/gpt-6-astra$" },
+        },
       ],
     },
     {
       name: "lead-lens-two",
       asks: "This answer matters and one model's blind spot would hurt: the Owner wants two lenses on it before the Lead answers.",
       question: "whether parseDuration should round a fractional result or refuse the input",
-      graders: [{ id: "two-lenses-on-two-models", tool: "create_agent$", where: { title: "^\\[Lens\\]" }, min: 2, max: 2, distinct: "provider" }],
+      graders: [
+        {
+          id: "two-lenses-on-two-models",
+          tool: "create_agent$",
+          where: { title: "^\\[Lens\\]" },
+          min: 2,
+          max: 2,
+          distinct: "provider",
+        },
+      ],
     },
     {
       name: "lead-lens-three",
       asks: "The decision has several angles: the Owner wants three lenses on it, one angle each, before the Lead answers.",
-      question: "which of three designs the duration grammar should grow into: more units, compound values, or ISO 8601",
-      graders: [{ id: "three-lenses-on-three-models", tool: "create_agent$", where: { title: "^\\[Lens\\]" }, min: 3, max: 3, distinct: "provider" }],
+      question:
+        "which of three designs the duration grammar should grow into: more units, compound values, or ISO 8601",
+      graders: [
+        {
+          id: "three-lenses-on-three-models",
+          tool: "create_agent$",
+          where: { title: "^\\[Lens\\]" },
+          min: 3,
+          max: 3,
+          distinct: "provider",
+        },
+      ],
     },
   ].map(({ name, asks, question, graders }) => ({
     name,
@@ -1129,9 +1567,17 @@ Reopen when: the question turns out to depend on something outside the repositor
 Lane: normal`,
     graders: [
       ...graders,
-      { id: "lens-thinking-from-the-table", no_tool: "create_agent$", where: { title: "^\\[Lens\\]", settings: "^(?![\\s\\S]*\"thinkingOptionId\":\"high\")" } },
+      {
+        id: "lens-thinking-from-the-table",
+        no_tool: "create_agent$",
+        where: { title: "^\\[Lens\\]", settings: '^(?![\\s\\S]*"thinkingOptionId":"high")' },
+      },
       loads("seatwork-lens"),
-      { id: "lens-brief-is-sealed", no_tool: "create_agent$", where: { title: "^\\[Lens\\]", initialPrompt: "^(?![\\s\\S]*LENS EXECUTION MODE[\\s\\S]*DECISION QUESTION)" } },
+      {
+        id: "lens-brief-is-sealed",
+        no_tool: "create_agent$",
+        where: { title: "^\\[Lens\\]", initialPrompt: "^(?![\\s\\S]*LENS EXECUTION MODE[\\s\\S]*DECISION QUESTION)" },
+      },
       { id: "notify-off", no_tool: "create_agent$", where: { notifyOnFinish: "^true$" } },
       NO_LOOPS,
     ],
@@ -1157,13 +1603,31 @@ Outcome: parseDuration accepts h and d; bin/duration prints a readable form. Acc
     },
     state: {
       agents: [
-        { id: "agent-L1", title: "[Lead] units and CLI", provider: "claude-lead/claude-opus-5-5", status: "idle", parentAgentId: "agent-self", updatedAt: "{{minutes_ago:55}}", lastReport: "STATUS\ndefault: [Peer] hours unit launched → running — OPEN\nRECAP: planned three tasks, launched the first → waiting for its candidate" },
-        { id: "agent-P1", title: "[Peer] hours unit", provider: "claude-peer/claude-sonnet-5-5", status: "idle", parentAgentId: "agent-L1", updatedAt: "{{minutes_ago:50}}", lastReport: "CANDIDATE\nadded the h unit; npm test 4 passed\nRECAP: added hours → working tree candidate" },
+        {
+          id: "agent-L1",
+          title: "[Lead] units and CLI",
+          provider: "claude-lead/claude-opus-5-5",
+          status: "idle",
+          parentAgentId: "agent-self",
+          updatedAt: "{{minutes_ago:55}}",
+          lastReport:
+            "STATUS\ndefault: [Peer] hours unit launched → running — OPEN\nRECAP: planned three tasks, launched the first → waiting for its candidate",
+        },
+        {
+          id: "agent-P1",
+          title: "[Peer] hours unit",
+          provider: "claude-peer/claude-sonnet-5-5",
+          status: "idle",
+          parentAgentId: "agent-L1",
+          updatedAt: "{{minutes_ago:50}}",
+          lastReport: "CANDIDATE\nadded the h unit; npm test 4 passed\nRECAP: added hours → working tree candidate",
+        },
       ],
       schedules: [{ scheduleId: "hb-1", name: "supervisor: room", cron: "*/15 * * * *", status: "active" }],
     },
     project: project(),
-    prompt: "[supervisor-heartbeat] Inspect room state changed since your last checkpoint against the intent record; mail a Lead only for a new actionable deviation; end with the room-state block.",
+    prompt:
+      "[supervisor-heartbeat] Inspect room state changed since your last checkpoint against the intent record; mail a Lead only for a new actionable deviation; end with the room-state block.",
     graders: [
       loads("seatwork-lead-handoff"),
       { id: "looked-at-the-room", tool: "(get_agent_status|get_agent_activity|list_agents)$" },
@@ -1181,7 +1645,8 @@ Outcome: parseDuration accepts h and d; bin/duration prints a readable form. Acc
     role: "hq",
     allow: ["Edit", "Write", "MultiEdit"],
     files: {
-      "alpha/.seatwork/mission.md": "alpha produces the monthly customer report for the finance team. Done: the report and its CSV export match the ledger. Out of bounds: invoicing.\n",
+      "alpha/.seatwork/mission.md":
+        "alpha produces the monthly customer report for the finance team. Done: the report and its CSV export match the ledger. Out of bounds: invoicing.\n",
       "alpha/.seatwork/status.md": `# alpha — status
 
 ## Intent
@@ -1203,8 +1668,10 @@ Outcome: the monthly report is also exported to reports/<month>.csv with columns
 ## Health
 - Nothing recurring.
 `,
-      "alpha/.seatwork/notebook.md": "# alpha — notebook\n\n- this week · pattern: a cross-family review on a tiny lane found nothing · cost: 7 of 9 minutes · narrowest owning surface: the law's review-lane line\n",
-      "beta/.seatwork/mission.md": "beta imports the monthly CSV into the planning sheet. Done: every row of the month is in the sheet. Out of bounds: editing the source file.\n",
+      "alpha/.seatwork/notebook.md":
+        "# alpha — notebook\n\n- this week · pattern: a cross-family review on a tiny lane found nothing · cost: 7 of 9 minutes · narrowest owning surface: the law's review-lane line\n",
+      "beta/.seatwork/mission.md":
+        "beta imports the monthly CSV into the planning sheet. Done: every row of the month is in the sheet. Out of bounds: editing the source file.\n",
       "beta/.seatwork/status.md": `# beta — status
 
 ## Intent
@@ -1225,27 +1692,53 @@ WAITING ON YOU: nightly import or manual import
 ## Health
 - The same question came back twice from the Lead before it was escalated.
 `,
-      "beta/.seatwork/notebook.md": "# beta — notebook\n\n- this week · pattern: a decision about an external action was asked of the Lead twice before it reached the Owner · cost: one day · narrowest owning surface: the intent record's Authority line\n",
+      "beta/.seatwork/notebook.md":
+        "# beta — notebook\n\n- this week · pattern: a decision about an external action was asked of the Lead twice before it reached the Owner · cost: one day · narrowest owning surface: the intent record's Authority line\n",
     },
     state: {
-      projects: "registered as alpha | alpha | {{cwd}}/alpha | mission: yes | law: yes | models: default | Supervisor seat: claude-supervisor/claude-opus-5-5\nregistered as beta | beta | {{cwd}}/beta | mission: yes | law: yes | models: default | Supervisor seat: claude-supervisor/claude-opus-5-5",
+      projects:
+        "registered as alpha | alpha | {{cwd}}/alpha | mission: yes | law: yes | models: default | Supervisor seat: claude-supervisor/claude-opus-5-5\nregistered as beta | beta | {{cwd}}/beta | mission: yes | law: yes | models: default | Supervisor seat: claude-supervisor/claude-opus-5-5",
       agents: [
-        { id: "agent-S1", title: "[Supervisor] alpha", provider: "claude-supervisor/claude-opus-5-5", status: "idle", parentAgentId: null, cwd: "{{cwd}}/alpha", lastReport: "DONE\nCSV export accepted at 4f2a91c.\nDONE: CSV export for the monthly report" },
-        { id: "agent-S2", title: "[Supervisor] beta", provider: "claude-supervisor/claude-opus-5-5", status: "idle", parentAgentId: null, cwd: "{{cwd}}/beta", lastReport: "DECISION_NEEDED\nNightly import or manual import: nightly needs a scheduler entry on the shared machine.\nWAITING ON YOU: nightly import or manual import" },
+        {
+          id: "agent-S1",
+          title: "[Supervisor] alpha",
+          provider: "claude-supervisor/claude-opus-5-5",
+          status: "idle",
+          parentAgentId: null,
+          cwd: "{{cwd}}/alpha",
+          lastReport: "DONE\nCSV export accepted at 4f2a91c.\nDONE: CSV export for the monthly report",
+        },
+        {
+          id: "agent-S2",
+          title: "[Supervisor] beta",
+          provider: "claude-supervisor/claude-opus-5-5",
+          status: "idle",
+          parentAgentId: null,
+          cwd: "{{cwd}}/beta",
+          lastReport:
+            "DECISION_NEEDED\nNightly import or manual import: nightly needs a scheduler entry on the shared machine.\nWAITING ON YOU: nightly import or manual import",
+        },
       ],
     },
     roomFiles: {
-      "registry-log.jsonl": '{"id":"agent-S1","parent":null,"role":"supervisor","cwd":"{{cwd}}/alpha","title":"[Supervisor] alpha","at":"2026-10-08T08:00:00Z"}\n{"id":"agent-S2","parent":null,"role":"supervisor","cwd":"{{cwd}}/beta","title":"[Supervisor] beta","at":"2026-10-08T08:01:00Z"}\n',
+      "registry-log.jsonl":
+        '{"id":"agent-S1","parent":null,"role":"supervisor","cwd":"{{cwd}}/alpha","title":"[Supervisor] alpha","at":"2026-10-08T08:00:00Z"}\n{"id":"agent-S2","parent":null,"role":"supervisor","cwd":"{{cwd}}/beta","title":"[Supervisor] beta","at":"2026-10-08T08:01:00Z"}\n',
       "projects.json": '{"projects":[{"name":"alpha","root":"{{cwd}}/alpha"},{"name":"beta","root":"{{cwd}}/beta"}]}\n',
     },
     prompt: "Cho tôi bức tranh tất cả project lúc này: cái gì đã dùng được, cái gì đang chờ tôi quyết.",
     graders: [
       loads("seatwork-portfolio-digest"),
       { id: "checked-registry", tool: "seatwork_projects$" },
-      { id: "wrote-the-digest", tool: "^(Write|Bash)$", input: "reports/[^\"]*digest\\.md" },
+      { id: "wrote-the-digest", tool: "^(Write|Bash)$", input: 'reports/[^"]*digest\\.md' },
       // these facts are in the two status.md files and nowhere else: naming them proves it read them
       { id: "says-what-waits-on-human", text: "nightly|manual|hằng đêm|hàng đêm|thủ công|ban đêm" },
-      { id: "shows-what-the-room-decided", any_of: [{ text: "two decimals|hai chữ số|2 chữ số|hai số thập phân|2 số thập phân" }, { tool: "^(Write|Bash)$", input: "digest\\.md[\\s\\S]*(two decimals|hai chữ số|2 chữ số|thập phân)" }] },
+      {
+        id: "shows-what-the-room-decided",
+        any_of: [
+          { text: "two decimals|hai chữ số|2 chữ số|hai số thập phân|2 số thập phân" },
+          { tool: "^(Write|Bash)$", input: "digest\\.md[\\s\\S]*(two decimals|hai chữ số|2 chữ số|thập phân)" },
+        ],
+      },
       { id: "files-first", no_tool: "seatwork_mail$" }, // the files answer the question; a Supervisor is mailed only for a gap they cannot fill
       { id: "no-new-seat", no_tool: "create_agent$" },
       HQ_LAST,
@@ -1268,25 +1761,52 @@ WAITING ON YOU: nightly import or manual import
 `,
     },
     state: {
-      projects: "registered as alpha | alpha | {{cwd}}/alpha | mission: yes | law: yes | models: default | Supervisor seat: claude-supervisor/claude-opus-5-5\nregistered as beta | beta | {{cwd}}/beta | mission: yes | law: yes | models: default | Supervisor seat: claude-supervisor/claude-opus-5-5",
+      projects:
+        "registered as alpha | alpha | {{cwd}}/alpha | mission: yes | law: yes | models: default | Supervisor seat: claude-supervisor/claude-opus-5-5\nregistered as beta | beta | {{cwd}}/beta | mission: yes | law: yes | models: default | Supervisor seat: claude-supervisor/claude-opus-5-5",
       agents: [
-        { id: "agent-S1", title: "[Supervisor] alpha", provider: "claude-supervisor/claude-opus-5-5", status: "idle", parentAgentId: null, cwd: "{{cwd}}/alpha", lastReport: "DONE: CSV export for the monthly report" },
-        { id: "agent-S2", title: "[Supervisor] beta", provider: "claude-supervisor/claude-opus-5-5", status: "idle", parentAgentId: null, cwd: "{{cwd}}/beta", lastReport: "DONE: monthly import" },
+        {
+          id: "agent-S1",
+          title: "[Supervisor] alpha",
+          provider: "claude-supervisor/claude-opus-5-5",
+          status: "idle",
+          parentAgentId: null,
+          cwd: "{{cwd}}/alpha",
+          lastReport: "DONE: CSV export for the monthly report",
+        },
+        {
+          id: "agent-S2",
+          title: "[Supervisor] beta",
+          provider: "claude-supervisor/claude-opus-5-5",
+          status: "idle",
+          parentAgentId: null,
+          cwd: "{{cwd}}/beta",
+          lastReport: "DONE: monthly import",
+        },
       ],
-      roomStats: "mail in the last 14 days: 58\n{{cwd}}/alpha: CANDIDATE 7, ACCEPT 7, REVIEW 7, QUESTION 2, other 6\n  candidates 7 → accepted 7, rejected 0, reviews 7\n{{cwd}}/beta: CANDIDATE 5, ACCEPT 5, REVIEW 5, QUESTION 4, DECISION_NEEDED 1, other 8\n  candidates 5 → accepted 5, rejected 0, reviews 5 · decisions escalated 1 · questions 4: a recurring class means the brief template is the defect",
+      roomStats:
+        "mail in the last 14 days: 58\n{{cwd}}/alpha: CANDIDATE 7, ACCEPT 7, REVIEW 7, QUESTION 2, other 6\n  candidates 7 → accepted 7, rejected 0, reviews 7\n{{cwd}}/beta: CANDIDATE 5, ACCEPT 5, REVIEW 5, QUESTION 4, DECISION_NEEDED 1, other 8\n  candidates 5 → accepted 5, rejected 0, reviews 5 · decisions escalated 1 · questions 4: a recurring class means the brief template is the defect",
     },
     roomFiles: {
-      "registry-log.jsonl": '{"id":"agent-S1","parent":null,"role":"supervisor","cwd":"{{cwd}}/alpha","title":"[Supervisor] alpha","at":"2026-10-08T08:00:00Z"}\n{"id":"agent-S2","parent":null,"role":"supervisor","cwd":"{{cwd}}/beta","title":"[Supervisor] beta","at":"2026-10-08T08:01:00Z"}\n',
+      "registry-log.jsonl":
+        '{"id":"agent-S1","parent":null,"role":"supervisor","cwd":"{{cwd}}/alpha","title":"[Supervisor] alpha","at":"2026-10-08T08:00:00Z"}\n{"id":"agent-S2","parent":null,"role":"supervisor","cwd":"{{cwd}}/beta","title":"[Supervisor] beta","at":"2026-10-08T08:01:00Z"}\n',
       "projects.json": '{"projects":[{"name":"alpha","root":"{{cwd}}/alpha"},{"name":"beta","root":"{{cwd}}/beta"}]}\n',
     },
-    prompt: "Hai project vừa xong việc tuần này. Làm retrospective cho tôi: room học được gì, và nên sửa gì. Đề xuất thôi, đừng tự sửa.",
+    prompt:
+      "Hai project vừa xong việc tuần này. Làm retrospective cho tôi: room học được gì, và nên sửa gì. Đề xuất thôi, đừng tự sửa.",
     graders: [
       loads("seatwork-room-notebook"),
       { id: "numbers-first", tool: "seatwork_room_stats$" },
       { id: "wrote-the-room-notebook", tool: "^(Write|Edit|MultiEdit|Bash)$", input: "NOTEBOOK\\.md" },
-      { id: "one-pattern-from-two-projects", any_of: [{ text: "review" }, { tool: "^(Write|Edit|MultiEdit|Bash)$", input: "NOTEBOOK\\.md[\\s\\S]*review" }] }, // the review that found nothing is in both notebooks and in the stats
+      {
+        id: "one-pattern-from-two-projects",
+        any_of: [{ text: "review" }, { tool: "^(Write|Edit|MultiEdit|Bash)$", input: "NOTEBOOK\\.md[\\s\\S]*review" }],
+      }, // the review that found nothing is in both notebooks and in the stats
       { id: "names-the-surface-to-correct", text: "law|luật|review lane|làn review" },
-      { id: "proposes-and-applies-nothing", no_tool: "^(Write|Edit|MultiEdit)$", where: { file_path: "/room/(roles|skills|specs)/|-law\\.md$" } }, // the path written, not a file the text mentions
+      {
+        id: "proposes-and-applies-nothing",
+        no_tool: "^(Write|Edit|MultiEdit)$",
+        where: { file_path: "/room/(roles|skills|specs)/|-law\\.md$" },
+      }, // the path written, not a file the text mentions
       { id: "no-new-seat", no_tool: "create_agent$" },
       HQ_LAST,
     ],
@@ -1297,7 +1817,15 @@ WAITING ON YOU: nightly import or manual import
     title: "[Peer] timers page states",
     fixture: "timer-page",
     allow: ["Edit", "Write", "MultiEdit"],
-    project: { name: "timer-page", mission: "timer-page is the static page the team opens to see its timers. Users: the team, on a laptop and on a phone. Done: the list is readable and every state says what to do next. Out of bounds: a build step, a framework.", law: LAW.replace("# durations law", "# timer-page law").replace("- src/duration.js has one owner at a time", "- web/ has one owner at a time") },
+    project: {
+      name: "timer-page",
+      mission:
+        "timer-page is the static page the team opens to see its timers. Users: the team, on a laptop and on a phone. Done: the list is readable and every state says what to do next. Out of bounds: a build step, a framework.",
+      law: LAW.replace("# durations law", "# timer-page law").replace(
+        "- src/duration.js has one owner at a time",
+        "- web/ has one owner at a time",
+      ),
+    },
     prompt: `Project: {{cwd}}
 Outcome: the timers page stays usable when there is nothing to show and when loading fails: a person sees what happened and the one action that gets them going again. Nothing else.
 Candidate: an empty state and an error state inside the existing list region; changeable.
@@ -1314,8 +1842,14 @@ Reply with seatwork_mail to: owner`,
     graders: [
       loads("seatwork-frontend-design"),
       { id: "signal-candidate", signal: "CANDIDATE" },
-      { id: "edited-the-page", any_of: [{ tool: "^(Edit|Write|MultiEdit)$", input: "web/(app\\.js|index\\.html|style\\.css)" }, { tool: "^Bash$", input: "(python3 -|cat >|tee |sed -i)[\\s\\S]*(app\\.js|index\\.html|style\\.css)" }] }, // a real seat may write through the shell, from inside web/
-      { id: "stayed-in-scope", no_tool: "^(Edit|Write|MultiEdit)$", input: "\"file_path\":\"[^\"]*/cwd/(?!web/)" },
+      {
+        id: "edited-the-page",
+        any_of: [
+          { tool: "^(Edit|Write|MultiEdit)$", input: "web/(app\\.js|index\\.html|style\\.css)" },
+          { tool: "^Bash$", input: "(python3 -|cat >|tee |sed -i)[\\s\\S]*(app\\.js|index\\.html|style\\.css)" },
+        ],
+      }, // a real seat may write through the shell, from inside web/
+      { id: "stayed-in-scope", no_tool: "^(Edit|Write|MultiEdit)$", input: '"file_path":"[^"]*/cwd/(?!web/)' },
       { id: "says-how-the-rendering-was-checked", text: "render|viewport|375|browser|trình duyệt" }, // the skill: without rendered inspection, say so instead of claiming visual completion
       { id: "no-commit-or-push", no_tool: "^Bash$", input: "git (commit|push|merge)" },
       loads("seatwork-candidate-handoff"), // the task's own skill does not replace the handoff: a Peer that opened one tends to skip the other
@@ -1349,7 +1883,11 @@ ${READ_ONLY}`,
       loads("seatwork-repo-refresh"),
       { id: "read-the-standard", tool: "^(Read|Bash)$", input: "refresh-standard\\.md" },
       NO_EDITS,
-      { id: "deleted-nothing", no_tool: "^Bash$", where: { command: "(^|[;&|(]\\s*)(rm|git rm|git mv|mv|git clean)\\b" } },
+      {
+        id: "deleted-nothing",
+        no_tool: "^Bash$",
+        where: { command: "(^|[;&|(]\\s*)(rm|git rm|git mv|mv|git clean)\\b" },
+      },
       { id: "signal-review", signal: "REVIEW" },
       { id: "uses-the-dispositions", text: "\\b(DELETE|MERGE|DEMOTE|REWRITE)\\b" },
       { id: "finds-the-finished-plan", text: "PLAN-seconds-unit" },
@@ -1384,7 +1922,10 @@ ${READ_ONLY}`,
       loads("seatwork-architecture-premise-audit"),
       NO_EDITS,
       { id: "signal-review", signal: "REVIEW" },
-      { id: "one-verdict", text: "\\b(KEEP_FOUNDATION|REPAIR_FIRST|REDIRECT_RECOMMENDED|STOP_AND_REDIRECT|INSUFFICIENT_EVIDENCE)\\b" },
+      {
+        id: "one-verdict",
+        text: "\\b(KEEP_FOUNDATION|REPAIR_FIRST|REDIRECT_RECOMMENDED|STOP_AND_REDIRECT|INSUFFICIENT_EVIDENCE)\\b",
+      },
       { id: "coverage-ledger", text: "[Cc]overage|ledger" },
       { id: "decides-instead-of-asking", not_text: "^QUESTION\\b" },
       RECAP,

@@ -67,28 +67,46 @@ async function main(): Promise<void> {
   const base = roomModels(PLUGIN_DIR);
   let setup;
   try {
-    setup = await choose(readSetup(ROOM_HOME), flags, io, { catalog: cliCatalog, hq: base.seats.hq, watchKeyFile: join(WATCH_DIR, "key") });
+    setup = await choose(readSetup(ROOM_HOME), flags, io, {
+      catalog: cliCatalog,
+      hq: base.seats.hq,
+      watchKeyFile: join(WATCH_DIR, "key"),
+    });
   } finally {
     io.close();
   }
   if (mailPort !== undefined) setup = checkSetup({ ...setup, mailPort }, "--mail-port");
-  const plan = await setUpRoom({ pluginDir: PLUGIN_DIR, roomHome: ROOM_HOME, catalog: cliCatalog, version: VERSION }, setup);
+  const plan = await setUpRoom(
+    { pluginDir: PLUGIN_DIR, roomHome: ROOM_HOME, catalog: cliCatalog, version: VERSION },
+    setup,
+  );
   for (const warning of plan.warnings) console.error(`warning: ${warning}`);
   applyToConfigFile(PASEO_HOME, plan);
   const old = await clearOldRoom();
-  if (old) console.log(`A room from before 0.19.0 was on this machine: its folder is kept at ${old} for ${KEEP_REMOVED_DAYS} days.`);
+  if (old)
+    console.log(
+      `A room from before 0.19.0 was on this machine: its folder is kept at ${old} for ${KEEP_REMOVED_DAYS} days.`,
+    );
 
   const hq = plan.models.seats.hq;
-  console.log(`HQ seat: ${hq.provider}, thinking ${hq.thinking}; seats added on this machine: ${(setup.seats ?? []).join(", ") || "none"}; watcher: ${setup.watcher ?? "off"} (${join(ROOM_HOME, "setup.json")})`);
-  console.log(`Room files: ${join(ROOM_HOME, "room")}  policy: ${join(ROOM_HOME, "policy.json")}  seats: ${Object.keys(plan.providers).join(", ")}`);
+  console.log(
+    `HQ seat: ${hq.provider}, thinking ${hq.thinking}; seats added on this machine: ${(setup.seats ?? []).join(", ") || "none"}; watcher: ${setup.watcher ?? "off"} (${join(ROOM_HOME, "setup.json")})`,
+  );
+  console.log(
+    `Room files: ${join(ROOM_HOME, "room")}  policy: ${join(ROOM_HOME, "policy.json")}  seats: ${Object.keys(plan.providers).join(", ")}`,
+  );
   console.log(`Paseo config updated: ${join(PASEO_HOME, "config.json")} (backup alongside)`);
   console.log(`  profiles:  ${plan.profiles.map((profile) => profile.name).join(", ")}`);
   if (!existsSync(join(ROOM_HOME, "projects.json"))) {
     console.log(`No ${join(ROOM_HOME, "projects.json")}: the room runs in OPEN mode (no project guard).`);
-    console.log("  Ask HQ to onboard a project (or copy projects.json.example to projects.json) to switch on the registry.");
+    console.log(
+      "  Ask HQ to onboard a project (or copy projects.json.example to projects.json) to switch on the registry.",
+    );
   }
   if ((setup.watcher ?? "off") !== "off" && !process.env.SEATWORK_WATCH_KEY && !existsSync(join(WATCH_DIR, "key"))) {
-    console.log(`Watcher: no key in ${join(WATCH_DIR, "key")} (or SEATWORK_WATCH_KEY): the rules that read tool calls work, the four that ask a model only log their facts.`);
+    console.log(
+      `Watcher: no key in ${join(WATCH_DIR, "key")} (or SEATWORK_WATCH_KEY): the rules that read tool calls work, the four that ask a model only log their facts.`,
+    );
   }
   if (Object.keys(plan.providers).some((id) => id.startsWith("pi-"))) {
     const problem = await piProblem();

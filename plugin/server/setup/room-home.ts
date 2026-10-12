@@ -1,4 +1,14 @@
-import { chmodSync, cpSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  cpSync,
+  existsSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  renameSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { join } from "node:path";
 import { checkSetup, type RoomPlan, type Setup } from "./plan";
 
@@ -45,7 +55,14 @@ export function isSetUp(roomHome: string): boolean {
 }
 
 /** Writes the room home for a plan, keeping mail, logs and the registry; `seatsOnly` only adds seats. */
-export function writeRoomHome(input: { plan: RoomPlan; pluginDir: string; roomHome: string; setup: Setup; version: string; seatsOnly?: boolean }): void {
+export function writeRoomHome(input: {
+  plan: RoomPlan;
+  pluginDir: string;
+  roomHome: string;
+  setup: Setup;
+  version: string;
+  seatsOnly?: boolean;
+}): void {
   const { plan, pluginDir, roomHome, setup, version } = input;
   // the room home holds mail and copies of the user's harness config: its owner only
   mkdirSync(roomHome, { recursive: true, mode: 0o700 });
@@ -64,7 +81,10 @@ export function writeRoomHome(input: { plan: RoomPlan; pluginDir: string; roomHo
     rmSync(previous, { recursive: true, force: true });
     writePrivate(join(roomHome, "policy.json"), json(plan.policy));
   }
-  writePrivate(join(roomHome, "seats.json"), json({ seats: plan.seats, providers: Object.keys(plan.providers).sort(), source: pluginDir }));
+  writePrivate(
+    join(roomHome, "seats.json"),
+    json({ seats: plan.seats, providers: Object.keys(plan.providers).sort(), source: pluginDir }),
+  );
   writePrivate(join(roomHome, "setup.json"), json({ ...setup, version }));
 
   // runtimes of seats no longer enabled go; Claude seats run on the user's ~/.claude and have none
@@ -74,11 +94,15 @@ export function writeRoomHome(input: { plan: RoomPlan; pluginDir: string; roomHo
       if (!harness.isDirectory()) continue;
       for (const role of readdirSync(join(runtimes, harness.name), { withFileTypes: true })) {
         const kept = harness.name !== "claude" && `${harness.name}-${role.name}` in plan.providers;
-        if (role.isDirectory() && !kept) rmSync(join(runtimes, harness.name, role.name), { recursive: true, force: true });
+        if (role.isDirectory() && !kept)
+          rmSync(join(runtimes, harness.name, role.name), { recursive: true, force: true });
       }
     }
   }
   if (!existsSync(join(roomHome, "projects.json"))) {
-    writeFileSync(join(roomHome, "projects.json.example"), json({ projects: [{ name: "example", cwd: "/Users/you/code/example" }] }));
+    writeFileSync(
+      join(roomHome, "projects.json.example"),
+      json({ projects: [{ name: "example", cwd: "/Users/you/code/example" }] }),
+    );
   }
 }

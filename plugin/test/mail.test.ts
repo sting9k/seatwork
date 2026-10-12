@@ -24,7 +24,12 @@ function lead(agentId: string): SeatRecord {
   return { agentId, parentAgentId: null, role: "lead", provider: "claude-lead", title: null };
 }
 
-function mail(to: string, subject: string, from: Mail["from"] = { agentId: "room", role: "system" }, needs: Mail["needs"] = "nothing"): Omit<Mail, "id" | "at"> {
+function mail(
+  to: string,
+  subject: string,
+  from: Mail["from"] = { agentId: "room", role: "system" },
+  needs: Mail["needs"] = "nothing",
+): Omit<Mail, "id" | "at"> {
   return { from, to, priority: "action", subject, body: `body of ${subject}`, needs, whyNow: "test" };
 }
 
@@ -77,7 +82,10 @@ test("mail that arrives while the room learns its recipient is archived is bounc
   release.resolve();
   await first;
 
-  assert.ok(toSender.some((text) => text.includes(`UNDELIVERABLE: #${second.id}`)), "the sender of B was never told");
+  assert.ok(
+    toSender.some((text) => text.includes(`UNDELIVERABLE: #${second.id}`)),
+    "the sender of B was never told",
+  );
   assert.deepEqual(engine.held("gone1"), []);
 });
 
@@ -95,7 +103,10 @@ test("a failed status read holds the mail until the daemon answers again", async
   });
 
   const posted = await engine.post(mail("r2", "retry me"));
-  assert.deepEqual(engine.held("r2").map((m) => m.id), [posted.id]);
+  assert.deepEqual(
+    engine.held("r2").map((m) => m.id),
+    [posted.id],
+  );
 
   down = false;
   await engine.sweep();
@@ -112,12 +123,18 @@ test("a seat that a message can start takes its mail, whatever left it at rest; 
   for (const [status, taken] of cases) {
     const sent: string[] = [];
     const id = `seat-${status}`;
-    const engine = engineFor({ [id]: { refresh: async () => {}, current: () => ({ status }), send: async (text) => void sent.push(text) } });
+    const engine = engineFor({
+      [id]: { refresh: async () => {}, current: () => ({ status }), send: async (text) => void sent.push(text) },
+    });
 
     const posted = await engine.post(mail(id, "QUESTION"));
 
     assert.equal(sent.length, taken ? 1 : 0, status);
-    assert.deepEqual(engine.held(id).map((m) => m.id), taken ? [] : [posted.id], status);
+    assert.deepEqual(
+      engine.held(id).map((m) => m.id),
+      taken ? [] : [posted.id],
+      status,
+    );
   }
 });
 
@@ -149,7 +166,10 @@ test("a dropped mail that asked for nothing does not start its sender's turn; th
 
 test("quiet mail waits for the next mail that starts a turn, and the inbox hands it out meanwhile", async () => {
   const sent: string[] = [];
-  const engine = engineFor({ r6: { ...idle, send: async (text) => void sent.push(text) }, r7: { ...idle, send: async (text) => void sent.push(text) } });
+  const engine = engineFor({
+    r6: { ...idle, send: async (text) => void sent.push(text) },
+    r7: { ...idle, send: async (text) => void sent.push(text) },
+  });
 
   const quiet = await engine.post({ ...mail("r6", "ACK"), priority: "fyi", quiet: true });
   await engine.sweep();
@@ -160,7 +180,10 @@ test("quiet mail waits for the next mail that starts a turn, and the inbox hands
   assert.ok(sent[0].includes(quiet.id) && sent[0].includes(loud.id));
 
   const other = await engine.post({ ...mail("r7", "ACK"), priority: "fyi", quiet: true });
-  assert.deepEqual(engine.takeHeld("r7").map((m) => m.id), [other.id]);
+  assert.deepEqual(
+    engine.takeHeld("r7").map((m) => m.id),
+    [other.id],
+  );
 });
 
 test("a report kept for a turn end that never reached the room is posted once its seat is at rest", async () => {
@@ -212,7 +235,13 @@ test("mail whose delivery was cut off is still there for the next engine, marked
 
 test("a handover still holds for the engine that starts after a reload", async () => {
   const spawn = { lead: ["peer"] };
-  const peer: SeatRecord = { agentId: "peer10", parentAgentId: "deleted10", role: "peer", provider: "claude-peer", title: null };
+  const peer: SeatRecord = {
+    agentId: "peer10",
+    parentAgentId: "deleted10",
+    role: "peer",
+    provider: "claude-peer",
+    title: null,
+  };
   const before = engineFor({ peer10: idle }, spawn);
   before.rememberSeat(lead("lead10"));
   before.rememberSeat(peer);
@@ -238,7 +267,10 @@ test("a refused delivery keeps the mail for the next attempt, as a first deliver
   });
 
   const posted = await engine.post(mail("r4", "again"));
-  assert.deepEqual(engine.held("r4").map((m) => m.id), [posted.id]);
+  assert.deepEqual(
+    engine.held("r4").map((m) => m.id),
+    [posted.id],
+  );
 
   refuse = false;
   await engine.deliver("r4");

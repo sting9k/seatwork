@@ -17,7 +17,9 @@ export interface ScanRecord {
   reads?: number;
   ran?: "passed" | "failed" | "unknown";
   findings: ScanFinding[];
-  engine?: { ok: true; model: string; tokens: number; ms: number; cached?: true; skipped?: RuleId[] } | { ok: false; reason: string };
+  engine?:
+    | { ok: true; model: string; tokens: number; ms: number; cached?: true; skipped?: RuleId[] }
+    | { ok: false; reason: string };
   mail?: string;
 }
 

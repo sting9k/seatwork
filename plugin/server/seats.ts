@@ -52,7 +52,12 @@ export function specSheet(name: string | undefined): string | null {
 }
 
 /** Whether `parent` may create `childRole` with this title; a spawn entry is `role` or `role:spec`. */
-export function maySpawn(spawn: Record<string, string[]>, parent: string, childRole: string, title: string | null | undefined): boolean {
+export function maySpawn(
+  spawn: Record<string, string[]>,
+  parent: string,
+  childRole: string,
+  title: string | null | undefined,
+): boolean {
   const allowed = spawn[parent] ?? [];
   if (allowed.includes(childRole)) return true;
   const spec = specFromTitle(title);

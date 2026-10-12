@@ -96,7 +96,12 @@ export class JevEngine implements DecisionEngine {
 
   async ask(request: DecisionRequest): Promise<DecisionReply> {
     if (!this.options.apiKey) return { ok: false, reason: "no-key", detail: "no API key is set" };
-    if (this.now() < this.restUntil) return { ok: false, reason: "resting", detail: `resting after failures until ${new Date(this.restUntil).toISOString()}` };
+    if (this.now() < this.restUntil)
+      return {
+        ok: false,
+        reason: "resting",
+        detail: `resting after failures until ${new Date(this.restUntil).toISOString()}`,
+      };
     const started = this.now();
     const deadline = AbortSignal.timeout(this.options.deadlineMs);
     const body = JSON.stringify({ model: this.options.model, state: request.state, questions: request.questions });
@@ -105,13 +110,19 @@ export class JevEngine implements DecisionEngine {
       try {
         response = await this.fetch(this.options.url, {
           method: "POST",
-          headers: { authorization: `Bearer ${this.options.apiKey}`, "content-type": "application/json", accept: "application/json" },
+          headers: {
+            authorization: `Bearer ${this.options.apiKey}`,
+            "content-type": "application/json",
+            accept: "application/json",
+          },
           body,
           signal: deadline,
         });
       } catch (error) {
         this.failed(false);
-        return deadline.aborted ? { ok: false, reason: "timeout", detail: `no answer within ${this.options.deadlineMs} ms` } : { ok: false, reason: "unreachable", detail: error instanceof Error ? error.message : String(error) };
+        return deadline.aborted
+          ? { ok: false, reason: "timeout", detail: `no answer within ${this.options.deadlineMs} ms` }
+          : { ok: false, reason: "unreachable", detail: error instanceof Error ? error.message : String(error) };
       }
       if (response.ok) {
         const parsed = await response.json().catch(() => null);
@@ -119,14 +130,27 @@ export class JevEngine implements DecisionEngine {
         const inputTokens = number((parsed as { usage?: { input_tokens?: unknown } } | null)?.usage?.input_tokens);
         if (!answers || inputTokens === null) {
           this.failed(false);
-          return { ok: false, reason: "malformed", detail: "the reply did not carry an answer of the asked type for every question" };
+          return {
+            ok: false,
+            reason: "malformed",
+            detail: "the reply did not carry an answer of the asked type for every question",
+          };
         }
         this.failures = 0;
-        return { ok: true, model: String((parsed as { model?: unknown }).model ?? this.options.model), answers, inputTokens, ms: this.now() - started };
+        return {
+          ok: true,
+          model: String((parsed as { model?: unknown }).model ?? this.options.model),
+          answers,
+          inputTokens,
+          ms: this.now() - started,
+        };
       }
       const detail = `${response.status} ${(await response.text().catch(() => "")).slice(0, 200)}`;
       if (attempt === 0 && RETRY.has(response.status)) {
-        const wait = Math.min(Number(response.headers.get("retry-after-ms")) || Number(response.headers.get("retry-after")) * 1000 || 300, 1500);
+        const wait = Math.min(
+          Number(response.headers.get("retry-after-ms")) || Number(response.headers.get("retry-after")) * 1000 || 300,
+          1500,
+        );
         await new Promise((resolve) => setTimeout(resolve, wait));
         if (!deadline.aborted) continue;
       }

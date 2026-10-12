@@ -1,4 +1,14 @@
-import { appendFileSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
+import {
+  appendFileSync,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  readdirSync,
+  renameSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
 import { maySpawn } from "./seats";
 import { join } from "node:path";
 import type { PaseoApi } from "./paseo";
@@ -48,10 +58,12 @@ const REPORT_DIR = join(MAIL_DIR, "reports");
 const ADOPTIONS_FILE = join(MAIL_DIR, "adoptions.json");
 
 const HANDLING: Record<Priority, string> = {
-  blocking: "BLOCKING — someone is stopped until you act. Handle this first in this turn: reason, reply with seatwork_mail (or respond_to_permission), then resume your own plan where you left it.",
-  action: "ACTION — handle it in this turn: answer or take the disposition it asks for, reply with seatwork_mail if it needs one, then continue your own plan. It is a message, not a new brief.",
+  blocking:
+    "BLOCKING — someone is stopped until you act. Handle this first in this turn: reason, reply with seatwork_mail (or respond_to_permission), then resume your own plan where you left it.",
+  action:
+    "ACTION — handle it in this turn: answer or take the disposition it asks for, reply with seatwork_mail if it needs one, then continue your own plan. It is a message, not a new brief.",
   fyi: "FYI — read it; no reply needed unless it changes your plan.",
-}
+};
 
 const PRIORITY_RANK: Record<Priority, number> = { blocking: 0, action: 1, fyi: 2 };
 const RECENT_MAILS = 2000;
@@ -93,12 +105,18 @@ function writeQueue(agentId: string, mails: Mail[]): void {
 
 /** Rewrites a queue from what is on disk now, so mail posted in the meantime is kept. `null` drops a mail. */
 function updateQueue(agentId: string, change: (mail: Mail) => Mail | null): void {
-  writeQueue(agentId, readQueue(agentId).flatMap((mail) => change(mail) ?? []));
+  writeQueue(
+    agentId,
+    readQueue(agentId).flatMap((mail) => change(mail) ?? []),
+  );
 }
 
 function logLine(kind: string, mail: Mail, detail?: string): void {
   ensureDirs();
-  appendFileSync(LOG_FILE, `${JSON.stringify({ at: new Date().toISOString(), kind, id: mail.id, from: mail.from.agentId, to: mail.to, priority: mail.priority, subject: mail.subject, detail })}\n`);
+  appendFileSync(
+    LOG_FILE,
+    `${JSON.stringify({ at: new Date().toISOString(), kind, id: mail.id, from: mail.from.agentId, to: mail.to, priority: mail.priority, subject: mail.subject, detail })}\n`,
+  );
 }
 
 /** A seat stopped until someone answers it: a pending permission, or a status that says it waits. */
@@ -120,7 +138,11 @@ export function envelope(mail: Mail): string {
     `SEATWORK MAIL #${mail.id} ${tag} from ${mail.fromLabel ?? senderLabel(mail.from)} re: ${mail.subject}`,
     `why now: ${mail.whyNow}`,
     `needs: ${mail.needs}`,
-    ...(mail.sending ? [`possible repeat: an earlier delivery of this mail was cut off; if you already handled #${mail.id}, do nothing`] : []),
+    ...(mail.sending
+      ? [
+          `possible repeat: an earlier delivery of this mail was cut off; if you already handled #${mail.id}, do nothing`,
+        ]
+      : []),
     "--- body ---",
     mail.body.trim(),
     "--- how to handle ---",
@@ -130,8 +152,14 @@ export function envelope(mail: Mail): string {
 
 function digest(mails: Mail[]): string {
   if (mails.length === 1) return envelope(mails[0]);
-  const sorted = [...mails].sort((a, b) => PRIORITY_RANK[a.priority] - PRIORITY_RANK[b.priority] || a.at.localeCompare(b.at));
-  return [`SEATWORK MAIL DIGEST — ${sorted.length} messages, highest first. Handle each by its own header.`, "", ...sorted.map((m) => envelope(m))].join("\n\n");
+  const sorted = [...mails].sort(
+    (a, b) => PRIORITY_RANK[a.priority] - PRIORITY_RANK[b.priority] || a.at.localeCompare(b.at),
+  );
+  return [
+    `SEATWORK MAIL DIGEST — ${sorted.length} messages, highest first. Handle each by its own header.`,
+    "",
+    ...sorted.map((m) => envelope(m)),
+  ].join("\n\n");
 }
 
 export class MailEngine {
@@ -155,7 +183,9 @@ export class MailEngine {
   private loadAdoptions(): void {
     if (!existsSync(ADOPTIONS_FILE)) return;
     try {
-      for (const [child, parent] of Object.entries(JSON.parse(readFileSync(ADOPTIONS_FILE, "utf8")) as Record<string, string>)) {
+      for (const [child, parent] of Object.entries(
+        JSON.parse(readFileSync(ADOPTIONS_FILE, "utf8")) as Record<string, string>,
+      )) {
         this.adoptions.set(child, parent);
       }
     } catch {
@@ -173,22 +203,33 @@ export class MailEngine {
   }
 
   /** A handoff: `adopter` becomes `child`'s owner for mail, reports and permissions, when the route allows it. */
-  async adopt(adopter: string, child: string): Promise<{ ok: true; previous: string | null } | { ok: false; reason: string }> {
+  async adopt(
+    adopter: string,
+    child: string,
+  ): Promise<{ ok: true; previous: string | null } | { ok: false; reason: string }> {
     const a = this.seats.get(adopter);
     const c = this.seats.get(child);
     if (!a) return { ok: false, reason: `adopter ${adopter} is not a room seat` };
     if (!c) return { ok: false, reason: `${child} is not a room seat` };
     if (adopter === child) return { ok: false, reason: "a seat does not adopt itself" };
     if (this.isAncestor(child, adopter)) return { ok: false, reason: `${child} is above you` };
-    if (!maySpawn(this.room.spawn, a.role, c.role, c.title)) return { ok: false, reason: `a ${a.role} may own only ${(this.room.spawn[a.role] ?? []).join(", ") || "nothing"}, not this ${c.role}` };
+    if (!maySpawn(this.room.spawn, a.role, c.role, c.title))
+      return {
+        ok: false,
+        reason: `a ${a.role} may own only ${(this.room.spawn[a.role] ?? []).join(", ") || "nothing"}, not this ${c.role}`,
+      };
     const previous = this.parentOf(child);
     if (previous === adopter) return { ok: true, previous };
     if ((await this.status(child)) === "gone") return { ok: false, reason: `${child} is archived or gone` };
     const previousGone = !previous || (await this.status(previous)) === "gone";
     const adopterParent = this.parentOf(adopter);
-    const sameChain = this.isAncestor(adopter, child) || (adopterParent !== null && this.isAncestor(adopterParent, child));
+    const sameChain =
+      this.isAncestor(adopter, child) || (adopterParent !== null && this.isAncestor(adopterParent, child));
     if (!previousGone && !sameChain) {
-      return { ok: false, reason: `${child} still reports to a live seat that is not in your chain; only its chain may hand it over` };
+      return {
+        ok: false,
+        reason: `${child} still reports to a live seat that is not in your chain; only its chain may hand it over`,
+      };
     }
     this.adoptions.set(child, adopter);
     this.saveAdoptions();
@@ -196,9 +237,14 @@ export class MailEngine {
     try {
       await paseoCli(["agent", "update", child, "--label", `paseo.parent-agent-id=${adopter}`]);
     } catch (error) {
-      this.log(`adopt: could not move the Paseo parent label of ${child}: ${error instanceof Error ? error.message : String(error)}`);
+      this.log(
+        `adopt: could not move the Paseo parent label of ${child}: ${error instanceof Error ? error.message : String(error)}`,
+      );
     }
-    appendFileSync(LOG_FILE, `${JSON.stringify({ at: new Date().toISOString(), kind: "adopted", child, adopter, previous })}\n`);
+    appendFileSync(
+      LOG_FILE,
+      `${JSON.stringify({ at: new Date().toISOString(), kind: "adopted", child, adopter, previous })}\n`,
+    );
     return { ok: true, previous };
   }
 
@@ -232,8 +278,22 @@ export class MailEngine {
     for (const line of readFileSync(REGISTRY_LOG, "utf8").split("\n")) {
       if (!line.trim()) continue;
       try {
-        const rec = JSON.parse(line) as { agentId: string; parentAgentId: string | null; role: Role; provider: string; title: string | null; cwd?: string };
-        this.seats.set(rec.agentId, { agentId: rec.agentId, parentAgentId: rec.parentAgentId ?? null, role: rec.role, provider: rec.provider, title: rec.title ?? null, ...(rec.cwd ? { cwd: rec.cwd } : {}) });
+        const rec = JSON.parse(line) as {
+          agentId: string;
+          parentAgentId: string | null;
+          role: Role;
+          provider: string;
+          title: string | null;
+          cwd?: string;
+        };
+        this.seats.set(rec.agentId, {
+          agentId: rec.agentId,
+          parentAgentId: rec.parentAgentId ?? null,
+          role: rec.role,
+          provider: rec.provider,
+          title: rec.title ?? null,
+          ...(rec.cwd ? { cwd: rec.cwd } : {}),
+        });
       } catch {
         // skip bad line
       }
@@ -272,7 +332,12 @@ export class MailEngine {
     if (from === to) return { ok: false, reason: "a seat does not mail itself" };
     const route = `${sender.role}>${recipient.role}`;
     if (this.room.routes[route] !== true) {
-      if (route === "supervisor>hq") return { ok: false, reason: "nothing travels up from a Supervisor: the Owner reads your final message and .seatwork/status.md (WAITING ON YOU rows); write there" };
+      if (route === "supervisor>hq")
+        return {
+          ok: false,
+          reason:
+            "nothing travels up from a Supervisor: the Owner reads your final message and .seatwork/status.md (WAITING ON YOU rows); write there",
+        };
       return { ok: false, reason: `route ${route} is off in the room policy (room.routes)` };
     }
     if (this.parentOf(from) === to || this.parentOf(to) === from) return { ok: true };
@@ -293,7 +358,9 @@ export class MailEngine {
 
   /** `id` is given when the mail was shown to its sender before it is posted (a kept report). */
   async post(input: Omit<Mail, "id" | "at"> & { id?: string }): Promise<Mail> {
-    const fromLabel = input.fromLabel ?? (this.isAncestor(input.from.agentId, input.to) ? "owner" : `${input.from.role}:${input.from.agentId}`);
+    const fromLabel =
+      input.fromLabel ??
+      (this.isAncestor(input.from.agentId, input.to) ? "owner" : `${input.from.role}:${input.from.agentId}`);
     const mail: Mail = { ...input, id: input.id ?? nowId(), at: new Date().toISOString(), fromLabel };
     this.posted.set(mail.id, { from: mail.from.agentId, to: mail.to });
     const queue = readQueue(mail.to);
@@ -415,7 +482,8 @@ export class MailEngine {
         // refused, so nothing arrived: the mail waits as it was read
         if (status === "idle") this.woke.delete(agentId);
         updateQueue(agentId, (mail) => asRead.get(mail.id) ?? mail);
-        for (const mail of send) logLine("delivery-failed", mail, error instanceof Error ? error.message : String(error));
+        for (const mail of send)
+          logLine("delivery-failed", mail, error instanceof Error ? error.message : String(error));
         this.log(`mail: delivery to ${agentId} failed: ${error instanceof Error ? error.message : String(error)}`);
         return;
       }
@@ -432,7 +500,8 @@ export class MailEngine {
     for (const name of readdirSync(QUEUE_DIR)) {
       if (!name.endsWith(".jsonl")) continue;
       // older versions left empty queue files
-      if (statSync(join(QUEUE_DIR, name), { throwIfNoEntry: false })?.size === 0) rmSync(join(QUEUE_DIR, name), { force: true });
+      if (statSync(join(QUEUE_DIR, name), { throwIfNoEntry: false })?.size === 0)
+        rmSync(join(QUEUE_DIR, name), { force: true });
       else await this.deliver(name.slice(0, -".jsonl".length));
     }
     // a kept report whose seat is in no turn any more: its turn end never reached us
@@ -456,7 +525,11 @@ export class MailEngine {
       // a lost connection or a timeout proves nothing about the seat
       return "unknown";
     }
-    const snapshot = handle.current() as { status?: string; archivedAt?: string | null; pendingPermissions?: unknown[] } | null;
+    const snapshot = handle.current() as {
+      status?: string;
+      archivedAt?: string | null;
+      pendingPermissions?: unknown[];
+    } | null;
     // the daemon answered: it has no such agent (deleted), or the agent is archived
     if (!snapshot || snapshot.archivedAt) return "gone";
     if (waitsOnSomeone(snapshot)) return "permission";

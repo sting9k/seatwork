@@ -106,7 +106,17 @@ interface ShellReading {
 function readShell(event: ShellEvent, cwd: string, namedChecks: readonly string[]): ShellReading {
   const line = parseShell(event.command);
   const context = { namedChecks };
-  const reading: ShellReading = { line, writes: [], treeWrite: undefined, checks: checkRuns(event, line, context), destroyed: [], external: [], sleeps: 0, waitLoop: undefined, opaque: [] };
+  const reading: ShellReading = {
+    line,
+    writes: [],
+    treeWrite: undefined,
+    checks: checkRuns(event, line, context),
+    destroyed: [],
+    external: [],
+    sleeps: 0,
+    waitLoop: undefined,
+    opaque: [],
+  };
   // a command that never ran did nothing; one that failed may still have written before it failed
   if (event.status === "canceled") return { ...reading, checks: [] };
   let dir: string | null = event.cwd ?? cwd;
@@ -132,9 +142,15 @@ function readShell(event: ShellEvent, cwd: string, namedChecks: readonly string[
         reading.destroyed.push({ at, what: effect.what, command: event.command, ...(targets ? { targets } : {}) });
       } else if (effect.kind === "external") {
         // a line that failed on its last command did not get that command through
-        if (!(event.status === "failed" && index === line.commands.length - 1)) reading.external.push({ at, what: effect.what, command: event.command });
+        if (!(event.status === "failed" && index === line.commands.length - 1))
+          reading.external.push({ at, what: effect.what, command: event.command });
       } else if (effect.kind === "wait") {
-        if (command.inLoop || !Number.isFinite(effect.seconds)) reading.waitLoop ??= { at, what: command.inLoop ? "a shell loop that sleeps" : `${command.argv[0]} that runs until stopped`, command: event.command };
+        if (command.inLoop || !Number.isFinite(effect.seconds))
+          reading.waitLoop ??= {
+            at,
+            what: command.inLoop ? "a shell loop that sleeps" : `${command.argv[0]} that runs until stopped`,
+            command: event.command,
+          };
         else reading.sleeps += effect.seconds;
       }
     }
@@ -222,11 +238,13 @@ export function turnFacts(input: FactsInput): TurnFacts {
       const reading = readShell(event, cwd, namedChecks);
       checks.push(...reading.checks);
       for (const write of reading.writes) if (write.path) noteWrite(write.at, write.path);
-      if (reading.treeWrite !== undefined) sourceEdits.push({ at: reading.treeWrite, path: "(working tree)", kind: "source" });
+      if (reading.treeWrite !== undefined)
+        sourceEdits.push({ at: reading.treeWrite, path: "(working tree)", kind: "source" });
       if (!inTurn(event.seq)) continue;
       opaque.push(...reading.opaque);
       for (const deed of reading.destroyed) {
-        if (!(deed.targets && ownToDelete(deed.targets))) destroyed.push({ at: deed.at, what: deed.what, command: deed.command });
+        if (!(deed.targets && ownToDelete(deed.targets)))
+          destroyed.push({ at: deed.at, what: deed.what, command: deed.command });
       }
       external.push(...reading.external);
       const seconds = waitedSeconds(event, reading, input.now);
@@ -257,8 +275,14 @@ export function turnFacts(input: FactsInput): TurnFacts {
     const kind = pathKind(root, resolve(root, path));
     if (kind === "source" || kind === "doc") written.add(path);
   }
-  const outsideScope = scope ? [...written].filter((path) => !inScope(scope, path) && !namedLater(path, input.later ?? [])).sort() : [];
-  const outsideProject = [...new Set(writesThisTurn.filter((edit) => edit.kind === "outside" && !underProject(edit.path)).map((edit) => edit.path))].sort();
+  const outsideScope = scope
+    ? [...written].filter((path) => !inScope(scope, path) && !namedLater(path, input.later ?? [])).sort()
+    : [];
+  const outsideProject = [
+    ...new Set(
+      writesThisTurn.filter((edit) => edit.kind === "outside" && !underProject(edit.path)).map((edit) => edit.path),
+    ),
+  ].sort();
 
   const turnEvents = events.filter((event) => inTurn(event.seq));
   const acted = turnEvents.filter((event) => event.kind !== "say" && event.kind !== "look");
@@ -321,13 +345,18 @@ function lastMove(a: number | undefined, b: number | undefined): number | undefi
   return a === undefined ? b : b === undefined ? a : Math.max(a, b);
 }
 
-const FORBIDS = /\b(?:do not|don't|never|must not|may not|leave|unchanged|untouched|frozen|out of scope|outside (?:the |your )?(?:write )?scope)\b/i;
+const FORBIDS =
+  /\b(?:do not|don't|never|must not|may not|leave|unchanged|untouched|frozen|out of scope|outside (?:the |your )?(?:write )?scope)\b/i;
 
 /** Whether a later word from the seat above names this file in a sentence that does not forbid it. */
 function namedLater(path: string, later: readonly string[]): boolean {
   const name = path.split("/").pop() ?? path;
   const wanted = name.includes(".") && name.length >= 4 ? [path, name] : [path];
-  return later.some((text) => text.split(/(?<=[.!?;])\s+|\n/).some((sentence) => wanted.some((word) => sentence.includes(word)) && !FORBIDS.test(sentence)));
+  return later.some((text) =>
+    text
+      .split(/(?<=[.!?;])\s+|\n/)
+      .some((sentence) => wanted.some((word) => sentence.includes(word)) && !FORBIDS.test(sentence)),
+  );
 }
 
 function lastMessage(events: readonly TurnEvent[]): string {

@@ -31,7 +31,10 @@ Object.assign(process.env, {
 export const PLUGIN_DIR = join(__dirname, "..", "..");
 
 /** A room home as setting the room up leaves it: the room files, the policy and the enabled seats. */
-export function installRoom(providers: string[], adjust: (policy: { watcher: { mode: string } }) => void = () => {}): void {
+export function installRoom(
+  providers: string[],
+  adjust: (policy: { watcher: { mode: string } }) => void = () => {},
+): void {
   cpSync(join(PLUGIN_DIR, "room"), join(ROOM_HOME, "room"), { recursive: true });
   const policy = JSON.parse(readFileSync(join(PLUGIN_DIR, "paseo", "policy.json"), "utf8"));
   policy.mail.port = 0; // any free port
@@ -39,7 +42,10 @@ export function installRoom(providers: string[], adjust: (policy: { watcher: { m
   writeFileSync(join(ROOM_HOME, "policy.json"), JSON.stringify(policy));
   writeFileSync(join(ROOM_HOME, "seats.json"), JSON.stringify({ providers }));
   // set up by the plugin version under test: a room from another version is asked to apply again first
-  writeFileSync(join(ROOM_HOME, "setup.json"), JSON.stringify({ version: JSON.parse(readFileSync(join(PLUGIN_DIR, "package.json"), "utf8")).version }));
+  writeFileSync(
+    join(ROOM_HOME, "setup.json"),
+    JSON.stringify({ version: JSON.parse(readFileSync(join(PLUGIN_DIR, "package.json"), "utf8")).version }),
+  );
 }
 
 export const MAIL_POLICY = {

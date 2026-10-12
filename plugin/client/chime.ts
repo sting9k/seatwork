@@ -33,7 +33,8 @@ function wav(): Uint8Array {
   }
   const bytes = new Uint8Array(44 + samples.length * 2);
   const view = new DataView(bytes.buffer);
-  const tag = (at: number, text: string) => [...text].forEach((char, index) => view.setUint8(at + index, char.charCodeAt(0)));
+  const tag = (at: number, text: string) =>
+    [...text].forEach((char, index) => view.setUint8(at + index, char.charCodeAt(0)));
   tag(0, "RIFF");
   view.setUint32(4, bytes.length - 8, true);
   // the format block: PCM, mono, 16-bit samples

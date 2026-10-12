@@ -12,12 +12,16 @@ const atLeast = (version: string, wanted: number[]): boolean => {
 /** What `pi --version` prints, or "" when there is no pi to run. */
 function piVersion(): Promise<string> {
   return new Promise((resolve) => {
-    execFile("pi", ["--version"], { timeout: 10_000 }, (error, stdout) => resolve(error ? "" : stdout.split("\n")[0].trim()));
+    execFile("pi", ["--version"], { timeout: 10_000 }, (error, stdout) =>
+      resolve(error ? "" : stdout.split("\n")[0].trim()),
+    );
   });
 }
 
 /** What is wrong with this machine's Pi, or null: a Pi seat needs Pi's built-in MCP, there from 0.99. */
 export async function piProblem(version: Promise<string> = piVersion()): Promise<string | null> {
   const found = await version;
-  return atLeast(found, [0, 99]) ? null : `a Pi seat needs Pi 0.99 or later to get the room's tools; found ${found || "no pi on PATH"}`;
+  return atLeast(found, [0, 99])
+    ? null
+    : `a Pi seat needs Pi 0.99 or later to get the room's tools; found ${found || "no pi on PATH"}`;
 }

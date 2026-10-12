@@ -15,7 +15,8 @@ const SHAPES: readonly RegExp[] = [
 ];
 
 /** `API_KEY=abc`, `"password": "abc"`, `--token abc`: the name stays, the value goes. */
-const NAMED = /((?:^|[\s"'{,(-])[\w.-]*(?:secret|token|passwd|password|api[_-]?key|access[_-]?key|private[_-]?key|credential|auth)[\w.-]*["']?\s*[:=]\s*|--(?:token|password|api-key|secret)[= ])(["']?)([^\s"',})]{6,})\2/gi;
+const NAMED =
+  /((?:^|[\s"'{,(-])[\w.-]*(?:secret|token|passwd|password|api[_-]?key|access[_-]?key|private[_-]?key|credential|auth)[\w.-]*["']?\s*[:=]\s*|--(?:token|password|api-key|secret)[= ])(["']?)([^\s"',})]{6,})\2/gi;
 
 export function redact(text: string): string {
   let out = text;
@@ -27,7 +28,9 @@ export function redactDeep<T>(value: T): T {
   if (typeof value === "string") return redact(value) as T;
   if (Array.isArray(value)) return value.map((item) => redactDeep(item)) as T;
   if (value !== null && typeof value === "object") {
-    return Object.fromEntries(Object.entries(value as Record<string, unknown>).map(([key, item]) => [key, redactDeep(item)])) as T;
+    return Object.fromEntries(
+      Object.entries(value as Record<string, unknown>).map(([key, item]) => [key, redactDeep(item)]),
+    ) as T;
   }
   return value;
 }

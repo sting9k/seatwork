@@ -12,10 +12,10 @@ interface Handle {
 const idle = { refresh: async () => {}, current: () => ({ status: "idle" }) };
 
 /** An engine over these agents; any other id is one the daemon no longer has: it answers, with no agent. */
-function engineFor(handles: Record<string, Partial<Handle>>): MailEngine {
+function engineFor(handles: Record<string, Partial<Handle>>, spawn: Record<string, string[]> = {}): MailEngine {
   const missing = { refresh: async () => null, current: () => null };
   const paseo = { agents: { ref: (id: string) => handles[id] ?? missing } };
-  return new MailEngine(paseo as never, MAIL_POLICY, { routes: {}, spawn: {} } as never, () => {});
+  return new MailEngine(paseo as never, MAIL_POLICY, { routes: {}, spawn } as never, () => {});
 }
 
 function lead(agentId: string): SeatRecord {
@@ -206,6 +206,20 @@ test("mail whose delivery was cut off is still there for the next engine, marked
   assert.ok(sent[0].includes(`#${queued.id}`));
   assert.match(sent[0], /possible repeat/);
   assert.deepEqual(after.held("r3"), []);
+});
+
+test("a handover still holds for the engine that starts after a reload", async () => {
+  const spawn = { lead: ["peer"] };
+  const peer: SeatRecord = { agentId: "peer10", parentAgentId: "deleted10", role: "peer", provider: "claude-peer", title: null };
+  const before = engineFor({ peer10: idle }, spawn);
+  before.rememberSeat(lead("lead10"));
+  before.rememberSeat(peer);
+  assert.deepEqual(await before.adopt("lead10", "peer10"), { ok: true, previous: "deleted10" });
+
+  // the plugin reloads: the registry it reads the seats from still names the Peer's first owner
+  const after = engineFor({}, spawn);
+  after.rememberSeat(peer);
+  assert.equal(after.parentOf("peer10"), "lead10");
 });
 
 test("a refused delivery keeps the mail for the next attempt, as a first delivery", async () => {

@@ -81,6 +81,11 @@ test("a seat's session opens with the seat's own environment every time, not onl
 const agents: Record<string, object> = {};
 const context = { paseo: { agents: { ref: (id: string) => agents[id] } } };
 
+// a seat as the daemon reports it: deleted (it answers, with no agent), archived, or not reported at all
+const deleted = { refresh: async () => null, current: () => null };
+const archived = { refresh: async () => {}, current: () => ({ status: "idle", archivedAt: "2026-10-01T00:00:00Z" }) };
+const silent = { refresh: () => Promise.reject(new Error("connection lost")), current: () => null };
+
 for (const archive of ["works", "fails"] as const) {
   test(`a seat created outside the spawn rules: its creator is told what happened when the archive ${archive}`, async () => {
     const parent = `lead-${archive}`;
@@ -121,6 +126,7 @@ interface TestSeat {
   mail(args: Record<string, unknown>): Promise<string>;
   /** What slp_inbox hands this seat. */
   held(): Promise<string>;
+  adopt(agentId: string): Promise<string>;
 }
 
 async function seat(id: string, provider: string, parentAgentId: string | null, title: string): Promise<TestSeat> {
@@ -143,7 +149,7 @@ async function seat(id: string, provider: string, parentAgentId: string | null, 
     if (result.isError) throw new Error(result.content[0].text);
     return result.content[0].text;
   };
-  return { agent, inbox, prompt: made.config.systemPrompt, mail: (args) => tool("slp_mail", args), held: () => tool("slp_inbox", {}) };
+  return { agent, inbox, prompt: made.config.systemPrompt, mail: (args) => tool("slp_mail", args), held: () => tool("slp_inbox", {}), adopt: (agentId) => tool("slp_adopt", { agent_id: agentId }) };
 }
 
 function turnEnds(who: TestSeat, finalMessage: string, outcome: object = { kind: "completed" }) {
@@ -334,6 +340,61 @@ test("a HOLD that asks nothing of a Peer whose candidate is under review waits f
   await lead.mail({ reply_to: mailId(lead.inbox[1]), subject: "HOLD: candidate stands", body: "HOLD: candidate stands. The line holds for the inputs the outcome names.", needs: "nothing" });
   assert.equal(stopped.inbox.length, 1, "a Peer stopped on its challenge did not get the answer");
   assert.match(stopped.inbox[0], /BLOCKING from owner re: HOLD: candidate stands/);
+});
+
+test("mail to a seat that is archived, or that the daemon no longer has, is refused and nothing is sent", async () => {
+  for (const [state, gone] of Object.entries({ archived, deleted })) {
+    const lead = await seat(`lead-to-${state}`, "claude-lead", null, "[Lead] stream");
+    const peer = await seat(`peer-${state}`, "claude-peer", lead.agent.id, "[Peer] task");
+    agents[peer.agent.id] = gone;
+
+    await assert.rejects(lead.mail({ to: peer.agent.id, subject: "ANSWER: seconds", body: "ANSWER\nseconds", needs: "reply" }), /refused: peer-\S+ is archived or gone; nothing was sent/, state);
+    assert.deepEqual(lead.inbox, [], `${state}: the mail was taken, then came back as undeliverable`);
+  }
+});
+
+test("a seat is handed over when its owner is gone or the new owner is in its chain; from then on it reports to the new owner", async () => {
+  const cases = [
+    // what the daemon says of the old owner (null: alive), whether both Leads have one Supervisor, why the handover is refused
+    { name: "deleted", owner: deleted, shared: false, refused: null },
+    { name: "archived", owner: archived, shared: false, refused: null },
+    { name: "alive", owner: null, shared: false, refused: /still reports to a live seat/ },
+    // a daemon that does not answer proves nothing about the owner
+    { name: "silent", owner: silent, shared: false, refused: /still reports to a live seat/ },
+    { name: "shared", owner: null, shared: true, refused: null },
+  ];
+  for (const { name, owner, shared, refused } of cases) {
+    const above = shared ? (await seat(`supervisor-adopt-${name}`, "claude-supervisor", null, "[Supervisor] project")).agent.id : null;
+    const old = await seat(`lead-old-${name}`, "claude-lead", above, "[Lead] stream");
+    const successor = await seat(`lead-new-${name}`, "claude-lead", above, "[Lead] stream, continued");
+    const peer = await seat(`peer-adopt-${name}`, "claude-peer", old.agent.id, "[Peer] task");
+    if (owner) agents[old.agent.id] = owner;
+
+    if (refused) {
+      await assert.rejects(successor.adopt(peer.agent.id), refused, name);
+      await assert.rejects(successor.mail({ to: peer.agent.id, subject: "ANSWER: seconds", body: "ANSWER\nseconds", needs: "nothing" }), /may write to its parent/, name);
+      continue;
+    }
+    await successor.adopt(peer.agent.id);
+    assert.match(peer.inbox[0], /OWNER CHANGED/, name);
+    await peer.mail({ to: "owner", subject: "QUESTION: which unit", body: "QUESTION\nseconds or minutes?", needs: "decision" });
+    assert.equal(successor.inbox.length, 1, name);
+    assert.match(successor.inbox[0], /re: QUESTION: which unit/, name);
+    assert.deepEqual(old.inbox, [], name);
+  }
+});
+
+test("a seat that is gone is not handed over, and no seat is handed to a role that may not own it", async () => {
+  const old = await seat("lead-old-gone", "claude-lead", null, "[Lead] stream");
+  const successor = await seat("lead-new-gone", "claude-lead", null, "[Lead] stream, continued");
+  const peer = await seat("peer-adopt-gone", "claude-peer", old.agent.id, "[Peer] task");
+  const sibling = await seat("peer-sibling", "claude-peer", old.agent.id, "[Peer] other task");
+  agents[old.agent.id] = archived;
+
+  await assert.rejects(sibling.adopt(peer.agent.id), /a peer may own only nothing, not this peer/);
+
+  agents[peer.agent.id] = deleted;
+  await assert.rejects(successor.adopt(peer.agent.id), /peer-adopt-gone is archived or gone/);
 });
 
 test("a Supervisor's prompt names no path of the room's own files", async () => {

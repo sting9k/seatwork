@@ -223,13 +223,27 @@ The link under the right column. It asks once more, then refuses while a
 seat of the room is still open: archive those agents first. Then it:
 
 - takes the seats and profiles out of Paseo;
-- archives the `hq-seatwork` workspace;
+- deletes the `hq-seatwork` project from Paseo's list;
 - moves the room's folder to `~/.config/slp-room.removed-<time>`, mail and
-  logs included.
+  logs included;
+- moves the room's files out of `.slp/` in every project it worked in, into
+  `projects/` of that same folder.
 
-The empty `hq-seatwork` project stays in Paseo's list; remove it there if
-you want it gone. Removing the plugin alone does not undo Init, so remove
-the room first.
+"Every project it worked in" is each registered project and each folder a
+seat of the room was created in. Your projects stay in Paseo, and nothing
+else in them is touched. In a `.slp/` the room takes only the names it
+writes itself (section 4 lists them). A file of yours in `.slp/` stays, and
+the screen names it; `.slp/` goes only when nothing is left in it. A `.slp`
+that is a link is left alone. In a project that commits `.slp/` to git, the
+move shows there as deleted files.
+
+Nothing is deleted. To be rid of it all, delete
+`~/.config/slp-room.removed-<time>` yourself.
+
+Deleting the `hq-seatwork` project needs the `paseo` command. Where the
+daemon cannot find it, the project stays in Paseo's list, empty, and the
+screen says so. Removing the plugin alone does not undo Init, so remove the
+room first.
 
 ## 4. Your first project
 
@@ -264,8 +278,12 @@ The project now has a `.slp/` folder:
 ├── mission.md       what the project is for
 ├── <name>-law.md    the project's own rules
 ├── status.md        the intent, decisions, overruled objections, progress
-└── notebook.md      lessons learned
+├── notebook.md      lessons learned
+├── plans/           a Lead's plan for risky or long work, when it writes one
+└── reviews/         the report of a Lead's deep review, when it runs one
 ```
+
+The room writes nothing else in a project besides the work you ask for.
 
 ## 5. Daily work
 

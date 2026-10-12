@@ -62,8 +62,9 @@ That is the whole setup. Nothing is left to run in a terminal.
 To change a choice later, change it on the same screen and press **Apply**:
 it reaches every project that has no models of its own, for the seats
 opened from then on. A project gets models of its own on the same screen,
-under **Projects**. **Remove the room** undoes Init and keeps the room's
-folder aside.
+under **Projects**. **Remove the room** undoes Init: the `hq-seatwork`
+project leaves Paseo, and the room's folder is moved aside together with
+what the room wrote in each project's `.slp/`. Nothing is deleted.
 
 ## First project
 

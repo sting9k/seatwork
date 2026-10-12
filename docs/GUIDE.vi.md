@@ -223,13 +223,26 @@ Dòng chữ dưới cột bên phải. Nó hỏi lại một lần, rồi từ c
 của room đang mở: hãy lưu trữ các agent đó trước. Sau đó nó:
 
 - gỡ các seat và profile khỏi Paseo;
-- lưu trữ workspace `hq-seatwork`;
+- xoá project `hq-seatwork` khỏi danh sách của Paseo;
 - chuyển thư mục của room sang `~/.config/slp-room.removed-<thời điểm>`,
-  giữ nguyên thư và log.
+  giữ nguyên thư và log;
+- chuyển các file của room ra khỏi `.slp/` ở mọi project nó từng làm việc,
+  vào `projects/` trong chính thư mục đó.
 
-Project `hq-seatwork` (đã trống) vẫn nằm trong danh sách của Paseo; muốn bỏ
-thì xoá ở đó. Chỉ gỡ plugin thì không hoàn tác được Init, nên hãy gỡ room
-trước.
+"Mọi project nó từng làm việc" là mỗi project đã đăng ký và mỗi thư mục
+từng có seat của room được tạo ở đó. Project của bạn vẫn nằm trong Paseo,
+và không thứ gì khác trong project bị đụng tới. Trong `.slp/`, room chỉ lấy
+đúng những tên nó tự ghi (mục 4 liệt kê). File của bạn trong `.slp/` được
+giữ lại, và màn hình nêu tên nó; `.slp/` chỉ mất khi không còn gì bên
+trong. `.slp` là một link thì được để yên. Ở project có commit `.slp/` vào
+git, việc chuyển này hiện ra như các file bị xoá.
+
+Không thứ gì bị xoá hẳn. Muốn bỏ hết thì tự xoá
+`~/.config/slp-room.removed-<thời điểm>`.
+
+Xoá project `hq-seatwork` cần lệnh `paseo`. Khi daemon không tìm thấy lệnh
+đó, project vẫn nằm trong danh sách của Paseo, trống, và màn hình báo điều
+đó. Chỉ gỡ plugin thì không hoàn tác được Init, nên hãy gỡ room trước.
 
 ## 4. Project đầu tiên
 
@@ -263,8 +276,12 @@ Project giờ có thư mục `.slp/`:
 ├── mission.md       project để làm gì
 ├── <tên>-law.md     quy tắc riêng của project
 ├── status.md        yêu cầu, quyết định, phản đối bị bác, tiến độ
-└── notebook.md      bài học rút ra
+├── notebook.md      bài học rút ra
+├── plans/           kế hoạch của Lead cho việc rủi ro hoặc dài, khi nó viết
+└── reviews/         báo cáo của một lần review sâu do Lead chạy, khi có
 ```
+
+Ngoài phần việc bạn giao, room không ghi gì khác vào project.
 
 ## 5. Việc hằng ngày
 

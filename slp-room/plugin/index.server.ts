@@ -7,9 +7,9 @@ import { z } from "zod";
 import { paseoCli } from "./server/cli";
 import { Collector, liveAgents } from "./server/gc";
 import { MailEngine, type Mail, type Priority, type Needs } from "./server/mail";
-import { checkHqPlacement, closeHqProject, ensureHqProject, hqDir } from "./server/hq";
+import { checkHqPlacement, ensureHqProject, hqDir, removeHqProject } from "./server/hq";
 import { McpHttpServer } from "./server/mcp-http";
-import { PASEO_HOME, REGISTRY_LOG, ROOM_HOME, WATCH_DIR } from "./server/paths";
+import { HQ_PROJECT, PASEO_HOME, REGISTRY_LOG, ROOM_HOME, WATCH_DIR } from "./server/paths";
 import { describeProjects, projectTables, registerProject, writeProjectModels } from "./server/onboard";
 import { OwedList, roomStatus as readRoomStatus } from "./server/room-status";
 import { fitSeat, loadModels, projectModels, type Models } from "./server/models";
@@ -22,6 +22,7 @@ import { piProblem } from "./server/setup/checks";
 import { addSeats, setUpRoom, sourceOf } from "./server/setup/init";
 import { applyWithSdk, readSwitches, removeWithSdk, turnBundledSkillsOff } from "./server/setup/paseo-config";
 import { roomModels, type Setup } from "./server/setup/plan";
+import { keptAt, roomFolders, takeRoomFiles, type ProjectFiles } from "./server/setup/project-files";
 import { isSetUp, moveRoomHomeAside, readSetup } from "./server/setup/room-home";
 import { asksOwner, CLOSES_WORK, signalOf, subjectSignal } from "./server/signals";
 import { roomStats } from "./server/stats";
@@ -39,7 +40,7 @@ import { Watcher, type SeatView, type TimelineView } from "./server/watch/watche
 
 type CreateRequest = PluginBeforeRequests["agent.create"];
 
-const VERSION = "0.16.0";
+const VERSION = "0.17.0";
 const MAIL_DIR = join(ROOM_HOME, "mail");
 const MCP_TOKEN_FILE = join(MAIL_DIR, "token");
 const NONCES_FILE = join(MAIL_DIR, "nonces.json");
@@ -147,11 +148,22 @@ export default function contribute(server: PluginServerContext) {
       if (!isSetUp(ROOM_HOME)) throw new Error("no room is set up on this daemon");
       const open = [...(await liveAgents(paseo)).values()].filter((agent) => parseSeat(agent.provider));
       if (open.length) throw new Error(`${open.length} room seat${open.length === 1 ? " is" : "s are"} still open (${open.slice(0, 3).map((agent) => agent.title ?? agent.id).join(", ")}${open.length > 3 ? ", …" : ""}); archive them first`);
+      const folders = roomFolders(); // read from the room home, before it moves
       await room?.stop();
       room = null;
       const { removed } = await removeWithSdk(paseo);
-      await closeHqProject(paseo);
-      return { removed, movedTo: moveRoomHomeAside(ROOM_HOME) };
+      const notes = (await removeHqProject(paseo)) ? [] : [`The ${HQ_PROJECT} project is still in Paseo's list, empty: the paseo CLI could not delete it. Delete it there.`];
+      const movedTo = moveRoomHomeAside(ROOM_HOME);
+      const projects: ProjectFiles[] = [];
+      for (const root of folders) {
+        try {
+          const taken = takeRoomFiles(root, keptAt(movedTo, root));
+          if (taken) projects.push(taken);
+        } catch (error) {
+          notes.push(`${root}/.slp could not be moved: ${error instanceof Error ? error.message : String(error)}`);
+        }
+      }
+      return { removed, movedTo, projects, notes };
     }),
   );
 

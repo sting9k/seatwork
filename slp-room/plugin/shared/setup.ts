@@ -70,11 +70,20 @@ export const setupInit = defineRpc({
   output: z.object({ seats: z.array(z.string()), removed: z.array(z.string()), notes: z.array(z.string()) }),
 });
 
-/** Takes the room off this daemon: its seats and profiles leave Paseo, its home is moved aside and kept. */
+/**
+ * Takes the room off this daemon: its seats, its profiles and the HQ project leave Paseo; its home is
+ * moved aside and kept, and so is what it wrote in each project's `.slp/`.
+ */
 export const setupRemove = defineRpc({
   name: "setup.remove",
   input: z.object({}),
-  output: z.object({ removed: z.array(z.string()), movedTo: z.string() }),
+  output: z.object({
+    removed: z.array(z.string()),
+    movedTo: z.string(),
+    /** The projects that held room files: the names moved out of `.slp/`, and what else was left there. */
+    projects: z.array(z.object({ root: z.string(), moved: z.array(z.string()), left: z.array(z.string()) })),
+    notes: z.array(z.string()),
+  }),
 });
 
 /** Stores the watcher's key in the room home. It is written, never read back to the app. */

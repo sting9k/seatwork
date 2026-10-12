@@ -1,6 +1,6 @@
 import { PLUGIN_DIR, PROJECT, ROOM_HOME } from "./support/room";
 import assert from "node:assert/strict";
-import { existsSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { after, before, test } from "node:test";
 import contribute from "../index.server";
@@ -161,18 +161,46 @@ test("the watcher's key is kept for its owner only and never handed back to the 
   assert.deepEqual([(await state()).watcherKey, existsSync(file)], [false, false]);
 });
 
-test("removing the room waits for its seats, then takes it out of Paseo, keeps its home whole beside it, and leaves the plugin asleep", async () => {
+test("removing the room waits for its seats, then takes it out of Paseo and out of the projects it worked in, keeps all of it beside its home, and leaves the plugin asleep", async () => {
+  // a registered project, a folder a seat once ran in, one whose .slp is a link, and one the room never knew
+  const [seatDir, linked, stranger] = ["seat-ran-here", "linked", "stranger"].map((name) => join(realpathSync(PROJECT), "..", name));
+  const slp = (dir: string, ...files: string[]) => {
+    mkdirSync(join(dir, ".slp", "plans"), { recursive: true });
+    for (const file of files) writeFileSync(join(dir, ".slp", file), file);
+  };
+  rmSync(join(PROJECT, ".slp"), { recursive: true, force: true });
+  slp(PROJECT, "room.json", "mission.md", "shop-law.md", "status.md", "notebook.md", "plans/billing.md", "mine.txt");
+  writeFileSync(join(PROJECT, "code.ts"), "the user's");
+  slp(seatDir, "status.md");
+  slp(stranger, "status.md");
+  mkdirSync(linked);
+  symlinkSync(join(stranger, ".slp"), join(linked, ".slp"));
+  writeFileSync(join(ROOM_HOME, "projects.json"), JSON.stringify({ projects: [{ name: "shop", cwd: PROJECT }] }));
+  appendFileSync(join(ROOM_HOME, "registry-log.jsonl"), [seatDir, linked, join(ROOM_HOME, "hq-seatwork")].map((cwd) => `${JSON.stringify({ agentId: cwd, cwd })}\n`).join(""));
+
   daemon.open = [{ id: "a1", provider: "claude-lead", title: "[Lead] billing" }, { id: "a2", provider: "claude", title: "not a seat" }];
   await assert.rejects(Promise.resolve(call("rpc setup.remove", {}, context)), /1 room seat is still open \(\[Lead\] billing\); archive them first/);
-  assert.ok("claude-hq" in daemon.config.providers);
+  assert.ok("claude-hq" in daemon.config.providers && existsSync(join(PROJECT, ".slp", "status.md")));
 
   daemon.open = [daemon.open[1]];
-  const { removed, movedTo } = (await call("rpc setup.remove", {}, context)) as { removed: string[]; movedTo: string };
+  const { removed, movedTo, projects, notes } = (await call("rpc setup.remove", {}, context)) as { removed: string[]; movedTo: string; projects: { root: string; moved: string[]; left: string[] }[]; notes: string[] };
 
   assert.deepEqual([Object.keys(daemon.config.providers), daemon.config.agentProfiles], [["my-own"], [{ id: "mine" }]]);
   assert.ok(removed.includes("claude-hq") && !removed.includes("my-own"));
   assert.deepEqual([existsSync(ROOM_HOME), dirname(movedTo), existsSync(join(movedTo, "room", "models.json"))], [false, dirname(ROOM_HOME), true]);
+  // this daemon's paseo CLI fails: the HQ workspace is archived and the screen is told the project's line stays
   assert.deepEqual(daemon.workspaces, [], "the HQ workspace is still listed in Paseo");
+  assert.match(notes.join(" "), /hq-seatwork project is still in Paseo's list/);
+
+  // the room's files leave .slp/ by name; a file of the user's stays, and so does the folder that holds it
+  const shop = projects.find((project) => project.root === realpathSync(PROJECT))!;
+  assert.deepEqual([shop.moved.sort(), shop.left], [["mission.md", "notebook.md", "plans", "room.json", "shop-law.md", "status.md"], ["mine.txt"]]);
+  assert.deepEqual([readdirSync(join(PROJECT, ".slp")), readFileSync(join(PROJECT, "code.ts"), "utf8")], [["mine.txt"], "the user's"]);
+  const kept = readdirSync(join(movedTo, "projects")).find((name) => name.endsWith("project"))!;
+  assert.equal(readFileSync(join(movedTo, "projects", kept, ".slp", "plans", "billing.md"), "utf8"), "plans/billing.md");
+  // a folder a seat ran in loses an emptied .slp/; a linked .slp and a folder the room never knew are not touched
+  assert.deepEqual(projects.map((project) => project.root).sort(), [realpathSync(PROJECT), seatDir].sort());
+  assert.deepEqual([existsSync(join(seatDir, ".slp")), readdirSync(join(stranger, ".slp")).sort(), existsSync(join(linked, ".slp", "status.md"))], [false, ["plans", "status.md"], true]);
   await assert.rejects(createPeer(), /no room is set up on this daemon/);
   assert.deepEqual(paseoSide.names().filter((name) => name.startsWith("on ")), []);
 });

@@ -163,6 +163,19 @@ function Legend(props: { table: Table; harnesses: Harness[]; colors: Colors }) {
   );
 }
 
+/** What Remove did: where the room went, whose notes went with it, and what it would not touch. */
+function removedLine(done: RpcOutput<typeof setupRemove>): string {
+  const count = done.projects.length;
+  const kept = done.projects.filter((project) => project.left.length > 0).map((project) => `${short(project.root)}/.slp (${project.left.join(", ")})`);
+  return [
+    `The room was removed. Its folder is kept at ${short(done.movedTo)}${count ? `, with the room's notes from ${count} project${count === 1 ? "" : "s"}` : ""}.`,
+    kept.length ? `Left in place, not the room's: ${kept.join("; ")}.` : "",
+    ...done.notes,
+  ]
+    .filter(Boolean)
+    .join(" ");
+}
+
 /**
  * The room's setup: what each role runs on and which projects follow it, with the room's state,
  * its watcher, its sound and this host beside them. Choices are kept as they are made; the room
@@ -260,7 +273,7 @@ function RoomSetup({ data, open, fit, colors: c }: { data: State; open(project?:
       )}
       {init.error ? <Text style={{ ...small(c), color: c.statusDanger }}>{failed(init.error)}</Text> : null}
       {done && done.notes.length > 0 ? <Text style={small(c)}>{done.notes.join(" ")}</Text> : null}
-      {moved ? <Text style={small(c)}>The room was removed. Its folder is kept at {short(moved.movedTo)}</Text> : null}
+      {moved ? <Text style={small(c)}>{removedLine(moved)}</Text> : null}
       <KeyValue name="Plugin" value={data.version} colors={c} />
       {applied ? <KeyValue name="Folder" value={short(data.home)} mono colors={c} /> : null}
     </Card>
@@ -392,7 +405,7 @@ function RoomSetup({ data, open, fit, colors: c }: { data: State; open(project?:
         confirming ? (
           <Card colors={c} style={{ ...RAIL, borderColor: tint(c.statusDanger, 0.5) }}>
             <Text style={{ color: c.foreground, fontSize: 13, lineHeight: 18, fontWeight: "600" }}>Remove the room?</Text>
-            <Text style={small(c)}>Its seats and profiles leave Paseo, the hq-seatwork workspace is archived, and the room's folder is moved aside with its mail and logs. Archive the room's agents first.</Text>
+            <Text style={small(c)}>Its seats, its profiles and the hq-seatwork project leave Paseo. The room's folder is moved aside with its mail and logs, and with it the notes the room kept in each project's .slp folder. Your projects and their code stay as they are. Archive the room's agents first.</Text>
             <View style={{ flexDirection: "row", gap: 8 }}>
               <Btn label={remove.isPending ? "Removing…" : "Remove"} kind="danger" grow disabled={busy} onPress={() => remove.mutate()} colors={c} />
               <Btn label="Cancel" disabled={busy} onPress={() => setConfirming(false)} colors={c} />

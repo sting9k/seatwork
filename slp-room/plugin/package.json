@@ -1,7 +1,7 @@
 {
   "name": "slp-seat",
   "private": true,
-  "version": "0.16.0",
+  "version": "0.17.0",
   "description": "Paseo plugin: a Supervisor → Lead → Peer room across Claude, Codex, Pi and OpenCode, set up from its own screen in Paseo.",
   "files": [
     "paseo-plugin.json",

@@ -82,10 +82,20 @@ test("a Claude seat is created with the policy's launch flags and its role's ski
   assert.deepEqual(created.config.providerOptions.additionalDirectories, ["/elsewhere", join(ROOM_HOME, "role-skills", "claude", "peer")]);
 });
 
+/** What a Claude seat starts with so that Claude Code adds nothing of its own: memory, teams, agent view, workflows, claude.ai connectors. */
+const CLAUDE_SWITCHES = {
+  CLAUDE_CODE_DISABLE_AUTO_MEMORY: "1",
+  CLAUDE_CODE_DISABLE_ORG_MEMORY: "1",
+  CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS: "0",
+  CLAUDE_CODE_DISABLE_AGENT_VIEW: "1",
+  CLAUDE_CODE_DISABLE_WORKFLOWS: "1",
+  ENABLE_CLAUDEAI_MCP_SERVERS: "false",
+};
+
 test("a seat's session opens with the seat's own environment every time, not only when the seat is created", async () => {
   for (const reason of ["resume", "refresh", "import"]) {
     assert.deepEqual(await opened("pi-peer", reason), { PI_CODING_AGENT_DIR: join(runtimes, "pi", "peer") }, reason);
-    assert.deepEqual(await opened("claude-peer", reason), { CLAUDE_CODE_DISABLE_AUTO_MEMORY: "1" }, reason);
+    assert.deepEqual(await opened("claude-peer", reason), CLAUDE_SWITCHES, reason);
   }
   // an agent that is no seat of the room keeps what it came with
   assert.deepEqual(await opened("claude", "resume", { MINE: "1" }), { MINE: "1" });

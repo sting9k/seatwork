@@ -98,7 +98,7 @@
     }
   },
   "claude": {
-    "$comment": "disallowedTools uses Claude Code's permission syntax. Agent/Task/ListAgents/SendMessage are Claude's own sub-agent and messaging tools; ScheduleWakeup/Cron*/Workflow are its own scheduling and orchestration; the Bash rules stop a seat from starting a nested harness or driving Paseo from the shell.",
+    "$comment": "disallowedTools uses Claude Code's permission syntax. Agent/Task/ListAgents/SendMessage are Claude's own sub-agent and messaging tools, TeamCreate/TeamDelete and the Task* tools its agent teams, shared task list and background tasks; ScheduleWakeup/Cron*/Workflow/RemoteTrigger are its own scheduling, orchestration and cloud routines; the Bash rules stop a seat from starting a nested harness or driving Paseo from the shell.",
     "disallowedTools": {
       "hq": [
         "Agent",
@@ -118,7 +118,16 @@
         "CronList",
         "Workflow",
         "SendMessage",
-        "ListAgents"
+        "ListAgents",
+        "TeamCreate",
+        "TeamDelete",
+        "TaskCreate",
+        "TaskGet",
+        "TaskList",
+        "TaskUpdate",
+        "TaskStop",
+        "TaskOutput",
+        "RemoteTrigger"
       ],
       "supervisor": [
         "Agent",
@@ -138,7 +147,16 @@
         "CronList",
         "Workflow",
         "SendMessage",
-        "ListAgents"
+        "ListAgents",
+        "TeamCreate",
+        "TeamDelete",
+        "TaskCreate",
+        "TaskGet",
+        "TaskList",
+        "TaskUpdate",
+        "TaskStop",
+        "TaskOutput",
+        "RemoteTrigger"
       ],
       "lead": [
         "Agent",
@@ -154,7 +172,16 @@
         "CronList",
         "Workflow",
         "SendMessage",
-        "ListAgents"
+        "ListAgents",
+        "TeamCreate",
+        "TeamDelete",
+        "TaskCreate",
+        "TaskGet",
+        "TaskList",
+        "TaskUpdate",
+        "TaskStop",
+        "TaskOutput",
+        "RemoteTrigger"
       ],
       "peer": [
         "Agent",
@@ -170,7 +197,16 @@
         "CronList",
         "Workflow",
         "SendMessage",
-        "ListAgents"
+        "ListAgents",
+        "TeamCreate",
+        "TeamDelete",
+        "TaskCreate",
+        "TaskGet",
+        "TaskList",
+        "TaskUpdate",
+        "TaskStop",
+        "TaskOutput",
+        "RemoteTrigger"
       ],
       "lens": [
         "Agent",
@@ -187,6 +223,15 @@
         "Workflow",
         "SendMessage",
         "ListAgents",
+        "TeamCreate",
+        "TeamDelete",
+        "TaskCreate",
+        "TaskGet",
+        "TaskList",
+        "TaskUpdate",
+        "TaskStop",
+        "TaskOutput",
+        "RemoteTrigger",
         "Edit",
         "Write",
         "MultiEdit",
@@ -195,14 +240,19 @@
     },
     "launch": {
       "env": {
-        "CLAUDE_CODE_DISABLE_AUTO_MEMORY": "1"
+        "CLAUDE_CODE_DISABLE_AUTO_MEMORY": "1",
+        "CLAUDE_CODE_DISABLE_ORG_MEMORY": "1",
+        "CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS": "0",
+        "CLAUDE_CODE_DISABLE_AGENT_VIEW": "1",
+        "CLAUDE_CODE_DISABLE_WORKFLOWS": "1",
+        "ENABLE_CLAUDEAI_MCP_SERVERS": "false"
       },
       "extraArgs": {
         "setting-sources": "project,local",
         "strict-mcp-config": null
       }
     },
-    "$comment_launch": "How a seat starts, per harness. Claude seats run on the user's ~/.claude: these flags make them take the sign-in only (no user settings, no personal MCP server) and the env keeps auto-memory out of it. The other harnesses start on a home of their own: {runtime} is ~/.config/slp-room/runtimes/<harness>/<role>. tools/gen-snippet.py writes each launch block into the harness's providers (env, and extraArgs under options), so a seat starts this way when the plugin is not running; the plugin gives every session it opens the same env.",
+    "$comment_launch": "How a seat starts, per harness. Claude seats run on the user's ~/.claude: the flags make them take the sign-in only (no user settings, no personal MCP server), and the env switches off what Claude Code adds of its own: auto memory and organization memory, agent teams, the agent view, workflows, and claude.ai connectors (strict-mcp-config alone still loads those). The other harnesses start on a home of their own: {runtime} is ~/.config/slp-room/runtimes/<harness>/<role>. tools/gen-snippet.py writes each launch block into the harness's providers (env, and extraArgs under options), so a seat starts this way when the plugin is not running; the plugin gives every session it opens the same env.",
     "shareFiles": [
       "CLAUDE.md"
     ],

@@ -157,6 +157,12 @@ hoặc một seat do chính bạn mở kết thúc lượt bằng `DECISION_NEED
 `BLOCKED`, một dòng `WAITING ON YOU:`, hoặc bị lỗi. Muốn tắt: đặt
 `owner.chime` thành `false` trong `paseo/policy.json` rồi chạy `./install.sh`.
 
+Dòng **Room** ở chân sidebar của Paseo cho biết còn bao nhiêu lượt như vậy
+đang chờ, và mở một màn hình gồm: các lượt đó, cây seat (mỗi seat kèm trạng
+thái và số thư đang giữ cho nó), thư gần nhất và những gì watcher phát hiện.
+Bấm vào một seat để mở nó. Một lượt nằm trong danh sách cho tới khi seat đó
+làm việc lại hoặc bị lưu trữ; khởi động lại daemon không xoá nó.
+
 ### Muốn can thiệp một Peer
 
 Nên nói với Supervisor. Nếu bạn chat thẳng với Peer, nó vẫn làm theo, và

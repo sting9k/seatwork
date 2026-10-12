@@ -23,7 +23,6 @@ const clip = (text: string, max: number) => (text.length <= max ? text : `${text
 
 export interface Excerpt {
   text: string;
-  /** False when lines that bear on the questions had to be left out. */
   whole: boolean;
 }
 

@@ -12,11 +12,11 @@ import type { MailPolicy, RoomPolicy } from "./policy";
 export type Priority = "blocking" | "action" | "fyi";
 export type Needs = "reply" | "decision" | "nothing";
 
+/** A mail: `sending` marks a delivery under way, `quiet` starts no turn, `progress` gives way to a newer report. */
 export interface Mail {
   id: string;
   at: string;
   from: { agentId: string; role: Role | "system" };
-  /** How the recipient sees the sender: "owner" for any seat above it, else role:id. */
   fromLabel?: string;
   to: string;
   priority: Priority;
@@ -24,11 +24,8 @@ export interface Mail {
   body: string;
   needs: Needs;
   whyNow: string;
-  /** Set while a delivery is under way; still set later means it was cut off and may have arrived. */
   sending?: true;
-  /** Never starts a turn by itself: it waits for the recipient's next mail, or its inbox. */
   quiet?: true;
-  /** A progress report: its sender's next report replaces it while it still waits. */
   progress?: true;
 }
 
@@ -135,12 +132,9 @@ function digest(mails: Mail[]): string {
 
 export class MailEngine {
   private readonly seats = new Map<string, SeatRecord>();
-  /** id → sender/recipient of every mail ever posted (for reply_to), loaded from the log. */
   private readonly posted = new Map<string, { from: string; to: string }>();
-  /** child → the seat that adopted it. */
   private readonly adoptions = new Map<string, string>();
   private delivering = new Set<string>();
-  /** recipient → the mail whose delivery started its current turn. */
   private readonly woke = new Map<string, Mail[]>();
 
   constructor(

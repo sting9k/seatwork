@@ -26,12 +26,9 @@ export type Moment = "start" | "live" | "end";
 export interface Thresholds {
   sleepSeconds: number;
   repeatRun: number;
-  /** A pattern of two to four actions, back to back. */
   cycleRepeats: number;
   sameFailure: number;
-  /** Minutes without activity while a turn runs and nothing is in flight. */
   silentMinutes: number;
-  /** Minutes one command may run before the silence counts anyway. */
   inFlightMinutes: number;
 }
 
@@ -39,28 +36,24 @@ export interface Situation {
   facts: TurnFacts;
   brief: Brief | null;
   moment: Moment;
-  /** What the brief a Lead gave a Peer lacks; null when it is complete or no brief opened the turn. */
   briefGap: BriefGap | null;
   now: number;
-  /** The seat is stopped on a permission, not silent; its parent has that mail. */
   pendingPermission: boolean;
   thresholds: Thresholds;
 }
 
 export interface BriefGap {
   lines: readonly string[];
-  /** The mail that carried it; absent for the brief the Peer was created with. */
   mail?: { id: string; subject: string };
 }
 
 /** The key of the gap in the brief a Peer was created with; a mailed brief's is its mail. */
 export const CREATED_WITH = "created";
 
+/** A finding: `evidence` is written for a reader who has not seen the turn; one `key` is told once per turn. */
 export interface Finding {
   rule: RuleId;
-  /** Written for a reader who has not seen the turn. */
   evidence: string;
-  /** One key is told once per turn. */
   key: string;
 }
 

@@ -1,13 +1,11 @@
 import { HARNESSES, parseSeat, ROLES, type Harness } from "../seats";
 import { WATCHER_MODES, type Catalog, type Setup } from "./plan";
 
-/** The installer's flags that are this machine's choices. */
+/** The installer's flags that are this machine's choices: --hq default|ask|<harness>/<model>, --watcher off|shadow|on|ask. */
 export interface ChoiceFlags {
-  /** default, ask, or <harness>/<model>. */
   hq?: string;
   hqThinking?: string;
   seats: string[];
-  /** off, shadow, on, or ask. */
   watcher?: string;
 }
 

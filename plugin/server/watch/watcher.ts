@@ -33,7 +33,6 @@ export interface Notice {
   to: string;
   subject: string;
   body: string;
-  /** The seat's own report follows at once: the notice waits for it. */
   withReport: boolean;
 }
 
@@ -62,16 +61,14 @@ interface Turn {
   carried: boolean;
 }
 
+/** One watched seat: `ending` is the turn before the running one while its end is unread; its scans run one at a time. */
 interface Watched {
   seat: SeatView;
   brief: Brief | null;
   mails: number;
-  /** Briefs whose gap was told: a brief is told once. */
   briefsTold: Set<string>;
   turn: Turn | null;
-  /** The turn before it, while its end has not been read: held mail can start the next turn first. */
   ending: Turn | null;
-  /** Scans of one seat run one after another. */
   busy: Promise<void>;
 }
 

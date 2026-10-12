@@ -7,13 +7,12 @@ import { statusCovers, type ShellLine } from "./shell";
 
 export type CheckResult = "passed" | "failed" | "unknown";
 
+/** One run of a check; `at` is its event's sequence number plus the command's place in its line as a fraction. */
 export interface CheckRun {
-  /** The event's sequence number, plus the command's place in its line as the fraction. */
   at: number;
   label: string;
   what: CheckKind | "named";
   result: CheckResult;
-  /** For a failure: what it printed, reduced so the same failure gives the same value. */
   signature?: string;
 }
 

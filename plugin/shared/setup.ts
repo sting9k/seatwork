@@ -41,18 +41,14 @@ export const setupState = defineRpc({
   name: "setup.state",
   input: z.object({}),
   output: z.object({
-    /** This plugin's version. */
     version: z.string(),
     home: z.string(),
-    /** What the room was last set up with; null on a daemon that only downloaded the plugin. */
     applied: choices.extend({ version: z.string(), seats: z.array(z.string()) }).nullable(),
     table: z.json(),
     harnesses: z.array(harness),
     watcherKey: z.boolean(),
     projects: z.array(project),
-    /** What the watcher's decision model cost this month, in dollars; null while the watcher is off. */
     spend: z.object({ usd: z.number(), planUsd: z.number(), capUsd: z.number() }).nullable(),
-    /** ok: true fine, false needs the Owner, null unknown. */
     checks: z.array(z.object({ id: z.string(), label: z.string(), ok: z.boolean().nullable(), detail: z.string() })),
   }),
 });
@@ -87,6 +83,5 @@ export const setupWatcherKey = defineRpc({
 export const setupProject = defineRpc({
   name: "setup.project",
   input: z.object({ name: z.string(), models: modelChoices.nullable() }),
-  /** The seats that were set up because the table names them. */
   output: z.object({ own: z.boolean(), seats: z.array(z.string()) }),
 });

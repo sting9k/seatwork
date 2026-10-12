@@ -283,7 +283,6 @@ const REBUILT = /(?:^|\/)(?:node_modules|dist|build|out|target|coverage|\.next|\
 interface Destruction {
   what: string;
   paths?: string[];
-  /** It takes only what a test selects under those paths (`find … -name`). */
   bounded?: boolean;
 }
 

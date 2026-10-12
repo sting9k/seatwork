@@ -4,30 +4,24 @@
 export type Joiner = "&&" | "||" | ";" | "|" | "&";
 
 export interface Redirect {
-  /** ">" truncates, ">>" appends, "<" reads. Descriptor copies such as 2>&1 are dropped. */
   op: ">" | ">>" | "<";
   target: string;
   fd?: number;
 }
 
+/** One simple command: `argv` has quotes removed and wrappers (`sudo`, `env X=1`, `timeout 60`) peeled off. */
 export interface SimpleCommand {
-  /** Program and arguments, quotes removed; wrappers such as `sudo`, `env X=1`, `timeout 60` are peeled off. */
   argv: string[];
   redirects: Redirect[];
-  /** Null for the last command of the line. */
   joiner: Joiner | null;
   inLoop: boolean;
-  /** Ran inside `$(...)` or backticks: its exit status is not the line's. */
   substituted: boolean;
-  /** Fed by `xargs`: the paths it acts on are not in argv. */
   viaXargs: boolean;
-  /** A heredoc fed to it as its input: for an interpreter, the program it runs. */
   script?: string;
 }
 
 export interface ShellLine {
   commands: SimpleCommand[];
-  /** False when the text was cut short (an open quote, input over the size cap). */
   complete: boolean;
 }
 

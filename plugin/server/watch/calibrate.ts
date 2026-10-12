@@ -57,9 +57,9 @@ export interface Scored {
   positive: boolean;
 }
 
+/** An AUROC with its standard error (Hanley and McNeil): the interval is wide below a hundred labels. */
 export interface Roc {
   auroc: number;
-  /** Standard error (Hanley and McNeil): the interval is wide below a hundred labels. */
   se: number;
   positives: number;
   negatives: number;
@@ -88,9 +88,7 @@ export function auroc(items: readonly Scored[]): Roc | null {
 
 export interface Operating {
   threshold: number;
-  /** Share of returned turns flagged at this threshold. */
   recall: number;
-  /** Share of accepted turns flagged at this threshold. */
   falseRate: number;
 }
 
@@ -114,7 +112,6 @@ export interface RuleReport {
   by: "facts" | "model";
   spoke: number;
   raised: number;
-  /** Turns it spoke in that have a label; `returned` of them were sent back. */
   labelled: number;
   returned: number;
   roc: Roc | null;
@@ -122,7 +119,6 @@ export interface RuleReport {
 }
 
 export interface CalibrationPolicy {
-  /** Minutes after a turn's end in which the answer of the seat above counts as its label. */
   labelWindowMinutes: number;
   minLabels: number;
   minAuroc: number;

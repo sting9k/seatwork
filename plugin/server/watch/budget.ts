@@ -4,7 +4,6 @@ import { dirname } from "node:path";
 /** What the decision model has cost, per month and day: `open`, `saving` (today's share is spent) or `closed`. */
 
 export interface BudgetPolicy {
-  /** Per million input tokens; output is not billed. */
   usdPerMillionTokens: number;
   monthlyPlanUsd: number;
   monthlyCapUsd: number;
@@ -36,7 +35,6 @@ export class Budget {
   private ledger: Ledger | null = null;
 
   constructor(
-    /** Path with `{month}` where the month goes, e.g. …/watch/usage-{month}.json. */
     private readonly filePattern: string,
     private readonly policy: BudgetPolicy,
     private readonly now: () => Date = () => new Date(),

@@ -9,11 +9,9 @@ export const roomWaiting = defineRpc({
     chime: z.boolean(),
     waiting: z.array(
       z.object({
-        /** One per turn: a seat that asks again is a new entry. */
         key: z.string(),
         agentId: z.string(),
         title: z.string().nullable(),
-        /** DECISION_NEEDED, BLOCKED, WAITING ON YOU or FAILED. */
         what: z.string(),
         at: z.string(),
       }),
@@ -27,11 +25,9 @@ export const roomStatus = defineRpc({
   input: z.object({}),
   output: z.object({
     waiting: z.array(z.object({ key: z.string(), agentId: z.string(), title: z.string().nullable(), what: z.string(), at: z.string(), project: z.string() })),
-    /** HQ first, then the registered projects (also one with no seat open), then any other. */
     projects: z.array(
       z.object({
         name: z.string(),
-        /** In tree order; `depth` is the number of seats above it inside the project. */
         seats: z.array(z.object({ agentId: z.string(), role: z.string(), title: z.string().nullable(), status: z.string(), held: z.number(), depth: z.number() })),
       }),
     ),

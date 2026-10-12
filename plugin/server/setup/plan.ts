@@ -7,14 +7,11 @@ import { HARNESSES, parseSeat, ROLES, type Harness, type Role } from "../seats";
 /** This machine's own choices, kept in ROOM_HOME/setup.json and never in the repo. */
 export interface Setup {
   hq?: "default" | { provider: string; thinking?: string };
-  /** Seats added on top of the ones every install gets, as `<harness>-<role>`. */
   seats?: string[];
   watcher?: "off" | "shadow" | "on";
   models?: Record<string, unknown>;
   chime?: boolean;
-  /** The mail server's port here, when the policy's is taken. */
   mailPort?: number;
-  /** The plugin version that last set the room up. */
   version?: string;
 }
 
@@ -54,7 +51,6 @@ export interface Profile {
 
 /** Everything setting the room up writes, worked out before anything is written. */
 export interface RoomPlan {
-  /** role -> harnesses that hold it. */
   seats: Record<string, string[]>;
   providers: Record<string, ProviderEntry>;
   profiles: Profile[];

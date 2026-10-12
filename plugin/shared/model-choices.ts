@@ -40,11 +40,10 @@ export interface ModelChoice {
   thinking: string;
 }
 
-/** One of a role's models as the screen lists it. */
+/** One of a role's models as the screen lists it; `more` counts further models under the same label. */
 export interface TierChoice extends ModelChoice {
   label: string;
   use: string;
-  /** Further models the table lists under the same label; the screen shows and writes the first. */
   more: number;
 }
 

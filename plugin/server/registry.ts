@@ -8,7 +8,6 @@ export interface ProjectEntry {
 }
 
 export interface Registry {
-  /** Overrides where the hq-seatwork project lives (default: paths.HQ_DIR). */
   hq?: string;
   projects: ProjectEntry[];
 }

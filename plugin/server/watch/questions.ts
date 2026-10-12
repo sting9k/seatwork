@@ -21,10 +21,8 @@ export const BRIEF_FIELD: Record<Extract<StateField, `brief.${string}`>, BriefFi
 
 export interface Inquiry {
   rule: RuleId;
-  /** Ids are keys of the request and never reach the model. */
   questions: Record<string, DecisionQuestion>;
   reads: readonly StateField[];
-  /** Lines of the seat's message worth sending for this inquiry. */
   relevant: RegExp;
   /** How strongly the answers support the rule's finding, 0 to 1; null when an answer is missing. */
   score(answers: Record<string, DecisionAnswer>): number | null;

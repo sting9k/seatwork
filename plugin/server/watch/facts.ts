@@ -12,7 +12,6 @@ import { parseShell, type ShellLine } from "./shell";
 
 export interface Edit {
   at: number;
-  /** Relative to the project root when inside it, else absolute. */
   path: string;
   kind: PathKind;
 }
@@ -32,21 +31,18 @@ export type Standing =
   /** One passed and no later run failed. */
   | "passed";
 
+/** One turn's facts; `tests` and `statics` (build, lint, types) are what the checks said after the last source change. */
 export interface TurnFacts {
   ended: boolean;
   message: string;
-  /** Undefined while the turn runs. */
   signal: string | undefined;
   closesWork: boolean;
   verdict: "acceptable" | "not-yet" | undefined;
 
   edits: Edit[];
-  /** The last source change in the history held; undefined when there is nothing to verify. */
   lastEdit: Edit | undefined;
   checksSince: CheckRun[];
-  /** Test runs and the checks the brief names, after the last change. */
   tests: Standing;
-  /** Build, lint and type checks after the last change: a green build is not a green test. */
   statics: Standing;
   checksThisTurn: CheckRun[];
 
@@ -55,7 +51,6 @@ export interface TurnFacts {
 
   destroyed: Deed[];
   external: Deed[];
-  /** Seconds spent waiting in the shell this turn, by the clock where the timeline has one. */
   waited: number;
   waitLoop: Deed | undefined;
 
@@ -71,20 +66,17 @@ export interface TurnFacts {
   lastActivity: number | undefined;
 }
 
+/** What a scan reads: `events` oldest first, from before the turn if need be, and `turnStart`, the turn's first `seq`. */
 export interface FactsInput {
-  /** Oldest first; may reach back before the turn being judged. */
   events: readonly TurnEvent[];
-  /** `seq` of the first event of the turn being judged. */
   turnStart: number;
   cwd: string;
   root: string;
   brief: Brief | null;
   ended: boolean;
-  /** Files git says changed during the turn; null when git could not say. */
   changed: readonly string[] | null;
   now?: number;
   startedAt?: number;
-  /** What the seat above wrote to this seat after the brief in force. */
   later?: readonly string[];
 }
 
@@ -104,12 +96,10 @@ interface ShellReading {
   writes: { at: number; path: string | null }[];
   treeWrite: number | undefined;
   checks: CheckRun[];
-  /** Set for deletes only. */
   destroyed: (Deed & { targets?: Target[] })[];
   external: Deed[];
   sleeps: number;
   waitLoop: Deed | undefined;
-  /** Commands the watcher cannot read (a script, an interpreter): they may have written anything. */
   opaque: { at: number; text: string }[];
 }
 

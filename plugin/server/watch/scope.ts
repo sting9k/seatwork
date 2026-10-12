@@ -6,9 +6,7 @@ import { CLAUDE_HOME, CODEX_HOME, OPENCODE_CONFIG_HOME, PASEO_HOME, PI_HOME, ROO
 
 export interface WriteScope {
   readOnly: boolean;
-  /** Globs relative to the project root. */
   patterns: string[];
-  /** Globs the line takes back out: `src/** except src/legacy/**`. */
   except: string[];
 }
 

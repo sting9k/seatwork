@@ -52,10 +52,8 @@ const LABEL_LINE = new RegExp(`^\\s*(?:[-*>]\\s+)?[*_\`"']*(${LABELS.map(([label
 
 export interface Brief {
   fields: Partial<Record<BriefField, string>>;
-  /** Null when the brief names no path the watcher can read. */
   scope: WriteScope | null;
   namedChecks: string[];
-  /** A review, a research task or a lens: its whole deliverable is a message. */
   readOnly: boolean;
 }
 

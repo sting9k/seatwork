@@ -4,14 +4,11 @@ import { isAbsolute, normalize, resolve } from "node:path";
 
 export type RunStatus = "running" | "ok" | "failed" | "canceled";
 
+/** What every event carries: `seq` orders the history; `at` is epoch ms, a finished call's end or a running one's start. */
 interface EventBase {
-  /** Strictly increasing position in the history. */
   seq: number;
-  /** Index of the timeline entry it came from. */
   source: number;
-  /** Epoch ms: the end of a finished call, the start of a running one. */
   at?: number;
-  /** Timestamp of the timeline entry before this one: a finished call began no earlier. */
   prior?: number;
   turn?: string;
 }
@@ -21,23 +18,20 @@ export interface SayEvent extends EventBase {
   text: string;
 }
 
+/** A shell call; `output` is read by code only and never leaves this machine. */
 export interface ShellEvent extends EventBase {
   kind: "shell";
   command: string;
   cwd?: string;
   status: RunStatus;
-  /** Null when the harness does not report one (Claude). */
   exitCode: number | null;
-  /** Read by code only: it never leaves this machine. */
   output: string;
-  /** "pending" until the harness reports its end, then "settled" with the real status. */
   background?: "pending" | "settled";
 }
 
-/** A file written through the harness's own edit tool; shell writes are found by the shell analysis. */
+/** A file (absolute path) written through the harness's own edit tool; shell writes come from the shell analysis. */
 export interface EditEvent extends EventBase {
   kind: "edit";
-  /** Absolute, normalized. */
   path: string;
   status: RunStatus;
 }
@@ -84,7 +78,6 @@ export function prompts(entries: readonly TimelineInput[]): string[] {
 
 export interface Letter {
   id: string;
-  /** As the recipient reads it: `owner` for any seat above it, `room`, or `role:id`. */
   from: string;
   subject: string;
   body: string;

@@ -44,7 +44,6 @@ export function SetupItem({ theme, currentScreen, openScreen }: PluginSidebarIte
 
 /** How the page lays itself out at the width it was given. */
 interface Fit {
-  /** The cards about the room sit beside the models, not under them. */
   rail: boolean;
   narrow: boolean;
 }

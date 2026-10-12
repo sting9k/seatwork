@@ -167,7 +167,6 @@ for (const archive of ["works", "fails"] as const) {
 
 interface TestSeat {
   agent: { id: string; parentAgentId: string | null; provider: string; cwd: string; title: string; workspaceId: null };
-  /** Every prompt the room started this seat with. */
   inbox: string[];
   prompt: string;
   mail(args: Record<string, unknown>): Promise<string>;

@@ -10,29 +10,24 @@ export interface ScanRecord {
   parent: string | null;
   turn: string | null;
   moment: "start" | "live" | "end";
-  /** Revision of the question catalogue the scores were given under. */
   rev: number;
   signal?: string;
   tests: string;
   statics: string;
-  /** How often this turn has been read so far, this record included. */
   reads?: number;
-  /** At a turn's end: what the first test the seat ran in that turn said. */
   ran?: "passed" | "failed" | "unknown";
   findings: ScanFinding[];
-  /** `skipped`: rules whose question was left out because the message was too long. */
   engine?: { ok: true; model: string; tokens: number; ms: number; cached?: true; skipped?: RuleId[] } | { ok: false; reason: string };
   mail?: string;
 }
 
+/** One finding of a scan: `raised` was mailed to the seat above, `logged` kept here only, `held` came after the turn's one mail. */
 export interface ScanFinding {
   rule: RuleId;
   key: string;
   by: "facts" | "model";
-  /** For a model's reading: the probability of the flagged option. */
   score?: number;
   evidence: string;
-  /** raised: mailed to the seat above; logged: kept here only; held: one mail per turn was already sent. */
   outcome: "raised" | "logged" | "held";
 }
 

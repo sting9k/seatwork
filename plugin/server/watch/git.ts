@@ -6,7 +6,6 @@ import { join } from "node:path";
 export interface TreeSnapshot {
   root: string;
   head: string;
-  /** Path → size and mtime of every file that differs from HEAD or is untracked. */
   dirty: Map<string, string>;
 }
 

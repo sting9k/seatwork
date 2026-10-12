@@ -24,7 +24,6 @@ export interface Models {
   seats: { hq: SeatModel; supervisor: SeatModel; lead: SeatModel };
   peer: { tiers: Record<string, Tier>; reviewThinking: string };
   lens: { tiers: Record<string, Tier> };
-  /** The Paseo session mode per harness; null where the harness has none. */
   modes: Record<string, string | null>;
 }
 

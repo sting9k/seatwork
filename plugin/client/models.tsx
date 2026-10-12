@@ -42,14 +42,12 @@ export function ModelChip(props: { choice: ModelChoice; harnesses: Harness[]; to
 /** One model table as its roles, each with its model; a press opens a role to choose what it runs on. */
 export function RoleTree(props: {
   mode: "room" | "project";
-  /** The table underneath the choices: the shipped one for the room, the room's for a project. */
   base: Table;
   choices: Choices;
   running: Table | null;
   harnesses: Harness[];
   onChange(choices: Choices): void;
   where: string;
-  /** A phone: assumed until the tree has measured its width. */
   compact: boolean;
   colors: Colors;
 }) {

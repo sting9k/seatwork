@@ -5,9 +5,7 @@ import { ROOM_HOME } from "./paths";
 /** Types and loader for policy.json: no defaults here, a broken file stops the plugin. */
 
 export interface ClaudeRuntimePolicy {
-  /** Bundled skills denied through the provider's disallowedTools as Skill(skill:<name>). */
   deniedSkills: string[];
-  /** Files of the user's ~/.claude appended to a seat's prompt (the seat loads no user settings). */
   shareFiles: string[];
 }
 
@@ -37,7 +35,6 @@ export interface OwnerPolicy {
 export interface PiRuntimePolicy {
   shareFiles: string[];
   shareDirs: string[];
-  /** Laid over the user's settings.json: it empties `packages` and `extensions`. */
   settings: Record<string, unknown>;
 }
 
@@ -48,12 +45,10 @@ export interface OpenCodeRuntimePolicy {
 
 export type MidTurnDelivery = "steer" | "hold";
 
+/** Mail delivery; `midTurn` "steer" hands mail to a running recipient (cancels its tool on Claude and Pi), "hold" waits. */
 export interface MailPolicy {
-  /** Fixed port for the room's MCP server, so seat URLs survive plugin reloads. */
   port: number;
-  /** With midTurn "steer": FYI mail still waits for the turn to end. */
   holdFyiWhileRunning: boolean;
-  /** "steer" hands mail to a running recipient (cancels its tool on Claude and Pi); "hold" waits for the turn's end. */
   midTurn: Record<"claude" | "codex" | "pi" | "opencode", MidTurnDelivery>;
 }
 
@@ -69,10 +64,9 @@ export interface RoomParams {
   cheapReadBudgetTokens: number;
 }
 
+/** Who may write to whom and create whom: `routes` keys are "<sender>><recipient>", `spawn` entries `role` or `role:spec`. */
 export interface RoomPolicy {
-  /** "<senderRole>><recipientRole>": whether that role may write to that role; a missing pair is refused. */
   routes: Record<string, boolean>;
-  /** Per role: the roles it may create, as `role` or `role:spec`; anything else is archived. */
   spawn: Record<RoleName, string[]>;
   params: RoomParams;
 }
@@ -91,10 +85,8 @@ export interface WatcherPolicy {
   watch: RoleName[];
   pollSeconds: number;
   historyEntries: number;
-  /** Per rule: mail it, only log it, or skip it. A rule not listed is logged. */
   rules: Record<string, "raise" | "log" | "off">;
   thresholds: { sleepSeconds: number; repeatRun: number; cycleRepeats: number; sameFailure: number; inFlightFactor: number };
-  /** Per rule that asks the model: the score from which its finding counts. */
   scores: Record<string, number>;
   maxMailsPerSeat: number;
   engine: { url: string; model: string; keyFile: string; keyEnv: string; deadlineMs: number; restAfterFailures: number; restMinutes: number };

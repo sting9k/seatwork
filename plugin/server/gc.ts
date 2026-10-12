@@ -73,7 +73,6 @@ export async function liveAgents(paseo: PaseoApi): Promise<Map<string, LiveAgent
 
 export class Collector {
   private running = false;
-  /** Heartbeat deletions run one at a time: the periodic pass and an archive hook may overlap. */
   private heartbeatLock: Promise<void> = Promise.resolve();
 
   constructor(
@@ -165,7 +164,7 @@ export class Collector {
     }
   }
 
-  /** Deletes the heartbeats of seats `orphaned` says are gone, and those Paseo already completed. */
+  /** Deletes the heartbeats of seats `orphaned` says are gone or Paseo completed, one pass at a time. */
   private deleteHeartbeats(orphaned: (agentId: string) => boolean): Promise<void> {
     const run = this.heartbeatLock.then(() => this.deleteHeartbeatsNow(orphaned));
     this.heartbeatLock = run.catch(() => undefined);

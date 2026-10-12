@@ -338,6 +338,61 @@ Lane: normal`,
       RECAP,
     ],
   },
+  // The Owner changed the room's model table after this Lead was opened, and the Lead's prompt still lists the old
+  // one. The plugin refuses a Peer on a model the table no longer lists, and names the models it lists now. The task
+  // leaves a judgement about behaviour to its implementer, so the Lead's own table sends it to the default tier.
+  ...[
+    {
+      // the default tier's model was replaced: Sonnet 5 where the prompt says Sonnet 5.5
+      name: "lead-table-changed",
+      table: ["claude-peer/claude-haiku-5-5", "claude-peer/claude-sonnet-5", "codex-peer/gpt-6.1-sol"],
+      graders: [
+        { id: "relaunched-on-a-listed-model", tool: "create_agent$", where: { title: "^\\[Peer\\]", provider: "^(claude-peer/claude-haiku-5-5|claude-peer/claude-sonnet-5|codex-peer/gpt-6\\.1-sol)$", initialPrompt: "Write scope[\\s\\S]*Acceptance evidence[\\s\\S]*Reply with slp_mail to: owner" } },
+        // of the three, one took the default tier's place; the other two are the cheap tier's and the reviewer's
+        { id: "on-the-model-that-replaced-its-tier", no_tool: "create_agent$", where: { title: "^\\[Peer\\]", provider: "^(claude-peer/claude-haiku-5-5|codex-peer/)" } },
+        { id: "report-status", first_line: "^STATUS\\b" },
+      ],
+    },
+    {
+      // the default tier is gone: what is left is the cheap tier's model and the reviewer's
+      name: "lead-table-lost-a-tier",
+      table: ["claude-peer/claude-haiku-5-5", "codex-peer/gpt-6.1-sol"],
+      graders: [
+        // no listed model is the task's tier: the Lead goes on with one of them, or asks its Owner
+        { id: "went-on-or-asked", any_of: [{ tool: "create_agent$", where: { title: "^\\[Peer\\]", provider: "^(claude-peer/claude-haiku-5-5|codex-peer/gpt-6\\.1-sol)$" } }, { first_line: "^DECISION_NEEDED\\b" }] },
+        { id: "report-line", first_line: "^(STATUS|DECISION_NEEDED)\\b" },
+      ],
+    },
+  ].map(({ name, table, graders }) => ({
+    name,
+    role: "lead",
+    fixture: "durations",
+    allow: ["Edit", "Write", "MultiEdit"],
+    project: project(),
+    state: { table: { peer: table } },
+    prompt: `Project: {{cwd}}
+Outcome: parseDuration also accepts hours ("2h" → 7200000) and days ("3d" → 259200000); s and m keep working. A value too large to be an exact number of milliseconds is rejected: where that limit sits and how the error reads is the implementer's judgement, reported with its reason.
+Non-goals: locales, fractional units, a CLI.
+Verified constraints: no new dependency; \`npm test\` is the acceptance command.
+Open assumptions: none.
+Decisions made: the parser stays one function in src/duration.js (one file, one owner).
+Decisions the Lead may question: none.
+Authority: edit; no commit, no push.
+Acceptance evidence: \`npm test\` green with a test for "2h", one for "3d" and one for a value past the limit.
+Inputs: src/duration.js, test/duration.test.js.
+Current candidate: none.
+Reopen when: a unit cannot be written as a fixed number of milliseconds.
+Lane: normal`,
+    graders: [
+      // asked on its own table's default tier once, and not again once that is refused
+      { id: "asked-on-its-old-table-once", tool: "create_agent$", where: { title: "^\\[Peer\\]", provider: "^claude-peer/claude-sonnet-5-5$" }, min: 1, max: 1 },
+      ...graders,
+      // its status file names the source paths; what counts is the file it writes
+      { id: "did-not-write-the-code-itself", no_tool: "^(Edit|Write|MultiEdit)$", where: { file_path: "/(src|test)/" } },
+      NO_LOOPS,
+      RECAP,
+    ],
+  })),
   {
     name: "lead-dispose-candidate",
     role: "lead",

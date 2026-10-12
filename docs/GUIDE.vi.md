@@ -158,10 +158,10 @@ hoặc một seat do chính bạn mở kết thúc lượt bằng `DECISION_NEED
 `owner.chime` thành `false` trong `paseo/policy.json` rồi chạy `./install.sh`.
 
 Dòng **Room** ở chân sidebar của Paseo cho biết còn bao nhiêu lượt như vậy
-đang chờ, và mở một màn hình cho cả room: các lượt đó ở trên cùng, rồi tới
-HQ và từng project, mỗi project kèm cây seat của nó. Chấm của seat có màu
-xanh khi nó đang làm việc; seat nào đang có thư giữ lại thì có ghi. Bấm vào
-một seat để mở nó. Một lượt nằm trong danh sách cho tới khi seat đó làm việc
+đang chờ, và mở một màn hình cho cả room: các lượt đó ở trên cùng, rồi mỗi
+dòng là HQ hoặc một project đang có seat, kèm một chấm cho mỗi seat (xanh
+khi seat đang làm việc). Bấm vào project để xem cây seat của nó, bấm vào
+seat để mở seat đó. Các project chưa có seat nào nằm chung một dòng ở cuối. Một lượt nằm trong danh sách cho tới khi seat đó làm việc
 lại hoặc bị lưu trữ; khởi động lại daemon không xoá nó.
 
 ### Muốn can thiệp một Peer

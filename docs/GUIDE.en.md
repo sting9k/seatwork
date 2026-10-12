@@ -161,9 +161,10 @@ a seat you opened yourself ends a turn with `DECISION_NEEDED`, `BLOCKED`, a
 
 The **Room** row at the bottom of Paseo's sidebar says how many of those
 turns still wait, and opens a screen for the whole room: those turns on
-top, then HQ and every project, each with its seats as a tree. A seat's dot
-is green while it works; a seat with mail held for it says so. Press a seat
-to open it. A turn stays on the list until its seat works again or is
+top, then one line for HQ and for every project that has a seat open, with
+a dot per seat (green while it works). Press a project to see its seats as
+a tree, and a seat to open it. Projects with no seat open share one line at
+the end. A turn stays on the list until its seat works again or is
 archived; a daemon restart does not clear it.
 
 ### Steering a Peer

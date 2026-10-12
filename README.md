@@ -50,16 +50,18 @@ You need Paseo 0.11.2 or later, and at least one of Claude Code, Codex, Pi
    git:sting9k/seatwork:slp-room/plugin
    ```
 
-2. On the plugin's **…** menu choose **Seatwork**. Choose what each role
-   runs on, or keep the shipped choices.
+2. Press **Seatwork**, now at the top of Paseo's sidebar. Choose what each
+   role runs on, or keep the shipped choices.
 
 3. Press **Init**. It creates the room's folder (`~/.config/slp-room`), the
    room's providers and four profiles in Paseo, and the `hq-seatwork`
    project.
 
-To change a choice later, change it on the same screen and press **Apply**.
-**Remove the room** on that screen undoes Init and keeps the room's folder
-aside.
+To change a choice later, change it on the same screen and press **Apply**:
+it reaches every project that has no models of its own, for the seats
+opened from then on. A project gets models of its own on the same screen,
+under **Projects**. **Remove the room** undoes Init and keeps the room's
+folder aside.
 
 ## First project
 
@@ -107,7 +109,7 @@ slp-room/
 │   ├── room/            role prompts, skills, the model table
 │   ├── paseo/           policy.json, seats.json, profiles.json
 │   ├── server/          setup, mail, cleanup, the watcher
-│   ├── client/          the setup screen and the Room screen
+│   ├── client/          the Seatwork screen and the Room screen
 │   └── test/
 └── evals/               prompt evals on real model sessions
 ```

@@ -69,7 +69,7 @@ export function RoomScreen({ theme, layout, navigation }: PluginScreenProps) {
         </View>
       )}
 
-      {active.length === 0 ? (room.isSuccess ? <Text style={muted}>{data.projects.length === 0 ? "No seat is open. A host where the room is not set up yet: Settings, Plugins, Seatwork." : "No seat is open."}</Text> : null) : (
+      {active.length === 0 ? (room.isSuccess ? <Text style={muted}>{data.projects.length === 0 ? "No seat is open. If the room is not set up yet: Seatwork, in the sidebar." : "No seat is open."}</Text> : null) : (
         <View style={card}>
           {active.map((project, index) => {
             const held = project.seats.reduce((sum, seat) => sum + seat.held, 0);

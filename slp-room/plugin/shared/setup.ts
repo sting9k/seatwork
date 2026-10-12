@@ -29,6 +29,17 @@ const harness = z.object({
   models: z.array(z.object({ id: z.string(), label: z.string(), thinking: z.array(z.string()), defaultThinking: z.string() })),
 });
 
+const project = z.object({
+  name: z.string(),
+  root: z.string(),
+  /** Whether `.slp/room.json` carries a table of the project's own. */
+  own: z.boolean(),
+  /** Its differences from the room's table, in the table's shape; {} when it has none. */
+  models: modelChoices,
+  /** Why its table cannot be used as written, in the room's words. */
+  error: z.string().nullable(),
+});
+
 /** What the setup screen needs to draw itself: whether a room is set up here, what it runs on, and what this machine offers. */
 export const setupState = defineRpc({
   name: "setup.state",
@@ -43,6 +54,8 @@ export const setupState = defineRpc({
     table: z.json(),
     harnesses: z.array(harness),
     watcherKey: z.boolean(),
+    /** The registered projects: each runs on the room's table, with its own differences laid over it when it has any. */
+    projects: z.array(project),
     /** ok: true fine, false needs the Owner, null unknown. */
     checks: z.array(z.object({ id: z.string(), label: z.string(), ok: z.boolean().nullable(), detail: z.string() })),
   }),
@@ -67,4 +80,12 @@ export const setupWatcherKey = defineRpc({
   name: "setup.watcher-key",
   input: z.object({ key: z.string() }),
   output: z.object({ set: z.boolean() }),
+});
+
+/** Writes a registered project's own model table into its `.slp/room.json`; null or {} puts it back on the room's table. */
+export const setupProject = defineRpc({
+  name: "setup.project",
+  input: z.object({ name: z.string(), models: modelChoices.nullable() }),
+  /** The seats that were set up because the table names them. */
+  output: z.object({ own: z.boolean(), seats: z.array(z.string()) }),
 });

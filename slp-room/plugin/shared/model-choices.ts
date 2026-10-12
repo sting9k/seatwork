@@ -95,6 +95,26 @@ export function dropTier(choices: Json, room: Table, role: TierRole, label: stri
   return { ...choices, [role]: { ...group, tiers } };
 }
 
+/** The roles a set of choices changes, in the screen's order. */
+export function changedRoles(choices: Json): (SeatRole | TierRole)[] {
+  const seats = isObject(choices.seats) ? choices.seats : {};
+  return [...SEAT_ROLES.filter((role) => role in seats), ...TIER_ROLES.filter((role) => isObject(choices[role]) && Object.keys(choices[role] as Json).length > 0)];
+}
+
+/** The choices with nothing left for that role: it follows the table underneath again. */
+export function clearRole(choices: Json, role: SeatRole | TierRole): Json {
+  const next: Json = { ...choices };
+  if (role === "peer" || role === "lens") {
+    delete next[role];
+    return next;
+  }
+  const seats: Json = { ...(isObject(next.seats) ? next.seats : {}) };
+  delete seats[role];
+  if (Object.keys(seats).length) next.seats = seats;
+  else delete next.seats;
+  return next;
+}
+
 /** Whether two sets of choices are the same, whatever order their keys were written in. */
 export function sameChoices(a: unknown, b: unknown): boolean {
   const ordered = (value: unknown): unknown =>

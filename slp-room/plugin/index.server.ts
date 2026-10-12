@@ -10,9 +10,9 @@ import { MailEngine, type Mail, type Priority, type Needs } from "./server/mail"
 import { checkHqPlacement, closeHqProject, ensureHqProject, hqDir } from "./server/hq";
 import { McpHttpServer } from "./server/mcp-http";
 import { PASEO_HOME, REGISTRY_LOG, ROOM_HOME, WATCH_DIR } from "./server/paths";
-import { describeProjects, registerProject } from "./server/onboard";
+import { describeProjects, projectTables, registerProject, writeProjectModels } from "./server/onboard";
 import { OwedList, roomStatus as readRoomStatus } from "./server/room-status";
-import { modelAllowed, projectModels, type Models } from "./server/models";
+import { fitSeat, loadModels, projectModels, type Models } from "./server/models";
 import { loadPolicy, type RuntimePolicy } from "./server/policy";
 import { findProject, findRoomMarker, loadRegistry, projectBlock } from "./server/registry";
 import { claudeRoleDir, describeIsolation, ensureRuntime, envFor, sharedClaudeFiles } from "./server/runtimes";
@@ -34,12 +34,12 @@ import { ScanLog } from "./server/watch/scanlog";
 import { usageReport } from "./server/watch/usage";
 import { merge } from "./shared/model-choices";
 import { roomStatus, roomWaiting } from "./shared/room";
-import { roomSettings, setupInit, setupRemove, setupState, setupWatcherKey } from "./shared/setup";
+import { roomSettings, setupInit, setupProject, setupRemove, setupState, setupWatcherKey } from "./shared/setup";
 import { Watcher, type SeatView, type TimelineView } from "./server/watch/watcher";
 
 type CreateRequest = PluginBeforeRequests["agent.create"];
 
-const VERSION = "0.14.0";
+const VERSION = "0.15.0";
 const MAIL_DIR = join(ROOM_HOME, "mail");
 const MCP_TOKEN_FILE = join(MAIL_DIR, "token");
 const NONCES_FILE = join(MAIL_DIR, "nonces.json");
@@ -51,7 +51,7 @@ const NONCES_FILE = join(MAIL_DIR, "nonces.json");
 export default function contribute(server: PluginServerContext) {
   server.registerSettings(roomSettings);
   let room: Room | null = isSetUp(ROOM_HOME) ? startRoom(server) : null;
-  if (!room) console.log(`slp-seat ${VERSION}: no room is set up on this daemon; its setup screen is in Settings, Plugins`);
+  if (!room) console.log(`slp-seat ${VERSION}: no room is set up on this daemon; its setup screen is Seatwork, in the sidebar`);
   /** Setting up, removing and re-keying the room happen one at a time. */
   let busy: Promise<unknown> = Promise.resolve();
   const oneAtATime = <T>(work: () => Promise<T>): Promise<T> => {
@@ -63,7 +63,7 @@ export default function contribute(server: PluginServerContext) {
   // a seat created while no room runs would start with no role, no isolation and no mail
   server.before("agent.create", ({ request }) => {
     if (!room && parseSeat(request.config.provider)) {
-      throw new Error(`slp-seat: ${request.config.provider} is a room seat and no room is set up on this daemon; set it up on the plugin's screen (Settings, Plugins, Seatwork)`);
+      throw new Error(`slp-seat: ${request.config.provider} is a room seat and no room is set up on this daemon; set it up on the Seatwork screen (in the sidebar)`);
     }
   });
 
@@ -103,6 +103,7 @@ export default function contribute(server: PluginServerContext) {
       table: roomModels(pluginDir) as never,
       harnesses,
       watcherKey: room !== null && watchKey(room.policy.watcher.engine) !== undefined,
+      projects: (setup ? projectTables() : []) as never,
       checks: await setupChecks(paseo, pluginDir, setup, seats),
     };
   });
@@ -149,6 +150,18 @@ export default function contribute(server: PluginServerContext) {
       const { removed } = await removeWithSdk(paseo);
       await closeHqProject(paseo);
       return { removed, movedTo: moveRoomHomeAside(ROOM_HOME) };
+    }),
+  );
+
+  server.handle(setupProject, ({ name, models }, { paseo }) =>
+    oneAtATime(async () => {
+      if (!room) throw new Error("no room is set up on this daemon");
+      const pluginDir = await ownFolder(paseo);
+      // a table may put a role on an agent CLI the room has no seat for yet: that seat is set up first
+      return writeProjectModels(name, models, async (providers) => {
+        const plan = await addSeats({ pluginDir, roomHome: ROOM_HOME, catalog: catalogFrom(await harnessStates(paseo, HARNESSES)), version: VERSION }, providers);
+        await applyWithSdk(paseo, plan, { daemonPolicy: false });
+      });
     }),
   );
 
@@ -774,7 +787,7 @@ function startRoom(server: Pick<PluginServerContext, "on" | "before">): Room {
     }
 
     if (filesFrom !== VERSION) {
-      throw new Error(`slp-seat: ${seat.provider} refused: the room's files were set up by ${filesFrom ? `version ${filesFrom}` : "an earlier version"} of the plugin and this is ${VERSION}. Press Apply on its setup screen (Settings, Plugins, Seatwork) or run install.sh, then create the seat again`);
+      throw new Error(`slp-seat: ${seat.provider} refused: the room's files were set up by ${filesFrom ? `version ${filesFrom}` : "an earlier version"} of the plugin and this is ${VERSION}. Press Apply on the Seatwork screen (in the sidebar) or run install.sh, then create the seat again`);
     }
 
     const registry = loadRegistry();
@@ -796,15 +809,20 @@ function startRoom(server: Pick<PluginServerContext, "on" | "before">): Room {
       if (marker) project = { name: marker.root.split("/").pop() ?? marker.root, root: marker.root, room: marker.room, mission: marker.mission, law: marker.law };
     }
 
-    // a project that carries its own model table gets it in its prompts, and enforced
-    let models: Models | undefined;
-    if (project?.room.models !== undefined) {
-      const where = `${project.root}/.slp/room.json`;
-      models = projectModels(project.room.models, enabledSeats().map((s) => s.provider), `slp-seat: ${where}`);
-      const check = modelAllowed(models, seat.role, seat.provider, request.config.model ?? undefined);
-      if (!check.ok) {
-        throw new Error(`slp-seat: ${seat.provider}/${request.config.model ?? "(default model)"} refused: project ${project.name} lists for ${seat.role} only ${check.listed.join(", ")} (${where})`);
-      }
+    // the table in force where this seat starts: the room's, with its project's own differences laid over it
+    const own = project?.room.models !== undefined ? `${project.root}/.slp/room.json` : null;
+    const models: Models = own ? projectModels(project!.room.models, enabledSeats().map((s) => s.provider), `slp-seat: ${own}`) : loadModels();
+    const fit = fitSeat(models, seat.role, seat.provider, request.config.model ?? undefined);
+    if (!fit.ok) {
+      const table = own ? `project ${project!.name} lists` : "the room's table lists";
+      throw new Error(`slp-seat: ${seat.provider}/${request.config.model ?? "(default model)"} refused: ${table} for ${seat.role} only ${fit.listed.join(", ")} (${own ?? "the Seatwork screen sets it"}). Create the seat again on one of these.`);
+    }
+    // a seat asked for on a model the table has since replaced starts on the table's
+    const onTable: Partial<CreateRequest["config"]> = {};
+    if (fit.model) {
+      onTable.model = fit.model;
+      if (fit.thinking) onTable.thinkingOptionId = fit.thinking === "default" ? undefined : fit.thinking;
+      log(`${seat.provider}: asked for ${request.config.model ?? "its default model"}, starts on ${fit.model} as the model table says`);
     }
 
     // without its own home a seat would start on the user's, with the user's MCP servers and plugins
@@ -838,7 +856,7 @@ function startRoom(server: Pick<PluginServerContext, "on" | "before">): Room {
       const dirs = Array.isArray(current.additionalDirectories) ? current.additionalDirectories.filter((d): d is string => typeof d === "string") : [];
       providerOptions = { ...current, additionalDirectories: [...new Set([...dirs, claudeRoleDir(seat.role)])], extraArgs: { ...(current.extraArgs ?? {}), ...policy.launch.claude.extraArgs } };
     }
-    return { ...request, env, config: { ...request.config, systemPrompt, mcpServers, ...(providerOptions ? { providerOptions } : {}) } };
+    return { ...request, env, config: { ...request.config, ...onTable, systemPrompt, mcpServers, ...(providerOptions ? { providerOptions } : {}) } };
   }
 
   function resolveCaller(nonce: string): string | null {

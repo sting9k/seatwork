@@ -66,9 +66,9 @@ tạo.
 
 ### Bước 2: chọn mỗi vai chạy trên gì
 
-Trong menu **…** của plugin, chọn **Seatwork**. Màn hình liệt kê năm vai,
-mỗi vai kèm lựa chọn có sẵn. Đổi cái bạn muốn, hoặc để nguyên. Mục 3 giải
-thích từng phần của màn hình.
+**Seatwork** giờ là một dòng ở đầu sidebar của Paseo. Bấm vào đó. Màn hình
+liệt kê năm vai, mỗi vai kèm lựa chọn có sẵn. Đổi cái bạn muốn, hoặc để
+nguyên. Mục 3 giải thích từng phần của màn hình.
 
 ### Bước 3: bấm Init
 
@@ -116,21 +116,27 @@ sẵn:
 | `--mail-port <cổng>` | Cổng của máy chủ thư, khi cổng mặc định đã có chương trình khác dùng |
 | `--seats-only` | Chỉ dựng seat; giữ nguyên file của room và plugin |
 
-Room cài theo cách này vẫn hiện trên màn hình thiết lập, với đúng các lựa
+Room cài theo cách này vẫn hiện trên màn hình Seatwork, với đúng các lựa
 chọn nó đang chạy.
 
-## 3. Màn hình thiết lập
+## 3. Màn hình Seatwork
 
-**Settings → Plugins → … → Seatwork**. Command Center cũng có mục này, tên
-là "Seatwork: set up the room".
+Bấm **Seatwork** ở đầu sidebar của Paseo. Command Center cũng có mục này,
+tên là "Seatwork: set up the room". Dòng này ghi "Set up" khi chưa có room
+và "Needs you" khi một phép kiểm tra máy không đạt.
 
-Lựa chọn được lưu ngay khi bạn chọn. Room chỉ đổi khi bạn bấm **Init** (lần
-đầu) hoặc **Apply** (các lần sau). Khi hai bên còn khác nhau, dòng trên
-cùng ghi "changes not applied".
+Màn hình có bảy phần, từ trên xuống.
 
-### What each role runs on
+### Room
 
-Mỗi vai một dòng. Bấm vào dòng để mở.
+Một thẻ ghi trạng thái của room và một nút: **Init** ở lần đầu, **Apply**
+ở các lần sau. Lựa chọn bên dưới được lưu ngay khi bạn chọn, nhưng room
+chỉ đổi khi bạn bấm nút đó. Trước lúc đó, thẻ ghi rõ những gì chưa được
+áp dụng.
+
+### Models
+
+Bảng của room: mỗi vai một dòng. Bấm một vai để chọn nó chạy trên gì.
 
 - **HQ, Supervisor, Lead** mỗi vai chạy một model. Chọn agent CLI, model
   và mức thinking. Danh sách model có ô tìm kiếm. Danh sách chỉ hiện những
@@ -138,18 +144,30 @@ Mỗi vai một dòng. Bấm vào dòng để mở.
 - **Peer và Lens** mỗi vai là một, nhưng có nhiều model. Mỗi model có một
   tên (`cheap`, `default`, `high`…) và một dòng nói nó dùng cho việc gì.
   Lead đọc tên và dòng đó rồi tự chọn cho từng việc. Bạn có thể đổi một
-  model, bấm **Remove** để bỏ nó, hoặc thêm model ở **One more model**: đặt
-  tên (chữ thường, số, gạch ngang) và ghi dòng "Use for".
-- **Reset** bỏ hết lựa chọn của bạn, quay về bảng có sẵn của room.
+  model, bấm **Remove** để bỏ nó, hoặc thêm một model nữa: đặt tên (chữ
+  thường, số, gạch ngang) và ghi dòng "Use for".
+- **Back to the shipped table** bỏ hết lựa chọn của bạn.
+
+HQ chạy theo bảng này, và mọi project không có bảng riêng cũng vậy. Phần
+này ghi rõ có bao nhiêu project như thế.
 
 Seat được dựng khi một lựa chọn cần tới nó. Cho Lead chạy Codex rồi bấm
 Apply là có `codex-lead`.
 
-### Watcher and sound
+### Projects
 
-- **Watcher**: Off, Shadow hoặc On. Xem mục 10.
-- **Watcher key**: hiện ra sau khi Init. Không bắt buộc.
-- **Chime**: một tiếng báo ngắn trong app đang mở, khi có seat chờ bạn.
+Mỗi project của room một dòng: "the room's table", hoặc "own" kèm các vai
+mà nó đổi. Bấm một project để đặt model riêng cho nó, chỉ cho project đó.
+Chi tiết ở mục 7.
+
+### Watcher
+
+- **Mode**: Off, Shadow hoặc On. Xem mục 10.
+- **Key**: hiện ra sau khi Init. Không bắt buộc.
+
+### Sound
+
+**Chime**: một tiếng báo ngắn trong app đang mở, khi có seat chờ bạn.
 
 ### This host
 
@@ -165,8 +183,8 @@ Các phép kiểm tra máy này. Mỗi dòng ghi **OK**, **Needs you** hoặc
 
 ### Remove the room
 
-Bấm hai lần. Nó từ chối khi còn seat của room đang mở: hãy lưu trữ các
-agent đó trước. Sau đó nó:
+Bấm **Remove** hai lần. Nó từ chối khi còn seat của room đang mở: hãy lưu
+trữ các agent đó trước. Sau đó nó:
 
 - gỡ các seat và profile khỏi Paseo;
 - lưu trữ workspace `hq-seatwork`;
@@ -303,7 +321,7 @@ lệnh đến từ HQ. HQ chỉ tạo Supervisor, không tạo vai nào khác.
 ### Bảng của room
 
 Plugin đi kèm một bảng. Đó là cách cài của một người, không phải khuyến
-nghị. Màn hình thiết lập bắt đầu từ bảng này.
+nghị. Màn hình Seatwork bắt đầu từ bảng này.
 
 | Vai | Tên | Model | Lead chọn nó cho |
 |---|---|---|---|
@@ -326,12 +344,21 @@ Lead dùng bảng thế này:
   `cross-family`. Giữ ba tên đó và đổi model bên dưới. Tên khác thì thêm
   tuỳ ý.
 
-Đổi bảng trên màn hình thiết lập rồi bấm Apply.
+Đổi bảng trên màn hình Seatwork rồi bấm Apply.
 
 ### Bảng riêng của project
 
-HQ viết bảng này khi đăng ký project. Sau đó bạn sửa tay object `models`
-trong `.slp/room.json`. Chỉ ghi phần khác với bảng của room:
+Trên màn hình Seatwork, bấm project trong phần **Projects**. Bạn thấy bảng
+của room cho Supervisor, Lead, Peer và Lens. Đổi một vai rồi bấm **Save**:
+vai đó giờ là của riêng project, các vai còn lại vẫn theo bảng của room.
+**Same as the room's table** trả một vai về bảng của room; **Use the
+room's table** trả hết.
+
+HQ cũng có thể viết bảng này khi đăng ký project.
+
+Lựa chọn riêng của project được lưu trong chính project, ở object `models`
+của `.slp/room.json`. Nó chỉ chứa phần khác với bảng của room, và bạn sửa
+tay được:
 
 ```json
 {
@@ -351,11 +378,23 @@ Ví dụ này cho Lead và model `default` của Peer dùng thinking medium, và
 `cross-family`.
 
 - `null` là bỏ một mục. Xoá `models` là quay về bảng của room.
-- Thay đổi áp dụng cho agent tạo sau đó. Không cần cài lại.
-- Agent chạy model không có trong bảng sẽ bị từ chối.
-- Mục ghi sai làm agent không khởi động được; lỗi nêu rõ mục nào.
-- Model ghi theo dạng `<harness>-<role>/<model>`. Nếu bảng nêu một seat
-  room chưa có, hãy bảo HQ đăng ký lại bảng: nó sẽ dựng seat đó.
+- Mục ghi sai làm agent của project không khởi động được; lỗi nêu rõ mục
+  nào, và màn hình đánh dấu project là "Needs you".
+- Model ghi theo dạng `<harness>-<role>/<model>`. Seat mà bảng nêu nhưng
+  room chưa có sẽ được dựng khi bạn bấm Save.
+
+### Khi nào thay đổi có hiệu lực
+
+Bảng quyết định ngay lúc một seat được mở. Vì vậy:
+
+- Thay đổi tới mọi seat mở sau khi bạn bấm Apply (bảng của room) hoặc Save
+  (bảng của project). Không cần cài lại.
+- Seat đang mở giữ model của nó cho tới khi được lưu trữ.
+- Bạn không phải thay Supervisor hay Lead đang mở. Prompt của nó vẫn ghi
+  bảng cũ, nhưng plugin ép mỗi seat nó mở theo bảng mới. Supervisor, Lead
+  hoặc HQ được gọi với model cũ sẽ khởi động trên model của bảng. Peer
+  hoặc Lens được gọi với model mà bảng không còn liệt kê thì bị từ chối,
+  kèm các model bảng đang có, và Lead của nó chọn lại.
 
 ## 8. Các seat nói chuyện với nhau
 
@@ -471,7 +510,7 @@ bên. Luật đầu tiên có gửi thư; ba luật còn lại chỉ ghi log cho
 | `reopen-condition` | brief có dòng `Reopen when` mà seat không xin mở lại |
 
 Bốn luật này cần một key. Model quyết định là Jev, gọi qua OpenRouter. Dán
-key vào ô **Watcher key** trên màn hình thiết lập. Key được lưu ở
+key vào ô **Key** trong phần Watcher của màn hình Seatwork. Key được lưu ở
 `~/.config/slp-room/watch/key`, chỉ user của bạn đọc được, và không bao giờ
 hiện lại. Biến môi trường `SLP_WATCH_KEY` cũng dùng được. Không có key thì
 mười luật ở trên vẫn chạy, và không có gì rời khỏi máy.
@@ -483,7 +522,7 @@ là 6 USD một tháng, tới 10 USD thì ngừng hỏi. Xem trong mục Usage c
 Paseo, dòng "Room watcher".
 
 Muốn bật: cho nó chạy Shadow một thời gian, hỏi HQ thống kê watcher, rồi
-đặt Watcher thành On và bấm Apply.
+đặt Mode của nó thành On và bấm Apply.
 
 ## 11. Bảo trì
 
@@ -493,7 +532,7 @@ Muốn bật: cho nó chạy Shadow một thời gian, hỏi HQ thống kê watc
 paseo plugin update slp-seat
 ```
 
-Sau đó bấm **Apply** trên màn hình thiết lập. Chưa bấm thì room từ chối
+Sau đó bấm **Apply** trên màn hình Seatwork. Chưa bấm thì room từ chối
 seat mới, và lỗi nói rõ điều đó. Nếu dùng bản clone: `git pull`, rồi
 `./install.sh`.
 
@@ -543,14 +582,14 @@ Thư được ghi ở `~/.config/slp-room/mail/log.jsonl`, việc dọn dẹp �
 
 | Thông báo | Cách xử lý |
 |---|---|
-| `is a room seat and no room is set up on this daemon` | Mở màn hình thiết lập và bấm Init |
-| `the room's files were set up by version …` | Bấm Apply trên màn hình thiết lập |
-| `is not a seat the room has set up` | Chọn agent CLI đó cho vai trên màn hình thiết lập, rồi Apply |
+| `is a room seat and no room is set up on this daemon` | Mở màn hình Seatwork và bấm Init |
+| `the room's files were set up by version …` | Bấm Apply trên màn hình Seatwork |
+| `is not a seat the room has set up` | Chọn agent CLI đó cho vai trên màn hình Seatwork, rồi Apply |
 | `may only be created in the hq-seatwork project` | Mở HQ trong project `hq-seatwork` |
 | `it holds only hq seats` | Mở vai này trong project của nó |
 | `is not a registered SLP project` | Bảo HQ đưa project vào room trước |
-| `lists for … only …` | Dùng một model có trong bảng của project, hoặc sửa `.slp/room.json` |
-| `which the room has not enabled` | Bảo HQ đăng ký lại bảng của project, hoặc sửa `.slp/room.json` |
+| `lists for … only …` | Seat được gọi với model mà bảng của nó không liệt kê. Dùng model có trong bảng, hoặc đổi bảng trên màn hình Seatwork |
+| `which the room has not enabled` | Mở project trên màn hình Seatwork rồi bấm Save, hoặc sửa `.slp/room.json` |
 | `its runtime could not be built` | Sửa thứ mà thông báo nêu (thường là `~/.codex/config.toml`), rồi tạo lại agent |
 | `still open … archive them first` | Lưu trữ các agent của room, rồi gỡ room |
 | `is too old: the room needs 0.11.2 or later` | Cập nhật Paseo, chạy `paseo daemon restart`, rồi cài lại |

@@ -1,6 +1,6 @@
 import { PLUGIN_DIR, PROJECT, ROOM_HOME } from "./support/room";
 import assert from "node:assert/strict";
-import { existsSync, readdirSync, readFileSync, realpathSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { after, before, test } from "node:test";
 import contribute from "../index.server";
@@ -60,7 +60,7 @@ after(async () => {
 
 test("a daemon that only downloaded the plugin: nothing is created, a room seat is refused, the app is told there is no room", async () => {
   assert.deepEqual(readdirSync(ROOM_HOME), ["setup.json"]);
-  await assert.rejects(createPeer(), /no room is set up on this daemon.*Settings, Plugins, Seatwork/);
+  await assert.rejects(createPeer(), /no room is set up on this daemon.*the Seatwork screen/);
   const own = { config: { provider: "claude", cwd: PROJECT }, env: {} };
   assert.deepEqual(await call("before agent.create", { request: own }), own, "an agent that is not a room seat");
   assert.deepEqual(await call("rpc room.waiting", {}, context), { chime: false, waiting: [] });
@@ -99,13 +99,44 @@ test("Init sets the room up and starts it without a reload; Apply restarts it on
   assert.ok(!screen.checks.some((check) => check.id === "version"), "a room this version set up is told to apply again");
 });
 
+test("a project's own models are written into the project from the screen and taken out again; a table the room cannot run on changes nothing", async () => {
+  writeFileSync(join(ROOM_HOME, "projects.json"), JSON.stringify({ projects: [{ name: "shop", cwd: PROJECT }] }));
+  const project = async () => ((await state()) as unknown as { projects: object[] }).projects[0];
+  const marker = () => JSON.parse(readFileSync(join(PROJECT, ".slp", "room.json"), "utf8")) as { models?: object };
+  const write = (name: string, models: object | null) => call("rpc setup.project", { name, models }, context);
+  const shop = { name: "shop", root: realpathSync(PROJECT), error: null };
+  assert.deepEqual(await project(), { ...shop, own: false, models: {} });
+
+  // its Supervisor moves to an agent CLI the room has no seat for: the seat is set up, then the table is written
+  const own = { seats: { supervisor: { provider: "opencode-supervisor/m", thinking: "default" } } };
+  assert.deepEqual(await write("shop", own), { own: true, seats: ["opencode-supervisor"] });
+  assert.ok("opencode-supervisor" in daemon.config.providers);
+  assert.deepEqual(marker().models, own);
+  assert.deepEqual(await project(), { ...shop, own: true, models: own });
+
+  await assert.rejects(write("shop", { peer: { tiers: { cheap: null, default: null, "cross-family": null } } }), /leaves the peer role without a model/);
+  assert.deepEqual(marker().models, own, "a table the room refused was written");
+  await assert.rejects(write("elsewhere", own), /elsewhere is not a registered project/);
+
+  // edited by hand to name a seat the room lacks: the screen is told why, and saving the table as it is sets the seat up
+  const byHand = { seats: { lead: { provider: "opencode-lead/m", thinking: "default" } } };
+  writeFileSync(join(PROJECT, ".slp", "room.json"), JSON.stringify({ models: byHand }));
+  assert.match(((await project()) as { error: string }).error, /names opencode-lead, which the room has not enabled/);
+  assert.deepEqual(await write("shop", byHand), { own: true, seats: ["opencode-lead"] });
+  assert.deepEqual(await project(), { ...shop, own: true, models: byHand });
+
+  assert.deepEqual(await write("shop", {}), { own: false, seats: [] });
+  assert.deepEqual(marker(), {});
+  rmSync(join(ROOM_HOME, "projects.json"));
+});
+
 test("after an update of the plugin the room takes no new seat until its files are applied again", async () => {
   const file = join(ROOM_HOME, "setup.json");
   writeFileSync(file, JSON.stringify({ ...JSON.parse(readFileSync(file, "utf8")), version: "0.1.0" }));
   await dispose();
   dispose = contribute(paseoSide.server); // the plugin as it starts after the update
 
-  await assert.rejects(createPeer(), /set up by version 0\.1\.0 of the plugin.*Press Apply on its setup screen/);
+  await assert.rejects(createPeer(), /set up by version 0\.1\.0 of the plugin.*Press Apply on the Seatwork screen/);
   assert.ok((await state()).checks.some((check) => check.id === "version" && check.ok === false));
 
   await init({ models: { seats: { lead: { provider: "pi-lead/m", thinking: "high" } } }, watcher: "on" });

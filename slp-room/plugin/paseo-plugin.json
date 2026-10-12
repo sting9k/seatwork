@@ -1,5 +1,7 @@
 {
   "id": "slp-seat",
+  "name": "Seatwork",
+  "description": "A Supervisor, Lead and Peer room of coding agents: role prompts, isolated seats, mail between them, a watcher",
   "requirements": {
     "paseo": ">=0.11.2"
   }

@@ -1,6 +1,6 @@
 import { appendFileSync, existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import type { PaseoApi } from "@getpaseo/client";
+import type { PaseoApi } from "./paseo";
 import { paseoCli as cli } from "./cli";
 import { waitsOnSomeone, type MailEngine } from "./mail";
 import { PASEO_SCHEDULES, ROOM_HOME } from "./paths";
@@ -32,6 +32,7 @@ export interface LiveAgent {
   id: string;
   status: string;
   updatedAt: string;
+  provider?: string;
   title?: string | null;
   cwd?: string;
   archivedAt?: string | null;

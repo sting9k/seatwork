@@ -12,7 +12,7 @@ const state = process.env.SLP_EVAL_STATE ? JSON.parse(readFileSync(process.env.S
 const agents = [...(state.agents ?? [])];
 // the registry as slp_projects prints it; a registration rewrites its project's line, so a seat that looks again sees what it did
 let projects = state.projects ? String(state.projects).split("\n") : [];
-// the seats every install has (paseo/seats.yml); the real tool sets up any other seat a table names, and says so
+// the seats every install has (plugin/paseo/seats.json); the real tool sets up any other seat a table names, and says so
 const ROOM_SEATS = ["claude-hq", "claude-supervisor", "claude-lead", "claude-peer", "claude-lens", "codex-peer", "codex-lens"];
 let counter = 0;
 const next = (prefix) => `${prefix}${++counter}`;

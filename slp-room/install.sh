@@ -1,146 +1,60 @@
 #!/usr/bin/env bash
-# slp-room installer: room files, policy, Paseo providers and profiles, the slp-seat plugin.
+# seatwork from a terminal: the setup the plugin's own screen does (Settings, Plugins, Seatwork), without the app.
 # Flags: --no-plugin  --no-reload  --no-daemon-policy
 #   --hq default|ask|<harness>/<model> [--hq-thinking <id>]   what HQ runs on; asked once, on a first install from a terminal
-#   --seat <harness>-<role>   set up a seat paseo/seats.yml does not list (repeatable; kept in setup.json)
+#   --seat <harness>-<role>   set up one more seat (repeatable; kept in setup.json)
 #   --watcher off|shadow|on|ask   the watcher on this machine; asked once, on a first install from a terminal
+#   --mail-port <port>        the port of the room's mail server on this machine (kept in setup.json)
 #   --seats-only              the seats and nothing else: providers into Paseo, reload; room files and plugin untouched
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-ROOM_HOME="${SLP_ROOM_HOME:-$HOME/.config/slp-room}"
-PASEO_HOME="${PASEO_HOME:-$HOME/.paseo}"
-CONFIG="$PASEO_HOME/config.json"
-DO_PLUGIN=1; DO_RELOAD=1; DO_DAEMON_POLICY=1; DO_ROOM=1
-CHOICES=()
+PLUGIN="$HERE/plugin"
+DO_PLUGIN=1; DO_RELOAD=1
+SETUP=()
 while [ $# -gt 0 ]; do
   case "$1" in
     --no-plugin) DO_PLUGIN=0 ;;
     --no-reload) DO_RELOAD=0 ;;
-    --no-daemon-policy) DO_DAEMON_POLICY=0 ;;
-    --seats-only) DO_ROOM=0; DO_PLUGIN=0 ;;
-    --hq|--hq-thinking|--seat|--watcher)
+    --no-daemon-policy) SETUP+=("$1") ;;
+    --seats-only) DO_PLUGIN=0; SETUP+=("$1") ;;
+    --hq|--hq-thinking|--seat|--watcher|--mail-port)
       [ $# -ge 2 ] || { echo "$1 needs a value" >&2; exit 2; }
-      CHOICES+=("$1" "$2"); shift ;;
+      SETUP+=("$1" "$2"); shift ;;
     *) echo "unknown option: $1" >&2; exit 2 ;;
   esac
   shift
 done
-for bin in jq paseo python3; do command -v "$bin" >/dev/null || { echo "$bin is required" >&2; exit 1; }; done
-# the daemon runs the plugin: its agent.closed hook and the providers' options need Paseo 0.11.2
-PASEO_VERSION="$(paseo daemon status --json 2>/dev/null | jq -r '.daemonVersion // empty' 2>/dev/null || true)"
+for bin in node npm paseo; do command -v "$bin" >/dev/null || { echo "$bin is required" >&2; exit 1; }; done
+# the daemon runs the plugin: its agent.closed hook and its setup screen need Paseo 0.11.2
+PASEO_VERSION="$(paseo daemon status --json 2>/dev/null | node -e 'let s="";process.stdin.on("data",(d)=>(s+=d)).on("end",()=>{try{process.stdout.write(JSON.parse(s).daemonVersion||"")}catch{}})' || true)"
 [ -n "$PASEO_VERSION" ] || PASEO_VERSION="$(paseo --version 2>/dev/null | head -n 1)"
-if ! jq -en --arg v "$PASEO_VERSION" '($v | split("-")[0] | split(".") | map(tonumber)) >= [0, 11, 2]' >/dev/null 2>&1; then
+if ! node -e 'const v=process.argv[1].split("-")[0].split(".").map(Number),w=[0,11,2];for(let i=0;i<3;i++)if((v[i]||0)!==w[i])process.exit((v[i]||0)>w[i]?0:1)' "$PASEO_VERSION"; then
   echo "Paseo ${PASEO_VERSION:-(unknown version)} is too old: the room needs 0.11.2 or later. Update it (npm install -g @getpaseo/cli@latest), run 'paseo daemon restart', then this again." >&2
   exit 1
 fi
-python3 -c "import yaml" 2>/dev/null || { echo "python3 needs PyYAML (pip3 install pyyaml) to read paseo/seats.yml" >&2; exit 1; }
 
-# the room home holds mail and copies of your harness config: its owner only, also when it already exists
+# the setup is the plugin's own TypeScript; its dev packages run it here
+if [ "$DO_PLUGIN" = 1 ] || [ ! -d "$PLUGIN/node_modules/typescript" ]; then
+  ( cd "$PLUGIN" && npm install --silent --no-audit --no-fund )
+fi
+
+# --- 1. this machine's choices, the room home, the seats and profiles in Paseo's config.json ---
+# the room home holds mail and copies of your harness config: its owner only
 umask 077
-mkdir -p "$ROOM_HOME"
-chmod 700 "$ROOM_HOME"
+node --require "$PLUGIN/test/register.cjs" "$PLUGIN/tools/room-init.ts" ${SETUP[@]+"${SETUP[@]}"}
 
-# --- 0. this machine's choices ($ROOM_HOME/setup.json), then $ROOM_HOME/config.snippet.json and
-#        $ROOM_HOME/seats.json from seats.yml + setup.json + policy + models ----
-SNIPPET="$ROOM_HOME/config.snippet.json"
-SLP_ROOM_HOME="$ROOM_HOME" python3 "$HERE/tools/choices.py" ${CHOICES[@]+"${CHOICES[@]}"}
-SLP_ROOM_HOME="$ROOM_HOME" python3 "$HERE/tools/gen-snippet.py"
-
-# --- 1. room files --------------------------------------------------------------
-if [ "$DO_ROOM" = 1 ]; then
-  mkdir -p "$ROOM_HOME/room"
-  # the whole room tree: models.json, roles/, harness/, specs/, skills/
-  rsync -a --delete "$HERE/room/" "$ROOM_HOME/room/"
-  # the watcher's mode is this machine's choice; the repo ships it off
-  jq --slurpfile setup "$ROOM_HOME/setup.json" '.watcher.mode = ($setup[0].watcher // "off")' "$HERE/paseo/policy.json" > "$ROOM_HOME/policy.json"
-fi
-# the installed table is the one HQ and the plugin read: HQ's seat in it is this machine's when it chose one
-if [ -f "$ROOM_HOME/room/models.json" ]; then
-  TMP="$(mktemp "$ROOM_HOME/room/models.json.XXXXXX")"
-  jq --slurpfile room "$HERE/room/models.json" --slurpfile setup "$ROOM_HOME/setup.json" \
-    '.seats.hq = ($room[0].seats.hq + ($setup[0].hq | if type == "object" then {thinking: "default"} + . else {} end))' \
-    "$ROOM_HOME/room/models.json" > "$TMP"
-  mv "$TMP" "$ROOM_HOME/room/models.json"
-fi
-# runtimes of seats no longer enabled are removed (the plugin rebuilds the others when policy.json changed)
-if [ -d "$ROOM_HOME/runtimes" ]; then
-  for dir in "$ROOM_HOME"/runtimes/*/*/; do
-    [ -d "$dir" ] || continue
-    h="$(basename "$(dirname "$dir")")"; r="$(basename "$dir")"
-    # Claude seats run on the user's ~/.claude and have no runtime; a leftover one is removed too
-    if [ "$h" = "claude" ] || ! jq -e --arg p "$h-$r" '.providers | index($p)' "$ROOM_HOME/seats.json" >/dev/null; then rm -rf "$dir"; fi
-  done
-fi
-if [ ! -f "$ROOM_HOME/projects.json" ]; then
-  cat > "$ROOM_HOME/projects.json.example" <<'EOF'
-{
-  "projects": [
-    { "name": "example", "cwd": "/Users/you/code/example" }
-  ]
-}
-EOF
-  echo "No $ROOM_HOME/projects.json: the room runs in OPEN mode (no project guard)."
-  echo "  Ask HQ to onboard a project (or copy projects.json.example to projects.json) to switch on the registry."
-fi
-echo "Room files: $ROOM_HOME/room  policy: $ROOM_HOME/policy.json  seats: $(jq -r '.providers | join(", ")' "$ROOM_HOME/seats.json")"
-if [ "$(jq -r '.watcher // "off"' "$ROOM_HOME/setup.json")" != off ] && [ -z "${SLP_WATCH_KEY:-}" ] && [ ! -s "$ROOM_HOME/watch/key" ]; then
-  echo "Watcher: no key in $ROOM_HOME/watch/key (or SLP_WATCH_KEY): the rules that read tool calls work, the four that ask a model only log their facts."
-fi
-
-# --- 1b. Pi seats: Paseo hands them the room's tools through Pi's built-in MCP (Pi 0.99 or later) ---
-if jq -e '.providers | any(startswith("pi-"))' "$ROOM_HOME/seats.json" >/dev/null; then
-  PI_VERSION="$(pi --version 2>/dev/null | head -n 1 || true)"
-  if ! jq -en --arg v "$PI_VERSION" '($v | split("-")[0] | split(".") | map(tonumber)) >= [0, 99]' >/dev/null 2>&1; then
-    echo "WARNING: a Pi seat needs Pi 0.99 or later to get the room's tools; found ${PI_VERSION:-no pi on PATH}." >&2
-  fi
-fi
-
-# --- 2. Paseo config: providers + profiles + daemon switches -------------------------
-mkdir -p "$PASEO_HOME"
-[ -f "$CONFIG" ] || echo '{"version":1}' > "$CONFIG"
-chmod 600 "$CONFIG"
-cp "$CONFIG" "$CONFIG.bak-$(date +%Y%m%d%H%M%S)"
-TMP="$(mktemp "$CONFIG.XXXXXX")"
-jq --slurpfile snip "$SNIPPET" --slurpfile pol "$HERE/paseo/policy.json" --argjson daemonPolicy "$DO_DAEMON_POLICY" '
-  ($snip[0].daemon.agentProfiles) as $new
-  | ($new | map(.id)) as $ownedIds
-  # every profile the room ever wrote (id prefix agent_profile_slp_) is replaced by the current set; user profiles are kept
-  | .daemon.agentProfiles = (((.daemon.agentProfiles // []) | map(select(((.id // "") | startswith("agent_profile_slp_") | not) and ((.id as $i | $ownedIds | index($i)) == null)))) + $new)
-  # every room-owned provider (<harness>-<role>) is dropped, then the enabled ones written back,
-  # so a seat removed from seats.yml disappears from Paseo
-  | .agents.providers = (((.agents.providers // {}) | with_entries(select(.key | test("^(claude|codex|pi|opencode)-(hq|supervisor|lead|peer|lens)$") | not))) + $snip[0].agents.providers)
-  | .daemon.mcp.enabled = true
-  | .daemon.mcp.injectIntoAgents = true
-  | .pluginsEnabled = true
-  | if $daemonPolicy == 1 then
-      .daemon.browserTools.enabled = ($pol[0].daemon.browserTools // false)
-      | .daemon.enableTerminalAgentHooks = ($pol[0].daemon.enableTerminalAgentHooks // false)
-      | .features.dictation.enabled = ($pol[0].daemon.dictation // false)
-      | .features.voiceMode.enabled = ($pol[0].daemon.voiceMode // false)
-      | (if ($pol[0].daemon.bundledSkills // "none") == "none"
-         then .agents.skills.selection = {"mode": "custom", "skills": []}
-         else . end)
-    else . end
-' "$CONFIG" > "$TMP"
-mv "$TMP" "$CONFIG"
-chmod 600 "$CONFIG"
-echo "Paseo config updated: $CONFIG (backup alongside)"
-echo "  profiles:  $(jq -r '[.daemon.agentProfiles[].name] | join(", ")' "$SNIPPET")"
-echo "  providers: $(jq -r '.agents.providers | keys | join(", ")' "$SNIPPET")"
-[ "$DO_DAEMON_POLICY" = 1 ] && echo "  daemon:    browserTools=$(jq -c .daemon.browserTools.enabled "$CONFIG") terminalHooks=$(jq -c .daemon.enableTerminalAgentHooks "$CONFIG") bundledSkills=$(jq -c .agents.skills.selection "$CONFIG")"
-
-# --- 3. plugin ----------------------------------------------------------------------
+# --- 2. plugin ---
 if [ "$DO_PLUGIN" = 1 ]; then
-  ( cd "$HERE/plugin" && npm install --silent --no-audit --no-fund && npm run --silent typecheck )
-  if paseo plugin ls --json 2>/dev/null | jq -e '.[]? | select(.id == "slp-seat")' >/dev/null 2>&1; then
+  ( cd "$PLUGIN" && npm run --silent typecheck )
+  if paseo plugin ls --json 2>/dev/null | node -e 'let s="";process.stdin.on("data",(d)=>(s+=d)).on("end",()=>{try{process.exit(JSON.parse(s).some((p)=>p.id==="slp-seat")?0:1)}catch{process.exit(1)}})'; then
     paseo plugin reload slp-seat
   else
-    paseo plugin install "$HERE/plugin"
+    paseo plugin install "$PLUGIN"
   fi
 fi
 
-# --- 4. reload ----------------------------------------------------------------------
+# --- 3. reload: Paseo picks the seats and profiles up from its config.json ---
 if [ "$DO_RELOAD" = 1 ]; then
   paseo daemon reload </dev/null || echo "WARNING: 'paseo daemon reload' failed; restart Paseo yourself." >&2
 fi

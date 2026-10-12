@@ -18,7 +18,7 @@ the law.
 3. Models. Ask Human one question: the room's table, or a table of its own
    for this project. Room's table → pass no `models`. Its own → read
    `ROOM_DIR/models.json`, show it as a short list (Supervisor, Lead, each
-   Peer tier, the lenses, with model and thinking), take the changes, and
+   Peer tier, each Lens tier, with model and thinking), take the changes, and
    build `models` holding only the differences, same shape (`null` removes a
    tier). Any role may sit on any harness (claude, codex, pi, opencode),
    written `<harness>-<role>/<model>`; a seat the room does not have yet is

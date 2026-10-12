@@ -1,5 +1,5 @@
 import { mkdirSync } from "node:fs";
-import { paseoCli } from "./cli";
+import type { PaseoApi } from "./paseo";
 import { HQ_DIR, HQ_PROJECT } from "./paths";
 import { isInside, loadRegistry, realOrSelf } from "./registry";
 
@@ -16,25 +16,31 @@ export function checkHqPlacement(role: string, provider: string, cwd: string): v
   if (role !== "hq" && inside) throw new Error(`slp-seat: ${provider} refused: ${dir} is the ${HQ_PROJECT} project, it holds only hq seats`);
 }
 
+const dirOf = (workspace: { workspaceDirectory?: string; projectRootPath: string }) => realOrSelf(workspace.workspaceDirectory ?? workspace.projectRootPath);
+/** One opening at a time: two that both find no workspace would both make one. */
+let opening: Promise<void> = Promise.resolve();
+
 /**
- * The room's default Paseo project: the directory, the project named
- * hq-seatwork and one local workspace in it, so the HQ Supervisor profile has
- * a home right after install. Safe to repeat; a project the user renamed or
- * a workspace that already exists is left alone.
+ * The room's default Paseo project: the directory, and the project and local workspace Paseo
+ * opens for it, so the HQ Supervisor profile has a home. Safe to repeat: a workspace that is
+ * already there is left alone, and so is a project the user renamed.
  */
-export async function ensureHqProject(log: (message: string) => void): Promise<void> {
+export function ensureHqProject(paseo: PaseoApi, log: (message: string) => void): Promise<void> {
+  const open = async () => {
+    mkdirSync(hqDir(), { recursive: true });
+    const dir = hqDir(); // read again: a path through a symlink resolves only once the directory exists
+    const { entries } = await paseo.workspaces.list();
+    if (entries.some((workspace) => dirOf(workspace) === dir)) return;
+    await paseo.workspaces.open({ cwd: dir });
+    log(`opened the ${HQ_PROJECT} project at ${dir}`);
+  };
+  opening = opening.then(open, open);
+  return opening;
+}
+
+/** Archives the HQ project's workspaces when the room is removed: they leave Paseo's lists, and nothing is deleted. */
+export async function closeHqProject(paseo: PaseoApi): Promise<void> {
   const dir = hqDir();
-  mkdirSync(dir, { recursive: true });
-  const projects = JSON.parse(await paseoCli(["project", "ls", "--json"])) as { projectId: string; name: string; path: string }[];
-  let project = projects.find((p) => realOrSelf(p.path) === dir);
-  if (!project) {
-    project = JSON.parse(await paseoCli(["project", "create", dir, "--json"])) as { projectId: string; name: string; path: string };
-    if (project.name !== HQ_PROJECT) await paseoCli(["project", "rename", project.projectId, HQ_PROJECT]);
-    log(`created the ${HQ_PROJECT} project at ${dir}`);
-  }
-  const workspaces = JSON.parse(await paseoCli(["workspace", "ls", "--json"])) as { cwd: string }[];
-  if (!workspaces.some((w) => realOrSelf(w.cwd) === dir)) {
-    await paseoCli(["workspace", "create", "--project", project.projectId, "--path", dir, "--isolation", "local", "--title", HQ_PROJECT, "--json"]);
-    log(`created the ${HQ_PROJECT} workspace`);
-  }
+  const { entries } = await paseo.workspaces.list();
+  for (const workspace of entries) if (dirOf(workspace) === dir) await paseo.workspaces.archive(workspace.id);
 }

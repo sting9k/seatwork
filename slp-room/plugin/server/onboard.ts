@@ -5,7 +5,7 @@ import { hqDir } from "./hq";
 import { missingSeats, projectModels } from "./models";
 import { REGISTRY_FILE } from "./paths";
 import { loadRegistry, readLaw, realOrSelf } from "./registry";
-import { enabledSeats, enableSeats } from "./seats";
+import { enabledSeats } from "./seats";
 
 interface PaseoProject {
   projectId: string;
@@ -61,9 +61,9 @@ export async function describeProjects(): Promise<string> {
  * mission and the project's own model table when given, and its line in
  * projects.json. Repeating it updates what is given and changes nothing else.
  * A table may put a role on a harness the room has no seat for yet: those
- * seats are set up before the table is written.
+ * seats are set up (`setUpSeats`) before the table is written.
  */
-export async function registerProject(args: { path: string; name?: string; mission?: string; models?: unknown }): Promise<string> {
+export async function registerProject(args: { path: string; name?: string; mission?: string; models?: unknown }, setUpSeats: (providers: string[]) => Promise<void>): Promise<string> {
   const wanted = realOrSelf(args.path.trim());
   const project = (await paseoProjects()).find((p) => p.path === wanted || p.name === args.path.trim());
   if (!project) throw new Error(`${args.path} is not a project in Paseo (or is the room's own); it has to be added to Paseo first`);
@@ -84,7 +84,7 @@ export async function registerProject(args: { path: string; name?: string; missi
   let added: string[] = [];
   if (args.models !== undefined) {
     added = missingSeats(args.models, enabledSeats().map((s) => s.provider), "models");
-    await enableSeats(added);
+    if (added.length) await setUpSeats(added);
     // checked before it is written: a table that names a seat the room does not have would refuse every seat
     projectModels(args.models, enabledSeats().map((s) => s.provider), "models");
     content.models = args.models;

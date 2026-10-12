@@ -1,0 +1,85 @@
+import { chmodSync, cpSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+import { checkSetup, type RoomPlan, type Setup } from "./plan";
+
+const json = (value: unknown) => `${JSON.stringify(value, null, 2)}\n`;
+
+/** Writes a file of the room home for its owner only, also when it was already there with wider rights. */
+function writePrivate(file: string, text: string): void {
+  writeFileSync(file, text, { mode: 0o600 });
+  chmodSync(file, 0o600);
+}
+
+/** setup.json of a room home, checked; {} when the room was never set up there. */
+export function readSetup(roomHome: string): Setup {
+  const file = join(roomHome, "setup.json");
+  if (!existsSync(file)) return {};
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(readFileSync(file, "utf8"));
+  } catch (error) {
+    throw new Error(`${file} is not JSON (${error instanceof Error ? error.message : String(error)})`);
+  }
+  return checkSetup(parsed, file);
+}
+
+/** Moves a room home aside, whole and readable, and returns where it went: nothing the room wrote is deleted. */
+export function moveRoomHomeAside(roomHome: string, now = new Date()): string {
+  const target = `${roomHome}.removed-${stamp(now)}`;
+  renameSync(roomHome, target);
+  return target;
+}
+
+/** A local date and time for a file name: 20261012-145625. */
+export function stamp(now = new Date()): string {
+  const two = (n: number) => String(n).padStart(2, "0");
+  return `${now.getFullYear()}${two(now.getMonth() + 1)}${two(now.getDate())}-${two(now.getHours())}${two(now.getMinutes())}${two(now.getSeconds())}`;
+}
+
+/** Whether a room is set up in this home: the plugin stays asleep until it is. */
+export function isSetUp(roomHome: string): boolean {
+  return existsSync(join(roomHome, "policy.json")) && existsSync(join(roomHome, "seats.json"));
+}
+
+/**
+ * Writes the room home for a plan: the room files, the policy, the model table, the seats and
+ * this machine's choices. Mail, logs, runtimes of seats still enabled and the registry are kept.
+ * `seatsOnly` leaves the room files and the policy as they are: a running room gains a seat, nothing else moves.
+ */
+export function writeRoomHome(input: { plan: RoomPlan; pluginDir: string; roomHome: string; setup: Setup; version: string; seatsOnly?: boolean }): void {
+  const { plan, pluginDir, roomHome, setup, version } = input;
+  // the room home holds mail and copies of the user's harness config: its owner only, also when it already exists
+  mkdirSync(roomHome, { recursive: true, mode: 0o700 });
+  chmodSync(roomHome, 0o700);
+
+  if (!input.seatsOnly) {
+    // the whole room tree (roles, harness, specs, skills) replaced in one move, so a file dropped from the plugin is dropped here
+    const room = join(roomHome, "room");
+    const next = `${room}.next`;
+    const previous = `${room}.previous`;
+    for (const stale of [next, previous]) rmSync(stale, { recursive: true, force: true });
+    cpSync(join(pluginDir, "room"), next, { recursive: true });
+    writeFileSync(join(next, "models.json"), json(plan.models));
+    if (existsSync(room)) renameSync(room, previous);
+    renameSync(next, room);
+    rmSync(previous, { recursive: true, force: true });
+    writePrivate(join(roomHome, "policy.json"), json(plan.policy));
+  }
+  writePrivate(join(roomHome, "seats.json"), json({ seats: plan.seats, providers: Object.keys(plan.providers).sort(), source: pluginDir }));
+  writePrivate(join(roomHome, "setup.json"), json({ ...setup, version }));
+
+  // runtimes of seats no longer enabled go; Claude seats run on the user's ~/.claude and have none
+  const runtimes = join(roomHome, "runtimes");
+  if (existsSync(runtimes)) {
+    for (const harness of readdirSync(runtimes, { withFileTypes: true })) {
+      if (!harness.isDirectory()) continue;
+      for (const role of readdirSync(join(runtimes, harness.name), { withFileTypes: true })) {
+        const kept = harness.name !== "claude" && `${harness.name}-${role.name}` in plan.providers;
+        if (role.isDirectory() && !kept) rmSync(join(runtimes, harness.name, role.name), { recursive: true, force: true });
+      }
+    }
+  }
+  if (!existsSync(join(roomHome, "projects.json"))) {
+    writeFileSync(join(roomHome, "projects.json.example"), json({ projects: [{ name: "example", cwd: "/Users/you/code/example" }] }));
+  }
+}

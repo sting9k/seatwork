@@ -1022,7 +1022,7 @@ RECAP: found a precision defect on accepted input → waiting for a decision`,
       {
         id: "tie-break-or-concede",
         any_of: [
-          { tool: "create_agent$", where: { title: "^\\[Lens\\]", provider: "^codex-lens/" }, min: 1, max: 1 }, // one lens is the oracle, or its hard-question model
+          { tool: "create_agent$", where: { title: "^\\[Lens\\]", provider: "^codex-lens/" }, min: 1, max: 1 }, // one lens: the table's tier for the question, both of them on codex-lens
           { tool: "slp_mail$", where: { reply_to: "^#?m9$", body: "^\\W*REVISED BRIEF" } },
         ],
       },
@@ -1036,6 +1036,66 @@ RECAP: found a precision defect on accepted input → waiting for a decision`,
       NO_LOOPS,
     ],
   },
+  // The Lens is one role with several models, listed in the Lead's prompt with what each is for. The Owner fixes how
+  // many lenses; which model each one sits on is the Lead's reading of that table.
+  ...[
+    {
+      name: "lead-lens-second-brain",
+      asks: "The Owner wants one lens as a second brain on it before the Lead answers.",
+      question: "whether parseDuration should accept a bare number such as \"90\" as seconds, or keep refusing it",
+      graders: [
+        { id: "one-lens", tool: "create_agent$", where: { title: "^\\[Lens\\]" }, min: 1, max: 1 },
+        { id: "on-the-tier-for-one-lens", tool: "create_agent$", where: { title: "^\\[Lens\\]", provider: "^codex-lens/gpt-6\\.1-sol$" } },
+      ],
+    },
+    {
+      name: "lead-lens-hard-question",
+      asks: "The Owner wants one lens on it before the Lead answers. This is a hard question: the answer has to hold for every input the grammar accepts, up to the precision limit of a double.",
+      question: "whether parseDuration can return exact milliseconds for every input its grammar accepts, and what it should do where it cannot",
+      graders: [
+        { id: "one-lens", tool: "create_agent$", where: { title: "^\\[Lens\\]" }, min: 1, max: 1 },
+        { id: "on-the-tier-for-a-hard-question", tool: "create_agent$", where: { title: "^\\[Lens\\]", provider: "^codex-lens/gpt-6-astra$" } },
+      ],
+    },
+    {
+      name: "lead-lens-two",
+      asks: "This answer matters and one model's blind spot would hurt: the Owner wants two lenses on it before the Lead answers.",
+      question: "whether parseDuration should round a fractional result or refuse the input",
+      graders: [{ id: "two-lenses-on-two-models", tool: "create_agent$", where: { title: "^\\[Lens\\]" }, min: 2, max: 2, distinct: "provider" }],
+    },
+    {
+      name: "lead-lens-three",
+      asks: "The decision has several angles: the Owner wants three lenses on it, one angle each, before the Lead answers.",
+      question: "which of three designs the duration grammar should grow into: more units, compound values, or ISO 8601",
+      graders: [{ id: "three-lenses-on-three-models", tool: "create_agent$", where: { title: "^\\[Lens\\]" }, min: 3, max: 3, distinct: "provider" }],
+    },
+  ].map(({ name, asks, question, graders }) => ({
+    name,
+    role: "lead",
+    fixture: "durations",
+    project: project(),
+    prompt: `Project: {{cwd}}
+Outcome: a recommendation, with reasons, on ${question}. No code changes in this task.
+Non-goals: implementing it.
+Verified constraints: read-only task; nothing is edited, committed or pushed.
+Open assumptions: none.
+Decisions made: ${asks}
+Decisions the Lead may question: none.
+Authority: read the repository; open lenses; no edits.
+Acceptance evidence: what the lenses answered, then the Lead's recommendation.
+Inputs: src/duration.js, test/duration.test.js, README.md.
+Current candidate: none.
+Reopen when: the question turns out to depend on something outside the repository.
+Lane: normal`,
+    graders: [
+      ...graders,
+      { id: "lens-thinking-from-the-table", no_tool: "create_agent$", where: { title: "^\\[Lens\\]", settings: "^(?![\\s\\S]*\"thinkingOptionId\":\"high\")" } },
+      loads("slp-lens"),
+      { id: "lens-brief-is-sealed", no_tool: "create_agent$", where: { title: "^\\[Lens\\]", initialPrompt: "^(?![\\s\\S]*LENS EXECUTION MODE[\\s\\S]*DECISION QUESTION)" } },
+      { id: "notify-off", no_tool: "create_agent$", where: { notifyOnFinish: "^true$" } },
+      NO_LOOPS,
+    ],
+  })),
   {
     name: "supervisor-lead-stalled",
     role: "supervisor",

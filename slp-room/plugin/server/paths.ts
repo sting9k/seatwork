@@ -5,7 +5,7 @@ import { join } from "node:path";
 export const USER_HOME = homedir();
 export const ROOM_HOME = process.env.SLP_ROOM_HOME?.trim() || join(USER_HOME, ".config", "slp-room");
 
-/** The room files install.sh copies here: models.json, roles/, specs/, harness/, skills/. */
+/** The room files copied here when the room is set up: models.json, roles/, specs/, harness/, skills/. */
 export const ROOM_DIR = join(ROOM_HOME, "room");
 
 /** Isolated runtimes, one per harness and role: runtimes/<harness>/<role>. */
@@ -14,7 +14,7 @@ export const RUNTIMES_DIR = join(ROOM_HOME, "runtimes");
 /** Claude role skills, one directory per role, handed to a seat as an additional directory (runtimes.ts). */
 export const ROLE_SKILLS_DIR = join(ROOM_HOME, "role-skills");
 
-/** Seats enabled in paseo/seats.yml, as generated seats.json: { seats, providers }. */
+/** The seats the room has on this machine: { seats, providers, source }, written when it is set up. */
 export const SEATS_FILE = join(ROOM_HOME, "seats.json");
 
 /** Registry of SLP projects the room may work in (see registry.ts). */

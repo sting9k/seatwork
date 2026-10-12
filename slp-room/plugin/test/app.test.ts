@@ -4,8 +4,7 @@ import { test } from "node:test";
 import { chime } from "../client/chime";
 import contribute from "../index.server";
 import { MailEngine } from "../server/mail";
-
-type Handler = (input: unknown, context: unknown) => unknown;
+import { fakeServer } from "./support/server";
 
 test("mail that was held when the daemon stopped moves once the app is open, before any agent runs", async () => {
   installRoom(["claude-lead"]);
@@ -18,10 +17,10 @@ test("mail that was held when the daemon stopped moves once the app is open, bef
   // after it every seat is closed and no hook has fired: the app's question is the first thing that reaches the plugin
   const inbox: string[] = [];
   const paseo = { agents: { list: async () => ({ entries: [] }), ref: () => ({ refresh: async () => {}, current: () => ({ status: "closed" }), send: async (text: string) => void inbox.push(text) }) } };
-  const rpcs = new Map<string, Handler>();
-  const dispose = contribute({ before: () => {}, on: () => {}, registerUsageSource: () => {}, handle: (contract: { name: string }, handler: Handler) => void rpcs.set(contract.name, handler) } as never);
+  const paseoSide = fakeServer();
+  const dispose = contribute(paseoSide.server);
   try {
-    await rpcs.get("room.waiting")!({}, { paseo });
+    await paseoSide.call("rpc room.waiting", {}, { paseo });
     for (let waited = 0; inbox.length === 0 && waited < 100; waited += 1) await new Promise((resolve) => setTimeout(resolve, 10));
   } finally {
     await dispose();

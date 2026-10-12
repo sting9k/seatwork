@@ -124,12 +124,12 @@ export interface RuntimePolicy {
 export const POLICY_FILE = join(ROOM_HOME, "policy.json");
 
 function need<T>(value: T | undefined, where: string): T {
-  if (value === undefined || value === null) throw new Error(`slp-seat: ${POLICY_FILE} is missing "${where}" (re-run install.sh)`);
+  if (value === undefined || value === null) throw new Error(`slp-seat: ${POLICY_FILE} is missing "${where}" (set the room up again)`);
   return value;
 }
 
 export function loadPolicy(): RuntimePolicy {
-  if (!existsSync(POLICY_FILE)) throw new Error(`slp-seat: ${POLICY_FILE} not found; run install.sh`);
+  if (!existsSync(POLICY_FILE)) throw new Error(`slp-seat: ${POLICY_FILE} not found; set the room up again`);
   const parsed = JSON.parse(readFileSync(POLICY_FILE, "utf8")) as Record<string, any>;
   const claude = need(parsed.claude, "claude");
   const room = need(parsed.room, "room");

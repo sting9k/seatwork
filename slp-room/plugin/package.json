@@ -1,15 +1,18 @@
 {
   "name": "slp-seat",
   "private": true,
-  "version": "0.13.0",
-  "description": "Paseo plugin: isolated per-seat runtimes and role prompts for a Supervisor → Lead → Peer room across Claude, Codex, Pi and OpenCode.",
+  "version": "0.14.0",
+  "description": "Paseo plugin: a Supervisor → Lead → Peer room across Claude, Codex, Pi and OpenCode, set up from its own screen in Paseo.",
   "files": [
     "paseo-plugin.json",
+    "OVERVIEW.md",
     "index.server.ts",
     "index.client.tsx",
     "server/",
     "client/",
-    "shared/"
+    "shared/",
+    "room/",
+    "paseo/"
   ],
   "scripts": {
     "typecheck": "tsc --noEmit",

@@ -1,5 +1,5 @@
 {
-  "$comment": "Single source of truth for what each seat may touch. tools/gen-snippet.py turns the paseo part into ~/.config/slp-room/config.snippet.json; install.sh copies the whole file to ~/.config/slp-room/policy.json where the plugin reads the harness part when it builds runtimes.",
+  "$comment": "Single source of truth for what each seat may touch. Setting the room up (the plugin's setup screen, or install.sh) turns the paseo part into the seats' providers in Paseo and copies the whole file to ~/.config/slp-room/policy.json, where the plugin reads the harness part when it builds runtimes.",
   "paseoTools": {
     "all": [
       "speak",
@@ -252,7 +252,7 @@
         "strict-mcp-config": null
       }
     },
-    "$comment_launch": "How a seat starts, per harness. Claude seats run on the user's ~/.claude: the flags make them take the sign-in only (no user settings, no personal MCP server), and the env switches off what Claude Code adds of its own: auto memory and organization memory, agent teams, the agent view, workflows, and claude.ai connectors (strict-mcp-config alone still loads those). The other harnesses start on a home of their own: {runtime} is ~/.config/slp-room/runtimes/<harness>/<role>. tools/gen-snippet.py writes each launch block into the harness's providers (env, and extraArgs under options), so a seat starts this way when the plugin is not running; the plugin gives every session it opens the same env.",
+    "$comment_launch": "How a seat starts, per harness. Claude seats run on the user's ~/.claude: the flags make them take the sign-in only (no user settings, no personal MCP server), and the env switches off what Claude Code adds of its own: auto memory and organization memory, agent teams, the agent view, workflows, and claude.ai connectors (strict-mcp-config alone still loads those). The other harnesses start on a home of their own: {runtime} is ~/.config/slp-room/runtimes/<harness>/<role>. Setting the room up writes each launch block into the harness's providers (env, and extraArgs under options), so a seat starts this way when the plugin is not running; the plugin gives every session it opens the same env.",
     "shareFiles": [
       "CLAUDE.md"
     ],
@@ -364,7 +364,7 @@
     }
   },
   "daemon": {
-    "$comment": "Daemon-wide switches install.sh applies to ~/.paseo/config.json. These affect every agent on the host, not only seats.",
+    "$comment": "Daemon-wide switches, applied when the room is set up. These affect every agent on the host, not only seats. The setup screen sets browserTools, enableTerminalAgentHooks and bundledSkills and reports dictation and voiceMode; install.sh sets all five.",
     "browserTools": false,
     "enableTerminalAgentHooks": false,
     "dictation": false,

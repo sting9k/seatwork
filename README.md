@@ -134,6 +134,7 @@ seatwork/
   room's files into `~/.config/seatwork` and reloads the plugin. This needs
   a room set up from this clone: see [From a terminal](#from-a-terminal).
 - Tests: `npm test` in `plugin/` (Node 22.15 or later).
+- Format: `npm run format` in `plugin/` (Prettier, 120 columns; code only).
 - A prompt change: run `node evals/run.cjs --label <name>` at the top of
   the clone, before and after. It opens real model sessions and costs
   tokens; see [evals/README.md](evals/README.md).

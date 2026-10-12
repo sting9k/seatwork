@@ -1,0 +1,4 @@
+# prompts and data are read as written: only code is formatted
+room/
+*.md
+*.json

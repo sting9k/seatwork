@@ -17,11 +17,13 @@
   "scripts": {
     "typecheck": "tsc --noEmit",
     "test": "node --require ./test/register.cjs --test \"test/*.test.ts\"",
-    "watch:replay": "node --require ./test/register.cjs tools/watch-replay.ts"
+    "watch:replay": "node --require ./test/register.cjs tools/watch-replay.ts",
+    "format": "prettier --write \"**/*.{ts,tsx,cjs,mjs}\" \"../evals/*.{cjs,mjs}\""
   },
   "devDependencies": {
     "@getpaseo/plugin": "0.11.2",
     "@types/node": "^22.0.0",
+    "prettier": "^3.9.10",
     "typescript": "^5.9.3",
     "zod": "^4.4.3"
   }

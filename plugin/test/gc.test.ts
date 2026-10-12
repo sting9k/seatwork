@@ -14,9 +14,6 @@ test("GC archives a seat that is at rest, never one that waits on someone or wen
     idle: { listed: { status: "idle" } },
     closed: { listed: { status: "closed" } },
     error: { listed: { status: "error" } },
-    "needs-input": { listed: { status: "needs_input" } },
-    permission: { listed: { status: "permission" } },
-    attention: { listed: { status: "attention" } },
     "pending-permission": { listed: { status: "idle", pendingPermissions: [{ id: "p1" }] } },
     "woke-up": { listed: { status: "idle" }, now: { status: "running" } },
   };

@@ -119,10 +119,9 @@ function logLine(kind: string, mail: Mail, detail?: string): void {
   );
 }
 
-/** A seat stopped until someone answers it: a pending permission, or a status that says it waits. */
-export function waitsOnSomeone(agent: { status?: string; pendingPermissions?: unknown[] | null }): boolean {
-  if (Array.isArray(agent.pendingPermissions) && agent.pendingPermissions.length > 0) return true;
-  return agent.status === "permission" || agent.status === "attention" || agent.status === "needs_input";
+/** A seat stopped until someone answers its permission request. */
+export function waitsOnSomeone(agent: { pendingPermissions?: unknown[] | null }): boolean {
+  return Array.isArray(agent.pendingPermissions) && agent.pendingPermissions.length > 0;
 }
 
 /** Fallback for mail queued before fromLabel existed. */

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # slp-room installer: room files, policy, Paseo providers and profiles, the slp-seat plugin.
-# Flags: --no-plugin  --no-reload  --no-daemon-policy  --no-pi-adapter
+# Flags: --no-plugin  --no-reload  --no-daemon-policy
 #   --hq default|ask|<harness>/<model> [--hq-thinking <id>]   what HQ runs on; asked once, on a first install from a terminal
 #   --seat <harness>-<role>   set up a seat paseo/seats.yml does not list (repeatable; kept in setup.json)
 #   --watcher off|shadow|on|ask   the watcher on this machine; asked once, on a first install from a terminal
@@ -11,14 +11,13 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOM_HOME="${SLP_ROOM_HOME:-$HOME/.config/slp-room}"
 PASEO_HOME="${PASEO_HOME:-$HOME/.paseo}"
 CONFIG="$PASEO_HOME/config.json"
-DO_PLUGIN=1; DO_RELOAD=1; DO_DAEMON_POLICY=1; DO_PI_ADAPTER=1; DO_ROOM=1
+DO_PLUGIN=1; DO_RELOAD=1; DO_DAEMON_POLICY=1; DO_ROOM=1
 CHOICES=()
 while [ $# -gt 0 ]; do
   case "$1" in
     --no-plugin) DO_PLUGIN=0 ;;
     --no-reload) DO_RELOAD=0 ;;
     --no-daemon-policy) DO_DAEMON_POLICY=0 ;;
-    --no-pi-adapter) DO_PI_ADAPTER=0 ;;
     --seats-only) DO_ROOM=0; DO_PLUGIN=0 ;;
     --hq|--hq-thinking|--seat|--watcher)
       [ $# -ge 2 ] || { echo "$1 needs a value" >&2; exit 2; }
@@ -89,13 +88,11 @@ if [ "$(jq -r '.watcher // "off"' "$ROOM_HOME/setup.json")" != off ] && [ -z "${
   echo "Watcher: no key in $ROOM_HOME/watch/key (or SLP_WATCH_KEY): the rules that read tool calls work, the four that ask a model only log their facts."
 fi
 
-# --- 1b. Pi MCP adapter: without it Pi seats get no Paseo tools -----------------------
-if [ "$DO_PI_ADAPTER" = 1 ] && command -v pi >/dev/null; then
-  if pi list 2>/dev/null | grep -q "pi-mcp-adapter"; then
-    echo "Pi MCP adapter: already installed"
-  else
-    pi install npm:pi-mcp-adapter && echo "Pi MCP adapter: installed" || echo "WARNING: 'pi install npm:pi-mcp-adapter' failed; Pi seats will have no Paseo tools" >&2
-    rm -rf "$ROOM_HOME/runtimes/pi"   # rebuilt by the plugin with the adapter package kept
+# --- 1b. Pi seats: Paseo hands them the room's tools through Pi's built-in MCP (Pi 0.99 or later) ---
+if jq -e '.providers | any(startswith("pi-"))' "$ROOM_HOME/seats.json" >/dev/null; then
+  PI_VERSION="$(pi --version 2>/dev/null | head -n 1 || true)"
+  if ! jq -en --arg v "$PI_VERSION" '($v | split("-")[0] | split(".") | map(tonumber)) >= [0, 99]' >/dev/null 2>&1; then
+    echo "WARNING: a Pi seat needs Pi 0.99 or later to get the room's tools; found ${PI_VERSION:-no pi on PATH}." >&2
   fi
 fi
 

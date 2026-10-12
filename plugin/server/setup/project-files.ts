@@ -26,24 +26,24 @@ export interface ProjectFiles {
 
 /** The folders a room worked in: every project in its registry, and the folder of every seat in its log. */
 export function roomFolders(home: string = ROOM_HOME): string[] {
-  const folders = new Set<string>();
+  const named = new Set<string>();
   const lines = (file: string) =>
     existsSync(join(home, file)) ? readFileSync(join(home, file), "utf8").split("\n") : [];
   try {
     const registry = JSON.parse(lines("projects.json").join("\n") || "{}") as { projects?: { cwd?: unknown }[] };
-    for (const project of registry.projects ?? [])
-      if (typeof project?.cwd === "string") folders.add(realOrSelf(project.cwd));
+    for (const project of registry.projects ?? []) if (typeof project?.cwd === "string") named.add(project.cwd);
   } catch {
     // a registry that cannot be read names no project
   }
   for (const line of lines("registry-log.jsonl")) {
     try {
       const { cwd } = JSON.parse(line) as { cwd?: unknown };
-      if (typeof cwd === "string") folders.add(realOrSelf(cwd));
+      if (typeof cwd === "string") named.add(cwd);
     } catch {
       // an empty or torn line
     }
   }
+  const folders = new Set([...named].map((cwd) => realOrSelf(cwd)));
   // HQ's own folder is in the room home and moves with it
   const real = realOrSelf(home);
   return [...folders].filter((folder) => !isInside(folder, real));

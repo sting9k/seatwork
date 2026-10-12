@@ -1,5 +1,5 @@
 import { chmodSync, cpSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { checkSetup, type RoomPlan, type Setup } from "./plan";
 
 const json = (value: unknown) => `${JSON.stringify(value, null, 2)}\n`;
@@ -23,11 +23,33 @@ export function readSetup(roomHome: string): Setup {
   return checkSetup(parsed, file);
 }
 
-/** Moves a room home aside, whole and readable, and returns where it went: nothing the room wrote is deleted. */
+/** Moves a room home aside, whole and readable, and returns where it went: it is kept there for KEEP_REMOVED_DAYS. */
 export function moveRoomHomeAside(roomHome: string, now = new Date()): string {
   const target = `${roomHome}.removed-${stamp(now)}`;
   renameSync(roomHome, target);
   return target;
+}
+
+/** How many days a folder set aside by Remove or by Init is kept before the plugin deletes it. */
+export const KEEP_REMOVED_DAYS = 30;
+
+/**
+ * Deletes the folders set aside beside a room home (`<home>.removed-<time>`, and `slp-room.removed-<time>`
+ * of a room from before 0.19.0) once the time in their name is more than `days` back. Returns what went.
+ */
+export function sweepRemoved(roomHome: string, days = KEEP_REMOVED_DAYS, now = new Date()): string[] {
+  const parent = dirname(roomHome);
+  if (!existsSync(parent)) return [];
+  const gone: string[] = [];
+  for (const entry of readdirSync(parent)) {
+    const at = /^(.+)\.removed-(\d{4})(\d\d)(\d\d)-(\d\d)(\d\d)(\d\d)$/.exec(entry);
+    if (!at || ![basename(roomHome), "slp-room"].includes(at[1])) continue;
+    const setAside = new Date(+at[2], +at[3] - 1, +at[4], +at[5], +at[6], +at[7]);
+    if (now.getTime() - setAside.getTime() < days * 86_400_000) continue;
+    rmSync(join(parent, entry), { recursive: true, force: true });
+    gone.push(join(parent, entry));
+  }
+  return gone;
 }
 
 /** A local date and time for a file name: 20261012-145625. */

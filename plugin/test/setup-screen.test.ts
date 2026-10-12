@@ -50,6 +50,8 @@ before(() => {
   // this machine keeps the room's mail server off the port the policy names
   writeFileSync(join(ROOM_HOME, "setup.json"), JSON.stringify({ mailPort: 0 }));
   console.log = console.error = () => {};
+  // a folder Remove set aside long ago: the plugin deletes it as it starts, room or no room
+  mkdirSync(`${ROOM_HOME}.removed-20260101-000000`);
   dispose = contribute(paseoSide.server);
 });
 
@@ -59,6 +61,7 @@ after(async () => {
 });
 
 test("a daemon that only downloaded the plugin: nothing is created, a room seat is refused, the app is told there is no room", async () => {
+  assert.equal(existsSync(`${ROOM_HOME}.removed-20260101-000000`), false);
   assert.deepEqual(readdirSync(ROOM_HOME), ["setup.json"]);
   await assert.rejects(createPeer(), /no room is set up on this daemon.*the Seatwork screen/);
   const own = { config: { provider: "claude", cwd: PROJECT }, env: {} };
@@ -146,16 +149,33 @@ test("after an update of the plugin the room takes no new seat until its files a
   assert.ok((await state()).checks.some((check) => check.id === "two-copies" && check.ok === false));
   delete daemon.config.plugins["slp-seat"];
   assert.ok(!(await state()).checks.some((check) => check.id === "two-copies"));
-  // a room home from before 0.19.0, beside this one: it is not read, and the screen says so
-  const old = join(ROOM_HOME, "..", "slp-room");
-  mkdirSync(old);
-  writeFileSync(join(old, "policy.json"), "{}");
-  assert.ok((await state()).checks.some((check) => check.id === "old-room" && check.ok === false));
-  rmSync(old, { recursive: true });
-  assert.ok(!(await state()).checks.some((check) => check.id === "old-room"));
-
   await init({ models: { seats: { lead: { provider: "pi-lead/m", thinking: "high" } } }, watcher: "on" });
   assert.match((await createPeer()).config.systemPrompt, /^# Seat: peer/);
+});
+
+test("Init clears a room from before 0.19.0: its home and its notes in a project are kept aside, its key is carried over, nothing of the user's moves", async () => {
+  const old = join(ROOM_HOME, "..", "slp-room");
+  const project = join(realpathSync(PROJECT), "..", "old-project");
+  for (const dir of [join(old, "watch"), join(project, ".slp")]) mkdirSync(dir, { recursive: true });
+  for (const file of ["policy.json", "seats.json"]) writeFileSync(join(old, file), "{}");
+  writeFileSync(join(old, "projects.json"), JSON.stringify({ projects: [{ name: "old", cwd: project }] }));
+  writeFileSync(join(old, "watch", "key"), "sk-old-not-a-key\n");
+  for (const file of ["status.md", "mine.txt"]) writeFileSync(join(project, ".slp", file), file);
+
+  const { notes } = (await init()) as unknown as { notes: string[] };
+
+  const kept = readdirSync(join(ROOM_HOME, "..")).filter((name) => name.startsWith("slp-room.removed-"));
+  assert.deepEqual([existsSync(old), kept.length], [false, 1]);
+  assert.match(notes.join(" "), new RegExp(`A room from before 0\\.19\\.0 .* kept at .*${kept[0]}`));
+  const bundle = join(ROOM_HOME, "..", kept[0]);
+  const notesKept = readdirSync(join(bundle, "projects")).map((name) => readdirSync(join(bundle, "projects", name, ".slp")));
+  assert.deepEqual([existsSync(join(bundle, "policy.json")), notesKept, readdirSync(join(project, ".slp"))], [true, [["status.md"]], ["mine.txt"]]);
+  assert.equal(readFileSync(join(ROOM_HOME, "watch", "key"), "utf8"), "sk-old-not-a-key\n");
+  assert.equal(statSync(join(ROOM_HOME, "watch", "key")).mode & 0o077, 0);
+  // a second Init finds nothing to clear
+  assert.ok(!((await init()) as unknown as { notes: string[] }).notes.some((note) => note.includes("before 0.19.0")));
+  rmSync(join(ROOM_HOME, "watch", "key"));
+  rmSync(bundle, { recursive: true });
 });
 
 test("the watcher's key is kept for its owner only and never handed back to the app", async () => {

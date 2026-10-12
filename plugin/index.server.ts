@@ -1,6 +1,6 @@
 import { appendFileSync, chmodSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { randomBytes } from "node:crypto";
-import { dirname, join } from "node:path";
+import { join } from "node:path";
 import type { PluginBeforeRequests, PluginServerContext } from "@getpaseo/plugin/server";
 import type { PaseoApi } from "./server/paseo";
 import { z } from "zod";
@@ -21,9 +21,10 @@ import { catalogFrom, harnessStates } from "./server/setup/catalog";
 import { piProblem } from "./server/setup/checks";
 import { addSeats, setUpRoom, sourceOf } from "./server/setup/init";
 import { applyWithSdk, readSwitches, removeWithSdk, turnBundledSkillsOff } from "./server/setup/paseo-config";
+import { clearOldRoom } from "./server/setup/old-room";
 import { roomModels, type Setup } from "./server/setup/plan";
 import { keptAt, roomFolders, takeRoomFiles, type ProjectFiles } from "./server/setup/project-files";
-import { isSetUp, moveRoomHomeAside, readSetup } from "./server/setup/room-home";
+import { isSetUp, KEEP_REMOVED_DAYS, moveRoomHomeAside, readSetup, sweepRemoved } from "./server/setup/room-home";
 import { asksOwner, CLOSES_WORK, signalOf, subjectSignal } from "./server/signals";
 import { roomStats } from "./server/stats";
 import { Budget } from "./server/watch/budget";
@@ -40,7 +41,7 @@ import { Watcher, type SeatView, type TimelineView } from "./server/watch/watche
 
 type CreateRequest = PluginBeforeRequests["agent.create"];
 
-const VERSION = "0.19.0";
+const VERSION = "0.19.1";
 const MAIL_DIR = join(ROOM_HOME, "mail");
 const MCP_TOKEN_FILE = join(MAIL_DIR, "token");
 const NONCES_FILE = join(MAIL_DIR, "nonces.json");
@@ -53,6 +54,16 @@ export default function contribute(server: PluginServerContext) {
   server.registerSettings(roomSettings);
   let room: Room | null = isSetUp(ROOM_HOME) ? startRoom(server) : null;
   if (!room) console.log(`seatwork ${VERSION}: no room is set up on this daemon; its setup screen is Seatwork, in the sidebar`);
+  // the folders Remove and Init set aside go once their keep is over, with or without a room
+  const sweepKept = () => {
+    try {
+      for (const folder of sweepRemoved(ROOM_HOME)) console.log(`seatwork: deleted ${folder}, set aside more than ${KEEP_REMOVED_DAYS} days ago`);
+    } catch (error) {
+      console.error("seatwork: could not delete a set-aside folder", error);
+    }
+  };
+  sweepKept();
+  const keptSweep = setInterval(sweepKept, 6 * 3_600_000);
   /** Setting up, removing and re-keying the room happen one at a time. */
   let busy: Promise<unknown> = Promise.resolve();
   const oneAtATime = <T>(work: () => Promise<T>): Promise<T> => {
@@ -127,6 +138,8 @@ export default function contribute(server: PluginServerContext) {
       const plan = await setUpRoom({ pluginDir, roomHome: ROOM_HOME, catalog, version: VERSION }, setup);
       const { removed } = await applyWithSdk(paseo, plan, { daemonPolicy: true });
       const notes = [...plan.warnings];
+      const old = await clearOldRoom();
+      if (old) notes.push(`A room from before 0.19.0 was on this machine: its folder is kept at ${old} for ${KEEP_REMOVED_DAYS} days.`);
       // the one switch of the room's that the SDK has no call for: written into config.json, then reloaded
       if ((plan.policy.daemon?.bundledSkills ?? "none") === "none" && turnBundledSkillsOff(PASEO_HOME, pluginDir)) {
         await paseoCli(["daemon", "reload"]).then(
@@ -196,6 +209,7 @@ export default function contribute(server: PluginServerContext) {
   );
 
   return async () => {
+    clearInterval(keptSweep);
     await busy;
     await room?.stop();
   };
@@ -231,10 +245,6 @@ async function setupChecks(paseo: PaseoApi, pluginDir: string, setup: Setup | nu
   if (seats.some((seat) => seat.startsWith("pi-"))) {
     const problem = await piProblem();
     checks.push({ id: "pi", label: "Pi", ok: !problem, detail: problem ?? "Recent enough to give a Pi seat the room's tools." });
-  }
-  // until 0.19.0 the room home was slp-room, beside where it is now: this version does not read it
-  if (existsSync(join(dirname(ROOM_HOME), "slp-room", "policy.json"))) {
-    checks.push({ id: "old-room", label: "A room from before 0.19.0", ok: false, detail: `${join(dirname(ROOM_HOME), "slp-room")} is not read by this version. The guide's Updating section says how to bring it over or clear it.` });
   }
   // until 0.18.0 the plugin's id was slp-seat: both ids installed are two copies running one room
   const ids = Object.keys((config.plugins ?? {}) as object);

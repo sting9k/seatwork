@@ -11,7 +11,7 @@ import { choose, type ChoiceFlags, type Terminal } from "../server/setup/choices
 import { addSeats, setUpRoom } from "../server/setup/init";
 import { applyToConfigFile, applyWithSdk } from "../server/setup/paseo-config";
 import { planRoom, roomModels, type Catalog, type Setup } from "../server/setup/plan";
-import { isSetUp, readSetup } from "../server/setup/room-home";
+import { isSetUp, readSetup, sweepRemoved } from "../server/setup/room-home";
 import { changedRoles, chooseSeat, chooseTier, clearRole, dropTier, merge, seatChanged, seatChoice, type Table, tierChoices, tierDiff } from "../shared/model-choices";
 
 // every harness has the same two models, plus the one the room's own table puts HQ on
@@ -231,6 +231,19 @@ test("the installer's command sets the room up from a terminal: the room home, a
   assert.deepEqual([isSetUp(ROOM_HOME), readSetup(ROOM_HOME).watcher, readSetup(ROOM_HOME).seats], [true, "shadow", ["pi-peer"]]);
   assert.equal(JSON.parse(readFileSync(join(ROOM_HOME, "policy.json"), "utf8")).mail.port, 0);
   assert.equal(spawnSync(process.execPath, ["--require", join(PLUGIN_DIR, "test", "register.cjs"), join(PLUGIN_DIR, "tools", "room-init.ts"), "--hq"], { encoding: "utf8" }).status, 1, "a flag without its value");
+});
+
+test("a folder set aside by Remove or by Init is deleted once its keep is over, by the time in its name, and nothing else beside the room home is", () => {
+  const parent = join(ROOM_HOME, "..", "kept");
+  const home = join(parent, "seatwork");
+  const names = ["seatwork.removed-20260901-120000", "slp-room.removed-20260910-235959", "seatwork.removed-20261001-080000", "other.removed-20260901-120000", "seatwork.removed-by-hand", "seatwork"];
+  for (const name of names) mkdirSync(join(parent, name, "mail"), { recursive: true });
+
+  const gone = sweepRemoved(home, 30, new Date(2026, 9, 12, 9, 0, 0));
+
+  assert.deepEqual(gone.map((folder) => folder.slice(parent.length + 1)).sort(), ["seatwork.removed-20260901-120000", "slp-room.removed-20260910-235959"]);
+  assert.deepEqual(readdirSync(parent).sort(), ["other.removed-20260901-120000", "seatwork", "seatwork.removed-20261001-080000", "seatwork.removed-by-hand"]);
+  rmSync(parent, { recursive: true });
 });
 
 test("install.sh refuses, before it writes anything, when Paseo runs the plugin from another folder, under its id or its old one", () => {

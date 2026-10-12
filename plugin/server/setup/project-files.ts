@@ -1,7 +1,7 @@
 import { cpSync, existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, renameSync, rmdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
-import { REGISTRY_LOG, ROOM_HOME } from "../paths";
-import { isInside, loadRegistry, realOrSelf } from "../registry";
+import { ROOM_HOME } from "../paths";
+import { isInside, realOrSelf } from "../registry";
 
 /**
  * All the room keeps in a project sits in `.seatwork/`, under these names: the plugin writes room.json and
@@ -17,34 +17,40 @@ export interface ProjectFiles {
   left: string[];
 }
 
-/** The folders the room worked in: every registered project, and the folder of every seat it created. */
-export function roomFolders(): string[] {
-  const folders = new Set((loadRegistry()?.projects ?? []).map((project) => project.cwd));
-  if (existsSync(REGISTRY_LOG)) {
-    for (const line of readFileSync(REGISTRY_LOG, "utf8").split("\n")) {
-      try {
-        const { cwd } = JSON.parse(line) as { cwd?: unknown };
-        if (typeof cwd === "string") folders.add(realOrSelf(cwd));
-      } catch {
-        // an empty or torn line
-      }
+/** The folders a room worked in: every project in its registry, and the folder of every seat in its log. */
+export function roomFolders(home: string = ROOM_HOME): string[] {
+  const folders = new Set<string>();
+  const lines = (file: string) => (existsSync(join(home, file)) ? readFileSync(join(home, file), "utf8").split("\n") : []);
+  try {
+    const registry = JSON.parse(lines("projects.json").join("\n") || "{}") as { projects?: { cwd?: unknown }[] };
+    for (const project of registry.projects ?? []) if (typeof project?.cwd === "string") folders.add(realOrSelf(project.cwd));
+  } catch {
+    // a registry that cannot be read names no project
+  }
+  for (const line of lines("registry-log.jsonl")) {
+    try {
+      const { cwd } = JSON.parse(line) as { cwd?: unknown };
+      if (typeof cwd === "string") folders.add(realOrSelf(cwd));
+    } catch {
+      // an empty or torn line
     }
   }
   // HQ's own folder is in the room home and moves with it
-  const home = realOrSelf(ROOM_HOME);
-  return [...folders].filter((folder) => !isInside(folder, home));
+  const real = realOrSelf(home);
+  return [...folders].filter((folder) => !isInside(folder, real));
 }
 
 /** Where a project's room files go under the folder the room home was moved to. */
-export const keptAt = (movedTo: string, root: string) => join(movedTo, "projects", root.replace(/[^A-Za-z0-9._-]+/g, "-").replace(/^-+/, ""), ".seatwork");
+export const keptAt = (movedTo: string, root: string, folder = ".seatwork") => join(movedTo, "projects", root.replace(/[^A-Za-z0-9._-]+/g, "-").replace(/^-+/, ""), folder);
 
 /**
  * Moves the room's files out of a project's `.seatwork/` into `into`, by name. Anything else in `.seatwork/`
  * stays, and `.seatwork/` itself goes only when nothing is left in it. null when the project holds none.
+ * `folder` is that folder's name: `.slp` for a room from before 0.19.0.
  */
-export function takeRoomFiles(root: string, into: string): ProjectFiles | null {
-  const seatwork = join(root, ".seatwork");
-  // a link named .seatwork points at someone else's folder
+export function takeRoomFiles(root: string, into: string, folder = ".seatwork"): ProjectFiles | null {
+  const seatwork = join(root, folder);
+  // a link of that name points at someone else's folder
   if (!existsSync(seatwork) || !lstatSync(seatwork).isDirectory()) return null;
   const moved = readdirSync(seatwork).filter(isRoomFile);
   if (moved.length === 0) return null;

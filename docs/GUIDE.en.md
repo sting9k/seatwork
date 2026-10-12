@@ -220,7 +220,6 @@ that are ready here.
 | Pi | A Pi seat is set up and Pi is missing or older than 0.99. |
 | Dictation, Voice mode | One is on. It is on for every agent on this machine; turn it off in Paseo's settings. |
 | Two copies of this plugin | `slp-seat`, the plugin's id until 0.18.0, is still installed beside `seatwork`. Remove it: `paseo plugin remove slp-seat`. |
-| A room from before 0.19.0 | `~/.config/slp-room` is still there. This version does not read it: see Updating in section 11. |
 
 ### Remove the room
 
@@ -242,8 +241,8 @@ the screen names it; `.seatwork/` goes only when nothing is left in it. A `.seat
 that is a link is left alone. In a project that commits `.seatwork/` to git, the
 move shows there as deleted files.
 
-Nothing is deleted. To be rid of it all, delete
-`~/.config/seatwork.removed-<time>` yourself.
+The plugin keeps `~/.config/seatwork.removed-<time>` for 30 days and then
+deletes it (section 11). To be rid of it sooner, delete it yourself.
 
 Deleting the `hq-seatwork` project needs the `paseo` command. Where the
 daemon cannot find it, the project stays in Paseo's list, empty, and the
@@ -620,20 +619,20 @@ before it is not carried over:
 
 To move a machine over:
 
-1. On the old version, press **Remove the room** (0.17.0 or later also
-   takes `.slp/` out of your projects and keeps it in the removed folder).
-2. Remove the plugin: `paseo plugin remove seatwork`, or
+1. Remove the plugin: `paseo plugin remove seatwork`, or
    `paseo plugin remove slp-seat` for an install from before 0.18.0.
-3. Install it again from the new source (section 2, step 1) and press
+   `paseo plugin update` cannot do this step: the plugin's folder moved
+   inside the repository.
+2. Install it again from the new source (section 2, step 1) and press
    **Init**.
-4. Set each project up again through HQ. Its mission and law are in the
-   removed folder, under `projects/`.
+3. Set each project up again through HQ.
 
-`paseo plugin update` cannot do this: the plugin's folder moved inside the
-repository. If the plugin was updated some other way while an old room was
-still set up, the Seatwork screen says so under **This host**: delete
-`~/.config/slp-room` and the old `hq-seatwork` project in Paseo, and in
-each project rename `.slp` to `.seatwork` before you set it up again.
+Init clears the old room by itself, as that room's own **Remove the room**
+would have. Its `hq-seatwork` project leaves Paseo. Its folder is moved to
+`~/.config/slp-room.removed-<time>`, together with what it wrote in your
+projects' `.slp/`: each project's mission and law are there, under
+`projects/`. The watcher's key is carried over to the new room. That folder
+is kept for 30 days, like the one Remove leaves.
 
 ### Automatic cleanup
 
@@ -647,6 +646,11 @@ answer is left alone.
 | Supervisor | 7 days |
 | Lead, Peer | 48 hours |
 | Lens | 12 hours |
+
+A folder set aside by **Remove the room** or by Init (`….removed-<time>`)
+is deleted 30 days after it was set aside. The plugin looks when it starts
+and every six hours, also while no room is set up. If you remove the plugin
+itself before then, delete that folder yourself.
 
 ### Where files live
 

@@ -173,7 +173,7 @@ function removedLine(done: RpcOutput<typeof setupRemove>): string {
   const count = done.projects.length;
   const kept = done.projects.filter((project) => project.left.length > 0).map((project) => `${short(project.root)}/.seatwork (${project.left.join(", ")})`);
   return [
-    `The room was removed. Its folder is kept at ${short(done.movedTo)}${count ? `, with the room's notes from ${count} project${count === 1 ? "" : "s"}` : ""}.`,
+    `The room was removed. Its folder is kept at ${short(done.movedTo)}${count ? `, with the room's notes from ${count} project${count === 1 ? "" : "s"}` : ""}, for 30 days.`,
     kept.length ? `Left in place, not the room's: ${kept.join("; ")}.` : "",
     ...done.notes,
   ]
@@ -420,7 +420,7 @@ function RoomSetup({ data, open, start, fit, colors: c }: { data: State; open: O
         confirming ? (
           <Card colors={c} style={{ ...RAIL, borderColor: tint(c.statusDanger, 0.5) }}>
             <Text style={{ color: c.foreground, fontSize: 13, lineHeight: 18, fontWeight: "600" }}>Remove the room?</Text>
-            <Text style={small(c)}>Its seats, its profiles and the hq-seatwork project leave Paseo. The room's folder is moved aside with its mail and logs, and with it the notes the room kept in each project's .seatwork folder. Your projects and their code stay as they are. Archive the room's agents first.</Text>
+            <Text style={small(c)}>Its seats, its profiles and the hq-seatwork project leave Paseo. The room's folder is moved aside with its mail and logs, and with it the notes the room kept in each project's .seatwork folder; it is deleted 30 days later. Your projects and their code stay as they are. Archive the room's agents first.</Text>
             <View style={{ flexDirection: "row", gap: 8 }}>
               <Btn label={remove.isPending ? "Removing…" : "Remove"} kind="danger" grow disabled={busy} onPress={() => remove.mutate()} colors={c} />
               <Btn label="Cancel" disabled={busy} onPress={() => setConfirming(false)} colors={c} />

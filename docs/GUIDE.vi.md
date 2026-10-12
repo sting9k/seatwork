@@ -219,7 +219,6 @@ agent CLI đã sẵn sàng trên máy.
 | Pi | Có seat Pi mà máy không có Pi, hoặc Pi cũ hơn 0.99. |
 | Dictation, Voice mode | Một trong hai đang bật. Nó bật cho mọi agent trên máy; tắt trong phần cài đặt của Paseo. |
 | Two copies of this plugin | `slp-seat`, id của plugin trước 0.18.0, vẫn còn cài bên cạnh `seatwork`. Gỡ nó: `paseo plugin remove slp-seat`. |
-| A room from before 0.19.0 | `~/.config/slp-room` vẫn còn đó. Bản này không đọc nó: xem phần Cập nhật ở mục 11. |
 
 ### Remove the room
 
@@ -241,8 +240,8 @@ giữ lại, và màn hình nêu tên nó; `.seatwork/` chỉ mất khi không c
 trong. `.seatwork` là một link thì được để yên. Ở project có commit `.seatwork/` vào
 git, việc chuyển này hiện ra như các file bị xoá.
 
-Không thứ gì bị xoá hẳn. Muốn bỏ hết thì tự xoá
-`~/.config/seatwork.removed-<thời điểm>`.
+Plugin giữ `~/.config/seatwork.removed-<thời điểm>` trong 30 ngày rồi xoá
+(mục 11). Muốn bỏ sớm hơn thì tự xoá.
 
 Xoá project `hq-seatwork` cần lệnh `paseo`. Khi daemon không tìm thấy lệnh
 đó, project vẫn nằm trong danh sách của Paseo, trống, và màn hình báo điều
@@ -612,19 +611,19 @@ Bản 0.19.0 đổi tên mọi thứ từng mang chữ `slp`. Bản cài từ tr
 
 Chuyển một máy sang bản mới:
 
-1. Ở bản cũ, bấm **Remove the room** (từ 0.17.0 nó cũng lấy `.slp/` ra khỏi
-   các project và giữ trong thư mục đã gỡ).
-2. Gỡ plugin: `paseo plugin remove seatwork`, hoặc
+1. Gỡ plugin: `paseo plugin remove seatwork`, hoặc
    `paseo plugin remove slp-seat` với bản cài từ trước 0.18.0.
-3. Cài lại từ nguồn mới (mục 2, bước 1) rồi bấm **Init**.
-4. Đưa lại từng project vào room qua HQ. Mission và law của nó nằm trong
-   thư mục đã gỡ, dưới `projects/`.
+   `paseo plugin update` không làm được bước này: thư mục của plugin đã đổi
+   chỗ trong repository.
+2. Cài lại từ nguồn mới (mục 2, bước 1) rồi bấm **Init**.
+3. Đưa lại từng project vào room qua HQ.
 
-`paseo plugin update` không làm được việc này: thư mục của plugin đã đổi
-chỗ trong repository. Nếu plugin được cập nhật bằng cách khác trong lúc
-room cũ còn đó, màn hình Seatwork báo ở phần **This host**: hãy xoá
-`~/.config/slp-room` và project `hq-seatwork` cũ trong Paseo, và ở mỗi
-project đổi tên `.slp` thành `.seatwork` trước khi đưa nó vào room lại.
+Init tự dọn room cũ, giống như **Remove the room** của chính room đó. Project
+`hq-seatwork` của nó rời Paseo. Thư mục của nó được chuyển sang
+`~/.config/slp-room.removed-<thời điểm>`, cùng với những gì nó ghi trong
+`.slp/` ở các project của bạn: mission và law của từng project nằm ở đó,
+dưới `projects/`. Key của watcher được mang sang room mới. Thư mục đó cũng
+được giữ 30 ngày, như thư mục Remove để lại.
 
 ### Tự dọn dẹp
 
@@ -638,6 +637,11 @@ yên.
 | Supervisor | 7 ngày |
 | Lead, Peer | 48 giờ |
 | Lens | 12 giờ |
+
+Thư mục do **Remove the room** hoặc Init để sang một bên
+(`….removed-<thời điểm>`) bị xoá sau 30 ngày kể từ lúc đó. Plugin kiểm tra
+khi nó khởi động và sáu giờ một lần, kể cả khi chưa có room. Nếu bạn gỡ
+chính plugin trước thời hạn đó thì tự xoá thư mục ấy.
 
 ### File nằm ở đâu
 

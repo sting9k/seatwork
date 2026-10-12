@@ -46,18 +46,21 @@ async function closeHqProject(paseo: PaseoApi): Promise<void> {
   for (const workspace of entries) if (dirOf(workspace) === dir) await paseo.workspaces.archive(workspace.id);
 }
 
-/**
- * Takes the HQ project out of Paseo when the room is removed, and no other project. The SDK has no
- * call for it, so the paseo CLI does it; false when the CLI could not, and only the workspaces were archived.
- */
-export async function removeHqProject(paseo: PaseoApi): Promise<boolean> {
-  const dir = hqDir();
+/** Deletes from Paseo the project at this folder, and no other. The SDK has no call for it, so the paseo CLI does it; false when the CLI could not. */
+export async function deleteProjectAt(dir: string): Promise<boolean> {
+  const real = realOrSelf(dir);
   try {
     const projects = JSON.parse(await paseoCli(["project", "ls", "--json"])) as { projectId: string; path: string }[];
-    for (const project of projects) if (realOrSelf(project.path) === dir) await paseoCli(["project", "delete", project.projectId]);
+    for (const project of projects) if (realOrSelf(project.path) === real) await paseoCli(["project", "delete", project.projectId]);
     return true;
   } catch {
-    await closeHqProject(paseo);
     return false;
   }
+}
+
+/** Takes the HQ project out of Paseo when the room is removed; false when only its workspaces could be archived. */
+export async function removeHqProject(paseo: PaseoApi): Promise<boolean> {
+  if (await deleteProjectAt(hqDir())) return true;
+  await closeHqProject(paseo);
+  return false;
 }

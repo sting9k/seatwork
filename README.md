@@ -64,7 +64,8 @@ it reaches every project that has no models of its own, for the seats
 opened from then on. A project gets models of its own on the same screen,
 on its **Projects** tab. **Remove the room** undoes Init: the `hq-seatwork`
 project leaves Paseo, and the room's folder is moved aside together with
-what the room wrote in each project's `.seatwork/`. Nothing is deleted.
+what the room wrote in each project's `.seatwork/`. That folder is kept for
+30 days, then the plugin deletes it.
 
 ## First project
 

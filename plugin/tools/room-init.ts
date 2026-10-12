@@ -13,9 +13,10 @@ import { cliCatalog } from "../server/setup/catalog";
 import { piProblem } from "../server/setup/checks";
 import { choose, type ChoiceFlags, type Terminal } from "../server/setup/choices";
 import { setUpRoom } from "../server/setup/init";
+import { clearOldRoom } from "../server/setup/old-room";
 import { applyToConfigFile } from "../server/setup/paseo-config";
 import { checkSetup, roomModels } from "../server/setup/plan";
-import { readSetup } from "../server/setup/room-home";
+import { KEEP_REMOVED_DAYS, readSetup } from "../server/setup/room-home";
 
 const PLUGIN_DIR = join(__dirname, "..");
 const VERSION = (JSON.parse(readFileSync(join(PLUGIN_DIR, "package.json"), "utf8")) as { version: string }).version;
@@ -76,6 +77,8 @@ async function main(): Promise<void> {
   const plan = await setUpRoom({ pluginDir: PLUGIN_DIR, roomHome: ROOM_HOME, catalog: cliCatalog, version: VERSION }, setup);
   for (const warning of plan.warnings) console.error(`warning: ${warning}`);
   applyToConfigFile(PASEO_HOME, plan);
+  const old = await clearOldRoom();
+  if (old) console.log(`A room from before 0.19.0 was on this machine: its folder is kept at ${old} for ${KEEP_REMOVED_DAYS} days.`);
 
   const hq = plan.models.seats.hq;
   console.log(`HQ seat: ${hq.provider}, thinking ${hq.thinking}; seats added on this machine: ${(setup.seats ?? []).join(", ") || "none"}; watcher: ${setup.watcher ?? "off"} (${join(ROOM_HOME, "setup.json")})`);

@@ -2,82 +2,98 @@
 
 English: [GUIDE.en.md](GUIDE.en.md)
 
-Seatwork chia việc lập trình cho nhiều agent trên Paseo. Bạn giao việc cho
-một agent; nó tự chia việc, tự giao tiếp và tự kiểm tra kết quả.
+Seatwork là một plugin của Paseo. Nó cho nhiều agent lập trình làm việc như
+một đội, tài liệu này gọi là **room**. Bạn giao việc cho một agent. Nó chia
+việc, giao từng phần cho agent khác, kiểm tra kết quả rồi báo lại cho bạn.
 
-## 1. Ai làm gì
+## 1. Room
 
 ```text
-Bạn ──────────────┬──────────────────────────┐
-                  │ quản lý nhiều project    │ việc hằng ngày
-                  ▼                          ▼
-                 HQ ······ lệnh ······▶ Supervisor      mỗi project một cái
-                                            │
-                                    ┌───────┴───────┐
-                                    ▼               ▼
-                                  Lead            Lead   mỗi luồng việc một cái
-                                    │
-                            ┌───────┼───────┐
-                            ▼       ▼       ▼
-                          Peer    Peer    Lens
+Bạn ── việc hằng ngày ──▶ Supervisor     mỗi project một cái
+ │                            │
+ │                          Lead         mỗi luồng việc một cái
+ │                          ├─ Peer      mỗi việc một cái
+ │                          └─ Lens      mỗi câu hỏi khó một cái
+ │
+ └── quản lý ───────────▶ HQ             một cái cho mọi project
 ```
 
-| Vai | Việc của nó |
-|---|---|
-| **Supervisor** | Nhận việc từ bạn, chia thành các luồng việc, theo dõi và báo cáo. Không sửa code. |
-| **Lead** | Lo một luồng việc: lập kế hoạch, giao cho Peer, nghiệm thu. Tự làm những việc nhỏ. |
-| **Peer** | Viết code cho một việc cụ thể, trong đúng các file được giao. |
-| **Lens** | Chỉ đọc. Trả lời một câu hỏi khó hoặc review, độc lập với Lead. |
-| **HQ** | Nhìn tổng thể nhiều project và chuyển lệnh của bạn xuống. Không tham gia làm việc. |
+| Vai | Việc của nó | Viết code |
+|---|---|---|
+| **Supervisor** | Người làm việc với bạn trong một project. Ghi lại điều bạn yêu cầu, chia thành các luồng việc, mở một Lead cho mỗi luồng, báo cáo cho bạn. | Không |
+| **Lead** | Lo một luồng việc. Lập kế hoạch, viết brief cho từng việc, giao cho Peer, nhận hoặc trả lại kết quả. | Chỉ việc rất nhỏ |
+| **Peer** | Làm một việc, trong đúng các file mà brief nêu. | Có |
+| **Lens** | Trả lời một câu hỏi khó cho Lead, hoặc review, mà không được thấy ý kiến riêng của Lead. | Không, chỉ đọc |
+| **HQ** | Nhìn mọi project. Đưa project vào room và chuyển lệnh của bạn xuống Supervisor. | Không |
 
-Ba điều cần nhớ:
+Hai từ dùng bên dưới:
 
-- **Việc hằng ngày: chat với Supervisor** của project đó.
-- **HQ chỉ để quản lý:** xem tình hình nhiều project, thêm project, gửi lệnh xuống.
-- **Project không biết HQ.** Báo cáo chỉ đi lên tới Supervisor. HQ muốn biết gì thì tự đọc.
+- **Seat** là một vai chạy trên một agent CLI, tên có dạng
+  `<harness>-<role>`: `claude-lead`, `codex-peer`. "Harness" là từ trong
+  code chỉ agent CLI: `claude`, `codex`, `pi` hoặc `opencode`. Cả bốn đều
+  giữ được mọi vai.
+- **Owner** là người mà một seat báo cáo lên. Với Supervisor thì đó là
+  bạn.
+
+Ba quy tắc:
+
+- **Việc hằng ngày: nói với Supervisor của project.**
+- **HQ chỉ để quản lý:** tình hình mọi project, thêm project mới, gửi một
+  lệnh xuống.
+- **Không có gì tự đi lên HQ.** Các seat trong project không biết có HQ.
+  HQ chỉ xem khi bạn bảo.
 
 ## 2. Cài đặt
 
-Cần có Paseo 0.11.2 trở lên, Claude Code và Codex (thêm Pi từ 0.99 trở lên,
-hoặc OpenCode, nếu bạn cho vai nào chạy trên đó).
+Bạn cần:
 
-### Cài từ Paseo
+- Paseo 0.11.2 trở lên, trên macOS hoặc Linux.
+- Ít nhất một trong Claude Code, Codex, Pi (0.99 trở lên) và OpenCode, đã
+  đăng nhập. Lựa chọn có sẵn dùng Claude Code và Codex.
+- Bộ công cụ Paseo dành cho agent đang bật. Đây là mặc định của Paseo.
 
-1. Mở Settings, Plugins. Dán dòng này vào ô "Plugin source" rồi bấm
-   **Install plugin**:
+### Bước 1: cài plugin
 
-   ```
-   git:sting9k/seatwork:slp-room/plugin
-   ```
+Trong Paseo mở **Settings → Plugins**. Dán dòng này vào **Plugin source**
+rồi bấm **Install plugin**:
 
-   Cài xong chưa có gì được tạo: chưa có thư mục, chưa có seat.
+```
+git:sting9k/seatwork:slp-room/plugin
+```
 
-2. Trong menu "…" của plugin, chọn **Seatwork**. Màn hình có một dòng cho
-   mỗi vai: HQ, Supervisor, Lead, Peer, Lens. Bấm một dòng để chọn agent
-   CLI, model (danh sách có ô tìm) và mức thinking, trong những thứ máy này
-   có. Peer và Lens mỗi vai là một, nhưng gán được nhiều model, mỗi model
-   mang một tên như `cheap`, `high`, `extra` kèm một dòng nói nó dùng cho
-   việc gì; thêm bớt ngay tại đó. Lead đọc các tên này rồi tự chọn. Bên dưới
-   các vai là chế độ của watcher (mục 11) và âm báo.
+Bước này chỉ tải plugin về. Chưa có thư mục, seat hay project nào được
+tạo.
 
-3. Bấm **Init**. Nó tạo thư mục của room (`~/.config/slp-room`), các "seat"
-   trong Paseo (mỗi seat là một vai chạy trên Claude, Codex, Pi hoặc
-   OpenCode), bốn profile và project `hq-seatwork`. Không cần khởi động lại
-   gì.
+### Bước 2: chọn mỗi vai chạy trên gì
 
-Muốn đổi lựa chọn về sau: đổi trên chính màn hình đó rồi bấm **Apply**.
-Chọn model cho một vai là seat của vai đó được dựng.
+Trong menu **…** của plugin, chọn **Seatwork**. Màn hình liệt kê năm vai,
+mỗi vai kèm lựa chọn có sẵn. Đổi cái bạn muốn, hoặc để nguyên. Mục 3 giải
+thích từng phần của màn hình.
 
-Nút **Remove the room** trên màn hình đó gỡ các seat và profile khỏi Paseo,
-rồi chuyển thư mục của room sang bên cạnh
-(`~/.config/slp-room.removed-<thời điểm>`), giữ nguyên thư và log. Nó chờ tới
-khi mọi agent của room đã được lưu trữ. Chỉ gỡ plugin thì không hoàn tác được
-Init.
+### Bước 3: bấm Init
+
+Init tạo ra:
+
+- thư mục của room, `~/.config/slp-room`;
+- các seat trong Paseo, mỗi seat là một provider;
+- bốn profile: **HQ Supervisor**, **Supervisor**, **Lead**, **Peer**;
+- project `hq-seatwork`, nơi HQ làm việc.
+
+Không cần khởi động lại gì.
+
+### Đăng nhập
+
+Seat dùng phiên đăng nhập của agent CLI trong terminal của bạn. Seatwork
+không lưu token nào. Với Claude, đăng nhập một lần là đủ cho mọi vai:
+
+```bash
+claude auth login
+```
 
 ### Cài từ terminal
 
-Dùng cho máy không có app, hoặc khi bạn muốn sửa file của chính room. Cần
-`node` và `npm`:
+Dùng cách này trên máy không có app, hoặc khi bạn sửa chính các file của
+room. Cần có `node`, `npm` và `paseo`.
 
 ```bash
 git clone https://github.com/sting9k/seatwork.git
@@ -87,183 +103,235 @@ git clone https://github.com/sting9k/seatwork.git
 cd seatwork/slp-room && ./install.sh
 ```
 
-Lệnh làm đúng việc của Init, chạy lại bao nhiêu lần cũng được. Lần chạy đầu
-nó hỏi hai câu: HQ chạy trên seat mặc định của room hay trên agent CLI và
-model bạn tự chọn, và có cài watcher không (trả lời có thì cài ở chế độ
-`shadow`). Trả lời sẵn bằng cờ: `--hq default`, `--hq <harness>/<model>`
-(thêm `--hq-thinking <mức>` nếu cần), `--watcher off`, `shadow` hoặc `on`.
-Room cài theo cách này vẫn hiện trên màn hình cài đặt với đúng các lựa chọn
-nó đang chạy.
+Nó làm đúng việc của Init và chạy lại bao nhiêu lần cũng được. Lần đầu nó
+hỏi hai câu: HQ chạy trên gì, và có bật watcher không. Dùng cờ để trả lời
+sẵn:
 
-### Đăng nhập Claude
+| Cờ | Ý nghĩa |
+|---|---|
+| `--hq default` | HQ dùng lựa chọn có sẵn của room |
+| `--hq <harness>/<model>` | HQ dùng model đó; thêm `--hq-thinking <mức>` nếu cần |
+| `--watcher off\|shadow\|on` | Chế độ của watcher (mục 10) |
+| `--seat <harness>-<role>` | Dựng thêm một seat; dùng được nhiều lần |
+| `--mail-port <cổng>` | Cổng của máy chủ thư, khi cổng mặc định đã có chương trình khác dùng |
+| `--seats-only` | Chỉ dựng seat; giữ nguyên file của room và plugin |
 
-Seat Claude dùng chung phiên đăng nhập với lệnh `claude` trong terminal.
-Đăng nhập một lần là đủ cho mọi vai:
+Room cài theo cách này vẫn hiện trên màn hình thiết lập, với đúng các lựa
+chọn nó đang chạy.
 
-```bash
-claude auth login
-```
+## 3. Màn hình thiết lập
 
-Seatwork không dùng token. Seat cũng không mang theo skill, plugin, hook hay
-MCP server cá nhân của bạn; nó chỉ có skill của vai mình. Những thứ Claude
-Code tự thêm cũng bị tắt trong seat: memory, agent teams và các công cụ task
-của nó, agent view, workflows, routine trên cloud và connector của claude.ai.
-Các công tắc tách
-seat khỏi cấu hình cá nhân của bạn nằm ngay trong provider của seat ở cấu
-hình Paseo, nên chúng vẫn có hiệu lực cả khi plugin không chạy.
+**Settings → Plugins → … → Seatwork**. Command Center cũng có mục này, tên
+là "Seatwork: set up the room".
 
-## 3. Thêm project
+Lựa chọn được lưu ngay khi bạn chọn. Room chỉ đổi khi bạn bấm **Init** (lần
+đầu) hoặc **Apply** (các lần sau). Khi hai bên còn khác nhau, dòng trên
+cùng ghi "changes not applied".
 
-Làm một lần cho mỗi project, qua HQ.
+### What each role runs on
+
+Mỗi vai một dòng. Bấm vào dòng để mở.
+
+- **HQ, Supervisor, Lead** mỗi vai chạy một model. Chọn agent CLI, model
+  và mức thinking. Danh sách model có ô tìm kiếm. Danh sách chỉ hiện những
+  gì máy này có; CLI nào chưa sẵn sàng thì được ghi rõ, kèm lý do.
+- **Peer và Lens** mỗi vai là một, nhưng có nhiều model. Mỗi model có một
+  tên (`cheap`, `default`, `high`…) và một dòng nói nó dùng cho việc gì.
+  Lead đọc tên và dòng đó rồi tự chọn cho từng việc. Bạn có thể đổi một
+  model, bấm **Remove** để bỏ nó, hoặc thêm model ở **One more model**: đặt
+  tên (chữ thường, số, gạch ngang) và ghi dòng "Use for".
+- **Reset** bỏ hết lựa chọn của bạn, quay về bảng có sẵn của room.
+
+Seat được dựng khi một lựa chọn cần tới nó. Cho Lead chạy Codex rồi bấm
+Apply là có `codex-lead`.
+
+### Watcher and sound
+
+- **Watcher**: Off, Shadow hoặc On. Xem mục 10.
+- **Watcher key**: hiện ra sau khi Init. Không bắt buộc.
+- **Chime**: một tiếng báo ngắn trong app đang mở, khi có seat chờ bạn.
+
+### This host
+
+Các phép kiểm tra máy này. Mỗi dòng ghi **OK**, **Needs you** hoặc
+**Unknown**.
+
+| Kiểm tra | Ghi "Needs you" khi |
+|---|---|
+| Paseo's tools for agents | Bộ công cụ đang tắt. Thiếu nó, seat không tạo được và không liên lạc được với nhau. |
+| Room files | Plugin và file của room thuộc hai phiên bản khác nhau. Bấm Apply. |
+| Pi | Có seat Pi mà máy không có Pi, hoặc Pi cũ hơn 0.99. |
+| Dictation, Voice mode | Một trong hai đang bật. Nó bật cho mọi agent trên máy; tắt trong phần cài đặt của Paseo. |
+
+### Remove the room
+
+Bấm hai lần. Nó từ chối khi còn seat của room đang mở: hãy lưu trữ các
+agent đó trước. Sau đó nó:
+
+- gỡ các seat và profile khỏi Paseo;
+- lưu trữ workspace `hq-seatwork`;
+- chuyển thư mục của room sang `~/.config/slp-room.removed-<thời điểm>`,
+  giữ nguyên thư và log.
+
+Project `hq-seatwork` (đã trống) vẫn nằm trong danh sách của Paseo; muốn bỏ
+thì xoá ở đó. Chỉ gỡ plugin thì không hoàn tác được Init, nên hãy gỡ room
+trước.
+
+## 4. Project đầu tiên
+
+Mỗi project làm một lần, qua HQ.
 
 1. Thêm thư mục project vào Paseo.
-2. Trong project `hq-seatwork`, mở agent bằng profile **HQ Supervisor**.
-3. Nhắn: "setup project X".
-4. HQ đọc README rồi đưa bạn bản nháp **mission**: project để làm gì, thế nào
-   là xong. Bạn duyệt hoặc sửa.
-5. HQ hỏi project dùng bảng model chung hay bảng riêng (xem mục 7).
-6. HQ đăng ký project và mở Supervisor để viết **law**, tức luật riêng của
-   project: review thế nào, việc gì phải hỏi bạn trước.
-7. Nhắn HQ "sao rồi". HQ đọc các câu Supervisor còn thiếu và hỏi bạn. Trả
-   lời từng câu, hoặc "all recommended" để nhận hết đề xuất.
-8. Nhắn HQ lần nữa để nghe xác nhận project đã sẵn sàng.
+2. Trong project `hq-seatwork`, mở một agent bằng profile **HQ
+   Supervisor**. HQ chỉ khởi động được ở đó.
+3. Viết: "set up project X".
+4. HQ đọc README rồi đưa bạn bản nháp **mission**: project để làm gì, thế
+   nào là xong. Đồng ý hoặc sửa lại.
+5. HQ hỏi một câu: project dùng bảng model của room, hay bảng riêng (mục
+   7)?
+6. HQ đăng ký project và mở Supervisor của nó để viết **law**: quy tắc
+   riêng của project, ví dụ review thế nào, việc gì phải hỏi bạn trước.
+7. Viết cho HQ lần nữa ("tình hình thế nào"). Nó chuyển cho bạn những câu
+   Supervisor không tự trả lời được từ repository, mỗi câu kèm đề xuất.
+   Trả lời từng câu, hoặc nói "theo đề xuất hết".
+8. Viết thêm một lần để nghe HQ báo project đã sẵn sàng.
 
-Supervisor không tự báo lên HQ, nên ở bước 7 và 8 bạn phải nhắn thì HQ mới
-đi xem.
+HQ chỉ xem khi bạn viết, vì không có gì tự báo lên nó.
 
-Sau project đầu tiên, Supervisor, Lead và Peer chỉ mở được trong project đã
-đăng ký.
+Sau khi project đầu tiên được đăng ký, Supervisor, Lead, Peer và Lens chỉ
+khởi động được bên trong project đã đăng ký.
 
-## 4. Làm việc hằng ngày
+Project giờ có thư mục `.slp/`:
 
-Mở agent bằng profile **Supervisor** trong workspace của project rồi nói
-việc bạn cần. Một yêu cầu đủ có ba phần:
+```text
+.slp/
+├── room.json        đánh dấu project; giữ bảng model riêng, nếu có
+├── mission.md       project để làm gì
+├── <tên>-law.md     quy tắc riêng của project
+├── status.md        yêu cầu, quyết định, phản đối bị bác, tiến độ
+└── notebook.md      bài học rút ra
+```
+
+## 5. Việc hằng ngày
+
+Mở một agent bằng profile **Supervisor** trong workspace của project rồi
+nói việc cần làm. Một yêu cầu đầy đủ có ba phần:
 
 | Phần | Ví dụ |
 |---|---|
 | Kết quả | "Thêm lệnh `notes search <từ>`" |
-| Cách nghiệm thu | "Có test, `python3 -m unittest` pass" |
+| Cách nghiệm thu | "Có test; `python3 -m unittest` chạy qua" |
 | Quyền hạn | "Được commit, không push" |
 
-Thiếu phần nào Supervisor sẽ hỏi. Sau đó nó tự làm:
+Thiếu phần nào Supervisor sẽ hỏi. Sau đó room tự làm:
 
-1. Supervisor chia việc thành các luồng, mỗi luồng một Lead.
-2. Lead chia tiếp thành task, mỗi task một Peer.
-3. Peer làm xong thì nộp. Lead cho một reviewer chạy model khác kiểm tra,
-   rồi nhận hoặc trả lại.
-4. Supervisor báo cáo cho bạn ngay trong cuộc chat.
+1. Supervisor chia việc thành các luồng việc và mở một Lead cho mỗi luồng.
+2. Lead chia luồng việc thành từng việc, viết brief cho mỗi việc và mở một
+   Peer làm việc đó.
+3. Peer nộp kết quả. Lead xem xét, cho một Peer thuộc họ model khác
+   review, rồi nhận hoặc trả lại kèm chỗ cần sửa.
+4. Khi mọi việc đã được nhận, Lead chạy các phép kiểm tra nghiệm thu một
+   lần, trên toàn bộ kết quả gộp lại.
+5. Supervisor báo cáo cho bạn ngay trong cuộc chat đó.
 
-Bạn không cần ngồi canh. Muốn biết tiến độ thì hỏi "sao rồi".
+Supervisor cũng xếp cỡ cho yêu cầu: tiny, normal hoặc high-risk. Việc
+high-risk (đăng nhập và phân quyền, mất dữ liệu, tiền, migration) phải có
+kế hoạch viết ra trước khi viết code, và được review kỹ hơn ở cuối.
 
-### Đọc báo cáo của Supervisor
+Bạn không cần ngồi theo dõi. Lúc nào muốn thì hỏi "tình hình thế nào".
 
-Dòng đầu cho biết tình trạng:
+### Đọc báo cáo
 
-| Dòng đầu | Nghĩa |
+Dòng đầu cho biết trạng thái:
+
+| Dòng đầu | Ý nghĩa |
 |---|---|
-| `DONE` | Xong hết, không còn gì đang chạy |
+| `DONE` | Mọi thứ đã được nhận, không còn gì đang chạy |
 | `STATUS` | Đang làm |
-| `DECISION_NEEDED` | Cần bạn quyết một việc |
-| `BLOCKED` | Kẹt, không làm tiếp được |
+| `DECISION_NEEDED` | Bạn phải quyết định một việc |
+| `BLOCKED` | Bị kẹt, không làm tiếp được |
 
-Trong báo cáo có hai mục giúp bạn giữ quyền kiểm soát:
+Ba phần giúp bạn giữ quyền kiểm soát:
 
-- **Decided by the room:** những gì các agent đã tự quyết, và bạn có thể lật lại hay không.
-- **Overruled:** ý kiến phản đối của agent nào đó đã bị bác, kèm bằng chứng của nó.
+- **Evidence (Lead `<luồng việc>`)**: từng phép kiểm tra Lead đã chạy, kèm
+  mấy dòng cuối của kết quả. Supervisor không tự chạy kiểm tra; nó chuyển
+  lên kết quả của Lead, ghi rõ tên Lead.
+- **Decided by the room**: những gì các agent tự quyết, và bạn có được xem
+  lại hay không.
+- **Overruled**: phản đối của một agent mà không được làm theo, kèm bằng
+  chứng của nó.
 
-Lead là người chạy phép kiểm, một lần, trên kết quả đã gộp. Supervisor đọc trạng thái room
-và cây mã, rồi chép dòng của Lead lên dưới tên Lead: `Evidence (Lead <workstream>): <phép
-kiểm> → <mấy dòng cuối>`. Nhờ vậy bạn phân biệt được cái đã chạy với cái chỉ được đọc.
+Các dòng cuối cho biết việc tiếp theo: `DONE: …`, `WAITING ON YOU: …`,
+hoặc `WORKING` với một dòng cho mỗi Lead.
 
-Việc cần bạn quyết nằm ở dòng `WAITING ON YOU:` cuối báo cáo. Đó là những
-việc về chi phí, phạm vi sản phẩm, hoặc hành động ra ngoài như push và
-deploy. Agent không bao giờ quyết thay bạn mấy việc này.
+Agent không bao giờ quyết thay bạn những việc này: chi phí, phạm vi sản
+phẩm, việc không hoàn tác được, và hành động ra bên ngoài như push, merge,
+deploy. Chúng sẽ hỏi.
 
-Khi app Paseo đang mở, nó phát một tiếng ngắn mỗi lần HQ, một Supervisor
-hoặc một seat do chính bạn mở kết thúc lượt bằng `DECISION_NEEDED`,
-`BLOCKED`, một dòng `WAITING ON YOU:`, hoặc bị lỗi. Muốn tắt: gạt công tắc
-Chime trên màn hình cài đặt.
+### Biết khi nào cần tới bạn
 
-Dòng **Room** ở chân sidebar của Paseo cho biết còn bao nhiêu lượt như vậy
-đang chờ, và mở một màn hình cho cả room: các lượt đó ở trên cùng, rồi mỗi
-dòng là HQ hoặc một project đang có seat, kèm một chấm cho mỗi seat (xanh
-khi seat đang làm việc). Bấm vào project để xem cây seat của nó, bấm vào
-seat để mở seat đó. Các project chưa có seat nào nằm chung một dòng ở cuối. Một lượt nằm trong danh sách cho tới khi seat đó làm việc
-lại hoặc bị lưu trữ; khởi động lại daemon không xoá nó.
+- **Âm báo.** Khi app Paseo đang mở, nó phát một tiếng ngắn mỗi khi HQ,
+  một Supervisor hoặc seat do chính bạn mở kết thúc lượt với
+  `DECISION_NEEDED`, `BLOCKED`, dòng `WAITING ON YOU:`, hoặc một lỗi.
+- **Dòng Room** ở cuối sidebar của Paseo đếm số lượt còn đang chờ bạn. Bấm
+  vào là mở màn hình của cả room: các lượt đó nằm trên cùng, rồi tới một
+  dòng cho HQ và mỗi project có seat đang mở, mỗi seat một chấm (xanh khi
+  đang làm). Bấm một project để xem các seat của nó theo dạng cây; bấm một
+  seat để mở nó. Một lượt nằm trong danh sách cho tới khi seat đó làm việc
+  lại hoặc được lưu trữ.
 
-### Muốn can thiệp một Peer
+### Điều chỉnh giữa chừng
 
-Nên nói với Supervisor. Nếu bạn chat thẳng với Peer, nó vẫn làm theo, và
-báo cáo sau của nó sẽ ghi `DIRECT:` để Lead biết.
+Nói với Supervisor. Nếu bạn viết thẳng cho một Peer thì nó vẫn làm theo, và
+báo cáo kế tiếp của nó mở đầu bằng `DIRECT:` để Lead biết.
 
-## 5. Khi nào cần HQ
+## 6. HQ
 
-| Bạn muốn | Nhắn HQ |
+| Bạn muốn | Viết cho HQ |
 |---|---|
-| Xem tình hình mọi project | "các project thế nào" |
-| Thêm project | "setup project X" |
-| Gửi lệnh xuống project | "project X dừng việc Y", "ưu tiên Z trước" |
+| Tình hình mọi project | "các project thế nào rồi" |
+| Thêm project | "set up project X" |
+| Gửi một lệnh xuống | "project X: dừng Y", "làm Z trước" |
+| Room làm gì gần đây | "thống kê room 14 ngày qua" |
+| Watcher thấy gì, tốn bao nhiêu | "thống kê watcher" |
 
-HQ gửi lệnh cho Supervisor dưới danh nghĩa "Owner". Supervisor không biết
-lệnh đến từ HQ.
+HQ gửi lệnh cho Supervisor dưới danh nghĩa Owner. Supervisor không biết
+lệnh đến từ HQ. HQ chỉ tạo Supervisor, không tạo vai nào khác.
 
-## 6. Agent trao đổi với nhau thế nào
+## 7. Model
 
-Agent gửi thư cho nhau, không ngắt lời nhau. Thư chỉ tới khi người nhận làm
-xong lượt hiện tại. Kết quả đã xong (`CANDIDATE`, `REVIEW`, `DONE`) đi lên
-đúng một lần, khi lượt của chính người gửi kết thúc, để không ai hành động
-trên một seat còn đang làm. Thư dài bao nhiêu cũng tới nơi nguyên vẹn.
+### Bảng của room
 
-Seat không cần đang mở mới nhận được thư. Sau khi daemon khởi động lại, mọi
-agent đều đóng cho tới khi có thứ gì mở nó, và thư sẽ mở nó. Thư đã nằm chờ
-từ trước lúc daemon tắt sẽ đi khi app Paseo đang mở hoặc khi có agent nào chạy. Seat vừa có
-lượt chạy bị lỗi cũng nhận thư như vậy. Thư gửi cho seat đã lưu trữ hoặc đã
-bị xoá sẽ quay về người gửi với tiêu đề `UNDELIVERABLE`.
+Plugin đi kèm một bảng. Đó là cách cài của một người, không phải khuyến
+nghị. Màn hình thiết lập bắt đầu từ bảng này.
 
-Có những thư không đánh thức ai, chỉ được đọc cùng thư kế tiếp: thư xác
-nhận, `DONE` chỉ lặp lại chính nó, `STATUS` của Lead sau báo cáo đầu tiên,
-và `HOLD` không cần trả lời gửi cho Peer đang chờ kết quả kiểm tra. Trong các
-`STATUS` của một Lead, room chỉ giữ bản mới nhất; Supervisor đọc nó ở nhịp
-heartbeat.
+| Vai | Tên | Model | Lead chọn nó cho |
+|---|---|---|---|
+| HQ, Supervisor, Lead | | `claude-opus-5-5`, high | |
+| Peer | `cheap` | `claude-haiku-5-5` | Việc máy móc, đã tả rõ hết: đổi tên, định dạng, đọc log, sửa tài liệu |
+| Peer | `default` | `claude-sonnet-5-5` | Viết code, gỡ lỗi, nghiên cứu |
+| Peer | `cross-family` | `gpt-6.1-sol` (Codex) | Review cái một Peer Claude viết; phân xử; thử lại |
+| Lens | `default` | `gpt-6.1-sol` (Codex) | Một lens: ý kiến thứ hai về một kế hoạch hay một lỗi |
+| Lens | `high` | `gpt-6-astra` (Codex) | Lens duy nhất khi câu hỏi khó; một trong hai lens |
+| Lens | `extra` | `claude-opus-5-5` | Lens còn lại trong hai, thuộc họ model khác; lens thứ ba |
 
-| Tín hiệu | Ai gửi | Nghĩa |
-|---|---|---|
-| `CANDIDATE` | Peer | Có kết quả, mời kiểm tra |
-| `QUESTION` | Peer | Đề bài thiếu thông tin |
-| `REOPEN_REQUEST` | Peer | Đề bài sai ở đâu đó, kèm bằng chứng đã chạy thử |
-| `DEPENDENCY_REQUEST` | Peer | Cần một thứ ngoài phạm vi được giao |
-| `ACCEPT` / `REJECT` | Lead | Nhận, hoặc trả lại kèm việc cần sửa |
-| `REVISED BRIEF` | Lead | Peer nói đúng, đề bài được sửa |
-| `HOLD` / `NOTED` | Lead | Giữ hướng cũ, ý kiến của Peer được ghi lại |
+`claude-haiku-5-5` cần Claude Code 2.1.293 trở lên.
 
-Plugin kiểm tra ai được gửi thư cho ai và ai được tạo ai. Thư Peer gửi cho
-Peer khác bị từ chối. Seat tạo sai luật bị lưu trữ và seat tạo ra nó được
-báo lại; lúc đó lượt đầu của nó có thể đã chạy.
+Lead dùng bảng thế này:
 
-Các luật này để chặn nhầm lẫn, không phải hàng rào bảo mật: mọi seat chạy
-bằng tài khoản của bạn, với file của bạn. Lens được dặn chỉ đọc; trên Claude
-các tool sửa file bị tắt, nhưng lệnh shell vẫn ghi được.
+- Với Peer, khi chưa chắc thì nó bắt đầu ở model thấp hơn. Nó chỉ lên bậc
+  sau khi đã thử lại với brief rõ hơn mà vẫn hỏng.
+- Hai lens luôn là hai model khác nhau.
+- Các quy trình của Lead gọi model của Peer bằng tên `cheap`, `default` và
+  `cross-family`. Giữ ba tên đó và đổi model bên dưới. Tên khác thì thêm
+  tuỳ ý.
 
-## 7. Cấu hình riêng của project
+Đổi bảng trên màn hình thiết lập rồi bấm Apply.
 
-Mỗi project có thư mục `.slp/`:
+### Bảng riêng của project
 
-```text
-.slp/
-├── room.json        đánh dấu project, và bảng model riêng nếu có
-├── mission.md       project để làm gì
-├── <tên>-law.md     luật riêng của project
-├── status.md        tiến độ, quyết định, ý kiến bị bác
-└── notebook.md      bài học rút ra
-```
-
-### Bảng model riêng
-
-Lần đầu HQ ghi giúp bạn. Về sau bạn sửa tay mục `models` trong
-`.slp/room.json`. Chỉ ghi phần khác với bảng chung. Vai nào cũng chạy được
-trên harness nào (`<harness>-<vai>/<model>`): seat nào room chưa có thì HQ
-dựng luôn lúc ghi bảng. Sửa tay mà thêm seat mới thì nhờ HQ ghi lại bảng
-(nếu có bản clone: `./install.sh --seat <harness>-<vai>`):
+HQ viết bảng này khi đăng ký project. Sau đó bạn sửa tay object `models`
+trong `.slp/room.json`. Chỉ ghi phần khác với bảng của room:
 
 ```json
 {
@@ -279,165 +347,212 @@ dựng luôn lúc ghi bảng. Sửa tay mà thêm seat mới thì nhờ HQ ghi l
 }
 ```
 
-Ví dụ này cho Lead và Peer bậc `default` suy nghĩ mức medium, và bỏ bậc
+Ví dụ này cho Lead và model `default` của Peer dùng thinking medium, và bỏ
 `cross-family`.
 
-- Ghi `null` để bỏ một mục. Xoá cả mục `models` để quay về bảng chung.
-- Thay đổi áp dụng cho agent tạo sau đó, không cần cài lại.
-- Agent dùng model ngoài bảng sẽ bị từ chối.
-- Ghi sai thì agent không tạo được, và lỗi chỉ rõ chỗ sai.
+- `null` là bỏ một mục. Xoá `models` là quay về bảng của room.
+- Thay đổi áp dụng cho agent tạo sau đó. Không cần cài lại.
+- Agent chạy model không có trong bảng sẽ bị từ chối.
+- Mục ghi sai làm agent không khởi động được; lỗi nêu rõ mục nào.
+- Model ghi theo dạng `<harness>-<role>/<model>`. Nếu bảng nêu một seat
+  room chưa có, hãy bảo HQ đăng ký lại bảng: nó sẽ dựng seat đó.
 
-## 8. Cấu hình chung
+## 8. Các seat nói chuyện với nhau
 
-| Ở đâu | Quyết định | Có hiệu lực khi |
+Seat gửi **thư** cho nhau. Thư không cắt ngang ai: nó tới khi người nhận
+làm xong lượt đang chạy. Kết quả đã xong chỉ đi lên một lần, khi lượt của
+chính người gửi đã kết thúc, nên không ai hành động dựa trên một seat còn
+đang làm.
+
+- Seat đang đóng vẫn nhận được thư: thư mở nó ra. Sau khi daemon khởi động
+  lại, mọi seat đều ở trạng thái này.
+- Thư gửi cho seat đã lưu trữ hoặc đã xoá quay về người gửi với nhãn
+  `UNDELIVERABLE`.
+- Có loại thư không đánh thức ai, được đọc cùng thư kế tiếp: thư xác nhận,
+  thư `DONE` chỉ lặp lại chính nó, và `STATUS` của Lead sau báo cáo đầu
+  (chỉ giữ bản mới nhất).
+
+Các tín hiệu bạn sẽ thấy trong báo cáo:
+
+| Tín hiệu | Ai gửi | Ý nghĩa |
 |---|---|---|
-| Màn hình cài đặt (Settings, Plugins, Seatwork) | Agent CLI, model và mức thinking của từng vai; chế độ của watcher; âm báo | Bấm **Apply** |
-| `~/.config/slp-room/setup.json` | Những gì màn hình đã áp dụng, các seat HQ dựng thêm cho project, và `mailPort` khi cổng trong policy đã có chương trình khác dùng | Bấm **Apply**, hoặc chạy `./install.sh` |
-| `slp-room/plugin/paseo/seats.json` | Các seat mà máy nào cài cũng có | xem bên dưới |
-| `slp-room/plugin/room/models.json` | Bảng model của room: điểm bắt đầu của màn hình | xem bên dưới |
-| `slp-room/plugin/paseo/policy.json` | Ai gửi thư cho ai, ai tạo ai, thời gian chờ, các luật của watcher | xem bên dưới |
-| `slp-room/plugin/room/roles/`, `skills/` | Prompt và quy trình của từng vai | xem bên dưới |
+| `CANDIDATE` | Peer | Có kết quả chờ kiểm tra |
+| `QUESTION` | Peer | Brief thiếu thông tin |
+| `REOPEN_REQUEST` | Peer | Brief sai ở đâu đó, kèm bằng chứng Peer đã chạy |
+| `DEPENDENCY_REQUEST` | Peer | Cần một thứ nằm ngoài phạm vi của nó |
+| `REVIEW` | Peer, Lens | Một bản review hoặc câu trả lời, có quan điểm rõ |
+| `ACCEPT` / `REJECT` | Lead | Nhận, hoặc trả lại kèm chỗ cần sửa |
+| `REVISED BRIEF` | Lead | Peer đúng; brief đã đổi |
+| `HOLD` / `NOTED` | Lead | Giữ hướng cũ; phản đối đã được ghi lại |
 
-Bốn dòng cuối là file của plugin. Có bản clone thì sửa rồi chạy
-`./install.sh`. Plugin cài từ Paseo nhận bản mới bằng
-`paseo plugin update slp-seat`; sau đó bấm **Apply**.
+Plugin kiểm tra ai được gửi thư cho ai và ai được tạo ai:
 
-Peer là một vai với nhiều model, mỗi model mang một tên trong `peer.tiers`.
-Bảng đi kèm có ba; màn hình cài đặt thêm được tên mới (ví dụ `expensive`)
-hoặc bỏ bớt. Lead chọn theo việc:
+| Seat | Được tạo | Được gửi thư cho |
+|---|---|---|
+| HQ | Supervisor | Supervisor |
+| Supervisor | Lead, một Peer nghiên cứu | Lead, Peer |
+| Lead | Peer, Lens | Supervisor, Peer, Lens |
+| Peer | không ai | Lead, Supervisor |
+| Lens | không ai | Lead |
 
-| Bậc | Dùng cho |
+Thư ngoài bảng này bị từ chối. Seat được tạo ngoài bảng này bị lưu trữ và
+người tạo được báo; lúc đó prompt đầu tiên của nó có thể đã kịp chạy.
+
+## 9. Seat được cấp những gì
+
+Seat nhận prompt và skill của vai mình, mission và law của project, công
+cụ gửi thư, và những công cụ Paseo mà vai đó được dùng. Nó không mang
+thiết lập agent cá nhân của bạn:
+
+- **Seat Claude** dùng phiên đăng nhập của bạn, nhưng tắt thiết lập cá
+  nhân: không có skill, plugin, hook hay MCP server riêng của bạn. Các tính
+  năng thêm của Claude Code cũng tắt: memory, agent teams, agent view,
+  workflows, cloud routines và connector của claude.ai. File
+  `~/.claude/CLAUDE.md` của bạn vẫn được nối vào prompt.
+- **Seat Codex, Pi và OpenCode** mỗi cái có một thư mục nhà riêng dưới
+  `~/.config/slp-room/runtimes/`. Nó được dựng từ thư mục của bạn: giữ
+  phiên đăng nhập, bỏ plugin, MCP server, hook và memory.
+- Sub-agent riêng của từng CLI bị tắt trong seat. Seat chỉ có thêm người
+  bằng cách tạo một seat khác.
+
+Các công tắc này nằm ngay trong provider của seat ở cấu hình Paseo, nên
+vẫn có hiệu lực cả khi plugin không chạy.
+
+Hai giới hạn cần biết:
+
+- **Các quy tắc chỉ chặn nhầm lẫn. Chúng không phải ranh giới bảo mật.**
+  Mọi seat chạy dưới tài khoản của bạn, với file của bạn. Lens được dặn chỉ
+  đọc; trên Claude các công cụ sửa file của nó bị tắt, nhưng một lệnh shell
+  vẫn ghi được.
+- **Init đổi ba công tắc của mọi agent trên máy**, không riêng gì seat:
+  tắt công cụ trình duyệt của Paseo, tắt terminal agent hooks, và không
+  nạp các skill đi kèm Paseo vào agent. Nó cũng bật công tắc cấp công cụ
+  Paseo cho agent.
+
+## 10. Watcher
+
+Watcher đọc mọi lượt của Lead và Peer: các lần gọi tool và tin nhắn cuối,
+không bao giờ đọc phần thinking. Khi một lượt có dấu hiệu đi sai, seat phía
+trên nhận một thư từ `room`, tiêu đề mở đầu bằng `OBSERVATION`. Thư về
+Peer tới Lead của nó, thư về Lead tới Supervisor. Watcher không bao giờ
+dừng hay sửa một seat.
+
+| Chế độ | Chuyện gì xảy ra |
 |---|---|
-| `cheap` | Việc máy móc, đã tả rõ: đổi tên, định dạng, lọc log, sửa tài liệu. Chạy Claude Haiku 5.5, cần Claude Code từ 2.1.293 |
-| `default` | Viết code, debug, research |
-| `cross-family` | Review code do họ model khác viết |
+| Off | Không đọc gì |
+| Shadow | Đọc các lượt và ghi phát hiện vào log; không gửi thư cho ai |
+| On | Gửi thư cả phát hiện, mỗi lượt nhiều nhất một thư |
 
-Lens cũng là một vai, các model liệt kê y như vậy trong `lens.tiers` (bảng
-đi kèm có `default`, `high` cho câu hỏi khó, `extra` thuộc họ model khác).
-Lead chọn theo câu hỏi; khi mở hai lens thì luôn là hai model khác nhau.
+Mười luật đọc các lần gọi tool và brief. Chúng không tốn tiền:
 
-## 9. File nằm ở đâu
+| Luật | Lên tiếng khi seat |
+|---|---|
+| `irreversible` | chạy một lệnh không hoàn tác được từ bên trong việc đó: `git reset --hard`, xoá đệ quy ngoài phạm vi, force push |
+| `outside-project` | ghi ra ngoài project |
+| `outside-scope` | sửa một file ngoài phạm vi ghi mà brief cho |
+| `edit-after-reopen` | đã gửi `REOPEN_REQUEST` mà vẫn sửa source |
+| `review-without-check` | đưa ra `REVIEW` chấp nhận trong khi không chạy phép kiểm tra nào |
+| `same-failure` | chạy cùng một phép kiểm tra 4 lần với cùng một lỗi |
+| `repeating` | làm cùng một việc 4 lần liền với cùng kết quả |
+| `shell-wait` | ngồi chờ trong shell một phút (`sleep`, vòng lặp có sleep) |
+| `silent` | ở trong lượt mà không hoạt động gì, quá thời gian cho phép của vai |
+| `incomplete-brief` | là Peer nhận brief thiếu `Outcome`, `Write scope`, `Acceptance evidence`, `Reopen when` hoặc dòng cuối `Reply with slp_mail to: owner` |
 
-```text
-~/.config/slp-room/
-├── hq-seatwork/         thư mục làm việc của HQ
-├── room/                prompt, skill, bảng model đang dùng
-├── role-skills/         skill theo vai cho seat Claude
-├── runtimes/            môi trường riêng của seat Codex, Pi, OpenCode
-├── mail/                thư và nhật ký thư
-├── setup.json           lựa chọn của máy này: seat của HQ, seat dựng thêm, watcher
-├── projects.json        các project đã đăng ký
-├── registry-log.jsonl   các agent đã tạo
-├── watch/               watcher: khoá, nhật ký quét, chi phí từng tháng
-└── gc.log               nhật ký dọn dẹp
+Bốn luật cần một bên đọc tin nhắn cuối của seat. Code quyết định khi nào
+hỏi, một model quyết định đọc xem tin nhắn khẳng định gì, rồi code so hai
+bên. Luật đầu tiên có gửi thư; ba luật còn lại chỉ ghi log cho tới khi bạn
+đặt chúng thành `raise` trong `policy.json`.
+
+| Luật | Hỏi khi |
+|---|---|
+| `unverified-completion` | tin nhắn nói về kiểm tra, mà không có test nào đứng sau thay đổi cuối |
+| `external-action` | seat đã push, publish hoặc deploy, và brief có ràng buộc |
+| `decided-beyond-brief` | tin nhắn báo một quyết định do seat tự đưa ra |
+| `reopen-condition` | brief có dòng `Reopen when` mà seat không xin mở lại |
+
+Bốn luật này cần một key. Model quyết định là Jev, gọi qua OpenRouter. Dán
+key vào ô **Watcher key** trên màn hình thiết lập. Key được lưu ở
+`~/.config/slp-room/watch/key`, chỉ user của bạn đọc được, và không bao giờ
+hiện lại. Biến môi trường `SLP_WATCH_KEY` cũng dùng được. Không có key thì
+mười luật ở trên vẫn chạy, và không có gì rời khỏi máy.
+
+Những gì được gửi cho model: các dòng của brief mà câu hỏi cần đọc, tên các
+file đã đổi, và tin nhắn cuối của seat sau khi che các bí mật. Output của
+tool không bao giờ được gửi. Chi phí tính theo từng câu trả lời: kế hoạch
+là 6 USD một tháng, tới 10 USD thì ngừng hỏi. Xem trong mục Usage của
+Paseo, dòng "Room watcher".
+
+Muốn bật: cho nó chạy Shadow một thời gian, hỏi HQ thống kê watcher, rồi
+đặt Watcher thành On và bấm Apply.
+
+## 11. Bảo trì
+
+### Cập nhật
+
+```bash
+paseo plugin update slp-seat
 ```
 
-Phiên làm việc của seat Claude nằm trong `~/.claude/projects`, chung chỗ với
-phiên của bạn.
+Sau đó bấm **Apply** trên màn hình thiết lập. Chưa bấm thì room từ chối
+seat mới, và lỗi nói rõ điều đó. Nếu dùng bản clone: `git pull`, rồi
+`./install.sh`.
 
-## 10. Tự dọn dẹp
+### Tự dọn dẹp
 
-Cứ 10 phút plugin lưu trữ những agent đã rảnh quá lâu và không còn agent
-con đang chạy. Agent đang chờ cấp quyền hoặc chờ trả lời thì được để yên.
+Cứ 10 phút plugin lưu trữ những seat đã rảnh quá lâu và không còn seat nào
+bên dưới đang chạy. Seat đang chờ cấp quyền hoặc chờ trả lời thì được để
+yên.
 
-| Vai | Rảnh bao lâu thì lưu trữ |
+| Vai | Lưu trữ sau khi rảnh |
 |---|---|
 | HQ | Không bao giờ |
 | Supervisor | 7 ngày |
 | Lead, Peer | 48 giờ |
 | Lens | 12 giờ |
 
-## 11. Watcher
+### File nằm ở đâu
 
-Plugin đọc mọi lượt của Lead và Peer: các lệnh gọi công cụ và câu trả lời
-cuối, không đọc phần suy nghĩ. Khi một lượt có dấu hiệu đi sai, seat phía
-trên nhận một thư từ `room` có tiêu đề bắt đầu bằng `OBSERVATION` (của Peer
-thì báo Lead, của Lead thì báo Supervisor). Watcher không dừng hay sửa seat
-nào, và không giữ trí nhớ giữa các lượt.
-
-Chế độ của nó là mục Watcher trên màn hình cài đặt (cài từ terminal thì lệnh
-cài hỏi một lần), được giữ trong `~/.config/slp-room/setup.json`:
-
-| Chế độ (mục Watcher trên màn hình, hoặc `./install.sh --watcher <chế độ>`) | Điều xảy ra |
-|---|---|
-| `off` (khi bạn chưa trả lời có) | Không đọc gì |
-| `shadow` (khi trả lời có lúc cài) | Đọc lượt và ghi nhật ký; không gửi thư cho ai |
-| `on` | Gửi thêm thư, nhiều nhất một thư mỗi lượt |
-
-Mười luật dựa hoàn toàn vào lệnh gọi công cụ và vào brief, không tốn tiền:
-
-| Luật | Báo khi seat |
-|---|---|
-| `irreversible` | chạy lệnh không hoàn tác được từ trong việc đang làm (`git reset --hard`, xoá đệ quy ngoài phạm vi, push đè) |
-| `outside-project` | ghi file ra ngoài project |
-| `outside-scope` | sửa file nằm ngoài phạm vi ghi của brief |
-| `edit-after-reopen` | đã gửi `REOPEN_REQUEST` mà vẫn sửa code tiếp |
-| `review-without-check` | đưa `REVIEW` chấp nhận trong khi không chạy kiểm tra nào |
-| `same-failure` | chạy cùng một kiểm tra 4 lần, hỏng y như nhau |
-| `repeating` | làm cùng một việc 4 lần liền, kết quả y như nhau |
-| `shell-wait` | chờ trong shell đủ một phút (`sleep`, vòng lặp có sleep) |
-| `silent` | đang trong lượt mà không hoạt động quá thời gian chờ của vai |
-| `incomplete-brief` | là Peer nhận từ Lead một brief thiếu `Outcome`, `Write scope`, `Acceptance evidence`, `Reopen when` hoặc dòng cuối `Reply with slp_mail to: owner` (brief viết tự do thì thiếu cả năm). Luật xét cả brief lúc tạo Peer lẫn brief gửi sau đó qua thư (thư có chữ `BRIEF` trong tiêu đề); mỗi brief báo một lần, lúc lượt mà nó mở ra bắt đầu |
-
-Bốn luật cần người đọc câu trả lời của seat. Code quyết định lúc nào hỏi (ví
-dụ: câu trả lời báo xong việc, code đã đổi, và không có test nào qua sau lần
-sửa cuối), model phân loại đọc xem câu trả lời khẳng định gì, rồi code so
-hai bên. Khi cài, luật đầu ở mức `raise`; ba luật còn lại ở mức `log`: chỉ
-ghi điểm vào nhật ký, không gửi thư cho tới khi bạn đổi sang `raise` trong
-`policy.json`.
-
-| Luật | Hỏi khi |
-|---|---|
-| `unverified-completion` | câu trả lời nói về kiểm tra, mà không có test nào đứng sau lần sửa cuối |
-| `external-action` | seat đã push, publish hoặc deploy, và brief có ràng buộc |
-| `decided-beyond-brief` | câu trả lời báo một quyết định của riêng seat |
-| `reopen-condition` | brief có dòng `Reopen when` và seat không xin mở lại |
-
-Model phân loại là Jev, gọi qua OpenRouter. Dán khoá vào mục Watcher key
-trên màn hình cài đặt; khoá được lưu ở `~/.config/slp-room/watch/key`
-(quyền 600) và không hiện lại nữa. Biến môi trường `SLP_WATCH_KEY` cũng dùng
-được. Không có khoá thì mười luật dựa vào lệnh vẫn chạy. Thứ được
-gửi đi: các dòng brief mà câu hỏi cần, tên các file đã đổi, và câu trả lời
-cuối của seat sau khi đã che bí mật. Câu trả lời dài tới 12.000 ký tự được
-gửi nguyên; dài hơn thì chỉ gửi các dòng câu hỏi cần đọc, và câu hỏi nào
-không đủ chỗ cho các dòng của nó thì bị bỏ qua, có ghi tên trong nhật ký.
-Output của công cụ không bao giờ được gửi. Chi phí được đếm từ mỗi lần trả lời; `watcher.budget` đặt kế hoạch 6
-USD một tháng và ngừng hỏi ở 10 USD. Chi phí trong tháng hiện ở mục Usage của
-Paseo, dưới tên "Room watcher".
-
-Muốn bật: để chạy `shadow` một thời gian, nhờ HQ xem số liệu watcher (HQ gọi
-`slp_watch_stats`: chi phí, số lượt đã theo dõi và số lần đọc, và với từng
-luật là nó lên tiếng bao nhiêu lần, trong đó bao nhiêu lượt bị seat phía
-trên trả lại), rồi chọn On ở mục Watcher trên màn hình cài đặt và bấm Apply
-(hoặc chạy `./install.sh --watcher on`). Với
-`unverified-completion`, một lượt bị trả lại chỉ được tính khi seat phía trên
-tự chạy test và thấy hỏng: bài còn bị trả lại vì nhiều lý do khác.
-
-Muốn thử luật trên các lượt đã ghi lại mà không đụng tới room nào, chạy
-trong `slp-room/plugin`:
-
-```bash
-npm run watch:replay -- --ask ../evals/results/<label>
+```text
+~/.config/slp-room/
+├── hq-seatwork/         thư mục làm việc của HQ
+├── room/                prompt, skill và bảng model đang dùng
+├── role-skills/         skill theo vai cho seat Claude
+├── runtimes/            thư mục nhà của seat Codex, Pi và OpenCode
+├── mail/                thư và log thư
+├── watch/               watcher: key, log quét và chi phí
+├── setup.json           lựa chọn của máy này
+├── policy.json          các quy tắc đang dùng
+├── seats.json           các seat đã dựng trên máy này
+├── projects.json        các project đã đăng ký
+├── registry-log.jsonl   mọi seat đã tạo từ trước tới giờ
+└── gc.log               log dọn dẹp
 ```
 
-## 12. Lỗi thường gặp
+Seat Claude lưu session trong `~/.claude/projects`, cạnh session của bạn.
 
-| Thông báo | Cách xử lý |
-|---|---|
-| `may only be created in the hq-seatwork project` | Mở HQ trong project `hq-seatwork` |
-| `holds only hq seats` | Vai này phải mở trong project của nó |
-| `is not a registered SLP project` | Nhờ HQ setup project trước |
-| `lists for … only …` | Dùng model có trong bảng, hoặc sửa `.slp/room.json` |
-| `which the room has not enabled` | Sửa `.slp/room.json`, hoặc nhờ HQ ghi lại bảng của project: HQ sẽ dựng seat đó |
-| `no room is set up on this daemon` | Mở Settings, Plugins, Seatwork rồi bấm Init |
-| `room seat is still open … archive them first` | Lưu trữ các agent của room, rồi gỡ room |
-| `its runtime could not be built` | Sửa thứ thông báo nêu ra (thường là `~/.codex/config.toml`), rồi tạo lại agent |
-| `is too old: the room needs 0.11.2 or later` | Cập nhật Paseo, chạy `paseo daemon restart`, rồi cài lại |
-| Agent báo chưa đăng nhập | Chạy `claude auth login` |
-| Agent không biết quy trình mới | Mở agent mới |
-
-Xem nhật ký của plugin:
+### Log
 
 ```bash
 paseo plugin logs slp-seat
 ```
+
+Thư được ghi ở `~/.config/slp-room/mail/log.jsonl`, việc dọn dẹp ở
+`~/.config/slp-room/gc.log`.
+
+## 12. Lỗi
+
+| Thông báo | Cách xử lý |
+|---|---|
+| `is a room seat and no room is set up on this daemon` | Mở màn hình thiết lập và bấm Init |
+| `the room's files were set up by version …` | Bấm Apply trên màn hình thiết lập |
+| `is not a seat the room has set up` | Chọn agent CLI đó cho vai trên màn hình thiết lập, rồi Apply |
+| `may only be created in the hq-seatwork project` | Mở HQ trong project `hq-seatwork` |
+| `it holds only hq seats` | Mở vai này trong project của nó |
+| `is not a registered SLP project` | Bảo HQ đưa project vào room trước |
+| `lists for … only …` | Dùng một model có trong bảng của project, hoặc sửa `.slp/room.json` |
+| `which the room has not enabled` | Bảo HQ đăng ký lại bảng của project, hoặc sửa `.slp/room.json` |
+| `its runtime could not be built` | Sửa thứ mà thông báo nêu (thường là `~/.codex/config.toml`), rồi tạo lại agent |
+| `still open … archive them first` | Lưu trữ các agent của room, rồi gỡ room |
+| `is too old: the room needs 0.11.2 or later` | Cập nhật Paseo, chạy `paseo daemon restart`, rồi cài lại |
+| Agent báo chưa đăng nhập | Đăng nhập agent CLI đó trong terminal |
+| Agent không biết một quy trình mới | Mở agent mới: seat nhận prompt lúc nó được tạo |

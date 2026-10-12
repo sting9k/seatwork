@@ -132,9 +132,10 @@ Hai điểm khác với Init:
   kết thúc bằng dòng Paseo báo có thay đổi cần restart, hãy chạy
   `paseo daemon restart`.
 
-Đừng chạy script đè lên plugin đã cài ở bước 1. Paseo vẫn chạy bản plugin
-của riêng nó, còn script ghi thư mục của room từ bản clone: hai bản có thể
-khác nhau. Muốn chuyển máy sang bản clone thì gỡ plugin, rồi chạy script:
+Script từ chối chạy đè lên plugin đã cài ở bước 1, và không đổi gì. Nếu
+chạy, Paseo vẫn dùng bản plugin của riêng nó, còn thư mục của room lại lấy
+từ bản clone: hai bản có thể khác nhau. Muốn chuyển máy sang bản clone thì
+gỡ plugin, rồi chạy script:
 
 ```bash
 paseo plugin remove slp-seat
@@ -631,5 +632,6 @@ Thư được ghi ở `~/.config/slp-room/mail/log.jsonl`, việc dọn dẹp �
 | `its runtime could not be built` | Sửa thứ mà thông báo nêu (thường là `~/.codex/config.toml`), rồi tạo lại agent |
 | `still open … archive them first` | Lưu trữ các agent của room, rồi gỡ room |
 | `is too old: the room needs 0.11.2 or later` | Cập nhật Paseo, chạy `paseo daemon restart`, rồi cài lại |
+| `already runs from …, not from this clone` | `install.sh` gặp plugin cài từ nơi khác. Đổi room đó trên màn hình Seatwork, hoặc chạy `paseo plugin remove slp-seat` rồi chạy lại script |
 | Agent báo chưa đăng nhập | Đăng nhập agent CLI đó trong terminal |
 | Agent không biết một quy trình mới | Mở agent mới: seat nhận prompt lúc nó được tạo |

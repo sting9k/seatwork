@@ -233,6 +233,20 @@ test("the installer's command sets the room up from a terminal: the room home, a
   assert.equal(spawnSync(process.execPath, ["--require", join(PLUGIN_DIR, "test", "register.cjs"), join(PLUGIN_DIR, "tools", "room-init.ts"), "--hq"], { encoding: "utf8" }).status, 1, "a flag without its value");
 });
 
+test("install.sh refuses, before it writes anything, when Paseo runs the plugin from another folder", () => {
+  // a stand-in paseo: new enough, with slp-seat installed from its own checkout
+  const bin = join(ROOM_HOME, "..", "install-bin");
+  const paseoHome = join(ROOM_HOME, "..", "install-paseo-home");
+  mkdirSync(bin, { recursive: true });
+  writeFileSync(join(bin, "paseo"), `#!/bin/sh\ncase "$*" in\n"daemon status --json") echo '{"daemonVersion":"0.11.2"}' ;;\n"plugin ls --json") echo '[{"id":"slp-seat","path":"/paseo/own/checkout/plugin"}]' ;;\n*) exit 1 ;;\nesac\n`, { mode: 0o755 });
+
+  const run = spawnSync("bash", [join(PLUGIN_DIR, "..", "install.sh")], { encoding: "utf8", env: { ...process.env, PASEO_HOME: paseoHome, PATH: `${bin}:${process.env.PATH}` } });
+
+  assert.equal(run.status, 1, run.stderr);
+  assert.match(run.stderr, /already runs from \/paseo\/own\/checkout\/plugin.*\n.*\n.*paseo plugin remove slp-seat/);
+  assert.deepEqual([isSetUp(ROOM_HOME), existsSync(paseoHome)], [false, false]);
+});
+
 test("a running daemon is patched so that no seat keeps a key its new entry dropped", async () => {
   const room = await plan();
   const config = {

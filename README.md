@@ -93,9 +93,9 @@ cd seatwork/slp-room && ./install.sh
 It installs the plugin from the clone's folder, does what Init does, and is
 safe to run again. The flags are in the guide.
 
-Do not run it over a plugin installed from Paseo's settings. Paseo keeps
-running its own copy of the plugin, and the script fills the room's folder
-from the clone: two copies that can differ. To move a machine to a clone,
+The script refuses to run over a plugin installed from Paseo's settings:
+Paseo would keep running its own copy while the room's folder was filled
+from the clone, two copies that can differ. To move a machine to a clone,
 run `paseo plugin remove slp-seat` first, then the script.
 
 ## What it changes on your machine

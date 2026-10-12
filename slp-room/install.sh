@@ -30,6 +30,17 @@ if ! node -e 'const v=process.argv[1].split("-")[0].split(".").map(Number),w=[0,
   echo "Paseo ${PASEO_VERSION:-(unknown version)} is too old: the room needs 0.11.2 or later. Update it (npm install -g @getpaseo/cli@latest), run 'paseo daemon restart', then this again." >&2
   exit 1
 fi
+# where Paseo runs slp-seat from: "here", another folder (its own copy from Settings, another clone), or empty when it has none.
+# Over another folder this script would fill the room from this clone while that copy keeps running.
+INSTALLED="$(paseo plugin ls --json 2>/dev/null | node -e 'const fs=require("fs"),real=(d)=>{try{return fs.realpathSync(d)}catch{return d}};let s="";process.stdin.on("data",(d)=>(s+=d)).on("end",()=>{try{const p=JSON.parse(s).find((p)=>p.id==="slp-seat");if(p)process.stdout.write(real(p.path)===real(process.argv[1])?"here":String(p.path))}catch{}})' "$PLUGIN" || true)"
+if [ -n "$INSTALLED" ] && [ "$INSTALLED" != here ]; then
+  {
+    echo "slp-seat already runs from $INSTALLED, not from this clone. Nothing was changed."
+    echo "This script would fill the room's folder from the clone while Paseo keeps running that copy."
+    echo "Change that room on the Seatwork screen. To move this machine to the clone: 'paseo plugin remove slp-seat', then this again."
+  } >&2
+  exit 1
+fi
 
 # the setup is the plugin's own TypeScript; its dev packages run it here
 if [ "$DO_PLUGIN" = 1 ] || [ ! -d "$PLUGIN/node_modules/typescript" ]; then
@@ -44,7 +55,7 @@ node --require "$PLUGIN/test/register.cjs" "$PLUGIN/tools/room-init.ts" ${SETUP[
 # --- 2. plugin ---
 if [ "$DO_PLUGIN" = 1 ]; then
   ( cd "$PLUGIN" && npm run --silent typecheck )
-  if paseo plugin ls --json 2>/dev/null | node -e 'let s="";process.stdin.on("data",(d)=>(s+=d)).on("end",()=>{try{process.exit(JSON.parse(s).some((p)=>p.id==="slp-seat")?0:1)}catch{process.exit(1)}})'; then
+  if [ "$INSTALLED" = here ]; then
     paseo plugin reload slp-seat
   else
     paseo plugin install "$PLUGIN"

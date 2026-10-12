@@ -131,10 +131,10 @@ Two things differ from Init:
   the script ends with Paseo's note that changes require a restart, run
   `paseo daemon restart`.
 
-Do not run the script over a plugin installed in step 1. Paseo keeps
-running its own copy of the plugin, and the script fills the room's folder
-from the clone: two copies that can differ. To move a machine to a clone,
-remove the plugin, then run the script:
+The script refuses to run over a plugin installed in step 1, and changes
+nothing. Paseo would keep running its own copy of the plugin while the
+room's folder was filled from the clone: two copies that can differ. To
+move a machine to a clone, remove the plugin, then run the script:
 
 ```bash
 paseo plugin remove slp-seat
@@ -638,5 +638,6 @@ Mail is logged in `~/.config/slp-room/mail/log.jsonl`, cleanup in
 | `its runtime could not be built` | Fix what the message names (often `~/.codex/config.toml`), then create the agent again |
 | `still open … archive them first` | Archive the room's agents, then remove the room |
 | `is too old: the room needs 0.11.2 or later` | Update Paseo, run `paseo daemon restart`, then install again |
+| `already runs from …, not from this clone` | `install.sh` met a plugin installed from somewhere else. Change that room on the Seatwork screen, or run `paseo plugin remove slp-seat` and then the script |
 | An agent says it is not signed in | Sign its agent CLI in, in your terminal |
 | An agent does not know a new procedure | Open a new agent: a seat gets its prompt when it is created |

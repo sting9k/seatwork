@@ -32,8 +32,7 @@ export interface CodexRuntimePolicy {
 export interface PiRuntimePolicy {
   shareFiles: string[];
   shareDirs: string[];
-  /** Substrings of user `packages` entries to keep (e.g. the MCP adapter); all others are dropped. */
-  keepPackages: string[];
+  /** Laid over the user's settings.json: it empties `packages` and `extensions`. */
   settings: Record<string, unknown>;
 }
 

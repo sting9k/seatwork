@@ -11,9 +11,10 @@ process.on("exit", () => rmSync(base, { recursive: true, force: true }));
 
 export const ROOM_HOME = join(base, "room-home");
 export const USER_CODEX = join(base, "codex");
+export const USER_PI = join(base, "pi");
 export const PROJECT = join(base, "project");
 
-for (const dir of [ROOM_HOME, USER_CODEX, PROJECT]) mkdirSync(dir);
+for (const dir of [ROOM_HOME, USER_CODEX, USER_PI, PROJECT]) mkdirSync(dir);
 // a paseo CLI that always fails: the plugin shells out for projects, labels and schedules
 const cli = join(base, "paseo");
 writeFileSync(cli, "#!/bin/sh\nexit 1\n");
@@ -25,7 +26,7 @@ Object.assign(process.env, {
   PASEO_HOME: join(base, "paseo-home"),
   CODEX_HOME: USER_CODEX,
   CLAUDE_CONFIG_DIR: join(base, "claude"),
-  PI_CODING_AGENT_DIR: join(base, "pi"),
+  PI_CODING_AGENT_DIR: USER_PI,
   OPENCODE_CONFIG_DIR: join(base, "opencode"),
 });
 

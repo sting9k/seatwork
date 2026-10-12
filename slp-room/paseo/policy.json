@@ -271,7 +271,7 @@
       }
     },
     "runtime": {
-      "$comment": "Pi only receives Paseo tools when the pi-mcp-adapter extension is installed (pi install npm:pi-mcp-adapter). keepPackages lists substrings of user packages to carry into the seat; everything else is dropped.",
+      "$comment": "A Pi seat gets the room's and Paseo's tools through Pi's built-in MCP (Pi 0.99 or later): Paseo registers its servers there. settings is laid over the user's settings.json: no user package or extension reaches the seat, and none can stand in for the built-in MCP.",
       "shareFiles": [
         "auth.json",
         "models.json",
@@ -279,11 +279,9 @@
         "AGENTS.md"
       ],
       "shareDirs": [],
-      "keepPackages": [
-        "pi-mcp-adapter"
-      ],
       "settings": {
-        "extensions": []
+        "extensions": [],
+        "packages": []
       }
     }
   },

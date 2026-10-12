@@ -2,6 +2,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { ROOM_DIR } from "./paths";
 import type { RoomParams } from "./policy";
+import { merge } from "../shared/model-choices";
 
 /**
  * room/models.json: every model id the room uses, in one editable file. Role
@@ -15,28 +16,20 @@ export interface SeatModel {
   alternatives?: string[];
 }
 
-export interface PeerTier {
+/** One of a role's models: what the Lead picks it for, and never for. */
+export interface Tier {
   providers: string[];
   thinking: string;
   use: string;
   never: string;
 }
 
-export interface LensModels {
-  /** One lens, the second brain. */
-  oracle: string;
-  /** The one lens for a hard question, when the table keeps a stronger model for it. */
-  hard?: string;
-  /** Two lenses that must differ: the first two of `pair`. More come from `pool`; a pool entry that repeats a pair model is a second lens on that model. */
-  pair: string[];
-  pool: string[];
-  thinking: string;
-}
-
 export interface Models {
   seats: { hq: SeatModel; supervisor: SeatModel; lead: SeatModel };
-  peer: { tiers: Record<string, PeerTier>; reviewThinking: string };
-  lens: LensModels;
+  /** One role, several models: the Lead picks the tier by the task. */
+  peer: { tiers: Record<string, Tier>; reviewThinking: string };
+  /** One role, several models: the Lead picks by the question; two lenses are two different models. */
+  lens: { tiers: Record<string, Tier> };
   /** The Paseo session mode a seat is created in, per harness; null where the harness has none and Paseo refuses any. */
   modes: Record<string, string | null>;
 }
@@ -44,24 +37,20 @@ export interface Models {
 export const MODELS_FILE = join(ROOM_DIR, "models.json");
 
 export function loadModels(): Models {
-  if (!existsSync(MODELS_FILE)) throw new Error(`slp-seat: ${MODELS_FILE} not found; run install.sh`);
+  if (!existsSync(MODELS_FILE)) throw new Error(`slp-seat: ${MODELS_FILE} not found; set the room up again`);
   return JSON.parse(readFileSync(MODELS_FILE, "utf8")) as Models;
 }
 
-function peerTable(m: Models): string {
-  const rows = Object.entries(m.peer.tiers).map(([tier, t]) => `| ${tier} | ${t.providers.map((p) => `\`${p}\``).join(" · ")} | ${t.thinking} | ${t.use} | ${t.never} |`);
+/** A role's models as the Lead reads them: one row a tier, in the table's order. */
+function tierTable(tiers: Record<string, Tier>): string {
+  const rows = Object.entries(tiers).map(([tier, t]) => `| ${tier} | ${t.providers.map((p) => `\`${p}\``).join(" · ")} | ${t.thinking} | ${t.use ?? "—"} | ${t.never ?? "—"} |`);
   return ["| Tier | `provider` for `create_agent` | thinking | Use for | Never for |", "|---|---|---|---|---|", ...rows].join("\n");
 }
 
 function lensTable(m: Models): string {
-  // the table decides whether a model may sit twice in one run: only by listing it in the pool as well as in the pair
-  const repeats = m.lens.pool.some((p) => m.lens.pair.includes(p));
-  return [
-    `- one lens (oracle): \`${m.lens.oracle}\`${m.lens.hard ? `; a hard question: \`${m.lens.hard}\`` : ""}`,
-    `- two lenses: \`${m.lens.pair.join("` and `")}\` — two different models, always`,
-    `- more lenses: add from \`${m.lens.pool.join("`, `")}\`; ${repeats ? "a model that sits twice gets two different angles" : "never the same model twice in one run"}`,
-    `- thinking \`${m.lens.thinking}\` on every lens`,
-  ].join("\n");
+  const models = new Set(Object.values(m.lens.tiers).flatMap((tier) => tier.providers)).size;
+  const several = models > 1 ? "Two lenses are two different models, always. More lenses: another model for each while the table has one; after that a model sits twice only on two different angles." : "The table has one lens model: open one lens.";
+  return `${tierTable(m.lens.tiers)}\n\n${several}`;
 }
 
 /** The placeholder map for role prompts. */
@@ -70,7 +59,7 @@ export function promptVars(m: Models, params: RoomParams): Record<string, string
   const without = Object.entries(m.modes).filter(([, mode]) => !mode).map(([h]) => h);
   const modes = [withMode.join(", "), without.length ? `${without.join(", ")}: none, omit \`modeId\`` : ""].filter(Boolean).join("; ");
   return {
-    peer_table: peerTable(m),
+    peer_table: tierTable(m.peer.tiers),
     review_thinking: m.peer.reviewThinking,
     // read-only research never runs on the cheap tier
     research_providers: Object.entries(m.peer.tiers).filter(([tier]) => tier !== "cheap").flatMap(([, t]) => t.providers).map((p) => `\`${p}\``).join(", ") || "none",
@@ -105,26 +94,15 @@ export function render(text: string, vars: Record<string, string>, onMissing?: (
 type Json = Record<string, unknown>;
 const isObject = (v: unknown): v is Json => typeof v === "object" && v !== null && !Array.isArray(v);
 
-/** Objects merge key by key, anything else replaces; `null` removes a key (a Peer tier, say). */
-function merge(base: unknown, over: unknown): unknown {
-  if (!isObject(base) || !isObject(over)) return over;
-  const out: Json = { ...base };
-  for (const [key, value] of Object.entries(over)) {
-    if (value === null) delete out[key];
-    else out[key] = merge(base[key], value);
-  }
-  return out;
-}
-
 /** Every `<harness>-<role>/<model>` a role may run on, as the table names them. */
-function allowed(m: Models): Record<string, string[]> {
+export function allowed(m: Models): Record<string, string[]> {
   const seat = (s: SeatModel | undefined) => (s ? [s.provider, ...(s.alternatives ?? [])] : []);
   return {
     hq: seat(m.seats?.hq),
     supervisor: seat(m.seats?.supervisor),
     lead: seat(m.seats?.lead),
     peer: Object.values(m.peer?.tiers ?? {}).flatMap((t) => t.providers ?? []),
-    lens: [m.lens?.oracle, m.lens?.hard, ...(m.lens?.pair ?? []), ...(m.lens?.pool ?? [])].filter((p): p is string => typeof p === "string"),
+    lens: Object.values(m.lens?.tiers ?? {}).flatMap((t) => t.providers ?? []),
   };
 }
 
@@ -132,8 +110,13 @@ const providerOf = (entry: string): string => String(entry).split("/")[0];
 
 /** The room's table with `override` laid over it, checked for everything but whether its seats exist. */
 function laidOver(override: unknown, where: string): Models {
+  return layModels(loadModels(), override, where);
+}
+
+/** `base` with `override` laid over it (objects merge, lists and values replace, null removes a key), checked as a table. */
+export function layModels(base: Models, override: unknown, where: string): Models {
   if (!isObject(override)) throw new Error(`${where}: "models" must be an object shaped like ${MODELS_FILE}`);
-  const merged = merge(loadModels(), override) as Models;
+  const merged = merge(base, override) as Models;
   for (const [role, entries] of Object.entries(allowed(merged))) {
     if (entries.length === 0) throw new Error(`${where}: "models" leaves the ${role} role without a model`);
     for (const entry of entries) {
@@ -141,7 +124,9 @@ function laidOver(override: unknown, where: string): Models {
       if (!providerOf(entry).endsWith(`-${role}`)) throw new Error(`${where}: "${entry}" is listed for ${role} but is not a ${role} seat`);
     }
   }
-  if (merged.lens.pair.length < 2 || new Set(merged.lens.pair).size < 2) throw new Error(`${where}: lens.pair must be two different models`);
+  // a table written before the lenses were listed like Peers would be read as having no change
+  const old = ["oracle", "hard", "pair", "pool"].find((key) => key in merged.lens);
+  if (old) throw new Error(`${where}: lens.${old} is not a place in the table: lenses are listed under lens.tiers, as Peers are under peer.tiers`);
   return merged;
 }
 
@@ -156,7 +141,7 @@ export function projectModels(override: unknown, enabledProviders: string[], whe
   const merged = laidOver(override, where);
   for (const entry of Object.values(allowed(merged)).flat()) {
     const provider = providerOf(entry);
-    if (!enabledProviders.includes(provider)) throw new Error(`${where}: "${entry}" names ${provider}, which the room has not enabled (enabled: ${enabledProviders.join(", ")}); \`./install.sh --seat ${provider}\` sets it up`);
+    if (!enabledProviders.includes(provider)) throw new Error(`${where}: "${entry}" names ${provider}, which the room has not enabled (enabled: ${enabledProviders.join(", ")})`);
   }
   return merged;
 }

@@ -1022,7 +1022,7 @@ RECAP: found a precision defect on accepted input → waiting for a decision`,
       {
         id: "tie-break-or-concede",
         any_of: [
-          { tool: "create_agent$", where: { title: "^\\[Lens\\]", provider: "^codex-lens/" }, min: 1, max: 1 }, // one lens is the oracle, or its hard-question model
+          { tool: "create_agent$", where: { title: "^\\[Lens\\]", provider: "^codex-lens/" }, min: 1, max: 1 }, // one lens: the table's tier for the question, both of them on codex-lens
           { tool: "slp_mail$", where: { reply_to: "^#?m9$", body: "^\\W*REVISED BRIEF" } },
         ],
       },

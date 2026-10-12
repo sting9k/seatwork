@@ -5,19 +5,10 @@ import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, statSync, write
 import { join } from "node:path";
 import { after, before, test } from "node:test";
 import contribute from "../index.server";
+import { fakeServer } from "./support/server";
 
-type Hook = (input: never, context: never) => unknown;
-
-const hooks = new Map<string, Hook>();
-/** What the plugin registered with Paseo's Usage screen. */
-let usage: { discover(scope: object): Promise<{ key: string }[]>; fetch(input: unknown): Promise<{ status: string; balances?: { limit?: number | null }[] }> };
-const server = {
-  before: (name: string, hook: Hook) => void hooks.set(`before ${name}`, hook),
-  on: (name: string, hook: Hook) => void hooks.set(`on ${name}`, hook),
-  registerUsageSource: (source: typeof usage) => void (usage = source),
-  handle: (contract: { name: string }, handler: Hook) => void hooks.set(`rpc ${contract.name}`, handler),
-};
-const call = (name: string, input: unknown, context: unknown = {}) => hooks.get(name)!(input as never, context as never);
+const paseoSide = fakeServer();
+const { call } = paseoSide;
 
 const runtimes = join(ROOM_HOME, "runtimes");
 const output = { log: console.log, error: console.error };
@@ -30,7 +21,7 @@ before(() => {
   mkdirSync(runtimes);
   writeFileSync(join(runtimes, "pi"), ""); // no Pi runtime can be built while this file is in the way
   console.log = console.error = () => {};
-  dispose = contribute(server as never);
+  dispose = contribute(paseoSide.server);
 });
 
 after(async () => {
@@ -55,9 +46,9 @@ async function opened(provider: string, reason: string, env: Record<string, stri
 test("Paseo's Usage screen is offered one account, the watcher's month against the policy's cap, and none for a single session", async () => {
   const { monthlyCapUsd } = JSON.parse(readFileSync(join(ROOM_HOME, "policy.json"), "utf8")).watcher.budget;
 
-  assert.deepEqual((await usage.discover({ kind: "global" })).map((account) => account.key), ["decision-model"]);
-  assert.deepEqual(await usage.discover({ kind: "session", provider: "claude", env: {} }), []);
-  const report = await usage.fetch({});
+  assert.deepEqual((await paseoSide.usage()!.discover({ kind: "global" })).map((account) => account.key), ["decision-model"]);
+  assert.deepEqual(await paseoSide.usage()!.discover({ kind: "session", provider: "claude", env: {} }), []);
+  const report = await paseoSide.usage()!.fetch({});
   assert.equal(report.status, "available");
   assert.equal(report.balances?.[0].limit, monthlyCapUsd);
 });
@@ -461,9 +452,9 @@ test("what a turn leaves for the Owner is listed for the app until that seat wor
   await call("on agent.closed", { agent: supervisor.agent }, context);
   assert.deepEqual(await waiting(), ["supervisor-owed DECISION_NEEDED"]);
   // nor does a plugin that starts again
-  const again = new Map<string, Hook>();
-  const stop = contribute({ before: () => {}, on: () => {}, registerUsageSource: () => {}, handle: (contract: { name: string }, handler: Hook) => void again.set(contract.name, handler) } as never);
-  const afterRestart = (await again.get("room.waiting")!({} as never, context as never)) as { waiting: { agentId: string }[] };
+  const again = fakeServer();
+  const stop = contribute(again.server);
+  const afterRestart = (await again.call("rpc room.waiting", {}, context)) as { waiting: { agentId: string }[] };
   await stop();
   assert.ok(afterRestart.waiting.some((item) => item.agentId === "supervisor-owed"), "a plugin restart forgot what waits on the Owner");
 

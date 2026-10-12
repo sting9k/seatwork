@@ -39,7 +39,7 @@ test("a scope line is read leniently: directories, bare names and globs all admi
 });
 
 test("the room's own brief template parses", () => {
-  const template = readFileSync(join(__dirname, "..", "..", "room", "skills", "lead", "slp-write-brief", "references", "brief-template.md"), "utf8");
+  const template = readFileSync(join(__dirname, "..", "room", "skills", "lead", "slp-write-brief", "references", "brief-template.md"), "utf8");
   const example = template.slice(template.indexOf("Project: /work/echo"), template.indexOf("```", template.indexOf("Project: /work/echo")));
   const parsed = parseBrief(example, "/work/echo");
   assert.deepEqual(parsed.scope?.patterns, ["src/web/state.ts", "src/web/realtime/**", "src/server/realtime/**"]);

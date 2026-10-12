@@ -30,16 +30,19 @@ Object.assign(process.env, {
   OPENCODE_CONFIG_DIR: join(base, "opencode"),
 });
 
-const REPO_ROOM = join(__dirname, "..", "..", "..");
+/** The plugin folder: the room files and the policy ship inside it. */
+export const PLUGIN_DIR = join(__dirname, "..", "..");
 
-/** What install.sh leaves in the room home: the room files, the policy and the enabled seats. */
+/** A room home as setting the room up leaves it: the room files, the policy and the enabled seats. */
 export function installRoom(providers: string[], adjust: (policy: { watcher: { mode: string } }) => void = () => {}): void {
-  cpSync(join(REPO_ROOM, "room"), join(ROOM_HOME, "room"), { recursive: true });
-  const policy = JSON.parse(readFileSync(join(REPO_ROOM, "paseo", "policy.json"), "utf8"));
+  cpSync(join(PLUGIN_DIR, "room"), join(ROOM_HOME, "room"), { recursive: true });
+  const policy = JSON.parse(readFileSync(join(PLUGIN_DIR, "paseo", "policy.json"), "utf8"));
   policy.mail.port = 0; // any free port
   adjust(policy);
   writeFileSync(join(ROOM_HOME, "policy.json"), JSON.stringify(policy));
   writeFileSync(join(ROOM_HOME, "seats.json"), JSON.stringify({ providers }));
+  // set up by the plugin version under test: a room from another version is asked to apply again first
+  writeFileSync(join(ROOM_HOME, "setup.json"), JSON.stringify({ version: JSON.parse(readFileSync(join(PLUGIN_DIR, "package.json"), "utf8")).version }));
 }
 
 export const MAIL_POLICY = {

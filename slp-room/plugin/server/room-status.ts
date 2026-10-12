@@ -1,6 +1,6 @@
 import { existsSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { basename } from "node:path";
-import type { PaseoApi } from "@getpaseo/client";
+import type { PaseoApi } from "./paseo";
 import { liveAgents, type LiveAgent } from "./gc";
 import { hqDir } from "./hq";
 import { waitsOnSomeone, type MailEngine, type SeatRecord } from "./mail";

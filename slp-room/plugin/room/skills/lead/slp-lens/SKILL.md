@@ -27,8 +27,8 @@ Announce each phase in one line of your own report.
 
 | Need | Lenses | Models (the lens table in your role prompt) |
 |---|---|---|
-| second brain on a plan, a bug, what to do next | 1 | the oracle; its hard-question model when the question is hard |
-| an answer that matters; one model's blind spot would hurt | 2 | the pair: two different models, always |
+| second brain on a plan, a bug, what to do next | 1 | the tier the table gives for the question: its hard-question tier when the question is hard |
+| an answer that matters; one model's blind spot would hurt | 2 | two different models from the table, always |
 | a decision with several angles, a plan review, an incident, a verdict the Owner asked for | 3+, one angle each; default angles: *independent* (first principles, strongest answer, decision-critical assumptions) · *premise challenger* (tests the framing, builds one viable counterfactual, does not manufacture disagreement) · *specialist* only when a domain's rules decide it | the pair plus the pool, as the lens table says |
 
 Other angles when the question wants them: *only what the code proves* · *free to propose

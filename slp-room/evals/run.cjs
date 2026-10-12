@@ -55,8 +55,8 @@ function parseArgs(argv) {
 function setup() {
   rmSync(OUT, { recursive: true, force: true });
   mkdirSync(HOME, { recursive: true });
-  cpSync(args["room-from"] ? resolve(args["room-from"]) : join(ROOM, "room"), join(HOME, "room"), { recursive: true });
-  cpSync(join(ROOM, "paseo", "policy.json"), join(HOME, "policy.json"));
+  cpSync(args["room-from"] ? resolve(args["room-from"]) : join(ROOM, "plugin", "room"), join(HOME, "room"), { recursive: true });
+  cpSync(join(ROOM, "plugin", "paseo", "policy.json"), join(HOME, "policy.json"));
   writeFileSync(join(HOME, "seats.json"), JSON.stringify({ providers: ["claude-hq", "claude-supervisor", "claude-lead", "claude-peer", "claude-lens", "codex-peer", "codex-lens"] }));
   process.env.SLP_ROOM_HOME = HOME;
   require("../plugin/test/register.cjs");
@@ -65,7 +65,7 @@ function setup() {
   const { loadPolicy } = require("../plugin/server/policy");
   const { loadModels } = require("../plugin/server/models");
   const { ensureRuntime } = require("../plugin/server/runtimes");
-  plugin = { rolePrompt, specFromTitle, projectBlock, ensureRuntime, policy: loadPolicy(), models: loadModels(), rawPolicy: JSON.parse(readFileSync(join(ROOM, "paseo", "policy.json"), "utf8")) };
+  plugin = { rolePrompt, specFromTitle, projectBlock, ensureRuntime, policy: loadPolicy(), models: loadModels(), rawPolicy: JSON.parse(readFileSync(join(ROOM, "plugin", "paseo", "policy.json"), "utf8")) };
 }
 
 /** `codex-peer/gpt-6.1-sol` → { harness: "codex", model: "gpt-6.1-sol" }. */
@@ -80,7 +80,8 @@ function runsFor(c) {
   let runs;
   if (c.runs) runs = c.runs;
   else if (c.role === "peer") runs = (args.tiers ? String(args.tiers).split(",") : ["default", "cheap", "cross-family"]).map((tier) => models.peer.tiers[tier]).filter(Boolean).map((tier) => seat(tier.providers[0], tier.thinking));
-  else if (c.role === "lens") runs = models.lens.pair.map((provider) => seat(provider, models.lens.thinking));
+  // two lenses, two models: the tiers a pair is made of, or every tier of a table that names them otherwise
+  else if (c.role === "lens") runs = (["high", "extra"].every((tier) => models.lens.tiers[tier]) ? ["high", "extra"] : Object.keys(models.lens.tiers)).map((tier) => seat(models.lens.tiers[tier].providers[0], models.lens.tiers[tier].thinking));
   else runs = [seat(models.seats[c.role].provider, models.seats[c.role].thinking)];
   // --codex-model <model>: also run every role on Codex with that model, to measure roles models.json keeps on Claude
   if (args["codex-model"] && !runs.some((run) => run.harness === "codex")) runs.push({ harness: "codex", model: args["codex-model"], effort: runs[0]?.effort ?? "high", note: "not a room seat" });
@@ -366,7 +367,7 @@ const line = (r) => `${r.pass ? "PASS" : "FAIL"}  ${r.case}@${r.model}  ${r.fail
 
 function report(results) {
   const head = execFileSync("git", ["rev-parse", "--short", "HEAD"], { cwd: ROOM, encoding: "utf8" }).trim();
-  const dirty = execFileSync("git", ["status", "--short", "--", "room"], { cwd: ROOM, encoding: "utf8" }).trim() ? " (room files modified)" : "";
+  const dirty = execFileSync("git", ["status", "--short", "--", "plugin/room"], { cwd: ROOM, encoding: "utf8" }).trim() ? " (room files modified)" : "";
   const passed = results.filter((r) => r.pass).length;
   const cost = results.reduce((sum, r) => sum + (r.cost ?? 0), 0);
   const rows = results

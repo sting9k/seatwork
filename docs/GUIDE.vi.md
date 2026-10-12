@@ -38,8 +38,46 @@ Ba điều cần nhớ:
 
 ## 2. Cài đặt
 
-Cần có Paseo 0.11.2 trở lên, `jq`, `python3` kèm PyYAML, Claude Code và Codex
-(thêm Pi từ 0.99 trở lên, hoặc OpenCode, nếu bạn cho vai nào chạy trên đó).
+Cần có Paseo 0.11.2 trở lên, Claude Code và Codex (thêm Pi từ 0.99 trở lên,
+hoặc OpenCode, nếu bạn cho vai nào chạy trên đó).
+
+### Cài từ Paseo
+
+1. Mở Settings, Plugins. Dán dòng này vào ô "Plugin source" rồi bấm
+   **Install plugin**:
+
+   ```
+   git:sting9k/seatwork:slp-room/plugin
+   ```
+
+   Cài xong chưa có gì được tạo: chưa có thư mục, chưa có seat.
+
+2. Trong menu "…" của plugin, chọn **Seatwork**. Màn hình có một dòng cho
+   mỗi vai: HQ, Supervisor, Lead, Peer, Lens. Bấm một dòng để chọn agent
+   CLI, model (danh sách có ô tìm) và mức thinking, trong những thứ máy này
+   có. Peer và Lens mỗi vai là một, nhưng gán được nhiều model, mỗi model
+   mang một tên như `cheap`, `high`, `extra` kèm một dòng nói nó dùng cho
+   việc gì; thêm bớt ngay tại đó. Lead đọc các tên này rồi tự chọn. Bên dưới
+   các vai là chế độ của watcher (mục 11) và âm báo.
+
+3. Bấm **Init**. Nó tạo thư mục của room (`~/.config/slp-room`), các "seat"
+   trong Paseo (mỗi seat là một vai chạy trên Claude, Codex, Pi hoặc
+   OpenCode), bốn profile và project `hq-seatwork`. Không cần khởi động lại
+   gì.
+
+Muốn đổi lựa chọn về sau: đổi trên chính màn hình đó rồi bấm **Apply**.
+Chọn model cho một vai là seat của vai đó được dựng.
+
+Nút **Remove the room** trên màn hình đó gỡ các seat và profile khỏi Paseo,
+rồi chuyển thư mục của room sang bên cạnh
+(`~/.config/slp-room.removed-<thời điểm>`), giữ nguyên thư và log. Nó chờ tới
+khi mọi agent của room đã được lưu trữ. Chỉ gỡ plugin thì không hoàn tác được
+Init.
+
+### Cài từ terminal
+
+Dùng cho máy không có app, hoặc khi bạn muốn sửa file của chính room. Cần
+`node` và `npm`:
 
 ```bash
 git clone https://github.com/sting9k/seatwork.git
@@ -49,24 +87,13 @@ git clone https://github.com/sting9k/seatwork.git
 cd seatwork/slp-room && ./install.sh
 ```
 
-Lệnh cài thêm vào Paseo các "seat" (mỗi seat là một vai chạy trên Claude,
-Codex, Pi hoặc OpenCode), bốn profile, plugin `slp-seat` và project `hq-seatwork`. Chạy
-lại bao nhiêu lần cũng được.
-
-Lần cài đầu, lệnh hỏi hai câu. Câu thứ nhất: HQ chạy trên seat mặc định của
-room, hay trên agent CLI và model bạn tự chọn. Chọn mặc định thì chỉ có các
-seat trong `seats.yml` được cài. Muốn đổi về sau:
-
-```bash
-./install.sh --hq ask
-```
-
-Trả lời sẵn, không cần hỏi: `--hq <harness>/<model>` (thêm `--hq-thinking <mức>`
-nếu cần) hoặc `--hq default`.
-
-Câu thứ hai: có cài watcher không (mục 11). Trả lời có thì watcher được cài
-ở chế độ `shadow`; không trả lời thì không cài. Muốn đổi về sau:
-`./install.sh --watcher ask`, hoặc `--watcher off`, `shadow`, `on`.
+Lệnh làm đúng việc của Init, chạy lại bao nhiêu lần cũng được. Lần chạy đầu
+nó hỏi hai câu: HQ chạy trên seat mặc định của room hay trên agent CLI và
+model bạn tự chọn, và có cài watcher không (trả lời có thì cài ở chế độ
+`shadow`). Trả lời sẵn bằng cờ: `--hq default`, `--hq <harness>/<model>`
+(thêm `--hq-thinking <mức>` nếu cần), `--watcher off`, `shadow` hoặc `on`.
+Room cài theo cách này vẫn hiện trên màn hình cài đặt với đúng các lựa chọn
+nó đang chạy.
 
 ### Đăng nhập Claude
 
@@ -154,8 +181,8 @@ deploy. Agent không bao giờ quyết thay bạn mấy việc này.
 
 Khi app Paseo đang mở, nó phát một tiếng ngắn mỗi lần HQ, một Supervisor
 hoặc một seat do chính bạn mở kết thúc lượt bằng `DECISION_NEEDED`,
-`BLOCKED`, một dòng `WAITING ON YOU:`, hoặc bị lỗi. Muốn tắt: đặt
-`owner.chime` thành `false` trong `paseo/policy.json` rồi chạy `./install.sh`.
+`BLOCKED`, một dòng `WAITING ON YOU:`, hoặc bị lỗi. Muốn tắt: gạt công tắc
+Chime trên màn hình cài đặt.
 
 Dòng **Room** ở chân sidebar của Paseo cho biết còn bao nhiêu lượt như vậy
 đang chờ, và mở một màn hình cho cả room: các lượt đó ở trên cùng, rồi mỗi
@@ -235,7 +262,8 @@ Mỗi project có thư mục `.slp/`:
 Lần đầu HQ ghi giúp bạn. Về sau bạn sửa tay mục `models` trong
 `.slp/room.json`. Chỉ ghi phần khác với bảng chung. Vai nào cũng chạy được
 trên harness nào (`<harness>-<vai>/<model>`): seat nào room chưa có thì HQ
-dựng luôn lúc ghi bảng, còn sửa tay thì chạy `./install.sh --seat <harness>-<vai>`:
+dựng luôn lúc ghi bảng. Sửa tay mà thêm seat mới thì nhờ HQ ghi lại bảng
+(nếu có bản clone: `./install.sh --seat <harness>-<vai>`):
 
 ```json
 {
@@ -261,18 +289,22 @@ Ví dụ này cho Lead và Peer bậc `default` suy nghĩ mức medium, và bỏ
 
 ## 8. Cấu hình chung
 
-Sửa trong repo rồi chạy lại lệnh cài.
-
-| File | Quyết định | Chạy lại |
+| Ở đâu | Quyết định | Có hiệu lực khi |
 |---|---|---|
-| `slp-room/paseo/seats.yml` | Các seat mà máy nào cài cũng có; vai chạy trên harness nào là `models.json` | `./install.sh` |
-| `~/.config/slp-room/setup.json` | Lựa chọn riêng của máy này: harness của HQ, seat dựng thêm cho project, chế độ của watcher | `./install.sh` |
-| `slp-room/room/models.json` | Mỗi vai dùng model nào | `./install.sh --no-plugin` |
-| `slp-room/paseo/policy.json` | Ai gửi thư cho ai, ai tạo ai, thời gian chờ, watcher | `./install.sh` |
-| `slp-room/room/roles/`, `skills/` | Prompt và quy trình của từng vai | `./install.sh --no-plugin` |
+| Màn hình cài đặt (Settings, Plugins, Seatwork) | Agent CLI, model và mức thinking của từng vai; chế độ của watcher; âm báo | Bấm **Apply** |
+| `~/.config/slp-room/setup.json` | Những gì màn hình đã áp dụng, các seat HQ dựng thêm cho project, và `mailPort` khi cổng trong policy đã có chương trình khác dùng | Bấm **Apply**, hoặc chạy `./install.sh` |
+| `slp-room/plugin/paseo/seats.json` | Các seat mà máy nào cài cũng có | xem bên dưới |
+| `slp-room/plugin/room/models.json` | Bảng model của room: điểm bắt đầu của màn hình | xem bên dưới |
+| `slp-room/plugin/paseo/policy.json` | Ai gửi thư cho ai, ai tạo ai, thời gian chờ, các luật của watcher | xem bên dưới |
+| `slp-room/plugin/room/roles/`, `skills/` | Prompt và quy trình của từng vai | xem bên dưới |
 
-Các bậc model của Peer. Bảng đi kèm có ba bậc; muốn thêm bậc `expensive`
-thì thêm một mục nữa dưới `peer.tiers`:
+Bốn dòng cuối là file của plugin. Có bản clone thì sửa rồi chạy
+`./install.sh`. Plugin cài từ Paseo nhận bản mới bằng
+`paseo plugin update slp-seat`; sau đó bấm **Apply**.
+
+Peer là một vai với nhiều model, mỗi model mang một tên trong `peer.tiers`.
+Bảng đi kèm có ba; màn hình cài đặt thêm được tên mới (ví dụ `expensive`)
+hoặc bỏ bớt. Lead chọn theo việc:
 
 | Bậc | Dùng cho |
 |---|---|
@@ -280,8 +312,9 @@ thì thêm một mục nữa dưới `peer.tiers`:
 | `default` | Viết code, debug, research |
 | `cross-family` | Review code do họ model khác viết |
 
-Bảng Lens có `oracle` (một lens), `hard` (một lens cho câu hỏi khó), `pair`
-(hai lens, hai model khác nhau) và `pool` (lens thứ ba).
+Lens cũng là một vai, các model liệt kê y như vậy trong `lens.tiers` (bảng
+đi kèm có `default`, `high` cho câu hỏi khó, `extra` thuộc họ model khác).
+Lead chọn theo câu hỏi; khi mở hai lens thì luôn là hai model khác nhau.
 
 ## 9. File nằm ở đâu
 
@@ -322,10 +355,10 @@ trên nhận một thư từ `room` có tiêu đề bắt đầu bằng `OBSERVA
 thì báo Lead, của Lead thì báo Supervisor). Watcher không dừng hay sửa seat
 nào, và không giữ trí nhớ giữa các lượt.
 
-Lệnh cài hỏi một lần có cài watcher không, và giữ câu trả lời trong
-`~/.config/slp-room/setup.json`:
+Chế độ của nó là mục Watcher trên màn hình cài đặt (cài từ terminal thì lệnh
+cài hỏi một lần), được giữ trong `~/.config/slp-room/setup.json`:
 
-| Chế độ (`./install.sh --watcher <chế độ>`) | Điều xảy ra |
+| Chế độ (mục Watcher trên màn hình, hoặc `./install.sh --watcher <chế độ>`) | Điều xảy ra |
 |---|---|
 | `off` (khi bạn chưa trả lời có) | Không đọc gì |
 | `shadow` (khi trả lời có lúc cài) | Đọc lượt và ghi nhật ký; không gửi thư cho ai |
@@ -360,9 +393,10 @@ ghi điểm vào nhật ký, không gửi thư cho tới khi bạn đổi sang `
 | `decided-beyond-brief` | câu trả lời báo một quyết định của riêng seat |
 | `reopen-condition` | brief có dòng `Reopen when` và seat không xin mở lại |
 
-Model phân loại là Jev, gọi qua OpenRouter. Đặt khoá ở
-`~/.config/slp-room/watch/key` (quyền 600) hoặc trong biến môi trường
-`SLP_WATCH_KEY`. Không có khoá thì mười luật dựa vào lệnh vẫn chạy. Thứ được
+Model phân loại là Jev, gọi qua OpenRouter. Dán khoá vào mục Watcher key
+trên màn hình cài đặt; khoá được lưu ở `~/.config/slp-room/watch/key`
+(quyền 600) và không hiện lại nữa. Biến môi trường `SLP_WATCH_KEY` cũng dùng
+được. Không có khoá thì mười luật dựa vào lệnh vẫn chạy. Thứ được
 gửi đi: các dòng brief mà câu hỏi cần, tên các file đã đổi, và câu trả lời
 cuối của seat sau khi đã che bí mật. Câu trả lời dài tới 12.000 ký tự được
 gửi nguyên; dài hơn thì chỉ gửi các dòng câu hỏi cần đọc, và câu hỏi nào
@@ -374,7 +408,8 @@ Paseo, dưới tên "Room watcher".
 Muốn bật: để chạy `shadow` một thời gian, nhờ HQ xem số liệu watcher (HQ gọi
 `slp_watch_stats`: chi phí, số lượt đã theo dõi và số lần đọc, và với từng
 luật là nó lên tiếng bao nhiêu lần, trong đó bao nhiêu lượt bị seat phía
-trên trả lại), rồi chạy `./install.sh --watcher on`. Với
+trên trả lại), rồi chọn On ở mục Watcher trên màn hình cài đặt và bấm Apply
+(hoặc chạy `./install.sh --watcher on`). Với
 `unverified-completion`, một lượt bị trả lại chỉ được tính khi seat phía trên
 tự chạy test và thấy hỏng: bài còn bị trả lại vì nhiều lý do khác.
 
@@ -393,9 +428,11 @@ npm run watch:replay -- --ask ../evals/results/<label>
 | `holds only hq seats` | Vai này phải mở trong project của nó |
 | `is not a registered SLP project` | Nhờ HQ setup project trước |
 | `lists for … only …` | Dùng model có trong bảng, hoặc sửa `.slp/room.json` |
-| `which the room has not enabled` | Sửa `.slp/room.json`, hoặc chạy `./install.sh --seat <seat>` để dựng seat đó |
+| `which the room has not enabled` | Sửa `.slp/room.json`, hoặc nhờ HQ ghi lại bảng của project: HQ sẽ dựng seat đó |
+| `no room is set up on this daemon` | Mở Settings, Plugins, Seatwork rồi bấm Init |
+| `room seat is still open … archive them first` | Lưu trữ các agent của room, rồi gỡ room |
 | `its runtime could not be built` | Sửa thứ thông báo nêu ra (thường là `~/.codex/config.toml`), rồi tạo lại agent |
-| `is too old: the room needs 0.11.2 or later` | Cập nhật Paseo, chạy `paseo daemon restart`, rồi chạy lại `./install.sh` |
+| `is too old: the room needs 0.11.2 or later` | Cập nhật Paseo, chạy `paseo daemon restart`, rồi cài lại |
 | Agent báo chưa đăng nhập | Chạy `claude auth login` |
 | Agent không biết quy trình mới | Mở agent mới |
 

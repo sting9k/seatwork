@@ -1,7 +1,7 @@
 import { appendFileSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { maySpawn } from "./seats";
 import { join } from "node:path";
-import type { PaseoApi } from "@getpaseo/client";
+import type { PaseoApi } from "./paseo";
 import { paseoCli } from "./cli";
 import { REGISTRY_LOG, ROOM_HOME } from "./paths";
 import { parseSeat, type Role } from "./seats";

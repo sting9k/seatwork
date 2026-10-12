@@ -1,21 +1,28 @@
-import { appendFileSync, chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { appendFileSync, chmodSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { randomBytes } from "node:crypto";
 import { join } from "node:path";
-import type { PaseoApi } from "@getpaseo/client";
 import type { PluginBeforeRequests, PluginServerContext } from "@getpaseo/plugin/server";
+import type { PaseoApi } from "./server/paseo";
 import { z } from "zod";
-import { Collector } from "./server/gc";
+import { paseoCli } from "./server/cli";
+import { Collector, liveAgents } from "./server/gc";
 import { MailEngine, type Mail, type Priority, type Needs } from "./server/mail";
-import { checkHqPlacement, ensureHqProject } from "./server/hq";
+import { checkHqPlacement, closeHqProject, ensureHqProject, hqDir } from "./server/hq";
 import { McpHttpServer } from "./server/mcp-http";
-import { REGISTRY_LOG, ROOM_HOME, WATCH_DIR } from "./server/paths";
+import { PASEO_HOME, REGISTRY_LOG, ROOM_HOME, WATCH_DIR } from "./server/paths";
 import { describeProjects, registerProject } from "./server/onboard";
 import { OwedList, roomStatus as readRoomStatus } from "./server/room-status";
 import { modelAllowed, projectModels, type Models } from "./server/models";
-import { loadPolicy } from "./server/policy";
+import { loadPolicy, type RuntimePolicy } from "./server/policy";
 import { findProject, findRoomMarker, loadRegistry, projectBlock } from "./server/registry";
 import { claudeRoleDir, describeIsolation, ensureRuntime, envFor, sharedClaudeFiles } from "./server/runtimes";
-import { enabledSeats, maySpawn, parseSeat, rolePrompt, specFromTitle, type Role } from "./server/seats";
+import { enabledSeats, HARNESSES, maySpawn, parseSeat, rolePrompt, specFromTitle, type Role } from "./server/seats";
+import { catalogFrom, harnessStates } from "./server/setup/catalog";
+import { piProblem } from "./server/setup/checks";
+import { addSeats, setUpRoom, sourceOf } from "./server/setup/init";
+import { applyWithSdk, readSwitches, removeWithSdk, turnBundledSkillsOff } from "./server/setup/paseo-config";
+import { roomModels, type Setup } from "./server/setup/plan";
+import { isSetUp, moveRoomHomeAside, readSetup } from "./server/setup/room-home";
 import { asksOwner, CLOSES_WORK, signalOf, subjectSignal } from "./server/signals";
 import { roomStats } from "./server/stats";
 import { Budget } from "./server/watch/budget";
@@ -25,27 +32,210 @@ import { JevEngine } from "./server/watch/jev";
 import { REVISION } from "./server/watch/questions";
 import { ScanLog } from "./server/watch/scanlog";
 import { usageReport } from "./server/watch/usage";
+import { merge } from "./shared/model-choices";
 import { roomStatus, roomWaiting } from "./shared/room";
+import { roomSettings, setupInit, setupRemove, setupState, setupWatcherKey } from "./shared/setup";
 import { Watcher, type SeatView, type TimelineView } from "./server/watch/watcher";
 
 type CreateRequest = PluginBeforeRequests["agent.create"];
 
-const VERSION = "0.13.0";
+const VERSION = "0.14.0";
 const MAIL_DIR = join(ROOM_HOME, "mail");
 const MCP_TOKEN_FILE = join(MAIL_DIR, "token");
 const NONCES_FILE = join(MAIL_DIR, "nonces.json");
 
 /**
- * slp-seat: the room's hooks into Paseo. A seat gets its prompt, project block and mail server at
+ * slp-seat. A daemon that only downloaded the plugin gets the setup screen and nothing else: no
+ * folder, no seat, no port. The room starts once it is set up, from that screen or by install.sh.
+ */
+export default function contribute(server: PluginServerContext) {
+  server.registerSettings(roomSettings);
+  let room: Room | null = isSetUp(ROOM_HOME) ? startRoom(server) : null;
+  if (!room) console.log(`slp-seat ${VERSION}: no room is set up on this daemon; its setup screen is in Settings, Plugins`);
+  /** Setting up, removing and re-keying the room happen one at a time. */
+  let busy: Promise<unknown> = Promise.resolve();
+  const oneAtATime = <T>(work: () => Promise<T>): Promise<T> => {
+    const next = busy.then(work, work);
+    busy = next.catch(() => undefined);
+    return next;
+  };
+
+  // a seat created while no room runs would start with no role, no isolation and no mail
+  server.before("agent.create", ({ request }) => {
+    if (!room && parseSeat(request.config.provider)) {
+      throw new Error(`slp-seat: ${request.config.provider} is a room seat and no room is set up on this daemon; set it up on the plugin's screen (Settings, Plugins, Seatwork)`);
+    }
+  });
+
+  // what the decision model cost this month, for Paseo's Usage screen; a watcher that is off asks nothing
+  const watching = room?.policy.watcher;
+  if (watching && watching.mode !== "off") {
+    server.registerUsageSource({
+      id: "slp-watcher",
+      label: "Room watcher",
+      input: z.object({}),
+      discover: async (scope) => (scope.kind === "global" && room ? [{ key: "decision-model", label: watching.engine.model, input: {} }] : []),
+      fetch: async () => (room ? room.usage() : { status: "error", error: "no room is set up on this daemon" }),
+    });
+  }
+
+  server.handle(roomWaiting, async (_input, { paseo }) => (room ? room.waiting(paseo) : { chime: false, waiting: [] }));
+  server.handle(roomStatus, async (_input, { paseo }) => (room ? room.status(paseo) : { waiting: [], projects: [] }));
+
+  server.handle(setupState, async (_input, { paseo }) => {
+    const pluginDir = await ownFolder(paseo);
+    const setup = isSetUp(ROOM_HOME) ? readSetup(ROOM_HOME) : null;
+    const seats = setup ? enabledSeats().map((seat) => seat.provider) : [];
+    const harnesses = (await harnessStates(paseo, HARNESSES)).map((h) => ({
+      ...h,
+      models: Object.entries(h.models).map(([id, m]) => ({ id, label: m.label, thinking: m.thinking, defaultThinking: m.defaultThinking ?? "" })),
+    }));
+    return {
+      version: VERSION,
+      home: ROOM_HOME,
+      applied: setup && {
+        models: appliedModels(setup),
+        watcher: setup.watcher ?? "off",
+        chime: setup.chime ?? room?.policy.owner.chime ?? true,
+        version: setup.version ?? "",
+        seats,
+      },
+      table: roomModels(pluginDir) as never,
+      harnesses,
+      watcherKey: room !== null && watchKey(room.policy.watcher.engine) !== undefined,
+      checks: await setupChecks(paseo, pluginDir, setup, seats),
+    };
+  });
+
+  server.handle(setupInit, (choices, { paseo }) =>
+    oneAtATime(async () => {
+      const pluginDir = await ownFolder(paseo);
+      const before = readSetup(ROOM_HOME);
+      // what the screen does not show stays: the seats HQ added for a project's table, this machine's mail port
+      const setup: Setup = {
+        ...(before.seats?.length ? { seats: before.seats } : {}),
+        ...(before.mailPort !== undefined ? { mailPort: before.mailPort } : {}),
+        models: choices.models,
+        watcher: choices.watcher,
+        chime: choices.chime,
+      };
+      const catalog = catalogFrom(await harnessStates(paseo, HARNESSES));
+      const plan = await setUpRoom({ pluginDir, roomHome: ROOM_HOME, catalog, version: VERSION }, setup);
+      const { removed } = await applyWithSdk(paseo, plan, { daemonPolicy: true });
+      const notes = [...plan.warnings];
+      // the one switch of the room's that the SDK has no call for: written into config.json, then reloaded
+      if ((plan.policy.daemon?.bundledSkills ?? "none") === "none" && turnBundledSkillsOff(PASEO_HOME, pluginDir)) {
+        await paseoCli(["daemon", "reload"]).then(
+          () => notes.push("Paseo's bundled skills are now kept out of agents (config.json; the old file is beside it)."),
+          () => notes.push("Paseo's bundled skills are switched off in config.json; `paseo daemon reload` makes it take effect."),
+        );
+      }
+      const firstWatch = !watching || watching.mode === "off";
+      if (firstWatch && choices.watcher !== "off") notes.push("The watcher's spending shows in Paseo's Usage once the plugin is reloaded.");
+      await room?.stop();
+      room = startRoom(server);
+      await ensureHqProject(paseo, (message) => console.log(`slp-seat: ${message}`));
+      return { seats: Object.keys(plan.providers), removed, notes };
+    }),
+  );
+
+  server.handle(setupRemove, (_input, { paseo }) =>
+    oneAtATime(async () => {
+      if (!isSetUp(ROOM_HOME)) throw new Error("no room is set up on this daemon");
+      const open = [...(await liveAgents(paseo)).values()].filter((agent) => parseSeat(agent.provider));
+      if (open.length) throw new Error(`${open.length} room seat${open.length === 1 ? " is" : "s are"} still open (${open.slice(0, 3).map((agent) => agent.title ?? agent.id).join(", ")}${open.length > 3 ? ", …" : ""}); archive them first`);
+      await room?.stop();
+      room = null;
+      const { removed } = await removeWithSdk(paseo);
+      await closeHqProject(paseo);
+      return { removed, movedTo: moveRoomHomeAside(ROOM_HOME) };
+    }),
+  );
+
+  server.handle(setupWatcherKey, ({ key }) =>
+    oneAtATime(async () => {
+      if (!room) throw new Error("set the room up first: the key is kept in its home");
+      const file = join(ROOM_HOME, room.policy.watcher.engine.keyFile);
+      if (key.trim()) {
+        mkdirSync(WATCH_DIR, { recursive: true, mode: 0o700 });
+        writeFileSync(file, `${key.trim()}\n`, { mode: 0o600 });
+        chmodSync(file, 0o600);
+      } else rmSync(file, { force: true });
+      // the watcher reads its key when it starts
+      await room.stop();
+      room = startRoom(server);
+      return { set: key.trim().length > 0 };
+    }),
+  );
+
+  return async () => {
+    await busy;
+    await room?.stop();
+  };
+}
+
+/** The plugin's own folder, where the room files ship. Paseo knows where it put the plugin; the plugin's code does not. */
+async function ownFolder(paseo: PaseoApi): Promise<string> {
+  const holdsRoom = (dir: unknown): dir is string => typeof dir === "string" && existsSync(join(dir, "room", "models.json")) && existsSync(join(dir, "paseo", "policy.json"));
+  const { config } = await paseo.config.get();
+  const listed = Object.values((config.plugins ?? {}) as Record<string, { path?: unknown }>).map((plugin) => plugin.path);
+  const found = listed.find(holdsRoom) ?? sourceOf(ROOM_HOME);
+  if (!found) throw new Error("slp-seat: Paseo's plugin list does not say where this plugin's folder is");
+  return found;
+}
+
+/** The model choices a room was set up with, in the screen's shape: an HQ seat chosen by install.sh is one of them. */
+function appliedModels(setup: Setup): Record<string, never> {
+  const hq = typeof setup.hq === "object" ? { seats: { hq: { thinking: "default", ...setup.hq } } } : {};
+  return merge(hq, setup.models ?? {}) as Record<string, never>;
+}
+
+/** What the Owner should know before trusting the room on this machine; `ok: null` is "cannot tell". */
+async function setupChecks(paseo: PaseoApi, pluginDir: string, setup: Setup | null, seats: string[]): Promise<{ id: string; label: string; ok: boolean | null; detail: string }[]> {
+  const { config } = await paseo.config.get();
+  const switches = readSwitches(PASEO_HOME, pluginDir);
+  const tools = (config.mcp as { enabled?: boolean } | undefined)?.enabled ?? switches.paseoTools;
+  const checks = [
+    { id: "paseo-tools", label: "Paseo's tools for agents", ok: tools ?? null, detail: tools === false ? "Off: seats cannot create or reach each other. Turn it on in Paseo's settings." : "Seats create and reach each other through them." },
+  ];
+  if (setup && setup.version !== VERSION) {
+    checks.push({ id: "version", label: "Room files", ok: false, detail: `Set up by ${setup.version ? `version ${setup.version}` : "an earlier version"}; Apply brings them to ${VERSION}.` });
+  }
+  if (seats.some((seat) => seat.startsWith("pi-"))) {
+    const problem = await piProblem();
+    checks.push({ id: "pi", label: "Pi", ok: !problem, detail: problem ?? "Recent enough to give a Pi seat the room's tools." });
+  }
+  for (const [id, label, on] of [["dictation", "Dictation", switches.dictation], ["voice", "Voice mode", switches.voiceMode]] as const) {
+    if (on) checks.push({ id, label, ok: false, detail: "On for every agent on this host; the room keeps it off. Turn it off in Paseo's settings." });
+  }
+  return checks;
+}
+
+/** A room that is set up on this daemon and running in this plugin process. */
+interface Room {
+  policy: RuntimePolicy;
+  /** The turns that left something for the Owner; the app asks while it is open. */
+  waiting(paseo: PaseoApi): Promise<{ chime: boolean; waiting: Awaited<ReturnType<OwedList["current"]>> }>;
+  status(paseo: PaseoApi): ReturnType<typeof readRoomStatus>;
+  usage(): ReturnType<typeof usageReport>;
+  stop(): Promise<void>;
+}
+
+/**
+ * The room's hooks into Paseo. A seat gets its prompt, project block and mail server at
  * agent.create and its own environment each time its session opens; turn ends and permission
  * requests become mail; archives and GC clean up after it.
  */
-export default function contribute(server: PluginServerContext) {
+function startRoom(server: Pick<PluginServerContext, "on" | "before">): Room {
   // the room home holds mail bodies and copies of the user's harness config: its owner only
-  mkdirSync(ROOM_HOME, { recursive: true });
   chmodSync(ROOM_HOME, 0o700);
   mkdirSync(MAIL_DIR, { recursive: true });
+  mkdirSync(hqDir(), { recursive: true });
   const policy = loadPolicy();
+  /** The plugin version the room's files were written by: prompts and code are one release. */
+  const filesFrom = readSetup(ROOM_HOME).version;
+  /** The hooks this room registered, taken back when it stops. */
+  const off: (() => void)[] = [];
   try {
     const seats = enabledSeats();
     for (const seat of seats) ensureRuntime(seat, policy);
@@ -57,14 +247,29 @@ export default function contribute(server: PluginServerContext) {
 
   // ---- mail engine + MCP server (one per daemon, fixed port so URLs survive reloads)
   let engine: MailEngine | null = null;
+  /** The Paseo client of the last hook or app call; the room is handed one only there. */
+  let client: PaseoApi | null = null;
   const token = loadOrCreateToken();
   const mcp = new McpHttpServer(token, "slp-seat", VERSION);
   let port = policy.mail.port;
   const nonces = loadNonces();
   const log = (m: string) => console.log(`slp-seat: ${m}`);
-  const getEngine = (paseo: Parameters<Parameters<typeof server.on>[1]>[1]["paseo"]) => {
-    if (!engine) engine = new MailEngine(paseo, policy.mail, policy.room, log);
+  const getEngine = (paseo: PaseoApi) => {
+    client = paseo;
+    if (!engine) {
+      engine = new MailEngine(paseo, policy.mail, policy.room, log);
+      // the first Paseo client the room is handed: the HQ project gets its place in Paseo
+      void ensureHqProject(paseo, log).catch((error) => console.error("slp-seat: the hq-seatwork project could not be opened", error));
+    }
     return engine;
+  };
+  /** Sets up seats the room does not have yet, for a project whose own model table names them. */
+  const setUpSeats = async (providers: string[]) => {
+    const paseo = client;
+    const pluginDir = sourceOf(ROOM_HOME);
+    if (!paseo || !pluginDir) throw new Error("slp-seat: the room cannot set a seat up right now; apply the room's setup screen once, then repeat");
+    const plan = await addSeats({ pluginDir, roomHome: ROOM_HOME, catalog: catalogFrom(await harnessStates(paseo, HARNESSES)), version: VERSION }, providers);
+    await applyWithSdk(paseo, plan, { daemonPolicy: false });
   };
   /** seat → the signals it mailed its parent in the turn it is in; read when that turn ends. */
   const mailedUp = new Map<string, Set<string>>();
@@ -78,16 +283,6 @@ export default function contribute(server: PluginServerContext) {
     return gc;
   };
   const budget = new Budget(join(WATCH_DIR, "usage-{month}.json"), policy.watcher.budget);
-  // what the decision model cost this month, for Paseo's Usage screen; a watcher that is off asks nothing
-  if (policy.watcher.mode !== "off") {
-    server.registerUsageSource({
-      id: "slp-watcher",
-      label: "Room watcher",
-      input: z.object({}),
-      discover: async (scope) => (scope.kind === "global" ? [{ key: "decision-model", label: policy.watcher.engine.model, input: {} }] : []),
-      fetch: async () => usageReport(budget.summary()),
-    });
-  }
   const scans = new ScanLog(join(WATCH_DIR, "scans.jsonl"));
   let watcher: Watcher | null = null;
   const getWatcher = (paseo: Parameters<typeof getEngine>[0]) => {
@@ -260,7 +455,7 @@ export default function contribute(server: PluginServerContext) {
     },
     async (args, context) => {
       registryOwner(context.nonce, "slp_register_project");
-      return registerProject({ path: String(args.path ?? ""), name: args.name ? String(args.name) : undefined, mission: args.mission ? String(args.mission) : undefined, models: args.models ?? undefined });
+      return registerProject({ path: String(args.path ?? ""), name: args.name ? String(args.name) : undefined, mission: args.mission ? String(args.mission) : undefined, models: args.models ?? undefined }, setUpSeats);
     },
   );
 
@@ -342,14 +537,14 @@ export default function contribute(server: PluginServerContext) {
     });
 
   // ---- hooks
-  server.before("agent.create", async ({ request }) => {
+  off.push(server.before("agent.create", async ({ request }) => {
     await starting;
     return applySeat(request);
-  });
+  }));
 
   // agent.create hands out the nonce (in the MCP URL and in env.SLP_NONCE); session_open
   // is the first hook that knows the agent id, so the link is made here, never guessed.
-  server.before("agent.session_open", ({ request }) => {
+  off.push(server.before("agent.session_open", ({ request }) => {
     const nonce = request.env?.SLP_NONCE;
     if (nonce && request.reason === "create" && nonces[nonce] !== request.agentId) {
       nonces[nonce] = request.agentId;
@@ -360,9 +555,9 @@ export default function contribute(server: PluginServerContext) {
     // Paseo saves no env with an agent: a seat reopened after a restart would start on the user's own home
     ensureRuntime(seat);
     return { ...request, env: { ...request.env, ...envFor(seat, policy) } };
-  });
+  }));
 
-  server.on("agent.created", async (event, { paseo }) => {
+  off.push(server.on("agent.created", async (event, { paseo }) => {
     const seat = parseSeat(event.agent.provider);
     // spawn rules: a seat may only create the roles policy.room.spawn allows, never a non-room provider
     const parentId = event.agent.parentAgentId;
@@ -411,42 +606,32 @@ export default function contribute(server: PluginServerContext) {
     } catch (error) {
       console.error("slp-seat: cannot append registry log", error);
     }
-  });
+  }));
 
   // Any turn start wakes the engine and the collector, so both work right after a
   // plugin reload (the API hands us the Paseo client only inside hook contexts).
-  // the app asks this while it is open. After a daemon start it is the first thing to hand the room a Paseo client:
-  // mail held on disk moves without waiting for an agent to run
-  server.handle(roomWaiting, async (_input, { paseo }) => {
-    if (!engine) void getEngine(paseo).sweep();
-    getGc(paseo);
-    return { chime: policy.owner.chime, waiting: await owed.current(paseo) };
-  });
-
-  server.handle(roomStatus, (_input, { paseo }) => readRoomStatus(paseo, getEngine(paseo), owed));
-
-  server.on("agent.turn_started", (event, { paseo }) => {
+  off.push(server.on("agent.turn_started", (event, { paseo }) => {
     owed.clear(event.agent.id);
     getGc(paseo);
     const view = viewOf(paseo, event.agent);
     if (view) getWatcher(paseo).turnStarted(view, event.turnId);
-  });
+  }));
 
-  server.on("agent.archived", async (event, { paseo }) => {
+  off.push(server.on("agent.archived", async (event, { paseo }) => {
     owed.clear(event.agent.id);
     watcher?.forget(event.agent.id);
     await getGc(paseo).onArchived(event.agent.id);
-  });
+  }));
 
   // a runtime that closes (daemon stopping, seat deleted) takes its turn with it, and Paseo sends that turn no end:
   // what the room kept for the turn goes; held mail stays, and the sweep posts a report the seat had mailed
-  server.on("agent.closed", (event) => {
+  off.push(server.on("agent.closed", (event) => {
     watcher?.cut(event.agent.id);
     mailedUp.delete(event.agent.id);
     engine?.takeWake(event.agent.id);
-  });
+  }));
 
-  server.on("agent.turn_ended", async (event, { paseo }) => {
+  off.push(server.on("agent.turn_ended", async (event, { paseo }) => {
     const eng = getEngine(paseo);
     const id = event.agent.id;
     const seat = parseSeat(event.agent.provider);
@@ -526,9 +711,9 @@ export default function contribute(server: PluginServerContext) {
     // the report the seat mailed before its turn ended goes out now, however the turn ended
     if (kept) await eng.post({ ...kept, to: reportsTo });
     if (report) await eng.post(report);
-  });
+  }));
 
-  server.on("agent.permission_requested", async (event, { paseo }) => {
+  off.push(server.on("agent.permission_requested", async (event, { paseo }) => {
     const eng = getEngine(paseo);
     const seat = parseSeat(event.agent.provider);
     const parentId = eng.parentOf(event.agent.id) ?? event.agent.parentAgentId;
@@ -542,16 +727,7 @@ export default function contribute(server: PluginServerContext) {
       needs: "decision",
       whyNow: "the seat is stopped until someone answers with respond_to_permission",
     });
-  });
-
-  // the default project: retried because the daemon may not answer the CLI while it loads plugins
-  const hqRetry = (left: number) => {
-    ensureHqProject(log).catch((error) => {
-      if (left > 0) setTimeout(() => hqRetry(left - 1), 15_000).unref();
-      else console.error("slp-seat: the hq-seatwork project could not be created", error);
-    });
-  };
-  hqRetry(4);
+  }));
 
   // safety net: anything still held gets another delivery attempt every minute
   const sweep = setInterval(() => {
@@ -566,13 +742,26 @@ export default function contribute(server: PluginServerContext) {
     void watcher?.tick();
   }, Math.max(5, policy.watcher.pollSeconds) * 1000);
 
-  return async () => {
-    clearInterval(sweep);
-    clearInterval(collect);
-    clearInterval(watch);
-    // a mail server still binding would stay open behind a close that came first
-    await starting;
-    await mcp.close();
+  return {
+    policy,
+    // After a daemon start the app's question is the first thing to hand the room a Paseo client:
+    // mail held on disk moves without waiting for an agent to run
+    async waiting(paseo) {
+      if (!engine) void getEngine(paseo).sweep();
+      getGc(paseo);
+      return { chime: policy.owner.chime, waiting: await owed.current(paseo) };
+    },
+    status: (paseo) => readRoomStatus(paseo, getEngine(paseo), owed),
+    usage: () => usageReport(budget.summary()),
+    async stop() {
+      for (const remove of off) remove();
+      clearInterval(sweep);
+      clearInterval(collect);
+      clearInterval(watch);
+      // a mail server still binding would stay open behind a close that came first
+      await starting;
+      await mcp.close();
+    },
   };
 
   /* ---------- helpers bound to this plugin instance ---------- */
@@ -581,7 +770,11 @@ export default function contribute(server: PluginServerContext) {
     const seat = parseSeat(request.config.provider);
     if (!seat) return request;
     if (!enabledSeats().some((s) => s.provider === seat.provider)) {
-      throw new Error(`slp-seat: ${seat.provider} is not a seat the room has set up (\`./install.sh --seat ${seat.provider}\` in slp-room sets it up)`);
+      throw new Error(`slp-seat: ${seat.provider} is not a seat the room has set up (the room's setup screen gives a role its seats; HQ sets one up when a project's model table names it)`);
+    }
+
+    if (filesFrom !== VERSION) {
+      throw new Error(`slp-seat: ${seat.provider} refused: the room's files were set up by ${filesFrom ? `version ${filesFrom}` : "an earlier version"} of the plugin and this is ${VERSION}. Press Apply on its setup screen (Settings, Plugins, Seatwork) or run install.sh, then create the seat again`);
     }
 
     const registry = loadRegistry();

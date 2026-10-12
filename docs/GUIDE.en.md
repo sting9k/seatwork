@@ -39,8 +39,45 @@ Three things to remember:
 
 ## 2. Install
 
-You need Paseo 0.11.2 or later, `jq`, `python3` with PyYAML, Claude Code and Codex
-(plus Pi 0.99 or later, or OpenCode, if you put a role on one of them).
+You need Paseo 0.11.2 or later, Claude Code and Codex (plus Pi 0.99 or
+later, or OpenCode, if you put a role on one of them).
+
+### From Paseo
+
+1. Open Settings, Plugins. Paste this into "Plugin source" and press
+   **Install plugin**:
+
+   ```
+   git:sting9k/seatwork:slp-room/plugin
+   ```
+
+   Installing creates nothing: no folder, no seat.
+
+2. On the plugin's "…" menu choose **Seatwork**. The screen has one line for
+   each role: HQ, Supervisor, Lead, Peer, Lens. Open a line to pick the agent
+   CLI, the model (the list has a search box) and the thinking level, from
+   what this machine has. A Peer and a Lens are one role with several
+   models, each under a name such as `cheap`, `high` or `extra` with a line on
+   what it is for; add or remove them there. The Lead reads the names and
+   picks. Below the roles are the watcher's mode (section 11) and the chime.
+
+3. Press **Init**. It creates the room's folder (`~/.config/slp-room`), the
+   "seats" in Paseo (a seat is one role running on Claude, Codex, Pi or
+   OpenCode), four profiles and the `hq-seatwork` project. Nothing needs a
+   restart.
+
+To change a choice later, change it on the same screen and press **Apply**.
+A role's seat is set up when you choose a model for it.
+
+**Remove the room** on that screen takes the seats and profiles out of Paseo
+and moves the room's folder aside (`~/.config/slp-room.removed-<time>`), mail
+and logs included. It waits until every agent of the room is archived.
+Removing the plugin alone does not undo Init.
+
+### From a terminal
+
+For a machine without the app, or to work on the room's own files. It needs
+`node` and `npm`:
 
 ```bash
 git clone https://github.com/sting9k/seatwork.git
@@ -50,24 +87,13 @@ git clone https://github.com/sting9k/seatwork.git
 cd seatwork/slp-room && ./install.sh
 ```
 
-The installer adds to Paseo the "seats" (a seat is one role running on
-Claude, Codex, Pi or OpenCode), four profiles, the `slp-seat` plugin and the `hq-seatwork`
-project. It is safe to run again.
-
-A first install asks two questions. The first: HQ on the room's default
-seat, or on an agent CLI and model you choose. With the default, only the
-seats in `seats.yml` are installed. To change it later:
-
-```bash
-./install.sh --hq ask
-```
-
-To answer without the question: `--hq <harness>/<model>` (with
-`--hq-thinking <level>` when needed) or `--hq default`.
-
-The second: whether to install the watcher (section 11). A yes installs it
-in `shadow` mode; without an answer it is not installed. To change it later:
-`./install.sh --watcher ask`, or `--watcher off`, `shadow` or `on`.
+It does what Init does, and is safe to run again. A first run asks two
+questions: HQ on the room's default seat or on an agent CLI and model you
+choose, and whether to install the watcher (a yes installs it in `shadow`
+mode). Flags answer without the question: `--hq default`,
+`--hq <harness>/<model>` (with `--hq-thinking <level>` when needed),
+`--watcher off`, `shadow` or `on`. A room installed this way shows on the
+setup screen with the choices it runs on.
 
 ### Signing Claude in
 
@@ -156,8 +182,8 @@ decide these for you.
 
 While the Paseo app is open it plays a short sound when HQ, a Supervisor or
 a seat you opened yourself ends a turn with `DECISION_NEEDED`, `BLOCKED`, a
-`WAITING ON YOU:` row, or a failure. Set `owner.chime` to `false` in
-`paseo/policy.json` and run `./install.sh` to switch it off.
+`WAITING ON YOU:` row, or a failure. The Chime switch on the setup screen
+turns it off.
 
 The **Room** row at the bottom of Paseo's sidebar says how many of those
 turns still wait, and opens a screen for the whole room: those turns on
@@ -239,8 +265,9 @@ Every project has a `.slp/` directory:
 HQ writes it for you the first time. After that, edit the `models` object in
 `.slp/room.json` by hand. Write only what differs from the shared table. Any
 role can run on any harness (`<harness>-<role>/<model>`): HQ sets up a seat
-the room does not have yet when it writes the table; after a hand edit, run
-`./install.sh --seat <harness>-<role>`:
+the room does not have yet when it writes the table. After a hand edit that
+names a new seat, ask HQ to write the table again (from a clone:
+`./install.sh --seat <harness>-<role>`):
 
 ```json
 {
@@ -266,18 +293,22 @@ removes the `cross-family` tier.
 
 ## 8. Shared configuration
 
-Edit in the repo, then run the installer again.
-
-| File | Decides | Run again |
+| Where | Decides | Takes effect |
 |---|---|---|
-| `slp-room/paseo/seats.yml` | The seats every install gets; which harness a role runs on is `models.json` | `./install.sh` |
-| `~/.config/slp-room/setup.json` | This machine's own choices: HQ's harness, seats added for a project, the watcher's mode | `./install.sh` |
-| `slp-room/room/models.json` | Which model each role uses | `./install.sh --no-plugin` |
-| `slp-room/paseo/policy.json` | Who mails whom, who creates whom, waiting times, the watcher | `./install.sh` |
-| `slp-room/room/roles/`, `skills/` | Each role's prompt and procedures | `./install.sh --no-plugin` |
+| The setup screen (Settings, Plugins, Seatwork) | The agent CLI, model and thinking level of each role; the watcher's mode; the chime | **Apply** |
+| `~/.config/slp-room/setup.json` | What the screen applied, the seats HQ added for a project, and `mailPort` when the policy's port is taken | **Apply**, or `./install.sh` |
+| `slp-room/plugin/paseo/seats.json` | The seats every install gets | see below |
+| `slp-room/plugin/room/models.json` | The room's own model table: where the screen starts | see below |
+| `slp-room/plugin/paseo/policy.json` | Who mails whom, who creates whom, waiting times, the watcher's rules | see below |
+| `slp-room/plugin/room/roles/`, `skills/` | Each role's prompt and procedures | see below |
 
-A Peer's model tiers. The shipped table has three; an `expensive` tier is
-added the same way, as one more entry under `peer.tiers`:
+The last four are files of the plugin. In a clone, edit them and run
+`./install.sh`. A plugin installed from Paseo gets new ones with
+`paseo plugin update slp-seat`; press **Apply** afterwards.
+
+A Peer is one role with several models, each under a name in `peer.tiers`.
+The shipped table has three; the setup screen adds one more (`expensive`,
+say) or takes one out. The Lead picks by the task:
 
 | Tier | Used for |
 |---|---|
@@ -285,8 +316,10 @@ added the same way, as one more entry under `peer.tiers`:
 | `default` | Writing code, debugging, research |
 | `cross-family` | Reviewing code another model family wrote |
 
-A Lens table has `oracle` (one lens), `hard` (the one lens for a hard
-question), `pair` (two lenses, two different models) and `pool` (a third).
+A Lens is one role too, with its models listed the same way under
+`lens.tiers` (the shipped ones: `default`, `high` for a hard question,
+`extra` on another model family). The Lead picks by the question; when it
+opens two lenses they are always two different models.
 
 ## 9. Where files live
 
@@ -327,10 +360,10 @@ the seat above gets one mail from `room` whose subject starts with
 `OBSERVATION` (a Peer's goes to its Lead, a Lead's to its Supervisor). The
 watcher never stops or changes a seat, and it keeps no memory between turns.
 
-The installer asks once whether to install it, and keeps the answer in
-`~/.config/slp-room/setup.json`:
+Its mode is the Watcher choice on the setup screen (from a terminal the
+installer asks once), kept in `~/.config/slp-room/setup.json`:
 
-| Mode (`./install.sh --watcher <mode>`) | What happens |
+| Mode (Watcher on the screen, or `./install.sh --watcher <mode>`) | What happens |
 |---|---|
 | `off` (unless you said yes) | Nothing is read |
 | `shadow` (a yes to the installer's question) | Turns are read and findings are logged; nobody is mailed |
@@ -365,9 +398,10 @@ until you set them to `raise` in `policy.json`.
 | `decided-beyond-brief` | the message reports a decision of the seat's own |
 | `reopen-condition` | the brief has a `Reopen when` line and the seat did not ask to reopen |
 
-The decision model is Jev, reached through OpenRouter. Put the key in
-`~/.config/slp-room/watch/key` (mode 600) or in the environment variable
-`SLP_WATCH_KEY`. Without a key the ten fact rules still work. What is sent:
+The decision model is Jev, reached through OpenRouter. Paste the key into
+Watcher key on the setup screen; it is stored in
+`~/.config/slp-room/watch/key` (mode 600) and never shown again. The
+environment variable `SLP_WATCH_KEY` works too. Without a key the ten fact rules still work. What is sent:
 the lines of the brief a question reads, the names of changed files, and the
 seat's final message with secrets blanked (whole up to 12,000 characters; a
 longer one is cut to the lines a question reads, and a question whose lines
@@ -379,7 +413,8 @@ and stops asking at 10. The month's spending is in Paseo's Usage view, under
 To switch it on: let it run in `shadow` for a while, ask HQ for the watcher
 stats (it calls `slp_watch_stats`: spending, how many turns were watched and
 how often they were read, and per rule how often it spoke and how many of
-those turns the seat above sent back), then run `./install.sh --watcher on`.
+those turns the seat above sent back), then set Watcher to On on the setup
+screen and press Apply (or run `./install.sh --watcher on`).
 For `unverified-completion` a returned turn counts only when the seat above
 ran a test itself and saw it fail: work also comes back for other reasons.
 
@@ -398,9 +433,11 @@ npm run watch:replay -- --ask ../evals/results/<label>
 | `holds only hq seats` | Open this role in its own project |
 | `is not a registered SLP project` | Ask HQ to set the project up first |
 | `lists for … only …` | Use a model from the table, or edit `.slp/room.json` |
-| `which the room has not enabled` | Fix `.slp/room.json`, or run `./install.sh --seat <seat>` to set that seat up |
+| `which the room has not enabled` | Fix `.slp/room.json`, or ask HQ to write the project's table again: it sets the seat up |
+| `no room is set up on this daemon` | Open Settings, Plugins, Seatwork and press Init |
+| `room seat is still open … archive them first` | Archive the room's agents, then remove the room |
 | `its runtime could not be built` | Fix what the message names (often `~/.codex/config.toml`), then create the agent again |
-| `is too old: the room needs 0.11.2 or later` | Update Paseo, run `paseo daemon restart`, then `./install.sh` again |
+| `is too old: the room needs 0.11.2 or later` | Update Paseo, run `paseo daemon restart`, then install again |
 | An agent says it is not signed in | Run `claude auth login` |
 | An agent does not know a new procedure | Open a new agent |
 

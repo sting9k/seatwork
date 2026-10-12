@@ -13,6 +13,7 @@ import { inquiryFor, REVISION } from "../server/watch/questions";
 import { redact } from "../server/watch/redact";
 import type { ScanRecord } from "../server/watch/scanlog";
 import { buildRequest, excerpt, fitting } from "../server/watch/state";
+import { usageReport } from "../server/watch/usage";
 
 const REQUEST: DecisionRequest = { state: { final_message: "CANDIDATE" }, questions: { q: { type: "choice", instructions: "?", criteria: { a: "a", b: "b" } }, n: { type: "noul", instructions: "?" } } };
 const REPLY = { model: "jev-x", answers: { q: { type: "choice", choice: "b", probabilities: { a: 0.1, b: 0.9 }, confidence: 0.8 }, n: { type: "noul", noul: 0.7 } }, usage: { input_tokens: 411, output_tokens: 60 } };
@@ -119,6 +120,26 @@ test("an inquiry's score is the weakest of what must hold", () => {
   assert.equal(inquiry.score(answers(0.95, 0.9)), 0.9);
   assert.equal(inquiry.score(answers(0.95, 0.2)), 0.2);
   assert.equal(inquiry.score({ report_on_checks: answers(1, 1).report_on_checks }), null);
+});
+
+test("the month's spending is reported to Paseo's Usage screen against the cap", () => {
+  const now = new Date("2026-10-11T08:00:00Z");
+  const budget = new Budget(join(ROOM_HOME, "watch-usage", "usage-{month}.json"), { usdPerMillionTokens: 1, monthlyPlanUsd: 21, monthlyCapUsd: 30 }, () => now);
+  budget.record("end", 900_000);
+  budget.record("live", 600_000); // $1.50 today, past today's $1.00 share of the plan
+
+  assert.deepEqual(usageReport(budget.summary()), {
+    status: "available",
+    planLabel: "plan $21 a month",
+    windows: [{ id: "month", label: "Cap for 2026-10", shortLabel: "mo", summary: true, usedPct: 5 }],
+    balances: [{ id: "month", label: "Spent this month", used: 1.5, limit: 30, unit: "usd" }],
+    details: [
+      { id: "calls", label: "Questions asked", value: "2" },
+      { id: "tokens", label: "Tokens read", value: "1500000" },
+      { id: "today", label: "Spent today", value: "$1.5000" },
+      { id: "pace", label: "Asking", value: "saving", tone: "warning" },
+    ],
+  });
 });
 
 test("the budget counts what replies report, saves the day's share, and closes at the cap", () => {

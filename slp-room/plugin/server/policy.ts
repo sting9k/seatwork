@@ -29,6 +29,12 @@ export interface CodexRuntimePolicy {
   agentsOff: boolean;
 }
 
+/** What the room does for the Owner in the app. */
+export interface OwnerPolicy {
+  /** Play a short sound in the open app when a turn leaves something for the Owner to answer. */
+  chime: boolean;
+}
+
 export interface PiRuntimePolicy {
   shareFiles: string[];
   shareDirs: string[];
@@ -106,6 +112,7 @@ export interface RuntimePolicy {
   room: RoomPolicy;
   mail: MailPolicy;
   gc: GcPolicy;
+  owner: OwnerPolicy;
   watcher: WatcherPolicy;
   launch: Record<"claude" | "codex" | "pi" | "opencode", LaunchPolicy>;
   claude: ClaudeRuntimePolicy;
@@ -134,6 +141,7 @@ export function loadPolicy(): RuntimePolicy {
     },
     mail: need(parsed.mail, "mail"),
     gc: need(parsed.gc, "gc"),
+    owner: need(parsed.owner, "owner"),
     watcher: need(parsed.watcher, "watcher"),
     launch: {
       claude: need(claude.launch, "claude.launch"),

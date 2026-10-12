@@ -333,6 +333,10 @@
     },
     "$comment_midTurn": "Mail to a RUNNING seat. 'steer' hands it to Paseo's steer; observed on 2026-10-07: Claude cancels the running tool ('[Request interrupted by user for tool use]') and Pi aborts it ('Command aborted'), so every harness is 'hold': mail is delivered the moment the recipient's turn ends. Keep 'hold' unless you verify a harness applies steer after the tool call."
   },
+  "owner": {
+    "$comment": "What the room does for the Owner in the Paseo app. chime: while the app is open, a short sound when a seat nobody above reads by mail (HQ, a Supervisor, a seat you opened yourself) ends a turn with DECISION_NEEDED, BLOCKED, a WAITING ON YOU row, or a failure.",
+    "chime": true
+  },
   "gc": {
     "$comment": "Room garbage collection, run by the plugin every everyMinutes and on agent.archived. A seat idle longer than its role's hours (0 = never) is archived unless one of its descendants is still alive; heartbeats whose seat is archived or gone are deleted; mail still held for an archived seat is bounced to its sender. It never kills processes and never touches agents that are not room seats.",
     "everyMinutes": 10,

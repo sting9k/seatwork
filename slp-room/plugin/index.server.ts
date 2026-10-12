@@ -3,6 +3,7 @@ import { randomBytes } from "node:crypto";
 import { join } from "node:path";
 import type { PaseoApi } from "@getpaseo/client";
 import type { PluginBeforeRequests, PluginServerContext } from "@getpaseo/plugin/server";
+import { z } from "zod";
 import { Collector } from "./server/gc";
 import { MailEngine, type Mail, type Priority, type Needs } from "./server/mail";
 import { checkHqPlacement, ensureHqProject } from "./server/hq";
@@ -14,7 +15,7 @@ import { loadPolicy } from "./server/policy";
 import { findProject, findRoomMarker, loadRegistry, projectBlock } from "./server/registry";
 import { claudeRoleDir, describeIsolation, ensureRuntime, envFor, sharedClaudeFiles } from "./server/runtimes";
 import { enabledSeats, maySpawn, parseSeat, rolePrompt, specFromTitle, type Role } from "./server/seats";
-import { CLOSES_WORK, signalOf, subjectSignal } from "./server/signals";
+import { asksOwner, CLOSES_WORK, signalOf, subjectSignal } from "./server/signals";
 import { roomStats } from "./server/stats";
 import { Budget } from "./server/watch/budget";
 import { calibrate, renderCalibration, type MailLine } from "./server/watch/calibrate";
@@ -22,11 +23,13 @@ import { snapshot } from "./server/watch/git";
 import { JevEngine } from "./server/watch/jev";
 import { REVISION } from "./server/watch/questions";
 import { ScanLog } from "./server/watch/scanlog";
+import { usageReport } from "./server/watch/usage";
+import { roomWaiting } from "./shared/room";
 import { Watcher, type SeatView, type TimelineView } from "./server/watch/watcher";
 
 type CreateRequest = PluginBeforeRequests["agent.create"];
 
-const VERSION = "0.11.1";
+const VERSION = "0.12.0";
 const MAIL_DIR = join(ROOM_HOME, "mail");
 const MCP_TOKEN_FILE = join(MAIL_DIR, "token");
 const NONCES_FILE = join(MAIL_DIR, "nonces.json");
@@ -66,12 +69,24 @@ export default function contribute(server: PluginServerContext) {
   const mailedUp = new Map<string, Set<string>>();
   /** seat → the signal its last turn ended with. */
   const lastSignal = new Map<string, string>();
+  /** seat nobody above reads by mail → what its last turn left for the Owner to answer. */
+  const owed = new Map<string, { key: string; agentId: string; title: string | null; what: string; at: string }>();
   let gc: Collector | null = null;
   const getGc = (paseo: Parameters<typeof getEngine>[0]) => {
     if (!gc) gc = new Collector(paseo, getEngine(paseo), policy.gc, log, forgetAgent);
     return gc;
   };
   const budget = new Budget(join(WATCH_DIR, "usage-{month}.json"), policy.watcher.budget);
+  // what the decision model cost this month, for Paseo's Usage screen; a watcher that is off asks nothing
+  if (policy.watcher.mode !== "off") {
+    server.registerUsageSource({
+      id: "slp-watcher",
+      label: "Room watcher",
+      input: z.object({}),
+      discover: async (scope) => (scope.kind === "global" ? [{ key: "decision-model", label: policy.watcher.engine.model, input: {} }] : []),
+      fetch: async () => usageReport(budget.summary()),
+    });
+  }
   const scans = new ScanLog(join(WATCH_DIR, "scans.jsonl"));
   let watcher: Watcher | null = null;
   const getWatcher = (paseo: Parameters<typeof getEngine>[0]) => {
@@ -399,13 +414,23 @@ export default function contribute(server: PluginServerContext) {
 
   // Any turn start wakes the engine and the collector, so both work right after a
   // plugin reload (the API hands us the Paseo client only inside hook contexts).
+  // the app asks this while it is open. After a daemon start it is the first thing to hand the room a Paseo client:
+  // mail held on disk moves without waiting for an agent to run
+  server.handle(roomWaiting, (_input, { paseo }) => {
+    if (!engine) void getEngine(paseo).sweep();
+    getGc(paseo);
+    return { chime: policy.owner.chime, waiting: [...owed.values()] };
+  });
+
   server.on("agent.turn_started", (event, { paseo }) => {
+    owed.delete(event.agent.id);
     getGc(paseo);
     const view = viewOf(paseo, event.agent);
     if (view) getWatcher(paseo).turnStarted(view, event.turnId);
   });
 
   server.on("agent.archived", async (event, { paseo }) => {
+    owed.delete(event.agent.id);
     watcher?.forget(event.agent.id);
     await getGc(paseo).onArchived(event.agent.id);
   });
@@ -414,6 +439,7 @@ export default function contribute(server: PluginServerContext) {
   // what the room kept for the turn goes; held mail stays, and the sweep posts a report the seat had mailed
   server.on("agent.closed", (event) => {
     watcher?.cut(event.agent.id);
+    owed.delete(event.agent.id);
     mailedUp.delete(event.agent.id);
     engine?.takeWake(event.agent.id);
   });
@@ -432,6 +458,11 @@ export default function contribute(server: PluginServerContext) {
     // nothing travels up to hq: it reads the Supervisor's final message and .slp/status.md when it looks
     const reportsTo = seat && parentId && parent && parent.role !== "hq" ? parentId : null;
     const canceled = event.outcome.kind === "canceled";
+    // a seat nobody above reads by mail: the Owner reads its final message, and the app is told when it asks something
+    if (seat && !reportsTo && !canceled) {
+      const what = event.outcome.kind === "failed" ? "FAILED" : asksOwner(lastAssistantText(event.timeline));
+      if (what) owed.set(id, { key: `${id}:${Date.now()}`, agentId: id, title: event.agent.title, what, at: new Date().toISOString() });
+    }
     // the turn's own report; it stays null when the parent has this turn's signal from the seat's own mail
     let report: Parameters<MailEngine["post"]>[0] | null = null;
     if (seat && reportsTo && !canceled) {
@@ -537,6 +568,8 @@ export default function contribute(server: PluginServerContext) {
     clearInterval(sweep);
     clearInterval(collect);
     clearInterval(watch);
+    // a mail server still binding would stay open behind a close that came first
+    await starting;
     await mcp.close();
   };
 

@@ -1,7 +1,7 @@
 import { installRoom, PROJECT, ROOM_HOME } from "./support/room";
 import { bash, BRIEF, edit, prompt, say } from "./support/watch";
 import assert from "node:assert/strict";
-import { chmodSync, existsSync, mkdirSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { after, before, test } from "node:test";
 import contribute from "../index.server";
@@ -9,9 +9,13 @@ import contribute from "../index.server";
 type Hook = (input: never, context: never) => unknown;
 
 const hooks = new Map<string, Hook>();
+/** What the plugin registered with Paseo's Usage screen. */
+let usage: { discover(scope: object): Promise<{ key: string }[]>; fetch(input: unknown): Promise<{ status: string; balances?: { limit?: number | null }[] }> };
 const server = {
   before: (name: string, hook: Hook) => void hooks.set(`before ${name}`, hook),
   on: (name: string, hook: Hook) => void hooks.set(`on ${name}`, hook),
+  registerUsageSource: (source: typeof usage) => void (usage = source),
+  handle: (contract: { name: string }, handler: Hook) => void hooks.set(`rpc ${contract.name}`, handler),
 };
 const call = (name: string, input: unknown, context: unknown = {}) => hooks.get(name)!(input as never, context as never);
 
@@ -47,6 +51,16 @@ async function opened(provider: string, reason: string, env: Record<string, stri
   const request = { agentId: `opened-${provider}`, workspaceId: null, provider, cwd: PROJECT, reason, purpose: "interactive", env };
   return ((await call("before agent.session_open", { request })) as { env: Record<string, string> }).env;
 }
+
+test("Paseo's Usage screen is offered one account, the watcher's month against the policy's cap, and none for a single session", async () => {
+  const { monthlyCapUsd } = JSON.parse(readFileSync(join(ROOM_HOME, "policy.json"), "utf8")).watcher.budget;
+
+  assert.deepEqual((await usage.discover({ kind: "global" })).map((account) => account.key), ["decision-model"]);
+  assert.deepEqual(await usage.discover({ kind: "session", provider: "claude", env: {} }), []);
+  const report = await usage.fetch({});
+  assert.equal(report.status, "available");
+  assert.equal(report.balances?.[0].limit, monthlyCapUsd);
+});
 
 test("a seat whose runtime cannot be built is refused, and created on its own home once it can", async () => {
   await assert.rejects(async () => call("before agent.create", createRequest("pi-peer")), /pi-peer/);
@@ -395,6 +409,41 @@ test("a seat that is gone is not handed over, and no seat is handed to a role th
 
   agents[peer.agent.id] = deleted;
   await assert.rejects(successor.adopt(peer.agent.id), /peer-adopt-gone is archived or gone/);
+});
+
+test("what a turn leaves for the Owner is listed for the app until that seat works again or is gone; a seat with a seat above it is not the Owner's", async () => {
+  const supervisor = await seat("supervisor-owed", "claude-supervisor", null, "[Supervisor] project");
+  const lead = await seat("lead-owed", "claude-lead", supervisor.agent.id, "[Lead] stream");
+  const waiting = async () => {
+    const { waiting } = (await call("rpc room.waiting", {}, context)) as { waiting: { agentId: string; what: string }[] };
+    return waiting.filter((item) => item.agentId.endsWith("-owed")).map((item) => `${item.agentId} ${item.what}`);
+  };
+  const starts = () => call("on agent.turn_started", { agent: supervisor.agent, turnId: "next" }, context);
+
+  // a Lead's question goes to its Supervisor by mail
+  await turnEnds(lead, "DECISION_NEEDED\ncallers may run at the same time; the brief does not say");
+  assert.deepEqual(await waiting(), []);
+
+  const cases: [message: string, outcome: object | undefined, listed: string | null][] = [
+    ["DECISION_NEEDED\nkeep or break the old behavior?", undefined, "DECISION_NEEDED"],
+    ["BLOCKED\nthe deploy key is missing", undefined, "BLOCKED"],
+    ["STATUS\none workstream waits\nWAITING ON YOU: which region goes first", undefined, "WAITING ON YOU"],
+    ["", { kind: "failed", error: { message: "the process exited" } }, "FAILED"],
+    ["STATUS\none Lead is BLOCKED on a review; I answered it\nWORKING\n- Lead stream: repairing", undefined, null],
+    ["DONE\nthe hours unit is accepted\nDONE: hours unit usable", undefined, null],
+  ];
+  for (const [message, outcome, listed] of cases) {
+    await turnEnds(supervisor, message, outcome);
+    assert.deepEqual(await waiting(), listed ? [`supervisor-owed ${listed}`] : [], message || "a failed turn");
+    await starts();
+    assert.deepEqual(await waiting(), [], "the seat is at work again, and still listed");
+  }
+
+  for (const gone of ["agent.closed", "agent.archived"]) {
+    await turnEnds(supervisor, "DECISION_NEEDED\nkeep or break the old behavior?");
+    await call(`on ${gone}`, { agent: supervisor.agent, archivedAt: "2026-10-12T00:00:00Z" }, context);
+    assert.deepEqual(await waiting(), [], gone);
+  }
 });
 
 test("a Supervisor's prompt names no path of the room's own files", async () => {

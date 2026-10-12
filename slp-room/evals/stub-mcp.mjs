@@ -103,6 +103,13 @@ const TOOLS = {
       ["title", "provider", "initialPrompt"],
     ),
     call: (a) => {
+      // state.table: the model table in force, by role, when it is newer than the seat's prompt. The plugin holds a new
+      // seat to it and refuses a model it does not list, in these words (index.server.ts, applySeat).
+      const role = /-(hq|supervisor|lead|peer|lens)(\/|$)/.exec(String(a.provider))?.[1];
+      const listed = state.table?.[role];
+      if (listed && !listed.includes(a.provider)) {
+        throw new Error(`Plugin slp-seat before agent.create failed: slp-seat: ${a.provider} refused: the room's table lists for ${role} only ${listed.join(", ")} (the Seatwork screen sets it). Create the seat again on one of these.`);
+      }
       const id = next("agent-new-");
       agents.push({ id, title: a.title, provider: a.provider, status: "running", parentAgentId: state.self ?? null });
       return json({ agentId: id, status: "running", title: a.title, provider: a.provider, workspaceId: a.workspaceId ?? "ws-self" });

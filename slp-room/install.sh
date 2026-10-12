@@ -1,11 +1,10 @@
 #!/usr/bin/env bash
 # seatwork from a terminal: the setup the plugin's own screen does (Seatwork, in Paseo's sidebar), without the app.
-# Flags: --no-plugin  --no-reload  --no-daemon-policy
+# Flags: --no-plugin  --no-reload
 #   --hq default|ask|<harness>/<model> [--hq-thinking <id>]   what HQ runs on; asked once, on a first install from a terminal
 #   --seat <harness>-<role>   set up one more seat (repeatable; kept in setup.json)
 #   --watcher off|shadow|on|ask   the watcher on this machine; asked once, on a first install from a terminal
 #   --mail-port <port>        the port of the room's mail server on this machine (kept in setup.json)
-#   --seats-only              the seats and nothing else: providers into Paseo, reload; room files and plugin untouched
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -16,8 +15,6 @@ while [ $# -gt 0 ]; do
   case "$1" in
     --no-plugin) DO_PLUGIN=0 ;;
     --no-reload) DO_RELOAD=0 ;;
-    --no-daemon-policy) SETUP+=("$1") ;;
-    --seats-only) DO_PLUGIN=0; SETUP+=("$1") ;;
     --hq|--hq-thinking|--seat|--watcher|--mail-port)
       [ $# -ge 2 ] || { echo "$1 needs a value" >&2; exit 2; }
       SETUP+=("$1" "$2"); shift ;;

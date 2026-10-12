@@ -3,7 +3,7 @@
  * seats and profiles in Paseo's config.json. install.sh runs it; the plugin's setup screen does the
  * same work through the SDK.
  *   node --require ./test/register.cjs tools/room-init.ts [--hq default|ask|<harness>/<model>] [--hq-thinking <id>]
- *        [--seat <harness>-<role>]... [--watcher off|shadow|on|ask] [--mail-port <port>] [--seats-only] [--no-daemon-policy]
+ *        [--seat <harness>-<role>]... [--watcher off|shadow|on|ask] [--mail-port <port>]
  */
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -20,11 +20,9 @@ import { readSetup } from "../server/setup/room-home";
 const PLUGIN_DIR = join(__dirname, "..");
 const VERSION = (JSON.parse(readFileSync(join(PLUGIN_DIR, "package.json"), "utf8")) as { version: string }).version;
 
-function parse(argv: string[]): { flags: ChoiceFlags; mailPort?: number; seatsOnly: boolean; daemonPolicy: boolean } {
+function parse(argv: string[]): { flags: ChoiceFlags; mailPort?: number } {
   const flags: ChoiceFlags = { seats: [] };
   let mailPort: number | undefined;
-  let seatsOnly = false;
-  let daemonPolicy = true;
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i];
     const value = () => {
@@ -36,11 +34,9 @@ function parse(argv: string[]): { flags: ChoiceFlags; mailPort?: number; seatsOn
     else if (arg === "--seat") flags.seats.push(value());
     else if (arg === "--watcher") flags.watcher = value();
     else if (arg === "--mail-port") mailPort = Number(value());
-    else if (arg === "--seats-only") seatsOnly = true;
-    else if (arg === "--no-daemon-policy") daemonPolicy = false;
     else throw new Error(`unknown option: ${arg}`);
   }
-  return { flags, mailPort, seatsOnly, daemonPolicy };
+  return { flags, mailPort };
 }
 
 /** Lines typed at the installer, one per question; null once the input has ended. */
@@ -67,7 +63,7 @@ function terminal(): Terminal & { close(): void } {
 }
 
 async function main(): Promise<void> {
-  const { flags, mailPort, seatsOnly, daemonPolicy } = parse(process.argv.slice(2));
+  const { flags, mailPort } = parse(process.argv.slice(2));
   const io = terminal();
   const base = roomModels(PLUGIN_DIR);
   let setup;
@@ -77,9 +73,9 @@ async function main(): Promise<void> {
     io.close();
   }
   if (mailPort !== undefined) setup = checkSetup({ ...setup, mailPort }, "--mail-port");
-  const plan = await setUpRoom({ pluginDir: PLUGIN_DIR, roomHome: ROOM_HOME, catalog: cliCatalog, version: VERSION }, setup, { seatsOnly });
+  const plan = await setUpRoom({ pluginDir: PLUGIN_DIR, roomHome: ROOM_HOME, catalog: cliCatalog, version: VERSION }, setup);
   for (const warning of plan.warnings) console.error(`warning: ${warning}`);
-  applyToConfigFile(PASEO_HOME, plan, { daemonPolicy });
+  applyToConfigFile(PASEO_HOME, plan);
 
   const hq = plan.models.seats.hq;
   console.log(`HQ seat: ${hq.provider}, thinking ${hq.thinking}; seats added on this machine: ${(setup.seats ?? []).join(", ") || "none"}; watcher: ${setup.watcher ?? "off"} (${join(ROOM_HOME, "setup.json")})`);

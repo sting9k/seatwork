@@ -58,8 +58,8 @@ export async function removeWithSdk(paseo: PaseoApi): Promise<{ removed: string[
   return { removed };
 }
 
-/** Paseo's config.json with the plan laid in: the room's seats and profiles replaced, everything else kept. */
-function mergeIntoConfig(config: Json, plan: RoomPlan, options: { daemonPolicy: boolean }): Json {
+/** Paseo's config.json with the plan laid in: the room's seats, profiles and daemon switches set, everything else kept. */
+function mergeIntoConfig(config: Json, plan: RoomPlan): Json {
   const next: Json = structuredClone(config);
   const owned = new Set(plan.profiles.map((profile) => profile.id));
   next.daemon ??= {};
@@ -68,15 +68,13 @@ function mergeIntoConfig(config: Json, plan: RoomPlan, options: { daemonPolicy: 
   next.agents.providers = { ...Object.fromEntries(Object.entries((next.agents.providers ?? {}) as Json).filter(([id]) => !isRoomSeat(id))), ...plan.providers };
   next.daemon.mcp = { ...(next.daemon.mcp ?? {}), enabled: true, injectIntoAgents: true };
   next.pluginsEnabled = true;
-  if (options.daemonPolicy) {
-    const daemon = (plan.policy.daemon ?? {}) as Json;
-    next.daemon.browserTools = { ...(next.daemon.browserTools ?? {}), enabled: daemon.browserTools ?? false };
-    next.daemon.enableTerminalAgentHooks = daemon.enableTerminalAgentHooks ?? false;
-    next.features ??= {};
-    next.features.dictation = { ...(next.features.dictation ?? {}), enabled: daemon.dictation ?? false };
-    next.features.voiceMode = { ...(next.features.voiceMode ?? {}), enabled: daemon.voiceMode ?? false };
-    if ((daemon.bundledSkills ?? "none") === "none") next.agents.skills = { ...(next.agents.skills ?? {}), selection: NO_BUNDLED_SKILLS };
-  }
+  const daemon = (plan.policy.daemon ?? {}) as Json;
+  next.daemon.browserTools = { ...(next.daemon.browserTools ?? {}), enabled: daemon.browserTools ?? false };
+  next.daemon.enableTerminalAgentHooks = daemon.enableTerminalAgentHooks ?? false;
+  next.features ??= {};
+  next.features.dictation = { ...(next.features.dictation ?? {}), enabled: daemon.dictation ?? false };
+  next.features.voiceMode = { ...(next.features.voiceMode ?? {}), enabled: daemon.voiceMode ?? false };
+  if ((daemon.bundledSkills ?? "none") === "none") next.agents.skills = { ...(next.agents.skills ?? {}), selection: NO_BUNDLED_SKILLS };
   return next;
 }
 
@@ -90,10 +88,10 @@ function writeConfig(file: string, next: Json): void {
 }
 
 /** The installer's way in: the plan written into a daemon's config.json, for a `paseo daemon reload` to pick up. */
-export function applyToConfigFile(paseoHome: string, plan: RoomPlan, options: { daemonPolicy: boolean }): void {
+export function applyToConfigFile(paseoHome: string, plan: RoomPlan): void {
   const file = join(paseoHome, "config.json");
   const config = existsSync(file) ? (JSON.parse(readFileSync(file, "utf8")) as Json) : { version: 1 };
-  writeConfig(file, mergeIntoConfig(config, plan, options));
+  writeConfig(file, mergeIntoConfig(config, plan));
 }
 
 /** The daemon switches the room cares about and the SDK cannot set, as this daemon's config.json has them. */

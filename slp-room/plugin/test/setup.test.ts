@@ -201,24 +201,17 @@ test("Paseo's config.json takes the room's seats and profiles and keeps everythi
   const room = await plan();
   const paseoHome = join(ROOM_HOME, "a-paseo-home");
   const file = join(paseoHome, "config.json");
-  const written = (daemonPolicy: boolean) => {
-    rmSync(paseoHome, { recursive: true, force: true });
-    mkdirSync(paseoHome, { recursive: true });
-    writeFileSync(file, JSON.stringify(before));
-    applyToConfigFile(paseoHome, room, { daemonPolicy });
-    return JSON.parse(readFileSync(file, "utf8"));
-  };
+  mkdirSync(paseoHome, { recursive: true });
+  writeFileSync(file, JSON.stringify(before));
+  applyToConfigFile(paseoHome, room);
+  const written = JSON.parse(readFileSync(file, "utf8"));
 
-  const kept = written(false);
-  const strict = written(true);
-
-  assert.deepEqual(Object.keys(kept.agents.providers).sort(), ["my-own", ...Object.keys(room.providers)].sort());
-  assert.deepEqual(kept.agents.providers["claude-peer"], room.providers["claude-peer"]); // replaced whole: no key of the old entry stays
-  assert.deepEqual(kept.daemon.agentProfiles.map((p: { id: string }) => p.id), ["mine", ...room.profiles.map((p) => p.id)]);
-  assert.deepEqual([kept.daemon.listen, kept.daemon.mcp, kept.pluginsEnabled], ["127.0.0.1:1", { enabled: true, injectIntoAgents: true }, true]);
-  // the daemon-wide switches are the installer's to set only when asked
-  assert.deepEqual([kept.features, kept.agents.skills], [before.features, before.agents.skills]);
-  assert.deepEqual([strict.features.dictation, strict.agents.skills.selection], [{ enabled: false, model: "kept" }, { mode: "custom", skills: [] }]);
+  assert.deepEqual(Object.keys(written.agents.providers).sort(), ["my-own", ...Object.keys(room.providers)].sort());
+  assert.deepEqual(written.agents.providers["claude-peer"], room.providers["claude-peer"]); // replaced whole: no key of the old entry stays
+  assert.deepEqual(written.daemon.agentProfiles.map((p: { id: string }) => p.id), ["mine", ...room.profiles.map((p) => p.id)]);
+  assert.deepEqual([written.daemon.listen, written.daemon.mcp, written.pluginsEnabled], ["127.0.0.1:1", { enabled: true, injectIntoAgents: true }, true]);
+  // the daemon-wide switches follow the room's policy; what the user kept beside one stays
+  assert.deepEqual([written.features.dictation, written.agents.skills.selection], [{ enabled: false, model: "kept" }, { mode: "custom", skills: [] }]);
   // the file as it was stays beside the new one
   const backup = readdirSync(paseoHome).find((name) => name.startsWith("config.json.bak-"))!;
   assert.deepEqual(JSON.parse(readFileSync(join(paseoHome, backup), "utf8")), before);

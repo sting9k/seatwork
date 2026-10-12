@@ -33,6 +33,7 @@ export interface LiveAgent {
   status: string;
   updatedAt: string;
   title?: string | null;
+  cwd?: string;
   archivedAt?: string | null;
   pendingPermissions?: unknown[] | null;
 }

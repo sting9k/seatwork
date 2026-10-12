@@ -25,7 +25,7 @@ let dispose: () => Promise<void>;
 
 before(() => {
   // the watcher mails in these tests; a room as installed only logs what it finds
-  installRoom(["claude-supervisor", "claude-lead", "claude-peer", "pi-peer"], (policy) => void (policy.watcher.mode = "on"));
+  installRoom(["claude-hq", "claude-supervisor", "claude-lead", "claude-peer", "pi-peer"], (policy) => void (policy.watcher.mode = "on"));
   chmodSync(ROOM_HOME, 0o755); // as a room home made under the usual umask
   mkdirSync(runtimes);
   writeFileSync(join(runtimes, "pi"), ""); // no Pi runtime can be built while this file is in the way
@@ -160,15 +160,15 @@ interface TestSeat {
   adopt(agentId: string): Promise<string>;
 }
 
-async function seat(id: string, provider: string, parentAgentId: string | null, title: string): Promise<TestSeat> {
-  const made = (await call("before agent.create", { request: { config: { provider, cwd: PROJECT, title }, env: {} } })) as {
+async function seat(id: string, provider: string, parentAgentId: string | null, title: string, cwd = PROJECT): Promise<TestSeat> {
+  const made = (await call("before agent.create", { request: { config: { provider, cwd, title }, env: {} } })) as {
     env: Record<string, string>;
     config: { systemPrompt: string; mcpServers: { slp: { url: string } } };
   };
   await call("before agent.session_open", { request: { env: made.env, reason: "create", agentId: id, provider } });
   const inbox: string[] = [];
   agents[id] = { refresh: async () => {}, current: () => ({ status: "idle" }), send: async (text: string) => void inbox.push(text) };
-  const agent = { id, parentAgentId, provider, cwd: PROJECT, title, workspaceId: null };
+  const agent = { id, parentAgentId, provider, cwd, title, workspaceId: null };
   await call("on agent.created", { agent }, context);
   const tool = async (name: string, args: Record<string, unknown>) => {
     const response = await fetch(made.config.mcpServers.slp.url, {
@@ -474,32 +474,44 @@ test("what a turn leaves for the Owner is listed for the app until that seat wor
   assert.deepEqual(await waiting(), [], "a seat the daemon no longer has");
 });
 
-test("the Room screen is given the seats that still exist as a tree, with the mail each holds, what waits on the Owner and the latest mail", async () => {
-  const supervisor = await seat("supervisor-screen", "claude-supervisor", null, "[Supervisor] project");
-  const lead = await seat("lead-screen", "claude-lead", supervisor.agent.id, "[Lead] stream");
-  const peer = await seat("peer-screen", "claude-peer", lead.agent.id, "[Peer] hours");
-  const gone = await seat("peer-screen-archived", "claude-peer", lead.agent.id, "[Peer] old task");
-  agents[gone.agent.id] = archived;
-  // the Lead is in a turn, so the Peer's report waits for it
-  Object.assign(agents[lead.agent.id], { current: () => ({ status: "running" }) });
-  await turnEnds(peer, "CANDIDATE\nsha abc123\nRECAP: added the unit → abc123");
-  await turnEnds(supervisor, "DECISION_NEEDED\nkeep or break the old behavior?");
+test("the Room screen is given the seats that still exist, project by project with HQ first, and what waits on the Owner", async () => {
+  const beta = join(ROOM_HOME, "project-beta");
+  mkdirSync(beta);
+  const registry = join(ROOM_HOME, "projects.json");
+  writeFileSync(registry, JSON.stringify({ projects: [{ name: "alpha", cwd: PROJECT }, { name: "beta", cwd: beta }, { name: "gamma", cwd: join(ROOM_HOME, "project-gamma") }] }));
+  try {
+    const hq = await seat("hq-screen", "claude-hq", null, "HQ Supervisor", join(ROOM_HOME, "hq-seatwork"));
+    const supervisor = await seat("supervisor-screen", "claude-supervisor", hq.agent.id, "[Supervisor] alpha");
+    const lead = await seat("lead-screen", "claude-lead", supervisor.agent.id, "[Lead] stream");
+    const peer = await seat("peer-screen", "claude-peer", lead.agent.id, "[Peer] hours");
+    const gone = await seat("peer-screen-archived", "claude-peer", lead.agent.id, "[Peer] old task");
+    await seat("supervisor-screen-beta", "claude-supervisor", null, "[Supervisor] beta", beta);
+    agents[gone.agent.id] = archived;
+    // the Lead is in a turn, so the Peer's report waits for it
+    Object.assign(agents[lead.agent.id], { current: () => ({ status: "running" }) });
+    await turnEnds(peer, "CANDIDATE\nsha abc123\nRECAP: added the unit → abc123");
+    await turnEnds(supervisor, "DECISION_NEEDED\nkeep or break the old behavior?");
 
-  const room = (await call("rpc room.status", {}, context)) as {
-    waiting: { agentId: string; what: string }[];
-    seats: { agentId: string; status: string; held: number; depth: number }[];
-    mail: { from: string; to: string; subject: string; state: string }[];
-  };
-  const mine = (id: string) => id.includes("-screen");
+    const room = (await call("rpc room.status", {}, context)) as {
+      waiting: { agentId: string; what: string; project: string }[];
+      projects: { name: string; seats: { agentId: string; status: string; held: number; depth: number }[] }[];
+    };
+    const mine = (row: { agentId: string }) => row.agentId.includes("-screen");
 
-  assert.deepEqual(room.seats.filter((row) => mine(row.agentId)), [
-    { agentId: "supervisor-screen", role: "supervisor", title: "[Supervisor] project", status: "idle", held: 0, depth: 0 },
-    { agentId: "lead-screen", role: "lead", title: "[Lead] stream", status: "running", held: 1, depth: 1 },
-    { agentId: "peer-screen", role: "peer", title: "[Peer] hours", status: "idle", held: 0, depth: 2 },
-  ]);
-  assert.deepEqual(room.waiting.filter((item) => mine(item.agentId)).map((item) => `${item.agentId} ${item.what}`), ["supervisor-screen DECISION_NEEDED"]);
-  const [{ from, to, subject, state }] = room.mail;
-  assert.deepEqual({ from, to, subject, state }, { from: "[Peer] hours", to: "[Lead] stream", subject: "CANDIDATE from peer [Peer] hours", state: "waiting" });
+    // one line per seat: indented by its depth inside the project, then its state and the mail held for it
+    assert.deepEqual(
+      room.projects.map((project) => [project.name, ...project.seats.filter(mine).map((row) => `${"  ".repeat(row.depth)}${row.agentId} ${row.status} ${row.held}`)]),
+      [
+        ["HQ", "hq-screen idle 0"],
+        ["alpha", "supervisor-screen idle 0", "  lead-screen running 1", "    peer-screen idle 0"],
+        ["beta", "supervisor-screen-beta idle 0"],
+        ["gamma"], // registered, with no seat open
+      ],
+    );
+    assert.deepEqual(room.waiting.filter(mine).map((item) => `${item.project} ${item.agentId} ${item.what}`), ["alpha supervisor-screen DECISION_NEEDED"]);
+  } finally {
+    rmSync(registry);
+  }
 });
 
 test("a Supervisor's prompt names no path of the room's own files", async () => {

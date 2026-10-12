@@ -396,7 +396,7 @@ export default function contribute(server: PluginServerContext) {
       }
     }
     if (!seat) return;
-    getEngine(paseo).rememberSeat({ agentId: event.agent.id, parentAgentId: event.agent.parentAgentId, role: seat.role, provider: seat.provider, title: event.agent.title });
+    getEngine(paseo).rememberSeat({ agentId: event.agent.id, parentAgentId: event.agent.parentAgentId, role: seat.role, provider: seat.provider, title: event.agent.title, cwd: event.agent.cwd });
     const line = JSON.stringify({
       at: new Date().toISOString(),
       agentId: event.agent.id,
@@ -423,7 +423,7 @@ export default function contribute(server: PluginServerContext) {
     return { chime: policy.owner.chime, waiting: await owed.current(paseo) };
   });
 
-  server.handle(roomStatus, (_input, { paseo }) => readRoomStatus(paseo, getEngine(paseo), owed, scans.read()));
+  server.handle(roomStatus, (_input, { paseo }) => readRoomStatus(paseo, getEngine(paseo), owed));
 
   server.on("agent.turn_started", (event, { paseo }) => {
     owed.clear(event.agent.id);

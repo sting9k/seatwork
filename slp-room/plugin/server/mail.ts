@@ -65,6 +65,8 @@ export interface SeatRecord {
   role: Role;
   provider: string;
   title: string | null;
+  /** Where the seat was created; absent in records older than the Room screen. */
+  cwd?: string;
 }
 
 const MAIL_DIR = join(ROOM_HOME, "mail");
@@ -263,8 +265,8 @@ export class MailEngine {
     for (const line of readFileSync(REGISTRY_LOG, "utf8").split("\n")) {
       if (!line.trim()) continue;
       try {
-        const rec = JSON.parse(line) as { agentId: string; parentAgentId: string | null; role: Role; provider: string; title: string | null };
-        this.seats.set(rec.agentId, { agentId: rec.agentId, parentAgentId: rec.parentAgentId ?? null, role: rec.role, provider: rec.provider, title: rec.title ?? null });
+        const rec = JSON.parse(line) as { agentId: string; parentAgentId: string | null; role: Role; provider: string; title: string | null; cwd?: string };
+        this.seats.set(rec.agentId, { agentId: rec.agentId, parentAgentId: rec.parentAgentId ?? null, role: rec.role, provider: rec.provider, title: rec.title ?? null, ...(rec.cwd ? { cwd: rec.cwd } : {}) });
       } catch {
         // skip bad line
       }

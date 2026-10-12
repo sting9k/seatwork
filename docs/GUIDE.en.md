@@ -160,10 +160,11 @@ a seat you opened yourself ends a turn with `DECISION_NEEDED`, `BLOCKED`, a
 `paseo/policy.json` and run `./install.sh` to switch it off.
 
 The **Room** row at the bottom of Paseo's sidebar says how many of those
-turns still wait, and opens a screen with them, the seats as a tree (each
-with its state and the mail held for it), the latest mail and what the
-watcher found. Press a seat to open it. A turn stays on the list until its
-seat works again or is archived; a daemon restart does not clear it.
+turns still wait, and opens a screen for the whole room: those turns on
+top, then HQ and every project, each with its seats as a tree. A seat's dot
+is green while it works; a seat with mail held for it says so. Press a seat
+to open it. A turn stays on the list until its seat works again or is
+archived; a daemon restart does not clear it.
 
 ### Steering a Peer
 

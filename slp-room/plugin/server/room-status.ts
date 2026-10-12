@@ -1,12 +1,10 @@
 import { existsSync, readFileSync, renameSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { basename } from "node:path";
 import type { PaseoApi } from "@getpaseo/client";
 import { liveAgents, type LiveAgent } from "./gc";
-import { waitsOnSomeone, type MailEngine } from "./mail";
-import { ROOM_HOME } from "./paths";
-import type { ScanRecord } from "./watch/scanlog";
-
-const MAIL_LOG = join(ROOM_HOME, "mail", "log.jsonl");
+import { hqDir } from "./hq";
+import { waitsOnSomeone, type MailEngine, type SeatRecord } from "./mail";
+import { findRoomMarker, isInside, loadRegistry, realOrSelf, type Registry } from "./registry";
 
 /** What a turn left for the Owner to answer, kept by the plugin until that seat works again. */
 export interface Owed {
@@ -58,78 +56,60 @@ export class OwedList {
   }
 }
 
-/** Where a mail stands, from the last line the mail log has for it. */
-const STATE: Record<string, string> = {
-  queued: "waiting",
-  "delivered-idle": "delivered",
-  "delivered-steer": "delivered",
-  "delivery-failed": "waiting",
-  "read-by-inbox": "read",
-  "dropped-recipient-gone": "undeliverable",
-  "replaced-by-newer-report": "replaced",
-  "report-kept": "kept for the turn's end",
-  "report-replaced": "replaced",
-};
-
-interface LogLine {
-  at: string;
-  kind: string;
-  id: string;
-  from: string;
-  to: string;
-  subject: string;
+/** The group a seat's directory puts it in: HQ's own project, a registered project, else the project its room marker or its directory names. */
+function placeOf(cwd: string, registry: Registry | null, hq: string): { key: string; name: string } {
+  const real = realOrSelf(cwd);
+  if (isInside(real, hq)) return { key: "hq", name: "HQ" };
+  const entry = registry?.projects.find((project) => isInside(real, project.cwd));
+  if (entry) return { key: entry.name, name: entry.name };
+  const root = findRoomMarker(real)?.root ?? real;
+  return { key: root, name: basename(root) };
 }
 
-/** The newest mails, one row each, with where each stands now. */
-function latestMail(count: number): { id: string; at: string; from: string; to: string; subject: string; state: string }[] {
-  if (!existsSync(MAIL_LOG)) return [];
-  const mails = new Map<string, { id: string; at: string; from: string; to: string; subject: string; state: string }>();
-  for (const line of readFileSync(MAIL_LOG, "utf8").split("\n")) {
-    if (!line.trim()) continue;
-    let entry: LogLine;
-    try {
-      entry = JSON.parse(line) as LogLine;
-    } catch {
-      continue;
-    }
-    if (!entry.id || !entry.subject) continue;
-    const known = mails.get(entry.id);
-    mails.set(entry.id, { id: entry.id, at: known?.at ?? entry.at, from: entry.from, to: entry.to, subject: entry.subject, state: STATE[entry.kind] ?? entry.kind });
-  }
-  return [...mails.values()].slice(-count).reverse();
-}
-
-/** The room as the app shows it: what waits on the Owner, the seats that exist as a tree, the latest mail, what the watcher found. */
-export async function roomStatus(paseo: PaseoApi, engine: MailEngine, owed: OwedList, scans: ScanRecord[]) {
+/**
+ * The room as the app shows it: what waits on the Owner, and the seats the daemon still has, grouped by project.
+ * HQ comes first, then the registered projects in their order (also one with no seat open), then the rest.
+ */
+export async function roomStatus(paseo: PaseoApi, engine: MailEngine, owed: OwedList) {
   const live = await liveAgents(paseo);
+  const registry = loadRegistry();
+  const hq = hqDir();
   const records = engine.allSeats().filter((seat) => live.has(seat.agentId));
-  const listed = new Set(records.map((seat) => seat.agentId));
-  const above = (id: string) => {
-    const parent = engine.parentOf(id);
-    return parent && listed.has(parent) ? parent : null;
-  };
-  const seats: { agentId: string; role: string; title: string | null; status: string; held: number; depth: number }[] = [];
-  const walk = (parent: string | null, depth: number) => {
-    for (const seat of records) {
-      if (above(seat.agentId) !== parent) continue;
-      const agent = live.get(seat.agentId)!;
-      seats.push({ agentId: seat.agentId, role: seat.role, title: seat.title, status: waitsOnSomeone(agent) ? "waiting" : agent.status, held: engine.held(seat.agentId).length, depth });
-      walk(seat.agentId, depth + 1);
-    }
-  };
-  walk(null, 0);
-  const name = (id: string) => {
-    const seat = engine.seat(id);
-    return seat ? (seat.title ?? seat.role) : id === "room" ? "room" : id.slice(0, 8);
-  };
-  const findings = scans
-    .flatMap((scan) => scan.findings.map((finding) => ({ at: scan.at, seat: name(scan.seat), rule: finding.rule as string, evidence: finding.evidence, outcome: finding.outcome as string })))
-    .slice(-8)
-    .reverse();
+  const place = new Map<string, { key: string; name: string }>();
+  for (const seat of records) {
+    const cwd = seat.cwd ?? live.get(seat.agentId)!.cwd;
+    place.set(seat.agentId, cwd ? placeOf(cwd, registry, hq) : { key: "", name: "unplaced" });
+  }
+  const groups = new Map<string, { name: string; members: SeatRecord[] }>([["hq", { name: "HQ", members: [] }]]);
+  for (const project of registry?.projects ?? []) groups.set(project.name, { name: project.name, members: [] });
+  for (const seat of records) {
+    const { key, name } = place.get(seat.agentId)!;
+    if (!groups.has(key)) groups.set(key, { name, members: [] });
+    groups.get(key)!.members.push(seat);
+  }
+  const projects = [...groups.entries()]
+    .filter(([key, group]) => group.members.length > 0 || (registry?.projects.some((project) => project.name === key) ?? false))
+    .map(([, group]) => {
+      const inGroup = new Set(group.members.map((seat) => seat.agentId));
+      // a project's own tree: its Supervisor is at the top, whoever opened it
+      const above = (id: string) => {
+        const parent = engine.parentOf(id);
+        return parent && inGroup.has(parent) ? parent : null;
+      };
+      const seats: { agentId: string; role: string; title: string | null; status: string; held: number; depth: number }[] = [];
+      const walk = (parent: string | null, depth: number) => {
+        for (const seat of group.members) {
+          if (above(seat.agentId) !== parent) continue;
+          const agent = live.get(seat.agentId)!;
+          seats.push({ agentId: seat.agentId, role: seat.role, title: seat.title, status: waitsOnSomeone(agent) ? "waiting" : agent.status, held: engine.held(seat.agentId).length, depth });
+          walk(seat.agentId, depth + 1);
+        }
+      };
+      walk(null, 0);
+      return { name: group.name, seats };
+    });
   return {
-    waiting: owed.among(live),
-    seats,
-    mail: latestMail(12).map((mail) => ({ ...mail, from: name(mail.from), to: name(mail.to) })),
-    findings,
+    waiting: owed.among(live).map((item) => ({ ...item, project: place.get(item.agentId)?.name ?? "" })),
+    projects,
   };
 }

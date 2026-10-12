@@ -12,7 +12,7 @@ import { addSeats, setUpRoom } from "../server/setup/init";
 import { applyToConfigFile, applyWithSdk } from "../server/setup/paseo-config";
 import { planRoom, roomModels, type Catalog, type Setup } from "../server/setup/plan";
 import { isSetUp, readSetup } from "../server/setup/room-home";
-import { changedRoles, chooseSeat, chooseTier, clearRole, dropTier, seatChoice, tierChoices, type Table } from "../shared/model-choices";
+import { changedRoles, chooseSeat, chooseTier, clearRole, dropTier, merge, seatChanged, seatChoice, type Table, tierChoices, tierDiff } from "../shared/model-choices";
 
 // every harness has the same two models, plus the one the room's own table puts HQ on
 const catalog: Catalog = async () => ({
@@ -135,6 +135,21 @@ test("a project's own choices name the roles they change, and a role given back 
   own = clearRole(own, "peer");
   assert.deepEqual(changedRoles(own), ["lead"]);
   assert.deepEqual(clearRole(own, "lead"), {}, "a project with no role of its own is on the room's table");
+});
+
+test("what applying would change is named model by model: changed, added, taken out", async () => {
+  const room = roomModels(PLUGIN_DIR) as unknown as Table;
+  let choices = chooseSeat({}, "lead", { harness: "claude", model: "claude-sonnet-5-5", thinking: "medium" });
+  choices = chooseTier(choices, "peer", "cheap", { harness: "pi", model: "m-one", thinking: "" });
+  choices = chooseTier(choices, "peer", "extra", { harness: "claude", model: "claude-opus-5-5", thinking: "high" }, "the long jobs");
+  choices = dropTier(choices, room, "peer", "cross-family");
+  const next = merge(room, choices) as Table;
+
+  assert.deepEqual([seatChanged(room, next, "lead"), seatChanged(room, next, "supervisor")], [true, false]);
+  assert.deepEqual(tierDiff(room, next, "peer").map((tier) => [tier.label, tier.change]), [["cheap", "changed"], ["default", "same"], ["extra", "added"], ["cross-family", "removed"]]);
+  assert.ok(tierDiff(room, next, "lens").every((tier) => tier.change === "same"));
+  // a daemon with no room yet has nothing to compare with: nothing waits
+  assert.deepEqual([seatChanged(null, next, "lead"), tierDiff(null, next, "peer").some((tier) => tier.change !== "same")], [false, false]);
 });
 
 test("choices the room cannot run on are refused before anything is written", async () => {

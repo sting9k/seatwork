@@ -68,6 +68,7 @@ test("a daemon that only downloaded the plugin: nothing is created, a room seat 
 
   const screen = await state();
   assert.equal(screen.applied, null);
+  assert.equal((screen as unknown as { spend: unknown }).spend, null);
   assert.deepEqual(screen.harnesses.map((h) => [h.id, h.available]), [["claude", true], ["codex", false], ["pi", false], ["opencode", false]]);
   assert.equal(screen.harnesses[1].why, "codex is not installed");
 });
@@ -94,6 +95,8 @@ test("Init sets the room up and starts it without a reload; Apply restarts it on
   assert.deepEqual(daemon.workspaces.length, 1, "the HQ project was opened a second time");
 
   const screen = await state();
+  // the watcher is on: the screen is told what its model cost this month, against the policy's plan and cap
+  assert.deepEqual((screen as unknown as { spend: object }).spend, { usd: 0, planUsd: policy().watcher.budget.monthlyPlanUsd, capUsd: policy().watcher.budget.monthlyCapUsd });
   assert.deepEqual(screen.applied?.models, { seats: { lead: { provider: "pi-lead/m", thinking: "high" } } });
   assert.deepEqual([screen.applied?.watcher, screen.applied?.seats.includes("pi-lead")], ["on", true]);
   assert.ok(!screen.checks.some((check) => check.id === "version"), "a room this version set up is told to apply again");

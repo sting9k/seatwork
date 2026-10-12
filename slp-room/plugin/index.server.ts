@@ -39,7 +39,7 @@ import { Watcher, type SeatView, type TimelineView } from "./server/watch/watche
 
 type CreateRequest = PluginBeforeRequests["agent.create"];
 
-const VERSION = "0.15.0";
+const VERSION = "0.16.0";
 const MAIL_DIR = join(ROOM_HOME, "mail");
 const MCP_TOKEN_FILE = join(MAIL_DIR, "token");
 const NONCES_FILE = join(MAIL_DIR, "nonces.json");
@@ -104,6 +104,8 @@ export default function contribute(server: PluginServerContext) {
       harnesses,
       watcherKey: room !== null && watchKey(room.policy.watcher.engine) !== undefined,
       projects: (setup ? projectTables() : []) as never,
+      // a watcher that is off asks nothing and spends nothing
+      spend: room && room.policy.watcher.mode !== "off" ? room.spend() : null,
       checks: await setupChecks(paseo, pluginDir, setup, seats),
     };
   });
@@ -231,6 +233,8 @@ interface Room {
   waiting(paseo: PaseoApi): Promise<{ chime: boolean; waiting: Awaited<ReturnType<OwedList["current"]>> }>;
   status(paseo: PaseoApi): ReturnType<typeof readRoomStatus>;
   usage(): ReturnType<typeof usageReport>;
+  /** What the watcher's decision model cost this month, against its plan and its cap. */
+  spend(): { usd: number; planUsd: number; capUsd: number };
   stop(): Promise<void>;
 }
 
@@ -766,6 +770,7 @@ function startRoom(server: Pick<PluginServerContext, "on" | "before">): Room {
     },
     status: (paseo) => readRoomStatus(paseo, getEngine(paseo), owed),
     usage: () => usageReport(budget.summary()),
+    spend: () => (({ total, planUsd, capUsd }) => ({ usd: total.usd, planUsd, capUsd }))(budget.summary()),
     async stop() {
       for (const remove of off) remove();
       clearInterval(sweep);

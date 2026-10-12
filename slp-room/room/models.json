@@ -19,6 +19,14 @@
   "peer": {
     "reviewThinking": "high",
     "tiers": {
+      "cheap": {
+        "providers": [
+          "claude-peer/claude-haiku-5-5"
+        ],
+        "thinking": "high",
+        "use": "mechanical, fully specified: extraction, renames, formatting, log triage, doc edits, test scaffolds",
+        "never": "anything needing judgement about behavior"
+      },
       "default": {
         "providers": [
           "claude-peer/claude-sonnet-5-5"

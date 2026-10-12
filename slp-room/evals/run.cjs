@@ -183,7 +183,7 @@ function matchesWhere(tool, g) {
   return true;
 }
 
-/** One grader against one run. Shapes: signal, first_line, last_line, text, not_text, tool, no_tool, any_of. */
+/** One grader against one run. Shapes: signal, first_line, last_line, text, not_text, tool (with min, max, distinct), no_tool, any_of. */
 function grade(g, ctx) {
   const { text, lines, tools } = ctx;
   if (g.any_of) return g.any_of.some((inner) => grade(inner, ctx));
@@ -198,6 +198,8 @@ function grade(g, ctx) {
   if (g.not_text) return !new RegExp(g.not_text, "m").test(text);
   if (g.tool) {
     const hits = tools.filter((t) => new RegExp(g.tool).test(t.name) && matchesWhere(t, g));
+    // distinct: "<input field>": no two of the matching calls carry the same value there
+    if (g.distinct && new Set(hits.map((t) => JSON.stringify(t.input?.[g.distinct]))).size !== hits.length) return false;
     return hits.length >= (g.min ?? 1) && hits.length <= (g.max ?? Infinity);
   }
   if (g.no_tool) return !tools.some((t) => new RegExp(g.no_tool).test(t.name) && matchesWhere(t, g));

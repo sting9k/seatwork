@@ -3,7 +3,7 @@ import type { PaseoApi } from "../paseo";
 import type { Harness } from "../seats";
 import type { Catalog, CatalogModel } from "./plan";
 
-/** The catalogs as the `paseo` CLI lists them, for the installer: null when the daemon does not answer. */
+/** The catalogs as the `paseo` CLI lists them; null when the daemon does not answer. */
 export const cliCatalog: Catalog = async (harness) => {
   try {
     const rows = JSON.parse(await paseoCli(["provider", "models", harness, "--json"])) as { id: string; model?: string; description?: string; thinkingOptionIds?: string[]; defaultThinkingOptionId?: string | null }[];
@@ -17,7 +17,6 @@ export interface HarnessState {
   id: Harness;
   label: string;
   available: boolean;
-  /** Why it is not available, in Paseo's words. */
   why: string;
   models: Record<string, CatalogModel>;
 }

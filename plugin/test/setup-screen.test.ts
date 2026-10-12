@@ -98,7 +98,7 @@ test("Init sets the room up and starts it without a reload; Apply restarts it on
   assert.deepEqual(daemon.workspaces.length, 1, "the HQ project was opened a second time");
 
   const screen = await state();
-  // the watcher is on: the screen is told what its model cost this month, against the policy's plan and cap
+  // the watcher is on: the screen is told what its model cost this month, against plan and cap
   assert.deepEqual((screen as unknown as { spend: object }).spend, { usd: 0, planUsd: policy().watcher.budget.monthlyPlanUsd, capUsd: policy().watcher.budget.monthlyCapUsd });
   assert.deepEqual(screen.applied?.models, { seats: { lead: { provider: "pi-lead/m", thinking: "high" } } });
   assert.deepEqual([screen.applied?.watcher, screen.applied?.seats.includes("pi-lead")], ["on", true]);
@@ -113,7 +113,7 @@ test("a project's own models are written into the project from the screen and ta
   const shop = { name: "shop", root: realpathSync(PROJECT), error: null };
   assert.deepEqual(await project(), { ...shop, own: false, models: {} });
 
-  // its Supervisor moves to an agent CLI the room has no seat for: the seat is set up, then the table is written
+  // its Supervisor moves to an agent CLI the room has no seat for: the seat is set up first
   const own = { seats: { supervisor: { provider: "opencode-supervisor/m", thinking: "default" } } };
   assert.deepEqual(await write("shop", own), { own: true, seats: ["opencode-supervisor"] });
   assert.ok("opencode-supervisor" in daemon.config.providers);
@@ -124,7 +124,7 @@ test("a project's own models are written into the project from the screen and ta
   assert.deepEqual(marker().models, own, "a table the room refused was written");
   await assert.rejects(write("elsewhere", own), /elsewhere is not a registered project/);
 
-  // edited by hand to name a seat the room lacks: the screen is told why, and saving the table as it is sets the seat up
+  // edited by hand to name a seat the room lacks: the screen says why, and saving sets the seat up
   const byHand = { seats: { lead: { provider: "opencode-lead/m", thinking: "default" } } };
   writeFileSync(join(PROJECT, ".seatwork", "room.json"), JSON.stringify({ models: byHand }));
   assert.match(((await project()) as { error: string }).error, /names opencode-lead, which the room has not enabled/);
@@ -144,7 +144,7 @@ test("after an update of the plugin the room takes no new seat until its files a
 
   await assert.rejects(createPeer(), /set up by version 0\.1\.0 of the plugin.*Press Apply on the Seatwork screen/);
   assert.ok((await state()).checks.some((check) => check.id === "version" && check.ok === false));
-  // an install from before 0.18.0, under the old id, beside this one: the screen says there are two copies
+  // an install from before 0.18.0, under the old id, beside this one: two copies
   daemon.config.plugins["slp-seat"] = { path: "/an/old/checkout" };
   assert.ok((await state()).checks.some((check) => check.id === "two-copies" && check.ok === false));
   delete daemon.config.plugins["slp-seat"];
@@ -194,7 +194,7 @@ test("the watcher's key is kept for its owner only and never handed back to the 
 });
 
 test("removing the room waits for its seats, then takes it out of Paseo and out of the projects it worked in, keeps all of it beside its home, and leaves the plugin asleep", async () => {
-  // a registered project, a folder a seat once ran in, one whose .seatwork is a link, and one the room never knew
+  // a registered project, a folder a seat ran in, one with a linked .seatwork, one the room never knew
   const [seatDir, linked, stranger] = ["seat-ran-here", "linked", "stranger"].map((name) => join(realpathSync(PROJECT), "..", name));
   const seatwork = (dir: string, ...files: string[]) => {
     mkdirSync(join(dir, ".seatwork", "plans"), { recursive: true });
@@ -220,17 +220,17 @@ test("removing the room waits for its seats, then takes it out of Paseo and out 
   assert.deepEqual([Object.keys(daemon.config.providers), daemon.config.agentProfiles], [["my-own"], [{ id: "mine" }]]);
   assert.ok(removed.includes("claude-hq") && !removed.includes("my-own"));
   assert.deepEqual([existsSync(ROOM_HOME), dirname(movedTo), existsSync(join(movedTo, "room", "models.json"))], [false, dirname(ROOM_HOME), true]);
-  // this daemon's paseo CLI fails: the HQ workspace is archived and the screen is told the project's line stays
+  // the paseo CLI fails here: the HQ workspace is archived, and the screen is told the project's line stays
   assert.deepEqual(daemon.workspaces, [], "the HQ workspace is still listed in Paseo");
   assert.match(notes.join(" "), /hq-seatwork project is still in Paseo's list/);
 
-  // the room's files leave .seatwork/ by name; a file of the user's stays, and so does the folder that holds it
+  // the room's files leave .seatwork/ by name; the user's file stays, and so does its folder
   const shop = projects.find((project) => project.root === realpathSync(PROJECT))!;
   assert.deepEqual([shop.moved.sort(), shop.left], [["mission.md", "notebook.md", "plans", "room.json", "shop-law.md", "status.md"], ["mine.txt"]]);
   assert.deepEqual([readdirSync(join(PROJECT, ".seatwork")), readFileSync(join(PROJECT, "code.ts"), "utf8")], [["mine.txt"], "the user's"]);
   const kept = readdirSync(join(movedTo, "projects")).find((name) => name.endsWith("project"))!;
   assert.equal(readFileSync(join(movedTo, "projects", kept, ".seatwork", "plans", "billing.md"), "utf8"), "plans/billing.md");
-  // a folder a seat ran in loses an emptied .seatwork/; a linked .seatwork and a folder the room never knew are not touched
+  // an emptied .seatwork/ goes; a linked .seatwork and a folder the room never knew are not touched
   assert.deepEqual(projects.map((project) => project.root).sort(), [realpathSync(PROJECT), seatDir].sort());
   assert.deepEqual([existsSync(join(seatDir, ".seatwork")), readdirSync(join(stranger, ".seatwork")).sort(), existsSync(join(linked, ".seatwork", "status.md"))], [false, ["plans", "status.md"], true]);
   await assert.rejects(createPeer(), /no room is set up on this daemon/);

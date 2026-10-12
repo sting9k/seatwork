@@ -2,7 +2,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { ROOM_HOME } from "./paths";
 
-/** Types and loader for policy.json, the single source of truth: no defaults here, a broken file stops the plugin. */
+/** Types and loader for policy.json: no defaults here, a broken file stops the plugin. */
 
 export interface ClaudeRuntimePolicy {
   /** Bundled skills denied through the provider's disallowedTools as Skill(skill:<name>). */
@@ -11,7 +11,7 @@ export interface ClaudeRuntimePolicy {
   shareFiles: string[];
 }
 
-/** How a harness's seats start. In an env value `{runtime}` is the seat's own home; `extraArgs` are launch flags (Claude). */
+/** How a harness's seats start: `{runtime}` in an env value is the seat's home; `extraArgs` are launch flags. */
 export interface LaunchPolicy {
   env: Record<string, string>;
   extraArgs?: Record<string, string | null>;
@@ -31,7 +31,6 @@ export interface CodexRuntimePolicy {
 
 /** What the room does for the Owner in the app. */
 export interface OwnerPolicy {
-  /** Play a short sound in the open app when a turn leaves something for the Owner to answer. */
   chime: boolean;
 }
 
@@ -54,7 +53,7 @@ export interface MailPolicy {
   port: number;
   /** With midTurn "steer": FYI mail still waits for the turn to end. */
   holdFyiWhileRunning: boolean;
-  /** "steer" hands mail to Paseo's steer while the recipient runs (cancels its tool on Claude and Pi); "hold" waits for the turn to end. */
+  /** "steer" hands mail to a running recipient (cancels its tool on Claude and Pi); "hold" waits for the turn's end. */
   midTurn: Record<"claude" | "codex" | "pi" | "opencode", MidTurnDelivery>;
 }
 
@@ -71,9 +70,9 @@ export interface RoomParams {
 }
 
 export interface RoomPolicy {
-  /** "<senderRole>><recipientRole>": may that role write to that role. The tree relation is still required. A missing pair is refused. */
+  /** "<senderRole>><recipientRole>": whether that role may write to that role; a missing pair is refused. */
   routes: Record<string, boolean>;
-  /** Per role: the roles it may create, as `role` or `role:spec` (only that specialization). Anything else is archived and its parent told. */
+  /** Per role: the roles it may create, as `role` or `role:spec`; anything else is archived. */
   spawn: Record<RoleName, string[]>;
   params: RoomParams;
 }
@@ -83,18 +82,14 @@ export interface GcPolicy {
   everyMinutes: number;
   idleHoursBeforeArchive: Record<RoleName, number>;
   deleteOrphanHeartbeats: boolean;
-  /** FYI mail to the parent when one of its seats is archived by GC. */
   tellParent: boolean;
 }
 
-/** The watcher, see watch/watcher.ts. `off` does nothing, `shadow` scans and logs, `on` also mails the seat above. */
+/** The watcher (watch/watcher.ts): `off` does nothing, `shadow` scans and logs, `on` also mails the seat above. */
 export interface WatcherPolicy {
   mode: "off" | "shadow" | "on";
-  /** Roles whose turns are read. */
   watch: RoleName[];
-  /** Seconds between two looks at a running turn. */
   pollSeconds: number;
-  /** Timeline entries read per look. */
   historyEntries: number;
   /** Per rule: mail it, only log it, or skip it. A rule not listed is logged. */
   rules: Record<string, "raise" | "log" | "off">;

@@ -15,7 +15,7 @@ export interface Owed {
   at: string;
 }
 
-/** What waits on the Owner, one entry per seat, kept on disk: a plugin reload or a daemon restart answers nothing. */
+/** What waits on the Owner, one entry per seat, kept on disk across reloads and restarts. */
 export class OwedList {
   private readonly items = new Map<string, Owed>();
 
@@ -56,7 +56,7 @@ export class OwedList {
   }
 }
 
-/** The group a seat's directory puts it in: HQ's own project, a registered project, else the project its room marker or its directory names. */
+/** The group a seat's directory puts it in: HQ's project, a registered project, or what its directory names. */
 function placeOf(cwd: string, registry: Registry | null, hq: string): { key: string; name: string } {
   const real = realOrSelf(cwd);
   if (isInside(real, hq)) return { key: "hq", name: "HQ" };
@@ -66,10 +66,7 @@ function placeOf(cwd: string, registry: Registry | null, hq: string): { key: str
   return { key: root, name: basename(root) };
 }
 
-/**
- * The room as the app shows it: what waits on the Owner, and the seats the daemon still has, grouped by project.
- * HQ comes first, then the registered projects in their order (also one with no seat open), then the rest.
- */
+/** The room as the app shows it: what waits on the Owner, and the seats grouped by project, HQ first. */
 export async function roomStatus(paseo: PaseoApi, engine: MailEngine, owed: OwedList) {
   const live = await liveAgents(paseo);
   const registry = loadRegistry();

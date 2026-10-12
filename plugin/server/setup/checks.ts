@@ -16,10 +16,7 @@ function piVersion(): Promise<string> {
   });
 }
 
-/**
- * A Pi seat gets the room's tools through Pi's built-in MCP, which Pi has from 0.99. Returns what
- * is wrong with this machine's Pi, or null.
- */
+/** What is wrong with this machine's Pi, or null: a Pi seat needs Pi's built-in MCP, there from 0.99. */
 export async function piProblem(version: Promise<string> = piVersion()): Promise<string | null> {
   const found = await version;
   return atLeast(found, [0, 99]) ? null : `a Pi seat needs Pi 0.99 or later to get the room's tools; found ${found || "no pi on PATH"}`;

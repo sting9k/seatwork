@@ -1,6 +1,6 @@
 /**
- * Replays recorded turns through the watcher's gate: `npm run watch:replay -- [--ask] <eval run dir | results label dir | session.jsonl> …`
- * Prints what each turn's facts amount to; with --ask the opened questions go to the decision model (key as the plugin reads it).
+ * Replays recorded turns through the watcher's gate; --ask also puts the opened questions to the decision model.
+ *   npm run watch:replay -- [--ask] <eval run dir | results label dir | session.jsonl> …
  */
 import { execFileSync } from "node:child_process";
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
@@ -19,7 +19,6 @@ interface Turn {
   id: string;
   entries: TimelineInput[];
   cwd: string;
-  /** The project root: the repository the seat stood in, as the watcher takes it from git. */
   root: string;
   brief: Brief | null;
   changed: string[] | null;
@@ -27,7 +26,7 @@ interface Turn {
 
 type Block = { type: string; text?: string; id?: string; name?: string; input?: Record<string, unknown>; tool_use_id?: string; content?: unknown; is_error?: boolean };
 
-/** Claude's stream (an eval run's events.jsonl, a session's .jsonl) as the timeline entries Paseo would project from it. */
+/** Claude's stream (events.jsonl or a session's .jsonl) as the timeline entries Paseo would project. */
 function claudeEntries(file: string): { entries: TimelineInput[]; cwds: (string | null)[] } {
   const entries: TimelineInput[] = [];
   const cwds: (string | null)[] = [];
@@ -120,7 +119,7 @@ function turnsOf(path: string): Turn[] {
     const prompt = readFileSync(join(full, "prompt.md"), "utf8");
     const { entries } = claudeEntries(join(full, "events.jsonl"));
     const brief = parseBrief(prompt, cwd);
-    // a review's fixture starts with the candidate's changes in the tree: git cannot tell them from the reviewer's own
+    // a review's fixture starts with the candidate's changes: git cannot tell them from the reviewer's
     const changed = brief.readOnly ? null : changedIn(cwd);
     return [{ id: basename(full), entries: [{ item: { type: "user_message", text: prompt }, turnId: "turn-1" }, ...entries.map((entry) => ({ ...entry, turnId: "turn-1" }))], cwd, root: cwd, brief, changed }];
   }
@@ -146,7 +145,7 @@ async function main(): Promise<void> {
     const turnId = (turn.entries.at(-1) as TimelineInput | undefined)?.turnId ?? null;
     const facts = turnFacts({ events, turnStart: turnStartOf(turn.entries, events, turnId), cwd: turn.cwd, root: turn.root, brief: turn.brief, ended: true, changed: turn.changed });
     turns += 1;
-    // an eval's Peer case is that Peer's first turn: its prompt is the brief a Lead would have created it with
+    // an eval's Peer case is that Peer's first turn: its prompt is the brief a Lead would create it with
     const lacks = turn.brief && turn.id.startsWith("peer-") ? missingLines(turn.brief) : [];
     const result = gate({ facts, brief: turn.brief, moment: "end", briefGap: lacks.length > 0 ? { lines: lacks } : null, now: facts.lastActivity ?? 0, pendingPermission: false, thresholds });
     const told = result.findings.map((finding) => `${finding.rule}: ${finding.evidence}`);

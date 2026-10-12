@@ -16,10 +16,7 @@ export interface Seat {
   role: Role;
 }
 
-/**
- * A seat is a Paseo provider named `<harness>-<role>`, e.g. `claude-lead` or
- * `codex-peer`. Any other provider id is not a room seat and is left alone.
- */
+/** A seat is a Paseo provider named `<harness>-<role>`, e.g. `claude-lead`; any other provider id is left alone. */
 export function parseSeat(provider: string | undefined): Seat | null {
   if (!provider) return null;
   const dash = provider.indexOf("-");
@@ -42,7 +39,7 @@ export function enabledSeats(): Seat[] {
   return (parsed.providers ?? []).map(parseSeat).filter((s): s is Seat => s !== null);
 }
 
-/** `harness/<harness>-harness.md`: how this harness exposes the room's tools (tool names, tool search, what is denied). Named so nobody mistakes `claude.md` for a CLAUDE.md. */
+/** `harness/<harness>-harness.md`: how this harness exposes the room's tools. */
 export function harnessSheet(harness: Harness | undefined): string | null {
   if (!harness) return null;
   return readIfExists(join(ROOM_DIR, "harness", `${harness}-harness.md`));
@@ -54,11 +51,7 @@ export function specSheet(name: string | undefined): string | null {
   return readIfExists(join(ROOM_DIR, "specs", `${name}.md`));
 }
 
-/** `[Peer:research] task` → "research"; otherwise undefined. */
-/**
- * Whether `parent` may create `childRole` with this title. A spawn entry is a
- * role (`lead`) or a role with the one specialization it allows (`peer:research`).
- */
+/** Whether `parent` may create `childRole` with this title; a spawn entry is `role` or `role:spec`. */
 export function maySpawn(spawn: Record<string, string[]>, parent: string, childRole: string, title: string | null | undefined): boolean {
   const allowed = spawn[parent] ?? [];
   if (allowed.includes(childRole)) return true;
@@ -74,18 +67,11 @@ export function specFromTitle(title: string | null | undefined): string | undefi
 export interface PromptContext {
   harness?: Harness;
   spec?: string;
-  /** Knobs quoted by the prompts; with models.json they fill the {{placeholders}}. */
   params: RoomParams;
-  /** The project's own table when its room.json carries one; default: the room's. */
   models?: Models;
 }
 
-/**
- * The system prompt every seat receives: the role file (self-contained: a seat
- * learns nothing about what sits above its "Owner"), the optional
- * specialization sheet, and the harness sheet. Read on every
- * call so edits to the room files apply to the next agent without a reload.
- */
+/** The system prompt every seat receives: role file, specialization sheet, harness sheet; read on every call. */
 export function rolePrompt(role: Role, context: PromptContext): string {
   const roleText = readIfExists(join(ROOM_DIR, "roles", `${role}.md`));
   if (!roleText) {
@@ -97,7 +83,7 @@ export function rolePrompt(role: Role, context: PromptContext): string {
   const missing: string[] = [];
   const rendered = render(roleText.trim(), vars, (name) => missing.push(name));
   if (missing.length) console.error(`seatwork: roles/${role}.md uses unknown placeholders: ${missing.join(", ")}`);
-  const needsRoomDir = role === "hq"; // the model table, the registry log and the room notebook live there; a project seat is shown none of it
+  const needsRoomDir = role === "hq"; // a project seat is shown none of the room's directory
   const parts = [
     `# Seat: ${role}${context.spec ? ` (specialization: ${context.spec})` : ""}`,
     `This session is a ${role} seat in a Paseo room.${needsRoomDir ? ` ROOM_DIR=${ROOM_DIR}. ROOM_HOME=${ROOM_HOME}.` : ""} Role skills live in your skills directory: use them for the procedures they name.`,

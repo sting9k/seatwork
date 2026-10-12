@@ -1,8 +1,4 @@
-/**
- * Enough TOML to edit a config file. Tables become one tree however they are
- * spelled (headers, array tables, dotted keys, inline tables); every other
- * value is kept exactly as written. Comments are not kept.
- */
+/** Enough TOML to edit a config file: tables become one tree, other values stay as written, comments are dropped. */
 
 /** A value as written (`"x"`, `[1, 2]`, `true`), a table, or an array of tables. */
 type TomlValue = string | TomlTable | TomlTable[];
@@ -158,7 +154,7 @@ export function parseToml(text: string): TomlTable {
   return root;
 }
 
-/** The tree as TOML: in each table its own values first, then its tables under `[a.b]` and `[[a.b]]` headers. */
+/** The tree as TOML: each table's own values first, then its tables under their headers. */
 export function formatToml(root: TomlTable): string {
   const lines: string[] = [];
   const write = (table: TomlTable, path: string[]) => {

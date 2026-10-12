@@ -1,8 +1,4 @@
-/**
- * A shell command line split the way the shell would: simple commands, each with its program, arguments and
- * redirections, so words that are only data stay data (`git commit -m "drop the rm -rf step"` is one `git commit`).
- * A reader, not an interpreter: nothing is expanded or run.
- */
+/** A shell command line split as the shell would, into simple commands; a reader, not an interpreter: nothing runs. */
 
 /** How a command hands over to the next one in its list. */
 export type Joiner = "&&" | "||" | ";" | "|" | "&";
@@ -11,17 +7,15 @@ export interface Redirect {
   /** ">" truncates, ">>" appends, "<" reads. Descriptor copies such as 2>&1 are dropped. */
   op: ">" | ">>" | "<";
   target: string;
-  /** The descriptor, when the command names one: 2 for `2>file`. */
   fd?: number;
 }
 
 export interface SimpleCommand {
-  /** Program as written and arguments, quotes removed; wrappers such as `sudo`, `env X=1`, `timeout 60` are peeled off. */
+  /** Program and arguments, quotes removed; wrappers such as `sudo`, `env X=1`, `timeout 60` are peeled off. */
   argv: string[];
   redirects: Redirect[];
   /** Null for the last command of the line. */
   joiner: Joiner | null;
-  /** Written inside a while, until or for loop. */
   inLoop: boolean;
   /** Ran inside `$(...)` or backticks: its exit status is not the line's. */
   substituted: boolean;
@@ -79,7 +73,7 @@ export function parseShell(source: string): ShellLine {
 
 /* ---------- lexer ---------- */
 
-/** Index just past the `)` that closes the `(` at `open`, quotes and nesting respected; -1 when it never closes. */
+/** Index just past the `)` that closes the `(` at `open`, quotes and nesting respected; -1 when none. */
 function closingParen(src: string, open: number): number {
   let depth = 0;
   for (let i = open; i < src.length; i += 1) {
@@ -316,7 +310,6 @@ function lex(src: string, state: { complete: boolean }): Token[] {
 interface Draft {
   words: string[];
   redirects: Redirect[];
-  /** Sources of the `$(...)` and backtick substitutions written in this command. */
   subs: string[];
 }
 
@@ -330,7 +323,7 @@ function parse(source: string, depth: number, state: { complete: boolean }): Sim
   let loops = 0;
   /** Words of a `for x in a b c` header are data until its `do` or the end of the line. */
   let skippingHeader = false;
-  /** A group just closed: the operator that follows joins the group's last command to what comes next. */
+  /** A group just closed: the next operator joins its last command to what follows. */
   let groupClosed = false;
 
   const finish = (joiner: Joiner | null) => {
@@ -409,7 +402,7 @@ function basename(program: string): string {
   return slash < 0 ? program : program.slice(slash + 1);
 }
 
-/** Drops `count` leading words, then every flag after them, with the value of each flag listed in `valued`. */
+/** Drops `count` leading words, then every flag after them, with the value of each flag in `valued`. */
 function peel(words: string[], count: number, valued: readonly string[]): string[] {
   let i = count;
   while (i < words.length && words[i].startsWith("-") && words[i] !== "-" && words[i] !== "--") {
@@ -419,7 +412,7 @@ function peel(words: string[], count: number, valued: readonly string[]): string
   return words.slice(i);
 }
 
-/** One drafted command → the simple commands it stands for (more than one when it wraps a `-c` script). */
+/** One drafted command → its simple commands (more than one when it wraps a `-c` script). */
 function build(draft: Draft, joiner: Joiner | null, inLoop: boolean, depth: number, state: { complete: boolean }): SimpleCommand[] {
   let words = draft.words;
   let viaXargs = false;
@@ -460,10 +453,7 @@ export function listed(line: ShellLine): SimpleCommand[] {
   return line.commands.filter((command) => !command.substituted);
 }
 
-/**
- * Whether the line's exit status proves `command` succeeded: it is the last command, or everything after it is
- * reached only through `&&`. A pipe, `;`, `||` or `&` after it hides its status; `|| exit 1` does not.
- */
+/** Whether the line's exit status proves `command` succeeded: it is last, or only `&&` follows it. */
 export function statusCovers(line: ShellLine, command: SimpleCommand): boolean {
   const chain = listed(line);
   const at = chain.indexOf(command);

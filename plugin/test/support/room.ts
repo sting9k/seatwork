@@ -2,10 +2,7 @@ import { chmodSync, cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeF
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-/**
- * A throwaway room home and throwaway harness homes. Import this first: server/paths.ts reads
- * the environment when it loads, and no test may touch the real ~/.config/seatwork or ~/.codex.
- */
+/** A throwaway room home and harness homes; import this first: server/paths.ts reads the environment as it loads. */
 const base = mkdtempSync(join(tmpdir(), "seatwork-test-"));
 process.on("exit", () => rmSync(base, { recursive: true, force: true }));
 

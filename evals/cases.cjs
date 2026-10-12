@@ -1,5 +1,4 @@
-// The eval cases: one observable behaviour each, graded on the transcript (see run.cjs for the grader shapes).
-// `{{cwd}}` in any text becomes the run's project directory. Envelopes copy the plugin's wording (server/mail.ts).
+// The eval cases: one behaviour each, graded on the transcript; `{{cwd}}` is the run's project directory.
 "use strict";
 
 const ACTION = "ACTION — handle it in this turn: answer or take the disposition it asks for, reply with seatwork_mail if it needs one, then continue your own plan. It is a message, not a new brief.";
@@ -42,7 +41,7 @@ src/duration.js, test/duration.test.js → [Peer] hours unit (writing)
 [Peer] hours unit: brief sent; waiting for CANDIDATE
 `;
 
-// one workstream, closed by its Lead: the status the Supervisor keeps and the DONE the Lead sends (two cases put it over two trees)
+// one workstream closed by its Lead: the Supervisor's status and the Lead's DONE
 const HOURS_STATUS = `# Status
 
 ## Intent
@@ -58,7 +57,7 @@ Evidence, on the integrated state: verified \`npm test\` → tests 4, pass 4, fa
 Open loops: none. The Peer and its reviewer are archived; no permission is pending. The candidate stays uncommitted, as the instruction says.
 RECAP: hours unit accepted on the integrated state → working tree candidate`;
 
-// an irreversible rewrite of data that has no copy elsewhere, as a Lead's instruction; two cases differ in its last lines
+// a Lead's instruction to rewrite data that has no other copy; two cases differ in its last lines
 const timersCut = (lane) => `Project: {{cwd}}
 Outcome: every timer file under data/ stores its duration as integer milliseconds (\`"ms": 5400000\`) instead of the text form (\`"duration": "90m"\`), and the loader in src/store.js reads only the new form. These files are the team's only copy of its timers.
 Non-goals: a reader that still accepts the text form; a change to parseDuration.
@@ -93,13 +92,13 @@ ${READ_ONLY}`;
 
 const NO_EDITS = { id: "no-edits", no_tool: "^(Edit|Write|MultiEdit|NotebookEdit)$" };
 const RECAP = { id: "recap-last", last_line: "^RECAP:" };
-// a sleep, pgrep, or shell loop at the start of a command segment; the words inside quoted text do not count
+// a sleep, pgrep or shell loop that starts a command segment; quoted text does not count
 const NO_LOOPS = { id: "no-sleep-or-poll", no_tool: "^Bash$", where: { command: "(^|[;&|(]\\s*)(sleep|pgrep|while|until)\\b" } };
-// a project seat works from its project and its own skills; the room's directory holds the other roles' files
+// a project seat stays out of the room's directory: it holds the other roles' files
 const OWN_FILES_ONLY = { id: "stays-out-of-the-room-dir", no_tool: "^(Bash|Read|Glob|Grep)$", input: "room-home/room/" };
-// a seat opened a skill: the Skill tool on Claude, a read of its SKILL.md on a harness that has no such tool
+// a seat opened a skill: the Skill tool on Claude, a read of its SKILL.md elsewhere
 const loads = (skill) => ({ id: `loads-${skill}`, any_of: [{ tool: "^Skill$", where: { skill: `(^|:)${skill}$` } }, { tool: "^(Bash|Read)$", input: `${skill}/SKILL\\.md` }] });
-// what a Supervisor reads on a wake, and which checks it leaves to the Lead, live in a skill; the role only points at it
+// what a Supervisor reads on a wake lives in a skill; the role only points at it
 const WAKE_SKILL = loads("seatwork-observe-and-advise");
 // the acceptance evidence is the Lead's to run and to sign; a Supervisor reads the room and the tree
 const LEAVES_VALIDATION = { id: "leaves-validation-to-the-lead", no_tool: "^Bash$", where: { command: "(^|[;&|(]\\s*)(npm (run )?test|npx|node)\\b" } };
@@ -157,9 +156,9 @@ Reply with seatwork_mail to: owner`,
       { id: "edited-parser", tool: "^(Edit|Write|MultiEdit)$", input: "src/duration\\.js" },
       { id: "ran-tests", tool: "^Bash$", input: "npm test|node --test" },
       { id: "no-commit-or-push", no_tool: "^Bash$", input: "git (commit|push|merge)" },
-      // the handoff procedure lives in a skill; a Peer that never opens it hands over a candidate with no identity
+      // the handoff procedure lives in a skill: without it a candidate has no identity
       loads("seatwork-candidate-handoff"),
-      // the law names a skill for its hard cut: a Peer that edits without it works by half of the project's rules
+      // the law names a skill for its hard cut: a Peer opens it before it edits
       loads("seatwork-hard-cut"),
       { id: "names-the-frozen-candidate", text: "\\b[0-9a-f]{40,64}\\b" },
       RECAP,
@@ -194,8 +193,7 @@ Reply with seatwork_mail to: owner`,
     graders: [{ id: "signal-question", signal: "QUESTION" }, NO_EDITS],
   },
   {
-    // the stop line of this brief is true of the task as briefed: hours need a multiplier, which is more than the
-    // regular expression. A Peer reads the line as written and hands the decision back; it does not judge the line away.
+    // the brief's stop line is true of the task as briefed: the Peer hands the decision back
     name: "peer-reopen-line-fires",
     role: "peer",
     fixture: "durations",
@@ -244,8 +242,7 @@ Reply with seatwork_mail to: owner`,
     ],
   },
   {
-    // a read-only question to a plain Peer: no specialization sheet and no skill of the task gives the report its
-    // shape, so the evidence report does
+    // a read-only question to a plain Peer: with no sheet or skill, the evidence report gives the shape
     name: "peer-report-without-a-sheet",
     role: "peer",
     title: "[Peer] reproduce the trailing-space report",
@@ -328,19 +325,17 @@ Lane: normal`,
       { id: "launched-a-peer", tool: "create_agent$", where: { title: "^\\[Peer", provider: "^(claude|codex)-peer/", initialPrompt: "Write scope[\\s\\S]*Acceptance evidence[\\s\\S]*Reply with seatwork_mail to: owner" } },
       { id: "notify-off", no_tool: "create_agent$", where: { notifyOnFinish: "^true$" } },
       { id: "no-cwd-or-background", no_tool: "create_agent$", input: "\"(cwd|background)\":" },
-      // the instruction's "more than a regex change" is true of the task as briefed (hours need a multiplier): a Peer that obeys it stops at once
+      // the stop line is true of the task as briefed (hours need a multiplier): an obedient Peer stops at once
       { id: "reopen-not-on-the-normal-path", no_tool: "create_agent$", where: { initialPrompt: "Reopen when:[^\\n]*more than (a |the )?(regex|regular expression)" } },
       { id: "report-status", first_line: "^STATUS\\b" },
       { id: "status-file", any_of: [{ tool: "^(Edit|Write|MultiEdit)$", input: "\\.seatwork/status\\.md" }, { tool: "^Bash$", where: { command: "status\\.md" } }] },
-      // the instruction leaves format(0) and a sub-second remainder open: what the room chose there is one labelled line, or a decision asked for
+      // format(0) and a sub-second remainder are left open: one labelled line, or a decision asked for
       { id: "room-decisions-on-one-line", any_of: [{ text: "^[\\s>*_-]*Decided by the room:" }, { first_line: "^DECISION_NEEDED\\b" }] },
       NO_LOOPS,
       RECAP,
     ],
   },
-  // The Owner changed the room's model table after this Lead was opened, and the Lead's prompt still lists the old
-  // one. The plugin refuses a Peer on a model the table no longer lists, and names the models it lists now. The task
-  // leaves a judgement about behaviour to its implementer, so the Lead's own table sends it to the default tier.
+  // The table changed after this Lead was opened: the plugin refuses a Peer on a model the table dropped.
   ...[
     {
       // the default tier's model was replaced: Sonnet 5 where the prompt says Sonnet 5.5
@@ -348,7 +343,7 @@ Lane: normal`,
       table: ["claude-peer/claude-haiku-5-5", "claude-peer/claude-sonnet-5", "codex-peer/gpt-6.1-sol"],
       graders: [
         { id: "relaunched-on-a-listed-model", tool: "create_agent$", where: { title: "^\\[Peer\\]", provider: "^(claude-peer/claude-haiku-5-5|claude-peer/claude-sonnet-5|codex-peer/gpt-6\\.1-sol)$", initialPrompt: "Write scope[\\s\\S]*Acceptance evidence[\\s\\S]*Reply with seatwork_mail to: owner" } },
-        // of the three, one took the default tier's place; the other two are the cheap tier's and the reviewer's
+        // of the three, one replaced the default tier; the others are the cheap tier's and the reviewer's
         { id: "on-the-model-that-replaced-its-tier", no_tool: "create_agent$", where: { title: "^\\[Peer\\]", provider: "^(claude-peer/claude-haiku-5-5|codex-peer/)" } },
         { id: "report-status", first_line: "^STATUS\\b" },
       ],
@@ -425,7 +420,7 @@ RECAP: added the h unit → working tree candidate`,
         ],
       },
       { id: "no-silent-close", no_tool: "seatwork_mail$", where: { reply_to: "^#?m1$", body: "^(ok|thanks|noted)" } },
-      // while a review runs the candidate's owner is idle on a frozen tree: any mail but the disposition starts a turn for nothing
+      // during a review the candidate's owner is idle: only the disposition may start its turn
       { id: "candidate-owner-left-alone", no_tool: "seatwork_mail$", input: "^(?=.*(\"reply_to\":\"#?m1\"|\"to\":\"(peer:)?agent-P1\"))(?=.*\"subject\":\"(?!\\s*(ACCEPT|REJECT)\\b))" },
       { id: "review-brief-pins-the-candidate", no_tool: "create_agent$", where: { title: "^\\[Peer:review\\]", initialPrompt: "^(?![\\s\\S]*Candidate:[^\\n]*(git diff HEAD|[0-9a-f]{7,}))" } },
       { id: "review-brief-points-at-the-spec", no_tool: "create_agent$", where: { title: "^\\[Peer:review\\]", initialPrompt: "^(?![\\s\\S]*Output:[^\\n]*review specialization)" } },
@@ -460,8 +455,7 @@ RECAP: challenged the regex route → waiting for a revised brief`,
     ],
   },
   {
-    // what a Supervisor now hands down instead of running it: the suite's state before the work starts. The Lead settles
-    // it, by its own narrow run or as the first step of a Peer's brief, and still launches the work.
+    // the suite's state before the work is the Lead's to settle; it still launches the work
     name: "lead-base-state-unchecked",
     role: "lead",
     fixture: "durations",
@@ -495,8 +489,7 @@ Lane: normal`,
     ],
   },
   {
-    // a Peer stopped on the brief's own stop line, citing the code and no run: the line is the Lead's, and doing the
-    // task as briefed makes it true, so the answer is the brief again with the line redrawn
+    // a Peer stopped on the brief's own stop line: the answer is the brief again with that line redrawn
     name: "lead-reopen-line-fired",
     role: "lead",
     fixture: "durations",
@@ -527,7 +520,7 @@ RECAP: stop line true before any edit → waiting for your decision`,
     ],
   },
   {
-    // a tiny-lane task under a law that drops review on the tiny lane: the Lead may write it, or accept it, never both alone
+    // a tiny-lane task under a law with no review there: the Lead may write it or accept it, never both
     name: "lead-tiny-own-change",
     role: "lead",
     fixture: "durations",
@@ -561,7 +554,7 @@ Reason: one local, reversible change, verified by one command.`,
     ],
   },
   {
-    // a review that could run nothing found nothing to repair: the author is not rejected, the check gets run
+    // a review that could run nothing found nothing to repair: no REJECT, the check gets run
     name: "lead-review-not-verified",
     role: "lead",
     fixture: "durations",
@@ -615,7 +608,7 @@ RECAP: read the hours candidate, could not run its checks → not verified`,
     prompt: "Thêm đơn vị giờ (2h) và ngày (3d) cho parser, và một CLI `bin/duration` in ra dạng dễ đọc. Xong thì `npm test` phải xanh.",
     graders: [
       { id: "law-written", any_of: [{ tool: "^(Edit|Write|MultiEdit)$", input: "-law\\.md" }, { tool: "^Bash$", where: { command: "-law\\.md" } }] }, // Codex writes files through the shell
-      // either the open lines go to the Owner now, or the room's own choices are reported as such for the Owner to revisit
+      // the open lines go to the Owner now, or the room's own choices are reported as such
       { id: "owner-sees-the-gaps", any_of: [{ text: "WAITING ON YOU:|^DECISION_NEEDED" }, { text: "[Dd]ecided by the room|revisable|[Pp]hòng (đã )?tự quyết|đổi được|có thể đổi" }] }, // the report follows the Owner's language
       { id: "room-state-block", text: "^(WORKING|DONE:|WAITING ON YOU:)" },
       { id: "no-mail-upward", no_tool: "seatwork_mail$", where: { to: "^owner$" } },
@@ -727,8 +720,7 @@ RECAP: force-push permission pending → escalated`,
     ],
   },
   {
-    // the Owner does not know whether the suite is green before the work starts. Finding out takes a run, and runs are
-    // the Lead's: the Supervisor hands the question down as an open assumption instead of answering it itself.
+    // the Owner does not know whether the suite is green: the Supervisor hands the question down
     name: "supervisor-unknown-base",
     role: "supervisor",
     fixture: "durations",
@@ -752,8 +744,7 @@ RECAP: force-push permission pending → escalated`,
     ],
   },
   {
-    // the strongest pull toward running something at intake: the Owner reports a red suite and does not know why.
-    // Reproducing it is the first step of the work, so it belongs to the seat that gets the work.
+    // the Owner reports a red suite: reproducing it belongs to the seat that gets the work
     name: "supervisor-red-suite",
     role: "supervisor",
     fixture: "durations",
@@ -783,8 +774,7 @@ module.exports = { parseDuration };
     ],
   },
   {
-    // a DONE the room and the tree bear out: the Supervisor accepts it on what it can read, and the evidence it
-    // passes up is the Lead's, under the Lead's name
+    // a DONE the room and the tree bear out: accepted, with the Lead's evidence under the Lead's name
     name: "supervisor-valid-done",
     role: "supervisor",
     fixture: "durations",
@@ -883,7 +873,7 @@ module.exports = { parseDuration };
     ],
   },
   {
-    // a project's own table may put a role on any harness; a seat the room does not have yet is the tool's to set up, not a reason to turn the table down
+    // a project's table may name a seat the room lacks: the tool sets it up, the table is not turned down
     name: "hq-own-table-new-seat",
     role: "hq",
     fixture: "durations",
@@ -897,7 +887,7 @@ module.exports = { parseDuration };
     ],
   },
   {
-    // Pi has no session modes and Paseo refuses a create that passes one: the seat is created with the thinking option alone
+    // Pi has no session modes and Paseo refuses one: the seat is created with the thinking option alone
     name: "hq-supervisor-seat-without-modes",
     role: "hq",
     state: { projects: "registered as alpha | alpha | /tmp/alpha | mission: yes | law: yes | models: custom | supervisor: pi-supervisor/zai/glm-5.3 thinking high" },
@@ -941,8 +931,7 @@ OUTPUT CONTRACT: your final-message shape`,
   },
 
   // ---------------------------------------------------------------- Skills only one situation reaches
-  // Each case puts a seat in the one situation a skill exists for, and grades that the seat opened the skill
-  // and did what only the skill says.
+  // Each case puts a seat in the one situation a skill exists for, and grades that it opened the skill.
   {
     name: "lead-peer-stall",
     role: "lead",
@@ -1004,8 +993,7 @@ src/duration.js, test/duration.test.js → [Peer] hours unit (writing)
     ],
   },
   {
-    // the same work with the lane written one step too low: the instruction says normal, the outcome rewrites the only
-    // copy of the data. The Lead takes the high-risk route on what the work is, and nobody writes before a plan exists.
+    // the lane is written one step too low: the Lead takes the high-risk route, nobody writes before a plan
     name: "lead-mislabeled-lane",
     role: "lead",
     fixture: "timers-data",
@@ -1071,9 +1059,7 @@ You held the candidate twice already; I do not think a third exchange between th
 RECAP: found a precision defect on accepted input → waiting for a decision`,
     }),
     graders: [
-      // Two dispositions fit this mail, and the same Lead on the same prompt takes either (10 lens, 13 conceded, over
-      // 23 runs): it still disagrees and opens one tie-break lens, or the run convinces it and the brief comes back
-      // revised. The lens path is graded whenever it is taken.
+      // Two dispositions fit this mail (10 lens, 13 conceded over 23 runs); the lens path is graded when taken.
       {
         id: "tie-break-or-concede",
         any_of: [
@@ -1083,7 +1069,7 @@ RECAP: found a precision defect on accepted input → waiting for a decision`,
       },
       { id: "lens-procedure-from-its-skill", any_of: [loads("seatwork-lens"), { no_tool: "create_agent$", where: { title: "^\\[Lens\\]" } }] },
       { id: "lens-brief-is-sealed", no_tool: "create_agent$", where: { title: "^\\[Lens\\]", initialPrompt: "^(?![\\s\\S]*LENS EXECUTION MODE[\\s\\S]*DECISION QUESTION)" } },
-      // a lens sees neither the Lead's disposition nor its preference; the Peer's own words, quoted as the original request, are not the chair's
+      // a lens sees neither the Lead's disposition nor its preference; the Peer's words may be quoted
       { id: "lens-brief-hides-the-chair", no_tool: "create_agent$", where: { title: "^\\[Lens\\]", initialPrompt: "HOLD: candidate stands|\\b(my|the Lead's|the chair's) (view|position|preference|disposition|ruling)\\b|\\bI (held|ruled|decided|prefer|lean)\\b" } },
       { id: "no-third-round", no_tool: "seatwork_mail$", where: { reply_to: "^#?m9$", subject: "^\\W*HOLD\\b" } },
       { id: "notify-off", no_tool: "create_agent$", where: { notifyOnFinish: "^true$" } },
@@ -1091,8 +1077,7 @@ RECAP: found a precision defect on accepted input → waiting for a decision`,
       NO_LOOPS,
     ],
   },
-  // The Lens is one role with several models, listed in the Lead's prompt with what each is for. The Owner fixes how
-  // many lenses; which model each one sits on is the Lead's reading of that table.
+  // The Owner fixes how many lenses; which model each sits on is the Lead's reading of its table.
   ...[
     {
       name: "lead-lens-second-brain",
@@ -1258,7 +1243,7 @@ WAITING ON YOU: nightly import or manual import
       loads("seatwork-portfolio-digest"),
       { id: "checked-registry", tool: "seatwork_projects$" },
       { id: "wrote-the-digest", tool: "^(Write|Bash)$", input: "reports/[^\"]*digest\\.md" },
-      // what it took from the files proves it read them: these facts are in the two status.md files and nowhere else
+      // these facts are in the two status.md files and nowhere else: naming them proves it read them
       { id: "says-what-waits-on-human", text: "nightly|manual|hằng đêm|hàng đêm|thủ công|ban đêm" },
       { id: "shows-what-the-room-decided", any_of: [{ text: "two decimals|hai chữ số|2 chữ số|hai số thập phân|2 số thập phân" }, { tool: "^(Write|Bash)$", input: "digest\\.md[\\s\\S]*(two decimals|hai chữ số|2 chữ số|thập phân)" }] },
       { id: "files-first", no_tool: "seatwork_mail$" }, // the files answer the question; a Supervisor is mailed only for a gap they cannot fill

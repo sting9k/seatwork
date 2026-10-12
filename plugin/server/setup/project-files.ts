@@ -3,10 +3,7 @@ import { join } from "node:path";
 import { ROOM_HOME } from "../paths";
 import { isInside, realOrSelf } from "../registry";
 
-/**
- * All the room keeps in a project sits in `.seatwork/`, under these names: the plugin writes room.json and
- * mission.md, seats write the rest (the law is `<name>-law.md`). A name not listed here is not the room's.
- */
+/** The names the room keeps in a project's `.seatwork/`; a name not listed here is not the room's. */
 const ROOM_FILES = new Set(["room.json", "mission.md", "law.md", "status.md", "notebook.md", "plans", "reviews"]);
 const isRoomFile = (name: string) => ROOM_FILES.has(name) || name.endsWith("-law.md");
 
@@ -43,11 +40,7 @@ export function roomFolders(home: string = ROOM_HOME): string[] {
 /** Where a project's room files go under the folder the room home was moved to. */
 export const keptAt = (movedTo: string, root: string, folder = ".seatwork") => join(movedTo, "projects", root.replace(/[^A-Za-z0-9._-]+/g, "-").replace(/^-+/, ""), folder);
 
-/**
- * Moves the room's files out of a project's `.seatwork/` into `into`, by name. Anything else in `.seatwork/`
- * stays, and `.seatwork/` itself goes only when nothing is left in it. null when the project holds none.
- * `folder` is that folder's name: `.slp` for a room from before 0.19.0.
- */
+/** Moves the room's files out of a project's `folder` into `into`, by name; null when the project has none. */
 export function takeRoomFiles(root: string, into: string, folder = ".seatwork"): ProjectFiles | null {
   const seatwork = join(root, folder);
   // a link of that name points at someone else's folder

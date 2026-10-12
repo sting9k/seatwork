@@ -53,7 +53,7 @@ test("a brief is held to five lines, however its labels are dressed; one in free
   assert.deepEqual(missingLines(parseBrief(without("Reopen when"), PROJECT)), ["Reopen when"]);
   assert.deepEqual(missingLines(parseBrief(without("Write scope"), PROJECT)), ["Write scope"]);
   assert.deepEqual(missingLines(parseBrief(BRIEF.replace(/Acceptance evidence:.*/, "Acceptance evidence:"), PROJECT)), ["Acceptance evidence"]);
-  // the last line reworded is the last line gone: this room measured that a Peer then stops asking and guesses
+  // the last line reworded is the last line gone: measured, a Peer then stops asking and guesses
   assert.deepEqual(missingLines(parseBrief(without("Reply with"), PROJECT)), ["Reply with seatwork_mail to: owner"]);
   assert.deepEqual(missingLines(parseBrief(BRIEF.replace("seatwork_mail to: owner", "seatwork_mail to: whoever asked"), PROJECT)), ["Reply with seatwork_mail to: owner"]);
   const dressed = BRIEF.split("\n").map((line) => `- **${line.replace(": ", ":** ")}`).join("\n");
@@ -92,7 +92,7 @@ test("only a quoted check command is a check the brief names: not a branch, a pa
 });
 
 test("several test runs in one command: the last one's summary decides, whatever a run before it printed", () => {
-  // a Peer killing a mutant: green, then a run meant to fail, then the restore and a green run, all in one call
+  // a Peer killing a mutant in one call: green, a run meant to fail, the restore, green again
   const mutant = "sed -i '' 's/a/b/' test/duration.test.js\nnpm test 2>&1 | grep -E '✖|ℹ (pass|fail)'\npython3 mutate.py\nnpm test 2>&1 | grep -E '✖|ℹ (pass|fail)'\ngit checkout src/duration.js\nnpm test 2>&1 | grep -E '✖|ℹ (pass|fail)'";
   const green = "ℹ pass 63\nℹ fail 0";
   const red = "✖ rounds half up\nℹ pass 62\nℹ fail 1\n✖ failing tests:";
@@ -169,7 +169,7 @@ test("a seat may delete what its brief gave it; history rewrites and sweeping de
   assert.deepEqual(rulesOf([prompt(BRIEF), bash("cd test && rm -rf ."), say("STATUS")]).told, ["irreversible"]);
   assert.deepEqual(rulesOf([prompt(BRIEF), bash("git reset --hard origin/main"), say("STATUS")]).told, ["irreversible"]);
   assert.deepEqual(rulesOf([prompt(BRIEF), bash('git commit -m "remove the rm -rf step"'), say("STATUS")]).told, []);
-  // a find that picks files by a test is the seat's own inside its project; one that takes everything is not
+  // a find that picks files by a test is the seat's own inside its project; one that takes all is not
   assert.deepEqual(rulesOf([prompt(BRIEF), bash("find . -name '*.snap' -delete"), say("STATUS")]).told, []);
   assert.deepEqual(rulesOf([prompt(BRIEF), bash("find . -mindepth 1 -delete"), say("STATUS")]).told, ["irreversible"]);
   assert.deepEqual(rulesOf([prompt(BRIEF), bash("find /srv/data -name '*.db' -delete"), say("STATUS")]).told, ["irreversible"]);
@@ -206,7 +206,7 @@ test("waiting in the shell is told by the clock; a short pause, a refused sleep 
   const live = (seconds: number) => gate({ facts: turnFacts({ events: toEvents(running, PROJECT), turnStart: 1, cwd: PROJECT, root: PROJECT, brief, ended: false, changed: null, now: started + seconds * 1000 }), brief, moment: "live", briefGap: null, now: started + seconds * 1000, pendingPermission: false, thresholds: THRESHOLDS }).findings.map((f) => f.rule);
   assert.deepEqual(live(20), []);
   assert.deepEqual(live(70), ["shell-wait"]);
-  // Claude turns a standalone sleep down, and the seat sends it to the background instead: neither holds the turn
+  // Claude turns a standalone sleep down and the seat backgrounds it: neither holds the turn
   const refused = claudeFailure("sleep 75", "<tool_use_error>Blocked: standalone sleep 75. To wait for a condition, use Monitor.</tool_use_error>");
   assert.deepEqual(rulesOf([prompt(BRIEF), refused, background("sleep 75", "b1")], { ended: false }).told, []);
 });

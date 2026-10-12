@@ -4,7 +4,7 @@ import { checkSetup, type RoomPlan, type Setup } from "./plan";
 
 const json = (value: unknown) => `${JSON.stringify(value, null, 2)}\n`;
 
-/** Writes a file of the room home for its owner only, also when it was already there with wider rights. */
+/** Writes a file of the room home for its owner only, even if it was there with wider rights. */
 function writePrivate(file: string, text: string): void {
   writeFileSync(file, text, { mode: 0o600 });
   chmodSync(file, 0o600);
@@ -23,7 +23,7 @@ export function readSetup(roomHome: string): Setup {
   return checkSetup(parsed, file);
 }
 
-/** Moves a room home aside, whole and readable, and returns where it went: it is kept there for KEEP_REMOVED_DAYS. */
+/** Moves a room home aside, whole, and returns where it went; it is kept for KEEP_REMOVED_DAYS. */
 export function moveRoomHomeAside(roomHome: string, now = new Date()): string {
   const target = `${roomHome}.removed-${stamp(now)}`;
   renameSync(roomHome, target);
@@ -33,10 +33,7 @@ export function moveRoomHomeAside(roomHome: string, now = new Date()): string {
 /** How many days a folder set aside by Remove or by Init is kept before the plugin deletes it. */
 export const KEEP_REMOVED_DAYS = 30;
 
-/**
- * Deletes the folders set aside beside a room home (`<home>.removed-<time>`, and `slp-room.removed-<time>`
- * of a room from before 0.19.0) once the time in their name is more than `days` back. Returns what went.
- */
+/** Deletes the folders set aside beside a room home once the time in their name is over `days` old. */
 export function sweepRemoved(roomHome: string, days = KEEP_REMOVED_DAYS, now = new Date()): string[] {
   const parent = dirname(roomHome);
   if (!existsSync(parent)) return [];
@@ -63,19 +60,15 @@ export function isSetUp(roomHome: string): boolean {
   return existsSync(join(roomHome, "policy.json")) && existsSync(join(roomHome, "seats.json"));
 }
 
-/**
- * Writes the room home for a plan: the room files, the policy, the model table, the seats and
- * this machine's choices. Mail, logs, runtimes of seats still enabled and the registry are kept.
- * `seatsOnly` leaves the room files and the policy as they are: a running room gains a seat, nothing else moves.
- */
+/** Writes the room home for a plan, keeping mail, logs and the registry; `seatsOnly` only adds seats. */
 export function writeRoomHome(input: { plan: RoomPlan; pluginDir: string; roomHome: string; setup: Setup; version: string; seatsOnly?: boolean }): void {
   const { plan, pluginDir, roomHome, setup, version } = input;
-  // the room home holds mail and copies of the user's harness config: its owner only, also when it already exists
+  // the room home holds mail and copies of the user's harness config: its owner only
   mkdirSync(roomHome, { recursive: true, mode: 0o700 });
   chmodSync(roomHome, 0o700);
 
   if (!input.seatsOnly) {
-    // the whole room tree (roles, harness, specs, skills) replaced in one move, so a file dropped from the plugin is dropped here
+    // the room tree is replaced in one move, so a file dropped from the plugin is dropped here
     const room = join(roomHome, "room");
     const next = `${room}.next`;
     const previous = `${room}.previous`;

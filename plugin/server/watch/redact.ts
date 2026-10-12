@@ -1,4 +1,4 @@
-/** Blanks credential shapes before text leaves this machine. A courtesy, not a guarantee: tool output is never sent at all. */
+/** Blanks credential shapes before text leaves this machine: a courtesy, not a guarantee. */
 
 const BLANK = "[redacted]";
 

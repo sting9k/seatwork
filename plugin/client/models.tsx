@@ -39,23 +39,17 @@ export function ModelChip(props: { choice: ModelChoice; harnesses: Harness[]; to
   return <Chip cli={choice.harness} model={modelName(choice, harnesses)} thinking={choice.thinking || undefined} tone={tone} width={width} grow={grow} colors={colors} />;
 }
 
-/**
- * One model table as the roles it gives a model to. The room's table is drawn as the room is
- * built, each role under the one that opens it; a project's is the four roles it may change, each
- * marked as its own or the room's. A press opens a role to choose what it runs on.
- */
+/** One model table as its roles, each with its model; a press opens a role to choose what it runs on. */
 export function RoleTree(props: {
   mode: "room" | "project";
   /** The table underneath the choices: the shipped one for the room, the room's for a project. */
   base: Table;
   choices: Choices;
-  /** The table in force, to show what applying would change; null while no room is set up. */
   running: Table | null;
   harnesses: Harness[];
   onChange(choices: Choices): void;
-  /** Whose table this is, for the editor's title. */
   where: string;
-  /** A phone: what the tree assumes until it has measured the room it was given. */
+  /** A phone: assumed until the tree has measured its width. */
   compact: boolean;
   colors: Colors;
 }) {
@@ -66,7 +60,7 @@ export function RoleTree(props: {
   const width = (measured as number) || (compact ? 340 : 720);
   const table = merge(base, choices) as Table;
   const own = changedRoles(choices);
-  // a role's models sit at the far end of its row while the row has room for them, and under its name when it has not
+  // a role's models sit at the far end of its row when there is room, else under its name
   const extra = mode === "project" ? 90 : 0;
   const beside = (role: Role) => width >= (isTierRole(role) ? 490 : 380) + extra;
   const node = (role: Role) => <RoleNode role={role} table={table} running={mode === "room" ? running : base} mode={mode} own={own.includes(role)} row={beside(role)} harnesses={harnesses} onPress={() => setOpen(role)} colors={c} />;
@@ -122,7 +116,7 @@ export function RoleTree(props: {
 }
 
 /** One role as a row: what it is, and the model or models it runs on. */
-function RoleNode(props: { role: Role; table: Table; running: Table | null; mode: "room" | "project"; own: boolean; /** Its models beside its name, at the far end of the row. */ row: boolean; harnesses: Harness[]; onPress(): void; colors: Colors }) {
+function RoleNode(props: { role: Role; table: Table; running: Table | null; mode: "room" | "project"; own: boolean; row: boolean; harnesses: Harness[]; onPress(): void; colors: Colors }) {
   const { role, table, running, mode, own, row, harnesses, onPress, colors: c } = props;
   const narrow = !row;
   const pending = mode === "room";
@@ -250,10 +244,7 @@ function PickList(props: { items: { id: string; label: string; sub?: string; cli
   );
 }
 
-/**
- * One model of a role: the agent CLI, the model and, where the model has one, the thinking level.
- * A Peer's or a Lens's model also carries its name and what the Lead picks it for.
- */
+/** One model of a role: the agent CLI, the model, its thinking level; a Peer's or a Lens's also has a name. */
 function ModelCard(props: { choice: ModelChoice; harnesses: Harness[]; onChange(next: ModelChoice): void; tag?: string; use?: string; note?: string; onRemove?(): void; colors: Colors }) {
   const { choice, harnesses, onChange, tag, use, note, onRemove, colors: c } = props;
   const [opened, setOpened] = useState(null as "cli" | "model" | null);

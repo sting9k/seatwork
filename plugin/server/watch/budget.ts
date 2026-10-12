@@ -1,17 +1,12 @@
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 
-/**
- * What the decision model has cost, per month and per day. `open`: everything may be asked; `saving`: today's share
- * of the plan is spent, only end-of-turn questions; `closed`: the month's cap is reached.
- */
+/** What the decision model has cost, per month and day: `open`, `saving` (today's share is spent) or `closed`. */
 
 export interface BudgetPolicy {
   /** Per million input tokens; output is not billed. */
   usdPerMillionTokens: number;
-  /** What a month is meant to cost. */
   monthlyPlanUsd: number;
-  /** What a month may cost at most. */
   monthlyCapUsd: number;
 }
 

@@ -1,9 +1,6 @@
 import { isAbsolute, normalize, resolve } from "node:path";
 
-/**
- * A seat's turn as harness-neutral events: one per assistant message and per tool call, in order.
- * Paseo's timeline differs by harness, so everything downstream reads these and never a timeline item.
- */
+/** A seat's turn as harness-neutral events, one per assistant message and tool call, in order. */
 
 export type RunStatus = "running" | "ok" | "failed" | "canceled";
 
@@ -16,7 +13,6 @@ interface EventBase {
   at?: number;
   /** Timestamp of the timeline entry before this one: a finished call began no earlier. */
   prior?: number;
-  /** Paseo's turn id, when known. */
   turn?: string;
 }
 
@@ -28,14 +24,13 @@ export interface SayEvent extends EventBase {
 export interface ShellEvent extends EventBase {
   kind: "shell";
   command: string;
-  /** Where the harness ran it, when it says so (Codex). */
   cwd?: string;
   status: RunStatus;
   /** Null when the harness does not report one (Claude). */
   exitCode: number | null;
   /** Read by code only: it never leaves this machine. */
   output: string;
-  /** Sent to the background: "pending" until the harness reports its end, then "settled" with the real status and exit code. */
+  /** "pending" until the harness reports its end, then "settled" with the real status. */
   background?: "pending" | "settled";
 }
 
@@ -138,7 +133,7 @@ function content(value: unknown): string {
 const REFUSED = /^\s*<tool_use_error>|^\s*(?:Blocked:|Permission (?:to use \w+ has been )?denied|The user doesn't want to proceed)/i;
 const BACKGROUND = /^\s*Command running in background with ID:/;
 
-/** How Claude's background commands ended, by the call that started them: a synthetic entry beside the call says so. */
+/** How Claude's background commands ended, by the call that started them. */
 function settledCalls(entries: readonly TimelineInput[]): Map<string, { status: RunStatus; exitCode: number | null }> {
   const settled = new Map<string, { status: RunStatus; exitCode: number | null }>();
   for (const entry of entries) {
@@ -158,7 +153,7 @@ function cleanSay(raw: string): string {
   return raw.replace(/^\s*(?:-{3,}\s*)+/, "").trim();
 }
 
-/** Drops what the watcher has no use for: prompts, reasoning, todo lists, compaction markers, synthetic notices. */
+/** Drops what the watcher has no use for: prompts, reasoning, todo lists, synthetic notices. */
 export function toEvents(entries: readonly TimelineInput[], cwd: string): TurnEvent[] {
   const events: TurnEvent[] = [];
   const settled = settledCalls(entries);

@@ -72,11 +72,8 @@ export function Meter(props: { level: string; colors: Colors }) {
   );
 }
 
-/**
- * A model in a seat: whose it is, its name, how hard it thinks. `was` is what applying replaces,
- * `new` what it puts there, `gone` a model taken out.
- */
-export function Chip(props: { cli?: string; model: string; thinking?: string; tone?: "was" | "new" | "gone"; /** One width for a column of chips. */ width?: number; /** Takes the room its row has left. */ grow?: boolean; colors: Colors }) {
+/** A model in a seat: whose it is, its name, how hard it thinks; `tone` marks what applying changes. */
+export function Chip(props: { cli?: string; model: string; thinking?: string; tone?: "was" | "new" | "gone"; width?: number; grow?: boolean; colors: Colors }) {
   const { cli, model, thinking, tone, width, grow, colors: c } = props;
   const spread = Boolean(width) || Boolean(grow);
   const faint = tone === "was" || tone === "gone";
@@ -138,7 +135,7 @@ export function Btn(props: { label: string; onPress(): void; kind?: "primary" | 
   );
 }
 
-/** The parts of a page, one in view at a time: a row of names, the one in view underlined, a count beside a name that has one. */
+/** The parts of a page as a row of names: the one in view is underlined. */
 export function Tabs<Value extends string>(props: { options: readonly { label: string; value: Value; count?: number }[]; value: Value; onChange(value: Value): void; colors: Colors }) {
   const c = props.colors;
   return (

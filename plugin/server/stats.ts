@@ -3,11 +3,7 @@ import { join } from "node:path";
 import { hqDir } from "./hq";
 import { ROOM_HOME, REGISTRY_LOG } from "./paths";
 
-/**
- * Better-Seatwork input: what the mail log says happened, counted per project and
- * per signal, so the one who watches the room argues from numbers instead of
- * from the last episode it remembers.
- */
+/** Better-Seatwork input: what the mail log says happened, counted per project and per signal. */
 
 const MAIL_LOG = join(ROOM_HOME, "mail", "log.jsonl");
 const SIGNALS = ["CANDIDATE", "ACCEPT", "REJECT", "REVIEW", "QUESTION", "ANSWER", "REOPEN_REQUEST", "REVISED BRIEF", "HOLD", "DEPENDENCY_REQUEST", "BLOCKED", "DECISION_NEEDED", "FAILED", "PERMISSION", "GC", "SPAWN REFUSED"] as const;
@@ -39,7 +35,7 @@ function signalOf(subject: string): string {
   return SIGNALS.find((s) => upper.startsWith(s)) ?? "other";
 }
 
-/** Counts of every signal mailed in the last `days`, per project (by the sender's cwd), plus the ratios Better-Seatwork asks about. */
+/** Counts of every signal mailed in the last `days`, per project, with the ratios Better-Seatwork asks about. */
 export function roomStats(days: number): string {
   const since = Date.now() - Math.max(1, days) * 86_400_000;
   const cwdOf = new Map<string, string>();

@@ -2,13 +2,9 @@ import { tmpdir } from "node:os";
 import { isAbsolute, normalize, relative, sep } from "node:path";
 import { CLAUDE_HOME, CODEX_HOME, OPENCODE_CONFIG_HOME, PASEO_HOME, PI_HOME, ROOM_HOME } from "../paths";
 
-/**
- * Where a seat may write, from the `Write scope:` line of its brief. The line is prose, so matching is lenient:
- * a path is outside only when no reading of the line admits it.
- */
+/** Where a seat may write, from its brief's `Write scope:` line; a path is outside only when no reading admits it. */
 
 export interface WriteScope {
-  /** The brief says the tree stays as it was found. */
   readOnly: boolean;
   /** Globs relative to the project root. */
   patterns: string[];
@@ -32,7 +28,7 @@ export function parseWriteScope(line: string, root: string): WriteScope | null {
       continue;
     }
     if (!(/^[\w.@~+\-/*?{}\[\],]+$/.test(word) && /[/.*]/.test(word) && /[A-Za-z0-9]/.test(word))) {
-      // only the path right after "except" is taken out ("except for the", "except anything under" still lead to it)
+      // only the path right after "except" is taken out ("except for the" still leads to it)
       if (!/^(?:for|the|in|under|of|anything|everything|files?)$/i.test(word)) excluding = false;
       continue;
     }
@@ -111,10 +107,7 @@ function splitTopLevel(text: string): string[] {
   return parts;
 }
 
-/**
- * Glob over path segments: `**` spans whole segments, `*` and `?` stay inside one. A table over
- * (pattern segment, path segment) keeps `a/**\/b/**\/c` from going exponential.
- */
+/** Glob over path segments: `**` spans segments, `*` and `?` stay in one; a table keeps it polynomial. */
 export function matchGlob(pattern: string, path: string): boolean {
   const p = pattern.split("/");
   const s = path.split("/");
@@ -192,10 +185,7 @@ function inClass(set: string, c: string): boolean {
 
 /* ---------- what kind of file a path is ---------- */
 
-/**
- * source: code and configuration, a change makes earlier checks stale. doc: prose. generated: rebuilt from source, or left by a run (logs).
- * room: notes under .seatwork/. vcs: git's own files. scratch: temporary files and harness homes. outside: the rest outside the root.
- */
+/** What kind of file a path is: only a `source` change makes earlier checks stale. */
 export type PathKind = "source" | "doc" | "generated" | "room" | "vcs" | "scratch" | "outside";
 
 const GENERATED = /^(?:.*\/)?(?:node_modules|dist|build|out|target|coverage|\.next|\.nuxt|\.turbo|\.cache|\.venv|venv|__pycache__|\.pytest_cache|\.mypy_cache|\.ruff_cache|\.gradle|\.tox)(?:\/|$)/;

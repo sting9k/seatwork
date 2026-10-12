@@ -1,9 +1,6 @@
 import type { SimpleCommand } from "./shell";
 
-/**
- * What one simple command does, read from its program and flags. A command may have several effects
- * (`npm test > out.log` checks and writes); one with none is unknown, and the watcher claims nothing about it.
- */
+/** What one simple command does, read from its program and flags; one with no effect is unknown. */
 
 export type CheckKind = "test" | "build" | "lint" | "types";
 
@@ -16,7 +13,6 @@ export type Effect =
   | { kind: "look" };
 
 export interface EffectContext {
-  /** Commands and test files the brief names as proof. */
   namedChecks: readonly string[];
 }
 
@@ -191,7 +187,7 @@ function checkOf(command: SimpleCommand, context: EffectContext): Effect | null 
 
 const NOT_A_FILE = /^(?:\/dev\/(?:null|stdout|stderr|tty|fd\/\d+)|&\d+|-)$/;
 
-/** Program → the paths this invocation writes; an empty list means the command line does not say where. */
+/** Program → the paths this invocation writes; an empty list when the command line does not say where. */
 const WRITE_PROGRAMS: Record<string, (argv: readonly string[]) => string[] | null> = {
   tee: (a) => operands(a),
   touch: (a) => operands(a),
@@ -286,7 +282,6 @@ const REBUILT = /(?:^|\/)(?:node_modules|dist|build|out|target|coverage|\.next|\
 
 interface Destruction {
   what: string;
-  /** For a delete: what it removes, as written. */
   paths?: string[];
   /** It takes only what a test selects under those paths (`find … -name`). */
   bounded?: boolean;

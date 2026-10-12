@@ -46,7 +46,7 @@ test("the engine fails open: every failure is a reason, none is an exception, an
   const retried = await engineWith(async () => (++calls === 1 ? respond(529, "overloaded", { "retry-after-ms": "5" }) : respond(200, REPLY))).ask(REQUEST);
   assert.deepEqual([calls, retried.ok], [2, true]);
 
-  // a bad key will not get better by asking again: the engine rests at once, and says so without calling
+  // a bad key will not get better by asking again: the engine rests at once
   let clock = 0;
   let asked = 0;
   const resting = engineWith(async () => (asked += 1, respond(401, "bad key")), () => clock);
@@ -188,7 +188,7 @@ test("a turn is labelled by what the seat above did with it; a claim of passing 
   assert.equal(labelOf(one, [mailed("p0", 5, "REJECT p0: one repair"), mailed("p0", 9, "ACCEPT p0")], now, 60), "returned");
   assert.equal(labelOf(one, [mailed("p0", 5, "ACCEPT", "someone-else"), mailed("p0", 9, "REVISED BRIEF")], now, 60), "returned");
   assert.equal(labelOf(one, [mailed("p0", 90, "REJECT p0: too late to count")], now, 60), null);
-  // a DONE is taken in silence: no verdict within the window is an acceptance, and a question about it is no verdict
+  // a DONE is taken in silence: no verdict in the window is an acceptance
   assert.equal(labelOf(scan("l1", 0, [], "DONE"), [], now, 60), "accepted");
   assert.equal(labelOf(scan("l1", 0, [], "DONE"), [mailed("l1", 3, "QUESTION: DONE arrived cut, send the rest")], now, 60), "accepted");
   assert.equal(labelOf(scan("l1", 0, [], "DONE"), [mailed("l1", 3, "REJECT: a Peer is still running")], now, 60), "returned");

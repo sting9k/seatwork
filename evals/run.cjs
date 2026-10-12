@@ -1,16 +1,9 @@
 #!/usr/bin/env node
 /**
- * Evals for the room's prompts. Each case opens one real seat session the way the plugin opens it: the prompt
- * it assembles (role, specialization, harness sheet, project block), the role's skills, and stand-in MCP
- * servers for `seatwork` and `paseo` (stub-mcp.mjs). Claude seats run through `claude -p`, Codex seats through
- * `codex exec` on the runtime the plugin builds. The transcript is then graded by the case's graders.
- *
+ * Evals for the room's prompts: each case opens one real seat session as the plugin opens it, then grades the transcript.
  *   node evals/run.cjs --label baseline [--only <regex on case name>] [--harness claude|codex] [--jobs 3] [--budget 4] [--timeout 20] [--list]
  *   node evals/run.cjs --regrade baseline          # grade saved transcripts again with the current graders
  *   node evals/run.cjs --label old --room-from <dir> # take the room files from another copy (an earlier run's)
- *
- * Output: evals/results/<label>/report.md and summary.json, plus one folder per run with the system prompt,
- * the prompt, the events and the stub's call log. Needs `claude` (and `codex`) signed in; every run costs tokens.
  */
 "use strict";
 const { spawn, execFileSync } = require("node:child_process");
@@ -37,7 +30,7 @@ const SEATWORK_TOOLS = {
 const BASE_ALLOW = ["Read", "Grep", "Glob", "Skill", "mcp__seatwork", "mcp__paseo", ...["git", "ls", "cat", "node", "npm", "wc", "head", "tail", "grep", "rg", "find", "sed", "pwd", "mkdir", "chmod", "shasum", "echo"].map((c) => `Bash(${c}:*)`)];
 const TIMEOUT_MS = Number(args.timeout ?? 20) * 60_000;
 
-let plugin = null; // the plugin's prompt assembly and runtime builder, loaded only for real runs
+let plugin = null; // loaded only for real runs
 
 function parseArgs(argv) {
   const out = {};
@@ -83,11 +76,11 @@ function runsFor(c) {
   // two lenses, two models: the tiers a pair is made of, or every tier of a table that names them otherwise
   else if (c.role === "lens") runs = (["high", "extra"].every((tier) => models.lens.tiers[tier]) ? ["high", "extra"] : Object.keys(models.lens.tiers)).map((tier) => seat(models.lens.tiers[tier].providers[0], models.lens.tiers[tier].thinking));
   else runs = [seat(models.seats[c.role].provider, models.seats[c.role].thinking)];
-  // --codex-model <model>: also run every role on Codex with that model, to measure roles models.json keeps on Claude
+  // --codex-model <model>: also run every role on Codex with that model
   if (args["codex-model"] && !runs.some((run) => run.harness === "codex")) runs.push({ harness: "codex", model: args["codex-model"], effort: runs[0]?.effort ?? "high", note: "not a room seat" });
   // --effort <level>: every run at that thinking level, whatever models.json gives the seat
   if (args.effort) runs = runs.map((run) => ({ ...run, effort: String(args.effort) }));
-  // a case may name the one harness it means anything on (`harness: "claude"`: a refusal only a Claude permission rule can stage)
+  // a case may name the one harness it means anything on (`harness: "claude"`)
   return runs.filter((run) => ["claude", "codex"].includes(run.harness) && (!args.harness || run.harness === args.harness) && (!c.harness || run.harness === c.harness));
 }
 
@@ -169,7 +162,7 @@ function harnessProcess(command, argv, cwd, dir, extraEnv) {
   });
 }
 
-/** A shell command without the bodies of its here-documents: text written into a file is not something that ran. */
+/** A shell command without its here-document bodies: text written into a file did not run. */
 const withoutHeredocs = (command) => command.replace(/<<-?\s*(['"]?)(\w+)\1[^\n]*\n[\s\S]*?\n\s*\2\b/g, "<<$2");
 
 function matchesWhere(tool, g) {
@@ -183,7 +176,7 @@ function matchesWhere(tool, g) {
   return true;
 }
 
-/** One grader against one run. Shapes: signal, first_line, last_line, text, not_text, tool (with min, max, distinct), no_tool, any_of. */
+/** One grader against one run: signal, first_line, last_line, text, not_text, tool, no_tool, any_of. */
 function grade(g, ctx) {
   const { text, lines, tools } = ctx;
   if (g.any_of) return g.any_of.some((inner) => grade(inner, ctx));
@@ -215,7 +208,7 @@ function safeGrade(g, ctx) {
   }
 }
 
-/** Lines of the final message with markdown dressing (bold, heading marks, quotes) stripped: a model reads through it. */
+/** Lines of the final message with markdown dressing (bold, headings, quotes) stripped. */
 const plainLines = (text) =>
   text
     .split("\n")
@@ -237,7 +230,7 @@ function prepare(c, run) {
   const dir = runDir(c, run);
   const cwd = join(dir, "cwd");
   mkdirSync(cwd, { recursive: true });
-  // {{cwd}} is the run's project directory; {{minutes_ago:N}} an ISO time N minutes before the run starts (stalls, old signals)
+  // {{cwd}} is the run's project directory; {{minutes_ago:N}} an ISO time N minutes before the run starts
   const startedAt = Date.now();
   const fill = (s) => String(s).replace(/\{\{cwd\}\}/g, cwd).replace(/\{\{minutes_ago:(\d+)\}\}/g, (_, m) => new Date(startedAt - Number(m) * 60_000).toISOString());
 
@@ -289,8 +282,7 @@ async function runClaude(c, run, p) {
     "--model", run.model,
     "--effort", run.effort,
     "--output-format", "stream-json", "--verbose",
-    // a case that may edit runs in the mode Paseo gives the real seat (models.json `modes.claude`): the room's own
-    // procedures write through the shell (a candidate frozen as a patch under /tmp), which an allowlist refuses
+    // a case that may edit runs in the real seat's mode: the room's procedures write through the shell
     "--permission-mode", p.writable ? plugin.models.modes.claude : "dontAsk",
     "--allowedTools", [...BASE_ALLOW, ...(c.allow ?? [])].join(","),
     "--disallowedTools", [...disallowed, ...(c.deny ?? [])].join(","), // `deny`: what this case's seat is refused, whatever its mode allows
@@ -318,7 +310,7 @@ async function runClaude(c, run, p) {
   };
 }
 
-/** A Codex seat: `codex exec` on the runtime the plugin builds (CODEX_HOME), the prompt as developer instructions. */
+/** A Codex seat: `codex exec` on the runtime the plugin builds, the prompt as developer instructions. */
 async function runCodex(c, run, p) {
   const runtime = plugin.ensureRuntime({ harness: "codex", role: c.role }, plugin.policy);
   const toml = (value) => JSON.stringify(value); // a JSON string is a valid TOML basic string

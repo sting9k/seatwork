@@ -13,7 +13,7 @@ import { CREATED_WITH, gate, RULE_ORDER, unqualified, type BriefGap, type Moment
 import type { ScanFinding, ScanLog, ScanRecord } from "./scanlog";
 import { buildRequest, fitting } from "./state";
 
-/** Reads the turns of Lead and Peer seats, turns facts into findings, and tells the seat above. It never touches a seat. */
+/** Reads the turns of Lead and Peer seats, turns facts into findings, and tells the seat above. */
 
 export interface SeatView {
   agentId: string;
@@ -21,7 +21,6 @@ export interface SeatView {
   title: string | null;
   cwd: string;
   parent: string | null;
-  /** The role of the seat above; null when there is none or it is not a room seat. */
   parentRole: Role | null;
 }
 
@@ -34,7 +33,7 @@ export interface Notice {
   to: string;
   subject: string;
   body: string;
-  /** The seat's own report follows at once: this notice waits for it, so the seat above reads both in one prompt. */
+  /** The seat's own report follows at once: the notice waits for it. */
   withReport: boolean;
 }
 
@@ -56,7 +55,6 @@ export interface WatcherDeps {
 interface Turn {
   id: string | null;
   startedAt: number;
-  /** Scans of this turn so far. */
   reads: number;
   before: Promise<TreeSnapshot | null>;
   told: Set<string>;
@@ -68,9 +66,8 @@ interface Watched {
   seat: SeatView;
   brief: Brief | null;
   mails: number;
-  /** Briefs whose gap was noted: a brief is told once, however many turns it stays the last prompt. */
+  /** Briefs whose gap was told: a brief is told once. */
   briefsTold: Set<string>;
-  /** The turn that is running. */
   turn: Turn | null;
   /** The turn before it, while its end has not been read: held mail can start the next turn first. */
   ending: Turn | null;
@@ -80,18 +77,18 @@ interface Watched {
 
 /** Findings that are told even when the turn has had its one mail: they cannot wait for the next turn. */
 const URGENT: ReadonlySet<RuleId> = new Set(["irreversible", "outside-project"]);
-/** What a brief lacks is its writer's doing, not the turn's: it is told beside the turn's one finding and does not take its place. */
+/** A brief's gap is its writer's doing: it is told beside the turn's one finding, not in its place. */
 const ABOUT_BRIEF: ReadonlySet<RuleId> = new Set(["incomplete-brief"]);
 const READ_ONLY_TITLE = /\[(?:peer:(?:review|research)|lens)\b/i;
 const MAIL = /^\s*SEATWORK MAIL\b/;
 const isPrompt = (entry: TimelineInput) => (entry.item as { type?: unknown } | null)?.type === "user_message";
 
-/** What the brief that opened a Peer's turn lacks: the prompt its Lead created it with, or a brief in the mail that started the turn. */
+/** What the brief that opened a Peer's turn lacks: its creation prompt, or a brief in the mail that started it. */
 function briefGapOf(entries: readonly TimelineInput[], received: readonly string[], turnId: string | null, cwd: string): BriefGap | null {
   const last = received.at(-1);
   if (last === undefined) return null;
   if (!MAIL.test(last)) {
-    // a Peer a Lead created has one prompt until its first mail: the brief, whatever shape the Lead gave it
+    // a Peer a Lead created has one prompt until its first mail: the brief, whatever its shape
     const lines = received.length === 1 ? missingLines(parseBrief(last, cwd)) : [];
     return lines.length > 0 ? { lines } : null;
   }
@@ -135,7 +132,7 @@ export class Watcher {
     await Promise.all([...this.seats.values()].flatMap((watched) => (watched.turn ? [this.queue(watched, watched.turn, "live")] : [])));
   }
 
-  /** `carried`: a mail that starts the parent's turn follows at once (the seat's report), so a notice may wait for it. */
+  /** `carried`: the seat's report follows at once, so a notice may wait for it. */
   async turnEnded(seat: SeatView, turnId: string | null, carried: boolean): Promise<void> {
     if (!this.watches(seat)) return;
     const watched = this.seats.get(seat.agentId) ?? { seat, brief: null, mails: 0, briefsTold: new Set(), turn: null, ending: null, busy: Promise.resolve() };
@@ -152,7 +149,7 @@ export class Watcher {
     this.seats.delete(agentId);
   }
 
-  /** The seat's runtime closed in mid-turn: that turn gets no end and is not read again. What the seat was told stays told. */
+  /** The seat's runtime closed in mid-turn: that turn gets no end and is not read again. */
   cut(agentId: string): void {
     const watched = this.seats.get(agentId);
     if (watched) watched.turn = watched.ending = null;
@@ -177,13 +174,13 @@ export class Watcher {
       return;
     }
     turn.reads += 1;
-    // the next turn may have begun before this one's end is read: the history stops where this turn does
+    // the next turn may have begun already: the history stops where this turn does
     const last = turn.id === null ? -1 : view.entries.findLastIndex((entry) => entry.turnId === turn.id);
     const next = last < 0 ? -1 : view.entries.findIndex((entry, index) => index > last && entry.turnId !== undefined && entry.turnId !== turn.id);
     const entries = next < 0 ? view.entries : view.entries.slice(0, next);
     const events = toEvents(entries, seat.cwd);
     const received = prompts(entries);
-    // the latest prompt written from the brief template is the brief in force (a REVISED BRIEF is the whole brief again)
+    // the latest prompt written from the template is the brief in force
     let briefAt = -1;
     received.forEach((prompt, index) => {
       const parsed = parseBrief(prompt, seat.cwd);
@@ -265,14 +262,14 @@ export class Watcher {
       const score = inquiry.score(answers);
       const key = asked.find((question) => question.rule === inquiry.rule)!.key;
       if (score === null) continue;
-      // below the bar the reading is kept as a score only: the calibration needs the quiet cases too
+      // below the bar the reading is kept as a score only: calibration needs the quiet cases too
       const holds = score >= (policy.scores[inquiry.rule] ?? 1);
       findings.push({ rule: inquiry.rule, key, by: "model", score, evidence: holds ? inquiry.finding(facts, brief) : `asked; score ${score.toFixed(2)} is under the bar`, outcome: "logged" });
     }
     return outcome;
   }
 
-  /** Mails the seat above the weightiest finding of the turn (one mail per turn, urgent ones excepted) and, beside it, what the brief lacks. */
+  /** Mails the seat above the turn's weightiest finding (one mail per turn, urgent ones excepted). */
   private async tell(watched: Watched, turn: Turn, findings: ScanFinding[], facts: TurnFacts): Promise<string | undefined> {
     const { policy } = this.deps;
     const { seat } = watched;

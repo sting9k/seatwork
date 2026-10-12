@@ -6,10 +6,7 @@ import { loadPolicy, type RuntimePolicy } from "./policy";
 import type { Harness, Role, Seat } from "./seats";
 import { formatToml, parseToml, type TomlTable } from "./toml";
 
-/**
- * Keeps a seat apart from the user's own setup: Codex, Pi and OpenCode get a home under runtimes/,
- * Claude runs on ~/.claude with launch flags. Role prompts go through Paseo's systemPrompt, not here.
- */
+/** Keeps a seat apart from the user's setup: a home under runtimes/, or launch flags for Claude. */
 
 /** Bump when the way a runtime is built changes. Policy and user config changes rebuild on their own. */
 const RUNTIME_VERSION = 13;
@@ -63,9 +60,7 @@ function writeJson(path: string, value: unknown): void {
 /* ---------- Codex: CODEX_HOME ---------- */
 
 function buildCodex(runtime: string, policy: RuntimePolicy["codex"]): void {
-  // Start from the user's config so model providers and trust settings carry
-  // over; drop MCP servers, plugins and hooks (Paseo supplies the seat's MCP);
-  // switch off Codex's own multi-agent, browser, computer-use and apps features.
+  // the user's config without MCP servers, plugins and hooks, and with Codex's own agent features off
   const file = join(CODEX_HOME, "config.toml");
   let config: TomlTable;
   try {
@@ -100,9 +95,7 @@ function buildCodex(runtime: string, policy: RuntimePolicy["codex"]): void {
 /* ---------- Pi: PI_CODING_AGENT_DIR ---------- */
 
 function buildPi(runtime: string, policy: RuntimePolicy["pi"]): void {
-  // Pi reads everything from the agent dir. Credentials and the model catalog
-  // are shared; settings are copied with the policy's laid over them, which
-  // empties packages and extensions; sessions stay private to the seat.
+  // credentials and the model catalog are shared; settings are copied with the policy's laid over them
   writeJson(join(runtime, "settings.json"), { ...readJsonObject(join(PI_HOME, "settings.json")), ...policy.settings });
   for (const name of policy.shareFiles) share(runtime, PI_HOME, name);
   for (const name of policy.shareDirs) share(runtime, PI_HOME, name);
@@ -112,10 +105,7 @@ function buildPi(runtime: string, policy: RuntimePolicy["pi"]): void {
 /* ---------- OpenCode v2: OPENCODE_CONFIG_DIR + OPENCODE_CONFIG ---------- */
 
 function buildOpenCode(runtime: string, policy: RuntimePolicy["opencode"]): void {
-  // OPENCODE_CONFIG_DIR scopes agents, commands, plugins and skills; the seat
-  // gets an empty one plus whatever policy shares. opencode.json (via
-  // OPENCODE_CONFIG) denies the task tool and disables the built-in subagents.
-  // Auth and storage live in the shared data dir and are not isolated.
+  // the seat gets an empty config dir plus what policy shares; auth and storage stay shared, not isolated
   writeJson(join(runtime, "opencode.json"), policy.config);
   if (!existsSync(OPENCODE_CONFIG_HOME)) return;
   for (const name of policy.shareEntries) share(runtime, OPENCODE_CONFIG_HOME, name);
@@ -189,7 +179,7 @@ export function sharedClaudeFiles(policy: RuntimePolicy = loadPolicy()): string 
   return texts.filter(Boolean).join("\n\n") || null;
 }
 
-/** The environment every session of a seat opens with (policy `launch.env`): its own home, or for Claude the switch that keeps auto-memory out of ~/.claude. */
+/** The environment every session of a seat opens with (policy `launch.env`). */
 export function envFor(seat: Pick<Seat, "harness" | "role">, policy: RuntimePolicy = loadPolicy()): Record<string, string> {
   const home = seat.harness === "claude" ? "" : runtimeDir(seat);
   return Object.fromEntries(Object.entries(policy.launch[seat.harness].env).map(([name, value]) => [name, value.replaceAll("{runtime}", home)]));

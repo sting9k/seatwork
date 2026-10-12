@@ -1,7 +1,5 @@
 /**
- * The installer's half that needs no app: this machine's choices, the room home, and the room's
- * seats and profiles in Paseo's config.json. install.sh runs it; the plugin's setup screen does the
- * same work through the SDK.
+ * The installer's half that needs no app: this machine's choices, the room home, Paseo's config.json.
  *   node --require ./test/register.cjs tools/room-init.ts [--hq default|ask|<harness>/<model>] [--hq-thinking <id>]
  *        [--seat <harness>-<role>]... [--watcher off|shadow|on|ask] [--mail-port <port>]
  */

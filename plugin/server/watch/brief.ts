@@ -54,7 +54,6 @@ export interface Brief {
   fields: Partial<Record<BriefField, string>>;
   /** Null when the brief names no path the watcher can read. */
   scope: WriteScope | null;
-  /** Commands and test files the brief names as proof. */
   namedChecks: string[];
   /** A review, a research task or a lens: its whole deliverable is a message. */
   readOnly: boolean;
@@ -90,7 +89,7 @@ export function fromTemplate(brief: Brief): boolean {
   return Object.keys(brief.fields).length >= 3;
 }
 
-/** The lines a Peer cannot work well without; measured in this room, a Peer without the last one stops asking and guesses. */
+/** The lines a Peer cannot work well without; measured here, a Peer without the last one guesses. */
 const NEEDED: readonly [BriefField, string][] = [
   ["outcome", "Outcome"],
   ["writeScope", "Write scope"],
@@ -99,7 +98,7 @@ const NEEDED: readonly [BriefField, string][] = [
   ["replyTo", "Reply with seatwork_mail to: owner"],
 ];
 
-/** A needed label near the start of a line, behind whatever a REVISED BRIEF puts there to mark a changed line. */
+/** A needed label near the start of a line, behind whatever marks a REVISED BRIEF puts there. */
 const marked = (label: string) => new RegExp(`^.{0,30}\\b${label}\\b[^:\\n]{0,30}:`, "im");
 const MARKED: Partial<Record<BriefField, RegExp>> = {
   outcome: marked("Outcome"),
@@ -109,17 +108,14 @@ const MARKED: Partial<Record<BriefField, RegExp>> = {
   replyTo: /^.{0,30}\bReply with seatwork_mail to\b\s*:\s*[`*_"']*owner\b/im,
 };
 
-/**
- * The needed lines a brief lacks; a brief in free prose lacks them all. `mailed` is the text of a brief that came
- * as mail: there a line also counts when its label is found behind the marks of a revision.
- */
+/** The needed lines a brief lacks; in `mailed` text a label also counts behind a revision's marks. */
 export function missingLines(brief: Brief, mailed?: string): string[] {
   const written = (field: BriefField) => (field === "replyTo" ? /^[\s`*_"']*owner\b/i.test(brief.fields.replyTo ?? "") : !!brief.fields[field]?.trim());
   const has = (field: BriefField) => written(field) || (mailed !== undefined && MARKED[field]?.test(mailed) === true);
   return NEEDED.filter(([field]) => !has(field)).map(([, label]) => label);
 }
 
-/** A quoted string names a check when it is one command that verifies something: a known runner, or a script of the project run by its path. */
+/** Whether a quoted string is one command that verifies something: a known runner or a project script. */
 function runsACheck(quoted: string): boolean {
   const line = parseShell(quoted);
   if (!line.complete || line.commands.length !== 1) return false;
@@ -127,7 +123,7 @@ function runsACheck(quoted: string): boolean {
   return effectsOf(command, { namedChecks: [] }).some((effect) => effect.kind === "check") || /^\.{1,2}\//.test(command.argv[0] ?? "");
 }
 
-/** The check commands a brief quotes in backticks and the test files it names; other quoted words (a branch, a path, a line of output) are not checks. */
+/** The check commands a brief quotes in backticks and the test files it names. */
 export function namedChecks(text: string): string[] {
   const found = new Set<string>();
   for (const [, quoted] of text.matchAll(/`([^`\n]{2,120})`/g)) {

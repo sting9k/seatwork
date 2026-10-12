@@ -21,15 +21,11 @@ const dirOf = (workspace: { workspaceDirectory?: string; projectRootPath: string
 /** One opening at a time: two that both find no workspace would both make one. */
 let opening: Promise<void> = Promise.resolve();
 
-/**
- * The room's default Paseo project: the directory, and the project and local workspace Paseo
- * opens for it, so the HQ Supervisor profile has a home. Safe to repeat: a workspace that is
- * already there is left alone, and so is a project the user renamed.
- */
+/** The room's default Paseo project: its directory, project and workspace, for the HQ profile. Safe to repeat. */
 export function ensureHqProject(paseo: PaseoApi, log: (message: string) => void): Promise<void> {
   const open = async () => {
     mkdirSync(hqDir(), { recursive: true });
-    const dir = hqDir(); // read again: a path through a symlink resolves only once the directory exists
+    const dir = hqDir(); // read again: a symlinked path resolves only once the directory exists
     const { entries } = await paseo.workspaces.list();
     if (entries.some((workspace) => dirOf(workspace) === dir)) return;
     await paseo.workspaces.open({ cwd: dir });
@@ -46,7 +42,7 @@ async function closeHqProject(paseo: PaseoApi): Promise<void> {
   for (const workspace of entries) if (dirOf(workspace) === dir) await paseo.workspaces.archive(workspace.id);
 }
 
-/** Deletes from Paseo the project at this folder, and no other. The SDK has no call for it, so the paseo CLI does it; false when the CLI could not. */
+/** Deletes from Paseo the project at this folder, through the CLI (the SDK has no call); false when it could not. */
 export async function deleteProjectAt(dir: string): Promise<boolean> {
   const real = realOrSelf(dir);
   try {
@@ -58,7 +54,7 @@ export async function deleteProjectAt(dir: string): Promise<boolean> {
   }
 }
 
-/** Takes the HQ project out of Paseo when the room is removed; false when only its workspaces could be archived. */
+/** Takes the HQ project out of Paseo; false when only its workspaces could be archived. */
 export async function removeHqProject(paseo: PaseoApi): Promise<boolean> {
   if (await deleteProjectAt(hqDir())) return true;
   await closeHqProject(paseo);

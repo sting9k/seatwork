@@ -71,7 +71,7 @@ test("a choice the installer cannot honour is refused by name", async () => {
 
 test("the provider written for a seat starts it as the plugin does: the same environment, the same flags", async () => {
   installRoom([]);
-  // the seats every install gets are Claude and Codex ones; this machine added one of each other harness
+  // every install gets Claude and Codex seats; this machine added one of each other harness
   const { providers } = await plan({ seats: ["pi-peer", "opencode-peer"] });
   const policy = loadPolicy();
 
@@ -96,7 +96,7 @@ test("a role's seat and profile follow the model this machine chose for it", asy
   // choosing a model for a role is what sets its seat up
   assert.ok("opencode-hq" in providers && "pi-supervisor" in providers);
   assert.deepEqual(models.seats.hq, { provider: "opencode-hq/vendor/m-two", thinking: "default" });
-  // a model without thinking options and a harness without session modes take no such setting: Paseo refuses one
+  // a model without thinking options and a harness without session modes take no such setting
   assert.deepEqual(profile("agent_profile_seatwork_hq"), { provider: "opencode-hq", model: "vendor/m-two", modeId: "build", thinkingOptionId: undefined });
   assert.deepEqual(profile("agent_profile_seatwork_supervisor"), { provider: "pi-supervisor", model: "m-one", modeId: undefined, thinkingOptionId: "high" });
   // a seat lists only the models the table gives it, the first as its default
@@ -273,7 +273,7 @@ test("a running daemon is patched so that no seat keeps a key its new entry drop
 
   const { removed } = await applyWithSdk(paseo as never, room, { daemonPolicy: false });
 
-  // Paseo merges a patched provider into the one it holds, and drops a provider named in both lists of one patch
+  // Paseo merges a patched provider into the one it holds, and drops one named in both lists of a patch
   assert.deepEqual(patches[0], { removeProviders: ["pi-lens", "claude-peer"] });
   assert.equal(patches[1].removeProviders, undefined);
   assert.deepEqual(patches[1].providers, room.providers);

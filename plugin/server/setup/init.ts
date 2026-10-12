@@ -5,11 +5,9 @@ import { planRoom, type Catalog, type RoomPlan, type Setup } from "./plan";
 import { readSetup, writeRoomHome } from "./room-home";
 
 export interface RoomSource {
-  /** The plugin's own folder: the room files and the policy ship inside it. */
   pluginDir: string;
   roomHome: string;
   catalog: Catalog;
-  /** The plugin version doing the work, recorded in setup.json. */
   version: string;
 }
 
@@ -28,10 +26,7 @@ export function sourceOf(roomHome: string): string | null {
   return source && existsSync(join(source, "room", "models.json")) ? source : null;
 }
 
-/**
- * Adds seats to a room that is set up, as a project's own model table may ask: they are kept in
- * setup.json, so every later setup keeps them.
- */
+/** Adds seats to a room that is set up; they are kept in setup.json, so every later setup keeps them. */
 export async function addSeats(source: RoomSource, providers: string[]): Promise<RoomPlan> {
   for (const provider of providers) if (!parseSeat(provider)) throw new Error(`"${provider}" is not a seat: a seat is <harness>-<role>`);
   const setup = readSetup(source.roomHome);

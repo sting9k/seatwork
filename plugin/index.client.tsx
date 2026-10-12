@@ -4,14 +4,10 @@ import { RoomItem, RoomScreen } from "./client/room";
 import { SetupItem, SetupScreen, type Open } from "./client/setup";
 import { roomWaiting } from "./shared/room";
 
-/** How often the open app asks the room what waits on the Owner. */
+/** How often the open app asks the room what waits on the Owner; asking also moves held mail after a restart. */
 const EVERY_MS = 15_000;
 
-/**
- * seatwork in the app: the Seatwork screen (the room's setup) and the Room screen, each with a row in the
- * sidebar, and a short sound for each turn that newly waits on the Owner. Asking the room is also what lets it move held mail after a
- * daemon restart.
- */
+/** Seatwork in the app: its two screens, their sidebar rows, and a sound when a turn newly waits on the Owner. */
 export default function contribute(client: PluginClientContext) {
   const heard = new Set<string>();
   let first = true;
@@ -32,7 +28,7 @@ export default function contribute(client: PluginClientContext) {
   const timer = setInterval(() => void look(), EVERY_MS);
   const screen = client.addScreen({ id: "room", title: "Room", Component: RoomScreen });
   const item = client.addSidebarFooterItem({ id: "room", title: "Room", Component: RoomItem });
-  // a project's own models, and the part of the room screen to show, open as the same screen with that in its address
+  // a project's own models and a part of the room screen open as the same screen, by its params
   const open: Open = (to) => client.openScreen({ screenId: "setup", ...(to?.project || to?.part ? { params: { ...(to.project ? { project: to.project } : {}), ...(to.part ? { part: to.part } : {}) } } : {}) });
   const setup = client.addScreen({ id: "setup", title: ({ project }) => (project ? `Seatwork · ${project}` : "Seatwork"), Component: (props: PluginScreenProps) => <SetupScreen {...props} open={open} /> });
   const setupItem = client.addSidebarHeaderItem({ id: "setup", title: "Seatwork", Component: SetupItem });

@@ -1,6 +1,4 @@
-/**
- * The sound for "something waits on you": two short notes as a WAV file, made here so the plugin ships no audio asset.
- */
+/** The sound for "something waits on you": two short notes as a WAV, made here so no audio file ships. */
 
 const RATE = 16000;
 /** Frequency in Hz and length in seconds: A5, then E6 held a little longer. */
@@ -38,14 +36,15 @@ function wav(): Uint8Array {
   const tag = (at: number, text: string) => [...text].forEach((char, index) => view.setUint8(at + index, char.charCodeAt(0)));
   tag(0, "RIFF");
   view.setUint32(4, bytes.length - 8, true);
+  // the format block: PCM, mono, 16-bit samples
   tag(8, "WAVEfmt ");
-  view.setUint32(16, 16, true); // size of the format block
-  view.setUint16(20, 1, true); // PCM
-  view.setUint16(22, 1, true); // mono
+  view.setUint32(16, 16, true);
+  view.setUint16(20, 1, true);
+  view.setUint16(22, 1, true);
   view.setUint32(24, RATE, true);
-  view.setUint32(28, RATE * 2, true); // bytes a second
-  view.setUint16(32, 2, true); // bytes a sample
-  view.setUint16(34, 16, true); // bits a sample
+  view.setUint32(28, RATE * 2, true);
+  view.setUint16(32, 2, true);
+  view.setUint16(34, 16, true);
   tag(36, "data");
   view.setUint32(40, samples.length * 2, true);
   samples.forEach((sample, index) => view.setInt16(44 + index * 2, sample, true));

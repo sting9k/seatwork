@@ -46,10 +46,7 @@ const MAIL_DIR = join(ROOM_HOME, "mail");
 const MCP_TOKEN_FILE = join(MAIL_DIR, "token");
 const NONCES_FILE = join(MAIL_DIR, "nonces.json");
 
-/**
- * seatwork. A daemon that only downloaded the plugin gets the setup screen and nothing else: no
- * folder, no seat, no port. The room starts once it is set up, from that screen or by install.sh.
- */
+/** Seatwork: a daemon that only downloaded the plugin gets the setup screen; the room starts once it is set up. */
 export default function contribute(server: PluginServerContext) {
   server.registerSettings(roomSettings);
   let room: Room | null = isSetUp(ROOM_HOME) ? startRoom(server) : null;
@@ -79,7 +76,7 @@ export default function contribute(server: PluginServerContext) {
     }
   });
 
-  // what the decision model cost this month, for Paseo's Usage screen; a watcher that is off asks nothing
+  // what the decision model cost this month, for Paseo's Usage screen
   const watching = room?.policy.watcher;
   if (watching && watching.mode !== "off") {
     server.registerUsageSource({
@@ -126,7 +123,7 @@ export default function contribute(server: PluginServerContext) {
     oneAtATime(async () => {
       const pluginDir = await ownFolder(paseo);
       const before = readSetup(ROOM_HOME);
-      // what the screen does not show stays: the seats HQ added for a project's table, this machine's mail port
+      // what the screen does not show stays: seats HQ added for a project's table, this machine's mail port
       const setup: Setup = {
         ...(before.seats?.length ? { seats: before.seats } : {}),
         ...(before.mailPort !== undefined ? { mailPort: before.mailPort } : {}),
@@ -140,7 +137,7 @@ export default function contribute(server: PluginServerContext) {
       const notes = [...plan.warnings];
       const old = await clearOldRoom();
       if (old) notes.push(`A room from before 0.19.0 was on this machine: its folder is kept at ${old} for ${KEEP_REMOVED_DAYS} days.`);
-      // the one switch of the room's that the SDK has no call for: written into config.json, then reloaded
+      // the one switch the SDK has no call for: written into config.json, then reloaded
       if ((plan.policy.daemon?.bundledSkills ?? "none") === "none" && turnBundledSkillsOff(PASEO_HOME, pluginDir)) {
         await paseoCli(["daemon", "reload"]).then(
           () => notes.push("Paseo's bundled skills are now kept out of agents (config.json; the old file is beside it)."),
@@ -215,7 +212,7 @@ export default function contribute(server: PluginServerContext) {
   };
 }
 
-/** The plugin's own folder, where the room files ship. Paseo knows where it put the plugin; the plugin's code does not. */
+/** The plugin's own folder, where the room files ship: Paseo knows it, the plugin's code does not. */
 async function ownFolder(paseo: PaseoApi): Promise<string> {
   const holdsRoom = (dir: unknown): dir is string => typeof dir === "string" && existsSync(join(dir, "room", "models.json")) && existsSync(join(dir, "paseo", "policy.json"));
   const { config } = await paseo.config.get();
@@ -225,7 +222,7 @@ async function ownFolder(paseo: PaseoApi): Promise<string> {
   return found;
 }
 
-/** The model choices a room was set up with, in the screen's shape: an HQ seat chosen by install.sh is one of them. */
+/** The model choices a room was set up with, in the screen's shape (an HQ seat from install.sh included). */
 function appliedModels(setup: Setup): Record<string, never> {
   const hq = typeof setup.hq === "object" ? { seats: { hq: { thinking: "default", ...setup.hq } } } : {};
   return merge(hq, setup.models ?? {}) as Record<string, never>;
@@ -269,11 +266,7 @@ interface Room {
   stop(): Promise<void>;
 }
 
-/**
- * The room's hooks into Paseo. A seat gets its prompt, project block and mail server at
- * agent.create and its own environment each time its session opens; turn ends and permission
- * requests become mail; archives and GC clean up after it.
- */
+/** The room's hooks into Paseo: a seat gets its prompt, project block and mail server; turn ends become mail. */
 function startRoom(server: Pick<PluginServerContext, "on" | "before">): Room {
   // the room home holds mail bodies and copies of the user's harness config: its owner only
   chmodSync(ROOM_HOME, 0o700);
@@ -352,7 +345,7 @@ function startRoom(server: Pick<PluginServerContext, "on" | "before">): Room {
           body: notice.body,
           needs: "nothing",
           whyNow: "the room noticed something in a seat you launched; its own report does not say it",
-          // a notice about a finished turn rides with that turn's report instead of starting a turn before it
+          // a notice about a finished turn rides with that turn's report
           ...(notice.withReport ? { quiet: true as const } : {}),
         });
         return mail.id;
@@ -420,7 +413,7 @@ function startRoom(server: Pick<PluginServerContext, "on" | "before">): Room {
       const signal = subjectSignal(subject);
       if (signal && engine.parentOf(from) === to) {
         mailedUp.set(from, (mailedUp.get(from) ?? new Set()).add(signal));
-        // "my work is finished" is true only once the turn has ended: until then the parent must not act on this seat
+        // "my work is finished" is true only once the turn has ended: the report is kept until then
         if (CLOSES_WORK.has(signal)) {
           const kept = engine.keepReport({
             from: { agentId: from, role: sender.role },
@@ -434,7 +427,7 @@ function startRoom(server: Pick<PluginServerContext, "on" | "before">): Room {
           return `kept #${kept.id} as your report to owner: it is delivered once, when your turn ends. End your turn with ${signal} on the first line; do not send it again.`;
         }
       }
-      // an acknowledgement asks nothing of anyone, and neither does a receipt for a candidate under review: neither starts a turn
+      // an ACK, or a receipt for a candidate under review, asks nothing of anyone: neither starts a turn
       const waits = signal === "ACK" || isReceipt({ recipientRole: recipient.role, subject, needs: args.needs, fromAbove: engine.isAncestor(from, to), recipientEndedWith: lastSignal.get(to) });
       const mail = await engine.post({
         from: { agentId: from, role: sender.role },
@@ -467,7 +460,7 @@ function startRoom(server: Pick<PluginServerContext, "on" | "before">): Room {
     },
   );
 
-  // the registry belongs to the seat above the projects; the descriptions stay neutral because every seat can read them
+  // the registry is the top seat's; tool descriptions stay neutral because every seat can read them
   const registryOwner = (nonce: string, tool: string) => {
     const me = resolveCaller(nonce);
     if (!me || engine?.seat(me)?.role !== "hq") throw new Error(`${tool} refused: your seat does not keep the project registry`);
@@ -590,8 +583,7 @@ function startRoom(server: Pick<PluginServerContext, "on" | "before">): Room {
     return applySeat(request);
   }));
 
-  // agent.create hands out the nonce (in the MCP URL and in env.SEATWORK_NONCE); session_open
-  // is the first hook that knows the agent id, so the link is made here, never guessed.
+  // session_open is the first hook that knows the agent id: the nonce from agent.create is tied to it here
   off.push(server.before("agent.session_open", ({ request }) => {
     const nonce = request.env?.SEATWORK_NONCE;
     if (nonce && request.reason === "create" && nonces[nonce] !== request.agentId) {
@@ -600,14 +592,14 @@ function startRoom(server: Pick<PluginServerContext, "on" | "before">): Room {
     }
     const seat = parseSeat(request.provider);
     if (!seat) return request;
-    // Paseo saves no env with an agent: a seat reopened after a restart would start on the user's own home
+    // Paseo saves no env with an agent: a reopened seat would start on the user's own home
     ensureRuntime(seat);
     return { ...request, env: { ...request.env, ...envFor(seat, policy) } };
   }));
 
   off.push(server.on("agent.created", async (event, { paseo }) => {
     const seat = parseSeat(event.agent.provider);
-    // spawn rules: a seat may only create the roles policy.room.spawn allows, never a non-room provider
+    // spawn rules: a seat may create only the roles policy.room.spawn allows
     const parentId = event.agent.parentAgentId;
     const parent = parentId ? getEngine(paseo).seat(parentId) : undefined;
     if (parent) {
@@ -616,7 +608,7 @@ function startRoom(server: Pick<PluginServerContext, "on" | "before">): Room {
       if (!childRole || !maySpawn(policy.room.spawn, parent.role, childRole, event.agent.title)) {
         const what = seat ? `a ${seat.role} seat` : `a non-room agent (provider ${event.agent.provider})`;
         log(`spawn refused: ${parent.role} ${parentId} created ${what} ${event.agent.id}; archiving it`);
-        // Paseo sends a new agent its first prompt without waiting for this hook, so the seat may already be at work
+        // Paseo sends a new agent its first prompt without waiting for this hook: the seat may be at work already
         let outcome = "The room archived it. If you gave it a first prompt, that turn may have started before the archive: check what it changed.";
         try {
           await paseo.agents.ref(event.agent.id).archive();
@@ -656,8 +648,7 @@ function startRoom(server: Pick<PluginServerContext, "on" | "before">): Room {
     }
   }));
 
-  // Any turn start wakes the engine and the collector, so both work right after a
-  // plugin reload (the API hands us the Paseo client only inside hook contexts).
+  // any turn start wakes the engine and the collector: Paseo's client is handed out only inside hooks
   off.push(server.on("agent.turn_started", (event, { paseo }) => {
     owed.clear(event.agent.id);
     getGc(paseo);
@@ -671,8 +662,7 @@ function startRoom(server: Pick<PluginServerContext, "on" | "before">): Room {
     await getGc(paseo).onArchived(event.agent.id);
   }));
 
-  // a runtime that closes (daemon stopping, seat deleted) takes its turn with it, and Paseo sends that turn no end:
-  // what the room kept for the turn goes; held mail stays, and the sweep posts a report the seat had mailed
+  // a runtime that closes takes its turn with it and Paseo sends no end: what the room kept for the turn goes
   off.push(server.on("agent.closed", (event) => {
     watcher?.cut(event.agent.id);
     mailedUp.delete(event.agent.id);
@@ -683,17 +673,17 @@ function startRoom(server: Pick<PluginServerContext, "on" | "before">): Room {
     const eng = getEngine(paseo);
     const id = event.agent.id;
     const seat = parseSeat(event.agent.provider);
-    // what this turn was started by and what the seat mailed during it; read before the next delivery starts its next turn
+    // what started this turn and what the seat mailed during it; read before the next delivery
     const wake = eng.takeWake(id);
     const kept = eng.takeReport(id);
     const mailed = mailedUp.get(id) ?? new Set<string>();
     mailedUp.delete(id);
     const parentId = eng.parentOf(id) ?? event.agent.parentAgentId;
     const parent = parentId ? eng.seat(parentId) : undefined;
-    // nothing travels up to hq: it reads the Supervisor's final message and .seatwork/status.md when it looks
+    // nothing travels up to hq: it reads the Supervisor's final message and status.md when it looks
     const reportsTo = seat && parentId && parent && parent.role !== "hq" ? parentId : null;
     const canceled = event.outcome.kind === "canceled";
-    // a seat nobody above reads by mail: the Owner reads its final message, and the app is told when it asks something
+    // a seat nobody above reads by mail: the Owner reads its final message, and the app is told
     if (seat && !reportsTo && !canceled) {
       const what = event.outcome.kind === "failed" ? "FAILED" : asksOwner(lastAssistantText(event.timeline));
       if (what) owed.set({ key: `${id}:${Date.now()}`, agentId: id, title: event.agent.title, what, at: new Date().toISOString() });
@@ -746,12 +736,12 @@ function startRoom(server: Pick<PluginServerContext, "on" | "before">): Room {
         };
       }
     }
-    // the watcher reads the turn before anything goes up: its notice rides with a mail that starts the parent's turn, or goes alone when this turn sends none
+    // the watcher reads the turn before anything goes up: its notice rides with the report, or goes alone
     const view = canceled ? null : viewOf(paseo, event.agent);
     const carried = [kept, report].some((mail) => mail && !mail.quiet);
     if (view) await getWatcher(paseo).turnEnded(view, event.turnId, carried);
     else watcher?.forget(id);
-    // whoever finished a turn may now take held mail; the watcher has read the turn, so the next one may start
+    // the watcher has read the turn: held mail may now start the next one
     await eng.deliver(id);
     if (!reportsTo) return;
     // a newer report takes the place of this seat's progress report that still waits unread
@@ -792,8 +782,7 @@ function startRoom(server: Pick<PluginServerContext, "on" | "before">): Room {
 
   return {
     policy,
-    // After a daemon start the app's question is the first thing to hand the room a Paseo client:
-    // mail held on disk moves without waiting for an agent to run
+    // after a daemon start the app's question is the first to hand the room a Paseo client: held mail moves
     async waiting(paseo) {
       if (!engine) void getEngine(paseo).sweep();
       getGc(paseo);
@@ -845,7 +834,7 @@ function startRoom(server: Pick<PluginServerContext, "on" | "before">): Room {
       if (marker) project = { name: marker.root.split("/").pop() ?? marker.root, root: marker.root, room: marker.room, mission: marker.mission, law: marker.law };
     }
 
-    // the table in force where this seat starts: the room's, with its project's own differences laid over it
+    // the table in force here: the room's, with the project's own differences laid over it
     const own = project?.room.models !== undefined ? `${project.root}/.seatwork/room.json` : null;
     const models: Models = own ? projectModels(project!.room.models, enabledSeats().map((s) => s.provider), `seatwork: ${own}`) : loadModels();
     const fit = fitSeat(models, seat.role, seat.provider, request.config.model ?? undefined);
@@ -868,7 +857,7 @@ function startRoom(server: Pick<PluginServerContext, "on" | "before">): Room {
       throw new Error(`seatwork: ${seat.provider} refused: its runtime could not be built (${error instanceof Error ? error.message : String(error)}). Fix that and create the seat again.`);
     }
 
-    // the room's MCP server; agent.session_open ties this nonce to the agent id and adds the seat's own environment
+    // the room's MCP server; agent.session_open ties this nonce to the agent id
     const nonce = randomBytes(9).toString("base64url");
     const env: Record<string, string> = { ...(request.env ?? {}), SEATWORK_NONCE: nonce };
     const mcpServers = {
@@ -885,7 +874,7 @@ function startRoom(server: Pick<PluginServerContext, "on" | "before">): Room {
       request.config.systemPrompt,
     ];
     const systemPrompt = parts.filter((p): p is string => typeof p === "string" && p.trim().length > 0).join("\n\n");
-    // a Claude seat runs on the user's ~/.claude: personal customizations off by flags, its role's skills as an additional directory
+    // a Claude seat runs on ~/.claude: customizations off by flags, its role's skills as an added directory
     let providerOptions = request.config.providerOptions;
     if (seat.harness === "claude") {
       const current = (providerOptions ?? {}) as { additionalDirectories?: unknown; extraArgs?: Record<string, string | null> };
@@ -915,11 +904,7 @@ function askedNothing(wake: readonly Mail[]): boolean {
   return wake.length > 0 && wake.every((mail) => mail.needs === "nothing" && (mail.priority === "fyi" || mail.from.role === "system"));
 }
 
-/**
- * A receipt: the seat above writes HOLD or NOTED, says it needs nothing, and the Peer's last turn handed its work
- * over. That Peer waits for the verdict and has nothing to do with a receipt; a Peer stopped on a challenge is
- * waiting for exactly this mail.
- */
+/** A receipt: HOLD or NOTED from above that needs nothing, to a Peer whose last turn handed its work over. */
 function isReceipt(input: { recipientRole: Role; subject: string; needs: unknown; fromAbove: boolean; recipientEndedWith: string | undefined }): boolean {
   if (input.recipientRole !== "peer" || !input.fromAbove || input.needs !== "nothing") return false;
   return /^\W*(?:HOLD|NOTED)\b/.test(input.subject) && input.recipientEndedWith !== undefined && CLOSES_WORK.has(input.recipientEndedWith);

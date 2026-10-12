@@ -2,7 +2,7 @@ import { appendFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
 import { dirname } from "node:path";
 import type { RuleId } from "./rules";
 
-/** One line per turn end, and per earlier scan that found or asked something: what the calibration is computed from. */
+/** One line per turn end, and per earlier scan that found or asked something: the calibration's input. */
 export interface ScanRecord {
   at: string;
   seat: string;
@@ -15,12 +15,12 @@ export interface ScanRecord {
   signal?: string;
   tests: string;
   statics: string;
-  /** How often this turn has been read so far, this record included; a quiet read writes no line of its own. */
+  /** How often this turn has been read so far, this record included. */
   reads?: number;
   /** At a turn's end: what the first test the seat ran in that turn said. */
   ran?: "passed" | "failed" | "unknown";
   findings: ScanFinding[];
-  /** `skipped`: rules whose question was left out because the message was too long to send what they read. */
+  /** `skipped`: rules whose question was left out because the message was too long. */
   engine?: { ok: true; model: string; tokens: number; ms: number; cached?: true; skipped?: RuleId[] } | { ok: false; reason: string };
   mail?: string;
 }

@@ -6,25 +6,7 @@ import { waitsOnSomeone, type MailEngine } from "./mail";
 import { PASEO_SCHEDULES, ROOM_HOME } from "./paths";
 import type { GcPolicy } from "./policy";
 
-/**
- * Garbage collection for the room. One pass every gc.everyMinutes, plus a
- * short pass whenever a seat is archived:
- *
- *  - a room seat at rest longer than its role's limit is archived, unless it
- *    waits on a permission or an answer, or one of its descendants is still
- *    alive (a Lead waits for its Peers, never the other way round); the parent
- *    gets an FYI mail;
- *  - heartbeats of room seats that are archived or gone are deleted. Paseo marks
- *    a heartbeat "completed" when its agent is archived but keeps the file, and
- *    `paseo schedule ls` hides heartbeats, so GC reads the daemon's schedule
- *    store directly and deletes through the CLI (the plugin SDK has no schedule
- *    API);
- *  - mail still held for an archived seat is bounced to its sender, and the
- *    seat's MCP nonce is forgotten.
- *
- * It never kills a process and never touches an agent that is not a room seat.
- * Every action is one line in ROOM_HOME/gc.log.
- */
+/** Garbage collection: archives room seats at rest too long, and clears the heartbeats and mail of seats that are gone. */
 
 const GC_LOG = join(ROOM_HOME, "gc.log");
 
@@ -52,7 +34,7 @@ interface Schedule {
   target?: { type?: string; agentId?: string };
 }
 
-/** Every schedule in the daemon's store; unreadable files are skipped. */
+/** Every schedule in the daemon's store, read from disk: `paseo schedule ls` hides heartbeats. */
 function storedSchedules(): Schedule[] {
   if (!existsSync(PASEO_SCHEDULES)) return [];
   const out: Schedule[] = [];
@@ -99,7 +81,6 @@ export class Collector {
     private readonly engine: MailEngine,
     private readonly policy: GcPolicy,
     private readonly log: (message: string) => void,
-    /** Drops the plugin's nonce → agent mapping for an archived seat. */
     private readonly forgetAgent: (agentId: string) => void,
   ) {}
 
@@ -118,7 +99,7 @@ export class Collector {
     }
   }
 
-  /** A seat was archived (by GC, a parent, or the user): bounce its mail, forget its nonce, delete its heartbeats. */
+  /** A seat was archived: bounce its mail, forget its nonce, delete its heartbeats. */
   async onArchived(agentId: string): Promise<void> {
     if (!this.engine.seat(agentId)) return;
     this.forgetAgent(agentId);
@@ -184,7 +165,7 @@ export class Collector {
     }
   }
 
-  /** Deletes every heartbeat of a room seat that `orphaned(agentId)` says is gone, or that Paseo already completed. */
+  /** Deletes the heartbeats of seats `orphaned` says are gone, and those Paseo already completed. */
   private deleteHeartbeats(orphaned: (agentId: string) => boolean): Promise<void> {
     const run = this.heartbeatLock.then(() => this.deleteHeartbeatsNow(orphaned));
     this.heartbeatLock = run.catch(() => undefined);

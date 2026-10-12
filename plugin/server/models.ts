@@ -4,11 +4,7 @@ import { ROOM_DIR } from "./paths";
 import type { RoomParams } from "./policy";
 import { merge } from "../shared/model-choices";
 
-/**
- * room/models.json: every model id the room uses, in one editable file. Role
- * prompts never name a model; they carry {{placeholders}} that render() fills
- * from this file at seat creation, so a model change needs no prompt edit.
- */
+/** room/models.json: every model id the room uses; role prompts carry {{placeholders}} filled from it. */
 
 export interface SeatModel {
   provider: string;
@@ -26,11 +22,9 @@ export interface Tier {
 
 export interface Models {
   seats: { hq: SeatModel; supervisor: SeatModel; lead: SeatModel };
-  /** One role, several models: the Lead picks the tier by the task. */
   peer: { tiers: Record<string, Tier>; reviewThinking: string };
-  /** One role, several models: the Lead picks by the question; two lenses are two different models. */
   lens: { tiers: Record<string, Tier> };
-  /** The Paseo session mode a seat is created in, per harness; null where the harness has none and Paseo refuses any. */
+  /** The Paseo session mode per harness; null where the harness has none. */
   modes: Record<string, string | null>;
 }
 
@@ -113,7 +107,7 @@ function laidOver(override: unknown, where: string): Models {
   return layModels(loadModels(), override, where);
 }
 
-/** `base` with `override` laid over it (objects merge, lists and values replace, null removes a key), checked as a table. */
+/** `base` with `override` laid over it: objects merge, other values replace, null removes a key. */
 export function layModels(base: Models, override: unknown, where: string): Models {
   if (!isObject(override)) throw new Error(`${where}: "models" must be an object shaped like ${MODELS_FILE}`);
   const merged = merge(base, override) as Models;
@@ -124,18 +118,13 @@ export function layModels(base: Models, override: unknown, where: string): Model
       if (!providerOf(entry).endsWith(`-${role}`)) throw new Error(`${where}: "${entry}" is listed for ${role} but is not a ${role} seat`);
     }
   }
-  // a table written before the lenses were listed like Peers would be read as having no change
+  // a table from before the lenses were listed like Peers would read as unchanged
   const old = ["oracle", "hard", "pair", "pool"].find((key) => key in merged.lens);
   if (old) throw new Error(`${where}: lens.${old} is not a place in the table: lenses are listed under lens.tiers, as Peers are under peer.tiers`);
   return merged;
 }
 
-/**
- * The room's table with a project's own `models` laid over it. Throws, naming
- * the entry, when the result names a seat that is not enabled, puts a provider
- * in another role's slot, or leaves a role without a model: the file is edited
- * by hand, so the error has to say what to fix.
- */
+/** The room's table with a project's `models` laid over it; throws, naming the entry, when it cannot be used. */
 export function projectModels(override: unknown, enabledProviders: string[], where: string): Models {
   if (override === undefined) return loadModels();
   const merged = laidOver(override, where);
@@ -146,7 +135,7 @@ export function projectModels(override: unknown, enabledProviders: string[], whe
   return merged;
 }
 
-/** The seats a project's own `models` names that the room does not have yet; the table is checked as projectModels checks it. */
+/** The seats a project's `models` names that the room does not have yet. */
 export function missingSeats(override: unknown, enabledProviders: string[], where: string): string[] {
   if (override === undefined) return [];
   const named = Object.values(allowed(laidOver(override, where))).flat().map(providerOf);
@@ -170,14 +159,10 @@ export function modelAllowed(m: Models, role: string, provider: string, model: s
 
 /** What the table in force makes of a seat about to be created. */
 export type SeatFit =
-  | { ok: true; /** The model to start on instead of the one asked for. */ model?: string; /** With it, the thinking level; "default" is none. */ thinking?: string }
+  | { ok: true; model?: string; thinking?: string }
   | { ok: false; listed: string[] };
 
-/**
- * Holds a seat about to be created to the table in force. The table decides, not the prompt of
- * whoever creates the seat: that prompt may be older than the table. A role with one model is put
- * on it; a Peer or a Lens on a model that left the table is refused, for its creator to pick again.
- */
+/** Holds a new seat to the table in force, not to its creator's prompt, which may be older than the table. */
 export function fitSeat(m: Models, role: string, provider: string, model: string | undefined): SeatFit {
   const listed = allowed(m)[role] ?? [];
   const mine = listed.filter((entry) => split(entry)[0] === provider);

@@ -14,7 +14,7 @@ test("mail that was held when the daemon stopped moves once the app is open, bef
   const busy = { agents: { ref: () => ({ refresh: async () => {}, current: () => ({ status: "running" }) }) } };
   const held = await new MailEngine(busy as never, MAIL_POLICY, { routes: {}, spawn: {} } as never, () => {}).post({ from: { agentId: "room", role: "system" }, to: "lead-restart", priority: "action", subject: "ANSWER: seconds", body: "ANSWER\nseconds", needs: "nothing", whyNow: "test" });
 
-  // after it every seat is closed and no hook has fired: the app's question is the first thing that reaches the plugin
+  // after it every seat is closed and no hook has fired: the app's question reaches the plugin first
   const inbox: string[] = [];
   const paseo = { agents: { list: async () => ({ entries: [] }), ref: () => ({ refresh: async () => {}, current: () => ({ status: "closed" }), send: async (text: string) => void inbox.push(text) }) } };
   const paseoSide = fakeServer();

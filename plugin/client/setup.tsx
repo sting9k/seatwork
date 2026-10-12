@@ -20,7 +20,7 @@ const ROOM_ROLES = [...SEAT_ROLES, ...TIER_ROLES] as const;
 const WATCHER_DOES = { off: "Nothing is read.", shadow: "Reads the turns of Leads and Peers and logs what it finds. Nobody is mailed.", on: "Reads the turns of Leads and Peers. What it finds is mailed to the seat above." } as const;
 const MONO = { dataSet: { pmono: "true" }, style: { fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace" } };
 
-/** What went wrong, in the room's words: Paseo wraps a refused request in its own prefix and request details. */
+/** What went wrong, in the room's words: Paseo wraps a refused request in its own prefix. */
 const failed = (error: unknown) => (error ? (error instanceof Error ? error.message : String(error)).replace(/^Request failed: /, "").replace(/ requestType=\S+( code=\S+)?$/, "") : null);
 /** A path as its owner writes it. */
 const short = (path: string) => path.replace(/^\/(Users|home)\/[^/]+/, "~");
@@ -46,7 +46,6 @@ export function SetupItem({ theme, currentScreen, openScreen }: PluginSidebarIte
 interface Fit {
   /** The cards about the room sit beside the models, not under them. */
   rail: boolean;
-  /** Tight on room: smaller paddings and headings, a project's changes in one word. */
   narrow: boolean;
 }
 
@@ -55,10 +54,7 @@ type Part = "settings" | "projects";
 /** Opens the screen: on a project's own models, or on one of its parts. */
 export type Open = (to?: { project?: string; part?: Part }) => void;
 
-/**
- * Seatwork's screen: the room's setup in two parts, or one project's own models when the screen
- * was opened for a project.
- */
+/** Seatwork's screen: the room's setup in two parts, or one project's own models. */
 export function SetupScreen({ theme, layout, params, open }: PluginScreenProps & { open: Open }) {
   const c = theme.colors;
   const readState = useRpc(setupState);
@@ -181,11 +177,7 @@ function removedLine(done: RpcOutput<typeof setupRemove>): string {
     .join(" ");
 }
 
-/**
- * The room's setup: what each role runs on and which projects follow it, with the room's state,
- * its watcher, its sound and this host beside them. Choices are kept as they are made; the room
- * changes on Init or Apply.
- */
+/** The room's setup: each role's model and the projects that follow it; the room changes on Init or Apply. */
 function RoomSetup({ data, open, start, fit, colors: c }: { data: State; open: Open; start: Part; fit: Fit; colors: Colors }) {
   const [part, setPart] = useState(start);
   const settings = useSettings(roomSettings);
@@ -219,7 +211,7 @@ function RoomSetup({ data, open, start, fit, colors: c }: { data: State; open: O
   const done = init.data as RpcOutput<typeof setupInit> | undefined;
   const moved = remove.data as RpcOutput<typeof setupRemove> | undefined;
 
-  // a room set up from a terminal: the screen starts from what it runs on, not from the room's defaults
+  // a room set up from a terminal: the screen starts from what it runs on
   const applied = data.applied;
   const unsaved = settings.status === "ready" && settings.revision === "missing";
   useEffect(() => {
@@ -487,10 +479,7 @@ function ProjectChanges(props: { project: Project; running: Table; harnesses: Ha
   );
 }
 
-/**
- * One project's own models: the room's table with this project's differences. They are written
- * into the project (`.seatwork/room.json`) on Save and reach the seats opened in it from then on.
- */
+/** One project's own models: its differences from the room's table, written to `.seatwork/room.json` on Save. */
 function ProjectModels({ data, name, open, fit, colors: c }: { data: State; name: string; open: Open; fit: Fit; colors: Colors }) {
   const project = data.projects.find((entry) => entry.name === name);
   const write = useRpc(setupProject);

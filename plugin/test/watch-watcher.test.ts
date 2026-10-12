@@ -193,7 +193,7 @@ test("a Peer created with a brief that lacks a line: its Lead is told when its f
   assert.match(mail[1].subject, /changed src\/other\.js/);
   assert.doesNotMatch(mail[1].body, /briefed without/);
 
-  // nor in a later turn that no prompt opened (a background job woke the Peer): the brief is still its only prompt
+  // nor in a later turn that no prompt opened: the brief is still its only prompt
   turn([prompt(CUT), edit(src("src/other.js")), bash("npm test"), say("CANDIDATE: hours added"), bash("npm test", {}, "turn-2")]);
   watcher.turnStarted(PEER, "turn-2");
   await watcher.tick();
@@ -272,16 +272,16 @@ test("which prompts are held to the five lines: a Lead's brief to a Peer, create
     return scans.read().some((record) => record.findings.some((finding) => finding.rule === "incomplete-brief"));
   };
   assert.equal(await judged(PEER, [prompt(CUT)]), true);
-  // a later turn, as after a plugin reload: nothing remembered, the first prompt still in the history
+  // a later turn, as after a plugin reload: the first prompt is still in the history
   assert.equal(await judged(PEER, [prompt(CUT, "turn-0"), say("QUESTION: which unit?", "turn-0"), prompt("ANSWER: hours")]), false);
   // a brief that came as mail lacks what it lacks, whatever a revision puts before a changed line
   assert.equal(await judged(PEER, [prompt(letter("m1", "REVISED BRIEF: hours and days", CUT))]), true);
   assert.equal(await judged(PEER, [prompt(letter("m2", "REVISED BRIEF: hours and days", BRIEF.replace("Reopen when:", "[changed] Reopen when:")))]), false);
   assert.equal(await judged(PEER, [prompt(`SEATWORK MAIL DIGEST — 2 messages, highest first. Handle each by its own header.\n\n${letter("m3", "ANSWER: hours", "hours")}\n\n${letter("m4", "BRIEF: the days unit", CUT)}`)]), true);
-  // other mail is no brief: a repair order that repeats two template lines, and a brief nobody above the Peer sent
+  // other mail is no brief: a repair order with two template lines, a brief from nobody above
   assert.equal(await judged(PEER, [prompt(letter("m5", "REJECT abc123: one repair", "REJECT abc123: print the unit back.\nWrite scope: unchanged\nOutput: CANDIDATE with the new sha\nReply with seatwork_mail to: owner"))]), false);
   assert.equal(await judged(PEER, [prompt(letter("m6", "BRIEF: the days unit", CUT, "room"))]), false);
-  // a Peer the user opened, a research Peer under a Supervisor, a Lead under its Supervisor: none is a Lead's brief to a Peer
+  // a Peer the user opened, a research Peer under a Supervisor, a Lead: none is a Lead's brief to a Peer
   assert.equal(await judged({ ...PEER, parent: null, parentRole: null }, [prompt("fix the flaky test")]), false);
   assert.equal(await judged({ ...PEER, parentRole: "supervisor" }, [prompt(CUT)]), false);
   assert.equal(await judged({ ...PEER, role: "lead", parentRole: "supervisor" }, [prompt(CUT)]), false);

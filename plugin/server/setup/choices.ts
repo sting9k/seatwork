@@ -30,7 +30,7 @@ async function pick(io: Terminal, prompt: string, options: string[], fallback?: 
   }
 }
 
-/** The setup.json entry for HQ on this harness and model, checked against the harness's catalog when it can be read. */
+/** The setup.json entry for HQ on this harness and model, checked against the harness's catalog. */
 async function hqSeat(harness: string, model: string, thinking: string | undefined, catalog: Catalog, io: Terminal): Promise<{ provider: string; thinking?: string }> {
   if (!(HARNESSES as readonly string[]).includes(harness) || !model) throw new Error(`--hq takes default, ask or <harness>/<model>; harnesses are ${HARNESSES.join(", ")}`);
   const cat = await catalog(harness as Harness);
@@ -67,10 +67,7 @@ async function askWatcher(io: Terminal, keyFile: string): Promise<Setup["watcher
   return (await pick(io, "Choice", ["no", "shadow"], "no")) === "shadow" ? "shadow" : "off";
 }
 
-/**
- * This machine's choices after the installer's flags and, on a first install from a terminal, its
- * two questions: what HQ runs on, and whether the watcher is installed.
- */
+/** This machine's choices: the installer's flags, and on a first install from a terminal its two questions. */
 export async function choose(before: Setup, flags: ChoiceFlags, io: Terminal, room: { catalog: Catalog; hq: { provider: string; thinking: string }; watchKeyFile: string }): Promise<Setup> {
   const setup: Setup = { ...before, ...(before.seats ? { seats: [...before.seats] } : {}) };
   for (const seat of flags.seats) {

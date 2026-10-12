@@ -2,10 +2,7 @@ import type { Brief } from "./brief";
 import type { TurnFacts } from "./facts";
 import { DECISION_WORDS, VERIFICATION_WORDS } from "./questions";
 
-/**
- * The gate: each rule reads the facts of a turn and answers nothing, a finding that stands on the facts alone, or a
- * question only a reader of the seat's message can settle. Words never decide whether something happened.
- */
+/** The gate: each rule reads a turn's facts and gives nothing, a finding, or a question about the message. */
 
 export type RuleId =
   | "irreversible"
@@ -27,13 +24,10 @@ export type RuleId =
 export type Moment = "start" | "live" | "end";
 
 export interface Thresholds {
-  /** Seconds of waiting in the shell in one turn. */
   sleepSeconds: number;
-  /** The same action with the same result, back to back. */
   repeatRun: number;
   /** A pattern of two to four actions, back to back. */
   cycleRepeats: number;
-  /** The same check failing the same way. */
   sameFailure: number;
   /** Minutes without activity while a turn runs and nothing is in flight. */
   silentMinutes: number;
@@ -45,7 +39,7 @@ export interface Situation {
   facts: TurnFacts;
   brief: Brief | null;
   moment: Moment;
-  /** What a brief a Lead gave a Peer lacks; null for a complete brief and for a turn no brief opened. */
+  /** What the brief a Lead gave a Peer lacks; null when it is complete or no brief opened the turn. */
   briefGap: BriefGap | null;
   now: number;
   /** The seat is stopped on a permission, not silent; its parent has that mail. */
@@ -54,13 +48,12 @@ export interface Situation {
 }
 
 export interface BriefGap {
-  /** The template lines it lacks. */
   lines: readonly string[];
   /** The mail that carried it; absent for the brief the Peer was created with. */
   mail?: { id: string; subject: string };
 }
 
-/** The key of the gap in the brief a Peer was created with; a mailed brief's gap is keyed by its mail. */
+/** The key of the gap in the brief a Peer was created with; a mailed brief's is its mail. */
 export const CREATED_WITH = "created";
 
 export interface Finding {

@@ -2,7 +2,7 @@ import { CLOSES_WORK } from "../signals";
 import type { RuleId } from "./rules";
 import type { ScanRecord } from "./scanlog";
 
-/** How well each rule's findings predict what the seat above did next, read from the scan log and the mail log. */
+/** How well each rule's findings predict what the seat above did next, from the scan and mail logs. */
 
 export interface MailLine {
   at: string;
@@ -19,7 +19,7 @@ export type Label = "returned" | "accepted";
 const RETURNS = /^\W*(?:REJECT|REVISED BRIEF)\b/i;
 const ACCEPTS = /^\W*ACCEPT\b/i;
 
-/** The first verdict of the seat above on a turn that handed work over, within the window. Null while it has given none. */
+/** The first verdict of the seat above on a turn that handed work over; null while there is none. */
 function verdictOf(scan: ScanRecord, mail: readonly MailLine[], now: number, windowMinutes: number): { label: Label; at: number } | null {
   if (scan.moment !== "end" || !scan.parent || !scan.signal || !CLOSES_WORK.has(scan.signal)) return null;
   const ended = Date.parse(scan.at);
@@ -38,11 +38,7 @@ export function labelOf(scan: ScanRecord, mail: readonly MailLine[], now: number
   return verdictOf(scan, mail, now, windowMinutes)?.label ?? null;
 }
 
-/**
- * Whether a returned turn bears out a rule's finding. Work comes back for many reasons; a claim of passing checks
- * was false only when the seat above ran a test of its own before its verdict and saw it fail. Null: nothing shows
- * which it was, and the turn is left out for this rule.
- */
+/** Whether a returned turn bears out a rule's finding; null when nothing shows why the work came back. */
 function borneOut(rule: RuleId, scan: ScanRecord, verdictAt: number, scans: readonly ScanRecord[]): boolean | null {
   if (rule !== "unverified-completion") return true;
   const ended = Date.parse(scan.at);
@@ -69,7 +65,7 @@ export interface Roc {
   negatives: number;
 }
 
-/** Area under the ROC curve by rank sums; tied scores share the mean of their ranks. Null without both classes. */
+/** Area under the ROC curve by rank sums, ties sharing their mean rank; null without both classes. */
 export function auroc(items: readonly Scored[]): Roc | null {
   const positives = items.filter((item) => item.positive).length;
   const negatives = items.length - positives;
@@ -98,7 +94,7 @@ export interface Operating {
   falseRate: number;
 }
 
-/** The lowest threshold whose false-flag rate stays within `maxFalseRate`: the most it can catch at that price. */
+/** The lowest threshold whose false-flag rate stays within `maxFalseRate`. */
 export function operatingPoint(items: readonly Scored[], maxFalseRate: number): Operating | null {
   const positives = items.filter((item) => item.positive).length;
   const negatives = items.length - positives;
@@ -118,7 +114,7 @@ export interface RuleReport {
   by: "facts" | "model";
   spoke: number;
   raised: number;
-  /** Of the turns it spoke in that have a label: how many were sent back (for unverified-completion: sent back after a test failed for the seat above). */
+  /** Turns it spoke in that have a label; `returned` of them were sent back. */
   labelled: number;
   returned: number;
   roc: Roc | null;
@@ -135,11 +131,9 @@ export interface CalibrationPolicy {
 
 export interface Calibration {
   turns: number;
-  /** Scans behind those turns, the quiet ones included. */
   reads: number;
   labelled: number;
   returned: number;
-  /** Returned turns that had any finding at all. */
   returnedWithFinding: number;
   rules: RuleReport[];
 }

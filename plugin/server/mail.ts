@@ -7,34 +7,7 @@ import { REGISTRY_LOG, ROOM_HOME } from "./paths";
 import { parseSeat, type Role } from "./seats";
 import type { MailPolicy, RoomPolicy } from "./policy";
 
-/**
- * Seatwork mail: every message between seats goes through here. The engine writes
- * the envelope (priority, sender label, why now, how to handle), checks the
- * route, and decides when the recipient sees it:
- *
- *   recipient at rest           → deliver now, one digest with everything held; at rest is
- *                                 idle, closed (no runtime, as after a daemon restart:
- *                                 Paseo reopens it) or stopped by a failed turn
- *   recipient running           → hold until its turn ends (policy mail.midTurn is
- *                                 "hold"; "steer" would hand it to Paseo mid-turn,
- *                                 which cancels the running tool on Claude and Pi)
- *   recipient waiting/unknown   → hold, retry on the next trigger or sweep (a pending
- *                                 permission, a session still opening, a silent daemon)
- *   recipient archived or gone  → drop it, bounce UNDELIVERABLE to the sender
- *
- * Two kinds of mail never start a turn early. Quiet mail (an acknowledgement, a
- * report that repeats itself, a Lead's progress report after its first, a receipt
- * for a candidate under review, the bounce of a mail nobody waited on) stays in
- * the queue until other mail starts the recipient's turn, and rides along; of a
- * seat's progress reports only the newest waits. A report a seat mails its parent
- * before its own turn has ended (CANDIDATE, REVIEW, DONE) is kept aside and
- * posted at that turn's end: a parent that acts on a child still in its turn
- * cuts the turn off. A body is delivered whole, whatever its length.
- *
- * Queues live on disk (mail/queue/<agentId>.jsonl) and a mail leaves its queue
- * only once the daemon has taken it, so nothing is lost when the plugin reloads
- * or dies; mail/log.jsonl records every step.
- */
+/** Seatwork mail: writes the envelope, checks the route, and holds a mail on disk until its recipient is at rest. */
 
 export type Priority = "blocking" | "action" | "fyi";
 export type Needs = "reply" | "decision" | "nothing";
@@ -51,7 +24,7 @@ export interface Mail {
   body: string;
   needs: Needs;
   whyNow: string;
-  /** On disk while its delivery is under way. Still set later: that delivery was cut off and may have arrived. */
+  /** Set while a delivery is under way; still set later means it was cut off and may have arrived. */
   sending?: true;
   /** Never starts a turn by itself: it waits for the recipient's next mail, or its inbox. */
   quiet?: true;
@@ -65,7 +38,6 @@ export interface SeatRecord {
   role: Role;
   provider: string;
   title: string | null;
-  /** Where the seat was created; absent in records older than the Room screen. */
   cwd?: string;
 }
 
@@ -165,7 +137,7 @@ export class MailEngine {
   private readonly seats = new Map<string, SeatRecord>();
   /** id → sender/recipient of every mail ever posted (for reply_to), loaded from the log. */
   private readonly posted = new Map<string, { from: string; to: string }>();
-  /** Adoptions: child → new parent. A handoff re-parents the old Lead's Peers to the successor. */
+  /** child → the seat that adopted it. */
   private readonly adoptions = new Map<string, string>();
   private delivering = new Set<string>();
   /** recipient → the mail whose delivery started its current turn. */
@@ -203,13 +175,7 @@ export class MailEngine {
     return this.adoptions.get(agentId) ?? this.seats.get(agentId)?.parentAgentId ?? null;
   }
 
-  /**
-   * `adopter` takes over `child` (a handoff). Allowed when the adopter's role may
-   * create the child's role, and either the child's current parent is archived or
-   * gone, or the adopter sits under the same ancestor as the child (a successor
-   * Lead launched by the same Supervisor). From then on the child's "owner" is
-   * the adopter: mail, turn reports and permission requests go there.
-   */
+  /** A handoff: `adopter` becomes `child`'s owner for mail, reports and permissions, when the route allows it. */
   async adopt(adopter: string, child: string): Promise<{ ok: true; previous: string | null } | { ok: false; reason: string }> {
     const a = this.seats.get(adopter);
     const c = this.seats.get(child);
@@ -229,8 +195,7 @@ export class MailEngine {
     }
     this.adoptions.set(child, adopter);
     this.saveAdoptions();
-    // Paseo's own parent link is a label; moving it keeps its tree in step (its
-    // archive cascade follows the label, so the old owner's archive no longer takes the child).
+    // Paseo's parent link is a label; moving it keeps its archive cascade off the adopted child
     try {
       await paseoCli(["agent", "update", child, "--label", `paseo.parent-agent-id=${adopter}`]);
     } catch (error) {
@@ -296,13 +261,7 @@ export class MailEngine {
     return false;
   }
 
-  /**
-   * Two gates, both must pass: the role route table in policy.json
-   * (`room.routes`), and the tree relation — parent, child, an ancestor
-   * writing down (direct intervention), or, with `viaReply`, a reply back up
-   * to an ancestor that wrote first. The tree uses effective parents, so an
-   * adopted seat belongs to its adopter.
-   */
+  /** Two gates: the role route table (`room.routes`) and the tree relation, read over effective parents. */
   canWrite(from: string, to: string, viaReply = false): { ok: true } | { ok: false; reason: string } {
     const sender = this.seats.get(from);
     const recipient = this.seats.get(to);
@@ -343,10 +302,7 @@ export class MailEngine {
     return mail;
   }
 
-  /**
-   * A report its sender wrote before its own turn ended. It is kept on disk, one
-   * per seat (a later one replaces it), and posted by whoever sees that turn end.
-   */
+  /** A report written before its sender's turn ended: kept on disk, one per seat, posted at that turn's end. */
   keepReport(input: Omit<Mail, "id" | "at">): Mail {
     const mail: Mail = { ...input, id: nowId(), at: new Date().toISOString() };
     mkdirSync(REPORT_DIR, { recursive: true });
@@ -371,7 +327,7 @@ export class MailEngine {
     }
   }
 
-  /** Drops the progress reports of `from` that still wait for `to`: a newer report of that seat is on its way. */
+  /** Drops the progress reports of `from` still waiting for `to`: a newer one is on its way. */
   dropProgress(from: string, to: string): void {
     if (!readQueue(to).some((mail) => mail.progress && mail.from.agentId === from && !mail.sending)) return;
     updateQueue(to, (mail) => {
@@ -381,7 +337,7 @@ export class MailEngine {
     });
   }
 
-  /** The mail that started this seat's current turn; empty when something else did (a prompt, a heartbeat). Read once. */
+  /** The mail that started this seat's current turn; empty when something else did. Read once. */
   takeWake(agentId: string): Mail[] {
     const mails = this.woke.get(agentId) ?? [];
     this.woke.delete(agentId);
@@ -393,7 +349,7 @@ export class MailEngine {
     return readQueue(agentId);
   }
 
-  /** Marks held mail as read by the recipient itself (seatwork_inbox). Mail on its way out is left to the delivery. */
+  /** Marks held mail as read by the recipient itself (seatwork_inbox); mail on its way out is left alone. */
   takeHeld(agentId: string): Mail[] {
     const mails = readQueue(agentId).filter((mail) => !mail.sending);
     updateQueue(agentId, (mail) => (mail.sending ? mail : null));
@@ -475,7 +431,7 @@ export class MailEngine {
       if (!name.endsWith(".jsonl")) continue;
       await this.deliver(name.slice(0, -".jsonl".length));
     }
-    // a kept report whose seat is in no turn any more: its turn end never reached us (hooks are best effort)
+    // a kept report whose seat is in no turn any more: its turn end never reached us
     if (!existsSync(REPORT_DIR)) return;
     for (const name of readdirSync(REPORT_DIR)) {
       if (!name.endsWith(".json")) continue;
@@ -487,7 +443,7 @@ export class MailEngine {
     }
   }
 
-  /** `idle` is any seat a message starts a turn in: at rest, without a runtime (Paseo reopens it), or after a failed turn. */
+  /** `idle` is any seat a message starts a turn in: at rest, without a runtime, or after a failed turn. */
   private async status(agentId: string): Promise<"idle" | "running" | "permission" | "unknown" | "gone"> {
     const handle = this.paseo.agents.ref(agentId);
     try {

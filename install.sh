@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
-# seatwork from a terminal: the setup the plugin's own screen does (Seatwork, in Paseo's sidebar), without the app.
+# Seatwork from a terminal: the setup the plugin's own screen does, without the app.
 # Flags: --no-plugin  --no-reload
-#   --hq default|ask|<harness>/<model> [--hq-thinking <id>]   what HQ runs on; asked once, on a first install from a terminal
-#   --seat <harness>-<role>   set up one more seat (repeatable; kept in setup.json)
-#   --watcher off|shadow|on|ask   the watcher on this machine; asked once, on a first install from a terminal
-#   --mail-port <port>        the port of the room's mail server on this machine (kept in setup.json)
+#   --hq default|ask|<harness>/<model> [--hq-thinking <id>]   what HQ runs on
+#   --seat <harness>-<role>        one more seat (repeatable)
+#   --watcher off|shadow|on|ask    the watcher on this machine
+#   --mail-port <port>             the port of the room's mail server on this machine
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -30,8 +30,7 @@ if ! node -e 'const v=process.argv[1].split("-")[0].split(".").map(Number),w=[0,
   echo "Paseo ${PASEO_VERSION:-(unknown version)} is too old: the room needs 0.11.2 or later. Update it (npm install -g @getpaseo/cli@latest), run 'paseo daemon restart', then this again." >&2
   exit 1
 fi
-# where Paseo runs this plugin from: "here", "old" (here, under slp-seat, its id until 0.18.0), "both", or "<id> <folder>" for a
-# copy from elsewhere (Paseo's own from Settings, another clone). Over that one this script would fill the room from this clone.
+# where Paseo runs this plugin from: here, old (id slp-seat), both, or "<id> <folder>" for a copy from elsewhere
 INSTALLED="$(paseo plugin ls --json 2>/dev/null | node -e 'const fs=require("fs"),real=(d)=>{try{return fs.realpathSync(d)}catch{return d}};let s="";process.stdin.on("data",(d)=>(s+=d)).on("end",()=>{try{const all=JSON.parse(s).filter((p)=>p.id==="seatwork"||p.id==="slp-seat"),away=all.find((p)=>real(p.path)!==real(process.argv[1]));process.stdout.write(away?away.id+" "+away.path:all.length>1?"both":all.length?(all[0].id==="seatwork"?"here":"old"):"")}catch{}})' "$PLUGIN" || true)"
 case "$INSTALLED" in
   *" "*)

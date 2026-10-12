@@ -1,4 +1,4 @@
-/** The decision model behind the gate: state and typed questions in, a probability per answer out. A call never throws and never outlives its deadline. */
+/** The decision model behind the gate: questions in, a probability per answer out; a call never throws. */
 
 export type JsonValue = string | number | boolean | null | JsonValue[] | { [key: string]: JsonValue };
 
@@ -30,7 +30,7 @@ export interface DecisionEngine {
 
 export interface JevOptions {
   apiKey: string | undefined;
-  /** The full endpoint: TypeSafe's `…/v1/systemone` or OpenRouter's `…/api/alpha/decisions` take the same body. */
+  /** The full endpoint (TypeSafe's `…/v1/systemone`, OpenRouter's `…/api/alpha/decisions`). */
   url: string;
   /** A versioned id: thresholds are fitted to one version. */
   model: string;

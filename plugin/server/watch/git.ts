@@ -43,7 +43,7 @@ function stamp(file: string): string {
   }
 }
 
-/** Files that changed between two snapshots of one tree, relative to its root: the dirty set's differences plus what new commits touched. */
+/** Files that changed between two snapshots of one tree: the dirty set's differences plus new commits. */
 export async function changedBetween(before: TreeSnapshot, after: TreeSnapshot): Promise<string[]> {
   const changed = new Set<string>();
   for (const [path, mark] of after.dirty) if (before.dirty.get(path) !== mark) changed.add(path);

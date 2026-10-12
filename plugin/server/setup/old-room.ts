@@ -5,12 +5,7 @@ import { HQ_PROJECT, ROOM_HOME, WATCH_DIR } from "../paths";
 import { keptAt, roomFolders, takeRoomFiles } from "./project-files";
 import { isSetUp, moveRoomHomeAside } from "./room-home";
 
-/**
- * Clears a room from before 0.19.0 off this machine, as its own Remove would have. Until then the room
- * lived in `slp-room`, beside where it is now, and kept its notes in a project's `.slp/`: its HQ project
- * leaves Paseo, its home is moved aside with those notes, and its watcher key is kept for the room
- * that takes its place. Returns where the home went, or null when there was no such room.
- */
+/** Clears a room from before 0.19.0 (`slp-room`, `.slp/`) as its own Remove would; returns where it went, or null. */
 export async function clearOldRoom(): Promise<string | null> {
   const home = join(dirname(ROOM_HOME), "slp-room");
   if (!isSetUp(home)) return null;

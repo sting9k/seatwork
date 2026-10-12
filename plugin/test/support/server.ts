@@ -5,11 +5,7 @@ interface UsageSource {
   fetch(input: unknown): Promise<{ status: string; balances?: { limit?: number | null }[] }>;
 }
 
-/**
- * Paseo's side of a plugin, as far as the room uses it: what the plugin registered, and a way to
- * fire it. `before` hooks run in the order they were registered, each on the request the one
- * before it returned, as Paseo runs them.
- */
+/** Paseo's side of a plugin as far as the room uses it: what the plugin registered, and a way to fire it. */
 export function fakeServer() {
   const registered = new Map<string, Hook[]>();
   let usage: UsageSource | undefined;

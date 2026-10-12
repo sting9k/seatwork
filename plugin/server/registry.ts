@@ -15,13 +15,9 @@ export interface Registry {
 
 export interface ProjectMatch {
   entry: ProjectEntry;
-  /** Real path of the project root. */
   root: string;
-  /** Parsed .seatwork/room.json, or {} when absent. */
   room: Record<string, unknown>;
-  /** Contents of .seatwork/mission.md, or null. */
   mission: string | null;
-  /** Contents of .seatwork/<name>-law.md (or .seatwork/law.md), or null. */
   law: string | null;
 }
 
@@ -41,12 +37,7 @@ export function realOrSelf(path: string): string {
   }
 }
 
-/**
- * projects.json is optional. When it is missing the room runs in open mode:
- * seats may be created in any directory and no project context is injected.
- * When it exists, project seats (supervisor, lead, peer) must be created inside
- * a registered project. HQ seats live in the hq-seatwork project either way (hq.ts).
- */
+/** projects.json is optional: without it the room is in open mode, and seats may be created anywhere. */
 export function loadRegistry(): Registry | null {
   if (!existsSync(REGISTRY_FILE)) return null;
   const parsed = JSON.parse(readFileSync(REGISTRY_FILE, "utf8")) as Partial<Registry>;

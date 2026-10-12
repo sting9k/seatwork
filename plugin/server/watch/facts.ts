@@ -8,10 +8,7 @@ import { digest, failureSignature, trailingCycle, trailingRun, type Cycle } from
 import { inScope, pathKind, relativeToRoot, type PathKind } from "./scope";
 import { parseShell, type ShellLine } from "./shell";
 
-/**
- * What code can say for certain about a seat's turn: a pure function of its events, so a scan can be repeated or
- * replayed. Positions are event sequence numbers, with a command's place in its shell line as the fraction.
- */
+/** What code can say for certain about a seat's turn: a pure function of its events, so a scan can be replayed. */
 
 export interface Edit {
   at: number;
@@ -40,11 +37,9 @@ export interface TurnFacts {
   message: string;
   /** Undefined while the turn runs. */
   signal: string | undefined;
-  /** The final message hands work over as finished. */
   closesWork: boolean;
   verdict: "acceptable" | "not-yet" | undefined;
 
-  /** Source changes in this turn. */
   edits: Edit[];
   /** The last source change in the history held; undefined when there is nothing to verify. */
   lastEdit: Edit | undefined;
@@ -55,31 +50,23 @@ export interface TurnFacts {
   statics: Standing;
   checksThisTurn: CheckRun[];
 
-  /** Written this turn and not covered by the brief's write scope. */
   outsideScope: string[];
-  /** Written this turn outside the project and outside temporary directories. */
   outsideProject: string[];
 
   destroyed: Deed[];
   external: Deed[];
   /** Seconds spent waiting in the shell this turn, by the clock where the timeline has one. */
   waited: number;
-  /** The loop or follow-forever command among those waits. */
   waitLoop: Deed | undefined;
 
-  /** The same action with the same result, back to back. */
   repeat: { count: number; what: string } | undefined;
   cycle: Cycle | undefined;
-  /** The same check failing the same way, run after run. */
   sameFailure: { count: number; label: string } | undefined;
 
-  /** Signals the seat mailed its parent this turn. */
   mailed: string[];
-  /** A source change made after the seat asked to reopen its brief. */
   editedAfterReopen: Edit | undefined;
 
   actions: number;
-  /** A tool call still running at the end of the history. */
   inFlight: { what: string; since: number | undefined } | undefined;
   lastActivity: number | undefined;
 }
@@ -90,17 +77,14 @@ export interface FactsInput {
   /** `seq` of the first event of the turn being judged. */
   turnStart: number;
   cwd: string;
-  /** Where scope patterns are anchored. */
   root: string;
   brief: Brief | null;
   ended: boolean;
   /** Files git says changed during the turn; null when git could not say. */
   changed: readonly string[] | null;
-  /** Time of the scan. */
   now?: number;
-  /** When the turn began, as the watcher saw it. */
   startedAt?: number;
-  /** What the seat above wrote to this seat after the brief in force: a file it names there is one it asked about. */
+  /** What the seat above wrote to this seat after the brief in force. */
   later?: readonly string[];
 }
 
@@ -264,7 +248,7 @@ export function turnFacts(input: FactsInput): TurnFacts {
       if (signal === "REOPEN_REQUEST") reopenAt ??= event.seq;
     }
   }
-  // source git saw change with no tool call to account for it: placed at the last unreadable command that names the file, else at the turn's start
+  // source git saw change with no tool call for it: placed at the last unreadable command that names the file
   const seen = new Set(sourceEdits.map((edit) => edit.path));
   for (const path of input.changed ?? []) {
     if (seen.has(path) || pathKind(root, resolve(root, path)) !== "source") continue;
@@ -327,7 +311,7 @@ export function turnFacts(input: FactsInput): TurnFacts {
   };
 }
 
-/** A finished wait runs from the entry before it to its own end, a running one from its start until now; without clocks the command's words count. */
+/** A finished wait runs from the entry before it to its end, a running one from its start until now. */
 function waitedSeconds(event: ShellEvent, reading: ShellReading, now: number | undefined): number {
   if (!reading.waitLoop && reading.sleeps === 0) return 0;
   // a command sent to the background holds no turn

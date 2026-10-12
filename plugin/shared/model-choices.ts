@@ -33,7 +33,7 @@ export const TIER_ROLES = ["peer", "lens"] as const;
 export type SeatRole = (typeof SEAT_ROLES)[number];
 export type TierRole = (typeof TIER_ROLES)[number];
 
-/** A model as the screen chooses it: the agent CLI, the model, the thinking level ("" where the model has none). */
+/** A model as the screen chooses it: agent CLI, model, thinking level ("" where the model has none). */
 export interface ModelChoice {
   harness: string;
   model: string;
@@ -42,7 +42,6 @@ export interface ModelChoice {
 
 /** One of a role's models as the screen lists it. */
 export interface TierChoice extends ModelChoice {
-  /** Its name in the table: cheap, default, high… */
   label: string;
   use: string;
   /** Further models the table lists under the same label; the screen shows and writes the first. */
@@ -72,21 +71,18 @@ export function chooseSeat(choices: Json, role: SeatRole, choice: ModelChoice): 
   return merge(choices, { seats: { [role]: { provider: entryOf(role, choice), thinking: thinkingOf(choice) } } }) as Json;
 }
 
-/** The models a Peer or a Lens may run on, in the table's order: the order is the ladder the Lead climbs. */
+/** The models a Peer or a Lens may run on, in the table's order: the ladder the Lead climbs. */
 export function tierChoices(table: Table, role: TierRole): TierChoice[] {
   return Object.entries(table[role].tiers).map(([label, tier]) => ({ label, use: tier.use ?? "", more: Math.max(0, tier.providers.length - 1), ...parse(tier.providers[0] ?? "", tier.thinking) }));
 }
 
-/** The choices with one of a role's models set; a label the table does not have yet is added after the others. */
+/** The choices with one of a role's models set; a new label is added after the others. */
 export function chooseTier(choices: Json, role: TierRole, label: string, choice: ModelChoice, use?: string): Json {
   const tier = { providers: [entryOf(role, choice)], thinking: thinkingOf(choice), ...(use === undefined ? {} : { use, never: "—" }) };
   return merge(choices, { [role]: { tiers: { [label]: tier } } }) as Json;
 }
 
-/**
- * The choices with one of a role's models taken out. A model of the room's own table is removed
- * by a `null` in its place; one the choices added is simply dropped from them.
- */
+/** The choices with one model taken out: `null` in place of a room's own, a plain drop for an added one. */
 export function dropTier(choices: Json, room: Table, role: TierRole, label: string): Json {
   const group = isObject(choices[role]) ? (choices[role] as Json) : {};
   const tiers: Json = { ...(isObject(group.tiers) ? group.tiers : {}) };
@@ -98,10 +94,7 @@ export function dropTier(choices: Json, room: Table, role: TierRole, label: stri
 /** What applying would do to one of a role's models: nothing, change it, add it, or take it out. */
 export type TierChange = "same" | "changed" | "added" | "removed";
 
-/**
- * A Peer's or a Lens's models in `next`, each marked by how it differs from `now` (the table in
- * force), followed by the models `next` no longer has. With no table in force nothing is a change.
- */
+/** A Peer's or a Lens's models in `next`, each marked by how it differs from `now`, then those it dropped. */
 export function tierDiff(now: Table | null, next: Table, role: TierRole): (TierChoice & { change: TierChange })[] {
   const before = new Map((now ? tierChoices(now, role) : []).map((tier) => [tier.label, tier]));
   const same = (a: TierChoice, b: TierChoice) => a.harness === b.harness && a.model === b.model && a.thinking === b.thinking && a.use === b.use;

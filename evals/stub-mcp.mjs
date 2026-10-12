@@ -1,8 +1,5 @@
 #!/usr/bin/env node
-// Stand-in for the room's `seatwork` MCP server and for Paseo's agent tools, one process per server
-// (SEATWORK_EVAL_SERVER = seatwork | paseo). It shows the tools named in SEATWORK_EVAL_TOOLS, answers every call with a
-// plausible result drawn from SEATWORK_EVAL_STATE (a JSON file), and appends each call to SEATWORK_EVAL_LOG.
-// Nothing it says is real: evals grade what the seat tried to do, not what happened.
+// Stand-in for the room's `seatwork` MCP server and Paseo's agent tools: answers from a state file, logs every call.
 import { appendFileSync, readFileSync } from "node:fs";
 import { createInterface } from "node:readline";
 
@@ -10,9 +7,9 @@ const server = process.env.SEATWORK_EVAL_SERVER ?? "seatwork";
 const shown = new Set((process.env.SEATWORK_EVAL_TOOLS ?? "").split(",").filter(Boolean));
 const state = process.env.SEATWORK_EVAL_STATE ? JSON.parse(readFileSync(process.env.SEATWORK_EVAL_STATE, "utf8")) : {};
 const agents = [...(state.agents ?? [])];
-// the registry as seatwork_projects prints it; a registration rewrites its project's line, so a seat that looks again sees what it did
+// the registry as seatwork_projects prints it; a registration rewrites its project's line
 let projects = state.projects ? String(state.projects).split("\n") : [];
-// the seats every install has (plugin/paseo/seats.json); the real tool sets up any other seat a table names, and says so
+// the seats every install has (plugin/paseo/seats.json); the real tool sets up any other a table names
 const ROOM_SEATS = ["claude-hq", "claude-supervisor", "claude-lead", "claude-peer", "claude-lens", "codex-peer", "codex-lens"];
 let counter = 0;
 const next = (prefix) => `${prefix}${++counter}`;
@@ -103,8 +100,7 @@ const TOOLS = {
       ["title", "provider", "initialPrompt"],
     ),
     call: (a) => {
-      // state.table: the model table in force, by role, when it is newer than the seat's prompt. The plugin holds a new
-      // seat to it and refuses a model it does not list, in these words (index.server.ts, applySeat).
+      // state.table: the table in force when it is newer than the seat's prompt; refused in the plugin's words
       const role = /-(hq|supervisor|lead|peer|lens)(\/|$)/.exec(String(a.provider))?.[1];
       const listed = state.table?.[role];
       if (listed && !listed.includes(a.provider)) {

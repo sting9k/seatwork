@@ -98,7 +98,7 @@ test("a new seat is held to the model table in force, whatever its creator's pro
   assert.deepEqual(await onto("claude-lead", "claude-opus-5-5"), ["claude-opus-5-5", "low"]);
 });
 
-/** What a Claude seat starts with so that Claude Code adds nothing of its own: memory, teams, agent view, workflows, claude.ai connectors. */
+/** What a Claude seat starts with so that Claude Code adds nothing of its own. */
 const CLAUDE_SWITCHES = {
   CLAUDE_CODE_DISABLE_AUTO_MEMORY: "1",
   CLAUDE_CODE_DISABLE_ORG_MEMORY: "1",
@@ -128,7 +128,7 @@ const listed = async () => ({
 });
 const context = { paseo: { agents: { ref: (id: string) => agents[id], list: listed } } };
 
-// a seat as the daemon reports it: deleted (it answers, with no agent), archived, or not reported at all
+// a seat as the daemon reports it: deleted, archived, or not reported at all
 const deleted = { refresh: async () => null, current: () => null };
 const archived = { refresh: async () => {}, current: () => ({ status: "idle", archivedAt: "2026-10-01T00:00:00Z" }) };
 const silent = { refresh: () => Promise.reject(new Error("connection lost")), current: () => null };
@@ -252,7 +252,7 @@ test("what the room kept for a turn does not outlive the runtime that closed in 
   await turnEnds(peer, "QUESTION\nand which rounding?\nRECAP: asked the Owner → waiting");
   assert.equal(lead.inbox.length, 2, "a question from the reopened Peer was taken for the one it had mailed before");
 
-  // a turn that mail asking nothing had started closes the same way; the Lead's next turn is one somebody else started
+  // a turn started by mail that asked nothing closes the same way
   await turnEnds(lead, "DONE\noutcome accepted on the integrated state\nRECAP: closed the workstream → accepted");
   await supervisor.mail({ to: lead.agent.id, subject: "ACCEPT: closed at abc123", body: "ACCEPT. Nothing is needed back.", needs: "nothing", priority: "fyi" });
   await closes(lead);
@@ -402,7 +402,7 @@ test("mail to a seat that is archived, or that the daemon no longer has, is refu
 
 test("a seat is handed over when its owner is gone or the new owner is in its chain; from then on it reports to the new owner", async () => {
   const cases = [
-    // what the daemon says of the old owner (null: alive), whether both Leads have one Supervisor, why the handover is refused
+    // what the daemon says of the old owner (null: alive), whether both Leads share a Supervisor, the refusal
     { name: "deleted", owner: deleted, shared: false, refused: null },
     { name: "archived", owner: archived, shared: false, refused: null },
     { name: "alive", owner: null, shared: false, refused: /still reports to a live seat/ },
@@ -514,7 +514,7 @@ test("the Room screen is given the seats that still exist, project by project wi
     };
     const mine = (row: { agentId: string }) => row.agentId.includes("-screen");
 
-    // one line per seat: indented by its depth inside the project, then its state and the mail held for it
+    // one line per seat: indented by its depth, then its state and the mail held for it
     assert.deepEqual(
       room.projects.map((project) => [project.name, ...project.seats.filter(mine).map((row) => `${"  ".repeat(row.depth)}${row.agentId} ${row.status} ${row.held}`)]),
       [

@@ -3,10 +3,7 @@ import type { ShellEvent } from "./events";
 import { failureSignature } from "./repeat";
 import { statusCovers, type ShellLine } from "./shell";
 
-/**
- * Whether a check passed. The line's exit status answers only where the check's own status reaches it;
- * otherwise the runner's summary is read, and what neither settles stays unknown.
- */
+/** Whether a check passed: by the line's exit status where it covers the check, else by the runner's summary. */
 
 export type CheckResult = "passed" | "failed" | "unknown";
 
@@ -43,7 +40,7 @@ const SAYS_PASSED: readonly RegExp[] = [
   /\bBUILD SUCCESS(?:FUL)?\b|\bFinished\b.*\b(?:dev|release|test)\b/,
 ];
 
-/** Words a broken run prints. A passing suite prints them too (a test named "throws TypeError"), so they count only where no summary speaks. */
+/** Words a broken run prints; a passing suite prints them too, so they count only where no summary speaks. */
 const HINTS_FAILED: readonly RegExp[] = [/\berror TS\d+\b/, /\berror(?:\[E\d+\])?: /, /\bTraceback \(most recent call last\)/, /\b(?:AssertionError|SyntaxError|TypeError|ReferenceError)\b/, /\bnpm ERR!|\bELIFECYCLE\b/];
 
 const plain = (output: string) => output.replace(/\x1b\[[0-9;]*[A-Za-z]/g, "");
@@ -70,7 +67,7 @@ export function readLastRun(output: string): CheckResult {
 const PRINTERS = new Set(["cat", "tail", "head", "less", "more", "bat"]);
 const NOT_A_FILE = /^\/dev\/(?:null|stdout|stderr|tty|fd\/\d+)$/;
 
-/** Whether what a check prints reaches the line's output: not when its pipeline ends in a file nothing on the line prints back. */
+/** Whether what a check prints reaches the line's output: not when its pipeline ends in a file. */
 function shown(line: ShellLine, index: number): boolean {
   let end = index;
   while (line.commands[end].joiner === "|" && end + 1 < line.commands.length) end += 1;
@@ -93,7 +90,7 @@ export function checkRuns(event: ShellEvent, line: ShellLine, context: EffectCon
       if (effect.kind === "check") found.push({ index, covered: statusCovers(line, command), label: effect.label, what: effect.what });
     }
   });
-  // checks whose status the line hides share one output: it shows the verdict of the last of them, and nothing sure of the others
+  // checks whose status the line hides share one output: it shows only the last one's verdict
   const hidden = found.filter((check) => !check.covered && shown(line, check.index));
   return found.map((check) => {
     const read = !hidden.includes(check) ? () => "unknown" as const : hidden.length < 2 ? readSummary : check === hidden[hidden.length - 1] ? readLastRun : () => "unknown" as const;

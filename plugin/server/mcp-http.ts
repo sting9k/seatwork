@@ -1,14 +1,6 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 
-/**
- * A minimal MCP server over HTTP (JSON-RPC 2.0 POST, stateless), enough for
- * the harnesses Paseo drives: initialize, ping, tools/list, tools/call.
- * No dependency: the MCP SDK is not available to plugin code at runtime.
- *
- * Every seat gets its own URL `/mcp/<token>/<nonce>`; the nonce identifies the
- * caller (see mail.ts). GET is answered 405 so clients that probe for an SSE
- * stream fall back to plain request/response.
- */
+/** A minimal MCP server over HTTP POST, no SSE (GET answers 405); each seat's URL `/mcp/<token>/<nonce>` names the caller. */
 
 export interface McpTool {
   name: string;

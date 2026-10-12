@@ -35,10 +35,7 @@ function writeMarker(root: string, content: Record<string, unknown>): void {
   writeFileSync(join(root, ".seatwork", "room.json"), `${JSON.stringify(content, null, 2)}\n`);
 }
 
-/**
- * Writes a project's own model table into its marker, or takes it out (null, or no difference left).
- * Seats the table names that the room does not have are set up first; returns those.
- */
+/** Writes a project's own model table into its marker, or takes it out; returns the seats set up for it. */
 async function writeModels(root: string, models: unknown, setUpSeats: (providers: string[]) => Promise<void>): Promise<string[]> {
   const content = readMarker(root);
   const none = models === null || (typeof models === "object" && !Array.isArray(models) && Object.keys(models as object).length === 0);
@@ -49,7 +46,7 @@ async function writeModels(root: string, models: unknown, setUpSeats: (providers
   }
   const added = missingSeats(models, enabledSeats().map((s) => s.provider), "models");
   if (added.length) await setUpSeats(added);
-  // checked before it is written: a table that names a seat the room does not have would refuse every seat
+  // checked before it is written: a table naming a seat the room lacks would refuse every seat
   projectModels(models, enabledSeats().map((s) => s.provider), "models");
   writeMarker(root, { ...content, models });
   return added;
@@ -60,7 +57,6 @@ export interface ProjectTable {
   name: string;
   root: string;
   own: boolean;
-  /** Its differences from the room's table; {} when it has none or they cannot be read. */
   models: Record<string, unknown>;
   error: string | null;
 }
@@ -118,13 +114,7 @@ export async function describeProjects(): Promise<string> {
     .join("\n");
 }
 
-/**
- * Registers a project Paseo already knows: the `.seatwork/room.json` marker, the
- * mission and the project's own model table when given, and its line in
- * projects.json. Repeating it updates what is given and changes nothing else.
- * A table may put a role on a harness the room has no seat for yet: those
- * seats are set up (`setUpSeats`) before the table is written.
- */
+/** Registers a project Paseo already knows: its marker, mission, own table and registry line. Safe to repeat. */
 export async function registerProject(args: { path: string; name?: string; mission?: string; models?: unknown }, setUpSeats: (providers: string[]) => Promise<void>): Promise<string> {
   const wanted = realOrSelf(args.path.trim());
   const project = (await paseoProjects()).find((p) => p.path === wanted || p.name === args.path.trim());

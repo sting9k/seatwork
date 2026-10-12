@@ -5,7 +5,7 @@ import { BRIEF_FIELD, type Inquiry, type StateField } from "./questions";
 import { redactDeep } from "./redact";
 import { digest } from "./repeat";
 
-/** The state sent with a set of questions: only the fields they read, each cut to what bears on them, secrets blanked. */
+/** The state sent with a set of questions: only the fields they read, cut to size, secrets blanked. */
 
 export interface StateLimits {
   messageChars: number;
@@ -16,7 +16,7 @@ const SKIPPED = "[…]";
 const LINE_MAX = 320;
 const NOT_STATED = "not stated in the brief";
 const MAX_FILES = 12;
-/** Fixed order, so equal situations give equal bytes: the brief, then the watcher's facts, then the agent's words. */
+/** Fixed order, so equal situations give equal bytes: brief, then facts, then the agent's words. */
 const ORDER: readonly StateField[] = ["brief.outcome", "brief.yours_to_decide", "brief.contract", "brief.constraints", "brief.authority", "brief.reopen_when", "changed_files", "action", "final_message"];
 
 const clip = (text: string, max: number) => (text.length <= max ? text : `${text.slice(0, max - 1).trimEnd()}…`);
@@ -27,10 +27,7 @@ export interface Excerpt {
   whole: boolean;
 }
 
-/**
- * A message within the limit goes whole. A longer one keeps its first line and RECAP line, then the lines
- * `relevant` matches, then one neighbour on each side of those, in their original order.
- */
+/** A message within the limit goes whole; a longer one keeps its first line, its RECAP and the `relevant` lines. */
 export function excerpt(text: string, relevant: RegExp, maxChars: number): Excerpt {
   const message = text.replace(/\r\n?/g, "\n").trim();
   if (message.length <= maxChars) return { text: message, whole: true };
@@ -75,10 +72,7 @@ export function excerpt(text: string, relevant: RegExp, maxChars: number): Excer
 const readsMessage = (inquiry: Inquiry) => inquiry.reads.includes("final_message");
 const relevantTo = (inquiries: readonly Inquiry[]) => new RegExp(inquiries.map((inquiry) => `(?:${inquiry.relevant.source})`).join("|"), "i");
 
-/**
- * The inquiries whose evidence fits: a question goes with every line of the message it reads, or it is not asked.
- * Those that read least join first; one that would push a needed line out is left for this turn.
- */
+/** The inquiries whose evidence fits: a question goes with every line it reads, or it is not asked. */
 export function fitting(inquiries: readonly Inquiry[], message: string, limits: StateLimits): Inquiry[] {
   const lines = message.split("\n");
   const need = (inquiry: Inquiry) => lines.filter((line) => line.trim() && inquiry.relevant.test(line)).length;

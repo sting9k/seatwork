@@ -1,7 +1,7 @@
 import { defineRpc } from "@getpaseo/plugin";
 import { z } from "zod";
 
-/** What the app asks the room while it is open: the turns that left something for the Owner, and whether to chime for a new one. */
+/** What the app asks the room while open: the turns that wait on the Owner, and whether to chime. */
 export const roomWaiting = defineRpc({
   name: "room.waiting",
   input: z.object({}),
@@ -27,7 +27,7 @@ export const roomStatus = defineRpc({
   input: z.object({}),
   output: z.object({
     waiting: z.array(z.object({ key: z.string(), agentId: z.string(), title: z.string().nullable(), what: z.string(), at: z.string(), project: z.string() })),
-    /** HQ first, then the registered projects, then any other. A registered project with no seat open has an empty list. */
+    /** HQ first, then the registered projects (also one with no seat open), then any other. */
     projects: z.array(
       z.object({
         name: z.string(),

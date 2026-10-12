@@ -6,16 +6,13 @@ import { HARNESSES, parseSeat, ROLES, type Harness, type Role } from "../seats";
 
 /** This machine's own choices, kept in ROOM_HOME/setup.json and never in the repo. */
 export interface Setup {
-  /** The seat HQ runs on: the room's, or this machine's own. */
   hq?: "default" | { provider: string; thinking?: string };
   /** Seats added on top of the ones every install gets, as `<harness>-<role>`. */
   seats?: string[];
   watcher?: "off" | "shadow" | "on";
-  /** This machine's differences from the room's model table, in the table's own shape. */
   models?: Record<string, unknown>;
-  /** A sound in the open app when a seat waits on the Owner; default: the policy's. */
   chime?: boolean;
-  /** The port of the room's mail server on this machine, when the policy's is taken (a second daemon, say). */
+  /** The mail server's port here, when the policy's is taken. */
   mailPort?: number;
   /** The plugin version that last set the room up. */
   version?: string;
@@ -61,9 +58,7 @@ export interface RoomPlan {
   seats: Record<string, string[]>;
   providers: Record<string, ProviderEntry>;
   profiles: Profile[];
-  /** The model table the room runs on: the room's, with this machine's choices laid over it. */
   models: Models;
-  /** policy.json as installed: the room's, with this machine's watcher mode and chime. */
   policy: Record<string, any>;
   warnings: string[];
 }
@@ -109,7 +104,7 @@ export function roomModels(pluginDir: string): Models {
   return readJson(join(pluginDir, "room", "models.json")) as Models;
 }
 
-/** The table this machine runs on: the room's, HQ on the seat chosen at install, then the machine's own differences. */
+/** The table this machine runs on: the room's, HQ on its chosen seat, then the machine's own differences. */
 function machineModels(base: Models, setup: Setup): Models {
   let models = base;
   if (typeof setup.hq === "object") {
@@ -145,10 +140,7 @@ function profileSeat(models: Models, role: Role): { entry: string; thinking: str
   return null;
 }
 
-/**
- * Works out the seats, their Paseo providers and profiles, the model table and the policy for
- * this machine. Reads the plugin's own files and the harnesses' catalogs; writes nothing.
- */
+/** Works out the seats, providers, profiles, model table and policy for this machine; writes nothing. */
 export async function planRoom(input: { pluginDir: string; roomHome: string; setup: Setup; catalog: Catalog }): Promise<RoomPlan> {
   const { pluginDir, roomHome, setup, catalog } = input;
   const seatsFile = readJson(join(pluginDir, "paseo", "seats.json")) as { seats?: Record<string, string[]>; restrictModels?: boolean };
@@ -167,7 +159,7 @@ export async function planRoom(input: { pluginDir: string; roomHome: string; set
     (seats[role] ??= []).push(harness);
   };
   for (const [role, harnesses] of Object.entries(seatsFile.seats ?? {})) for (const harness of harnesses ?? []) enable(harness, role, "paseo/seats.json");
-  // a seat the table names is a seat the room has: choosing a model for a role is what sets its seat up
+  // a seat the table names is a seat the room has
   const used = modelsByProvider(models);
   for (const provider of used.keys()) {
     const seat = parseSeat(provider);
@@ -203,7 +195,7 @@ export async function planRoom(input: { pluginDir: string; roomHome: string; set
       label: `${LABEL[harness]} ${ROLE_LABEL[role]}`,
       description: `${ROLE_LABEL[role]} seat ${ISOLATION[harness]}; Paseo tools: ${allow.join(", ") || "none"}`,
       paseoTools: { enabled: true, disabledTools: tools.all.filter((tool) => !allow.includes(tool)) },
-      // the seat's isolation is part of its provider, so it holds for a session the plugin did not open
+      // the seat's isolation is part of its provider: it holds for a session the plugin did not open
       env: Object.fromEntries(Object.entries(launch.env).map(([name, value]) => [name, value.replaceAll("{runtime}", runtime)])),
     };
     if (launch.extraArgs && Object.keys(launch.extraArgs).length) entry.options = { extraArgs: launch.extraArgs };
@@ -247,7 +239,7 @@ export async function planRoom(input: { pluginDir: string; roomHome: string; set
       const harness = parseSeat(provider)!.harness;
       Object.assign(profile, { provider, model });
       const known = (await catalogOf(harness))?.[model];
-      // a harness without session modes, or a model without that thinking option, takes no such setting: Paseo refuses one
+      // a harness without session modes, or a model without that thinking option, takes no such setting
       const thinking = seat.thinking && seat.thinking !== "default" && (!known || known.thinking.includes(seat.thinking)) ? seat.thinking : undefined;
       for (const [key, value] of [["modeId", models.modes[harness]], ["thinkingOptionId", thinking]] as const) {
         delete profile[key];

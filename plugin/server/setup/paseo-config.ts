@@ -5,7 +5,7 @@ import { parseSeat } from "../seats";
 import type { RoomPlan } from "./plan";
 import { stamp } from "./room-home";
 
-/** Every profile the room ever wrote carries one of these id prefixes (the second until 0.19.0); the user's own profiles do not. */
+/** The id prefixes of every profile the room ever wrote (the second until 0.19.0). */
 const isOwnProfile = (id: string) => id.startsWith("agent_profile_seatwork_") || id.startsWith("agent_profile_slp_");
 const isRoomSeat = (id: string) => parseSeat(id) !== null;
 const NO_BUNDLED_SKILLS = { mode: "custom", skills: [] as string[] };
@@ -25,15 +25,12 @@ const sameDir = (a: string, b: string) => {
   return real(a) === real(b);
 };
 
-/**
- * Writes the plan's seats and profiles into a running daemon through the SDK: live at once, no
- * reload. Seats the room no longer has are removed; the user's own providers and profiles stay.
- */
+/** Writes the plan's seats and profiles into a running daemon through the SDK; the user's own stay. */
 export async function applyWithSdk(paseo: PaseoApi, plan: RoomPlan, options: { daemonPolicy: boolean }): Promise<{ removed: string[] }> {
   const { config } = await paseo.config.get();
   const current = (config.providers ?? {}) as Record<string, unknown>;
   const removed = Object.keys(current).filter((id) => isRoomSeat(id) && !(id in plan.providers));
-  // Paseo merges a patched provider into the one it has, so a key the new entry dropped would stay: such a seat is removed first
+  // Paseo merges a patched provider into the one it has: one that dropped a key is removed first
   const rewritten = Object.keys(current).filter((id) => id in plan.providers && dropsKeys(current[id], plan.providers[id]));
   if (removed.length || rewritten.length) await paseo.config.patch({ removeProviders: [...removed, ...rewritten] });
 
@@ -58,7 +55,7 @@ export async function removeWithSdk(paseo: PaseoApi): Promise<{ removed: string[
   return { removed };
 }
 
-/** Paseo's config.json with the plan laid in: the room's seats, profiles and daemon switches set, everything else kept. */
+/** Paseo's config.json with the plan laid in: seats, profiles and daemon switches; the rest is kept. */
 function mergeIntoConfig(config: Json, plan: RoomPlan): Json {
   const next: Json = structuredClone(config);
   const owned = new Set(plan.profiles.map((profile) => profile.id));
@@ -87,7 +84,7 @@ function writeConfig(file: string, next: Json): void {
   chmodSync(file, 0o600);
 }
 
-/** The installer's way in: the plan written into a daemon's config.json, for a `paseo daemon reload` to pick up. */
+/** The installer's way in: the plan written into config.json, for `paseo daemon reload` to pick up. */
 export function applyToConfigFile(paseoHome: string, plan: RoomPlan): void {
   const file = join(paseoHome, "config.json");
   const config = existsSync(file) ? (JSON.parse(readFileSync(file, "utf8")) as Json) : { version: 1 };
@@ -96,15 +93,13 @@ export function applyToConfigFile(paseoHome: string, plan: RoomPlan): void {
 
 /** The daemon switches the room cares about and the SDK cannot set, as this daemon's config.json has them. */
 export interface DaemonSwitches {
-  /** Paseo's own tools for agents: seats cannot create or reach each other without them. */
   paseoTools: boolean | null;
   dictation: boolean | null;
   voiceMode: boolean | null;
-  /** Whether Paseo's bundled skills are kept out of every agent. */
   bundledSkillsOff: boolean | null;
 }
 
-/** This daemon's config.json, only when it is certain the file is this daemon's: it lists the plugin at its own folder. */
+/** This daemon's config.json, only when it lists the plugin at its own folder: then it is surely this daemon's. */
 function ownConfig(paseoHome: string, pluginDir: string): { file: string; config: Json } | null {
   const file = join(paseoHome, "config.json");
   if (!existsSync(file)) return null;
@@ -130,10 +125,7 @@ export function readSwitches(paseoHome: string, pluginDir: string): DaemonSwitch
   };
 }
 
-/**
- * Keeps Paseo's bundled skills out of agents by writing the daemon's config.json, the one switch
- * the room sets that the SDK has no call for. Returns whether a `paseo daemon reload` is now due.
- */
+/** Keeps Paseo's bundled skills out of agents by writing config.json; true when a daemon reload is now due. */
 export function turnBundledSkillsOff(paseoHome: string, pluginDir: string): boolean {
   const own = ownConfig(paseoHome, pluginDir);
   if (!own || readSwitches(paseoHome, pluginDir).bundledSkillsOff) return false;

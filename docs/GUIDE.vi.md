@@ -78,7 +78,10 @@ claude auth login
 ```
 
 Seatwork không dùng token. Seat cũng không mang theo skill, plugin, hook hay
-MCP server cá nhân của bạn; nó chỉ có skill của vai mình. Các công tắc tách
+MCP server cá nhân của bạn; nó chỉ có skill của vai mình. Những thứ Claude
+Code tự thêm cũng bị tắt trong seat: memory, agent teams và các công cụ task
+của nó, agent view, workflows, routine trên cloud và connector của claude.ai.
+Các công tắc tách
 seat khỏi cấu hình cá nhân của bạn nằm ngay trong provider của seat ở cấu
 hình Paseo, nên chúng vẫn có hiệu lực cả khi plugin không chạy.
 
@@ -149,6 +152,11 @@ Việc cần bạn quyết nằm ở dòng `WAITING ON YOU:` cuối báo cáo. �
 việc về chi phí, phạm vi sản phẩm, hoặc hành động ra ngoài như push và
 deploy. Agent không bao giờ quyết thay bạn mấy việc này.
 
+Khi app Paseo đang mở, nó phát một tiếng ngắn mỗi lần HQ, một Supervisor
+hoặc một seat do chính bạn mở kết thúc lượt bằng `DECISION_NEEDED`,
+`BLOCKED`, một dòng `WAITING ON YOU:`, hoặc bị lỗi. Muốn tắt: đặt
+`owner.chime` thành `false` trong `paseo/policy.json` rồi chạy `./install.sh`.
+
 ### Muốn can thiệp một Peer
 
 Nên nói với Supervisor. Nếu bạn chat thẳng với Peer, nó vẫn làm theo, và
@@ -173,7 +181,8 @@ xong lượt hiện tại. Kết quả đã xong (`CANDIDATE`, `REVIEW`, `DONE`)
 trên một seat còn đang làm. Thư dài bao nhiêu cũng tới nơi nguyên vẹn.
 
 Seat không cần đang mở mới nhận được thư. Sau khi daemon khởi động lại, mọi
-agent đều đóng cho tới khi có thứ gì mở nó, và thư sẽ mở nó. Seat vừa có
+agent đều đóng cho tới khi có thứ gì mở nó, và thư sẽ mở nó. Thư đã nằm chờ
+từ trước lúc daemon tắt sẽ đi khi app Paseo đang mở hoặc khi có agent nào chạy. Seat vừa có
 lượt chạy bị lỗi cũng nhận thư như vậy. Thư gửi cho seat đã lưu trữ hoặc đã
 bị xoá sẽ quay về người gửi với tiêu đề `UNDELIVERABLE`.
 
@@ -255,11 +264,12 @@ Sửa trong repo rồi chạy lại lệnh cài.
 | `slp-room/paseo/policy.json` | Ai gửi thư cho ai, ai tạo ai, thời gian chờ, watcher | `./install.sh` |
 | `slp-room/room/roles/`, `skills/` | Prompt và quy trình của từng vai | `./install.sh --no-plugin` |
 
-Các bậc model của Peer. Bảng đi kèm có hai bậc; muốn thêm bậc `cheap` hay
-`expensive` thì thêm một mục nữa dưới `peer.tiers`:
+Các bậc model của Peer. Bảng đi kèm có ba bậc; muốn thêm bậc `expensive`
+thì thêm một mục nữa dưới `peer.tiers`:
 
 | Bậc | Dùng cho |
 |---|---|
+| `cheap` | Việc máy móc, đã tả rõ: đổi tên, định dạng, lọc log, sửa tài liệu. Chạy Claude Haiku 5.5, cần Claude Code từ 2.1.293 |
 | `default` | Viết code, debug, research |
 | `cross-family` | Review code do họ model khác viết |
 
@@ -351,7 +361,8 @@ cuối của seat sau khi đã che bí mật. Câu trả lời dài tới 12.000
 gửi nguyên; dài hơn thì chỉ gửi các dòng câu hỏi cần đọc, và câu hỏi nào
 không đủ chỗ cho các dòng của nó thì bị bỏ qua, có ghi tên trong nhật ký.
 Output của công cụ không bao giờ được gửi. Chi phí được đếm từ mỗi lần trả lời; `watcher.budget` đặt kế hoạch 6
-USD một tháng và ngừng hỏi ở 10 USD.
+USD một tháng và ngừng hỏi ở 10 USD. Chi phí trong tháng hiện ở mục Usage của
+Paseo, dưới tên "Room watcher".
 
 Muốn bật: để chạy `shadow` một thời gian, nhờ HQ xem số liệu watcher (HQ gọi
 `slp_watch_stats`: chi phí, số lượt đã theo dõi và số lần đọc, và với từng

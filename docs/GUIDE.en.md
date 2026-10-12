@@ -79,7 +79,10 @@ claude auth login
 ```
 
 Seatwork uses no token. A seat does not carry your personal skills, plugins,
-hooks or MCP servers either; it has only its role's skills. The switches
+hooks or MCP servers either; it has only its role's skills. Claude Code's
+own extras are off in a seat as well: memory, agent teams and their task
+tools, the agent view, workflows, cloud routines and claude.ai connectors.
+The switches
 that keep a seat off your personal setup are part of its provider in Paseo's
 config, so they hold even while the plugin is not running.
 
@@ -151,6 +154,11 @@ What you have to decide is in the `WAITING ON YOU:` row at the end: cost,
 product scope, or an outside action such as push and deploy. Agents never
 decide these for you.
 
+While the Paseo app is open it plays a short sound when HQ, a Supervisor or
+a seat you opened yourself ends a turn with `DECISION_NEEDED`, `BLOCKED`, a
+`WAITING ON YOU:` row, or a failure. Set `owner.chime` to `false` in
+`paseo/policy.json` and run `./install.sh` to switch it off.
+
 ### Steering a Peer
 
 Tell the Supervisor. If you write to a Peer directly it still obeys, and its
@@ -176,8 +184,9 @@ nobody acts on a seat that is still working. A mail is delivered whole,
 whatever its length.
 
 A seat does not have to be open to get mail. After the daemon restarts,
-every agent is closed until something opens it, and mail opens it. A seat
-whose last turn failed takes mail the same way. Mail to an archived or
+every agent is closed until something opens it, and mail opens it. Mail that
+was already waiting when the daemon stopped moves once the Paseo app is open
+or any agent runs. A seat whose last turn failed takes mail the same way. Mail to an archived or
 deleted seat comes back to its sender as `UNDELIVERABLE`.
 
 Some mail wakes nobody and is read with the next mail: an acknowledgement,
@@ -259,11 +268,12 @@ Edit in the repo, then run the installer again.
 | `slp-room/paseo/policy.json` | Who mails whom, who creates whom, waiting times, the watcher | `./install.sh` |
 | `slp-room/room/roles/`, `skills/` | Each role's prompt and procedures | `./install.sh --no-plugin` |
 
-A Peer's model tiers. The shipped table has two; a `cheap` or an `expensive`
-tier is added the same way, as one more entry under `peer.tiers`:
+A Peer's model tiers. The shipped table has three; an `expensive` tier is
+added the same way, as one more entry under `peer.tiers`:
 
 | Tier | Used for |
 |---|---|
+| `cheap` | Mechanical, fully specified work: renames, formatting, log triage, doc edits. Claude Haiku 5.5, which needs Claude Code 2.1.293 or later |
 | `default` | Writing code, debugging, research |
 | `cross-family` | Reviewing code another model family wrote |
 
@@ -355,7 +365,8 @@ seat's final message with secrets blanked (whole up to 12,000 characters; a
 longer one is cut to the lines a question reads, and a question whose lines
 do not fit is skipped and named in the log). Tool output is never sent.
 Spending is counted from each reply; `watcher.budget` plans 6 USD a month
-and stops asking at 10.
+and stops asking at 10. The month's spending is in Paseo's Usage view, under
+"Room watcher".
 
 To switch it on: let it run in `shadow` for a while, ask HQ for the watcher
 stats (it calls `slp_watch_stats`: spending, how many turns were watched and

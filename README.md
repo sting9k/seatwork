@@ -47,13 +47,13 @@ You need Paseo 0.11.2 or later, and at least one of Claude Code, Codex, Pi
    and press **Install plugin**. Nothing is created yet.
 
    ```
-   git:sting9k/seatwork:slp-room/plugin
+   git:sting9k/seatwork:plugin
    ```
 
 2. Press **Seatwork**, now at the top of Paseo's sidebar. Choose what each
    role runs on, or keep the shipped choices.
 
-3. Press **Init**. It creates the room's folder (`~/.config/slp-room`), the
+3. Press **Init**. It creates the room's folder (`~/.config/seatwork`), the
    room's providers and four profiles in Paseo, and the `hq-seatwork`
    project.
 
@@ -62,9 +62,9 @@ That is the whole setup. Nothing is left to run in a terminal.
 To change a choice later, change it on the same screen and press **Apply**:
 it reaches every project that has no models of its own, for the seats
 opened from then on. A project gets models of its own on the same screen,
-under **Projects**. **Remove the room** undoes Init: the `hq-seatwork`
+on its **Projects** tab. **Remove the room** undoes Init: the `hq-seatwork`
 project leaves Paseo, and the room's folder is moved aside together with
-what the room wrote in each project's `.slp/`. Nothing is deleted.
+what the room wrote in each project's `.seatwork/`. Nothing is deleted.
 
 ## First project
 
@@ -88,7 +88,7 @@ git clone https://github.com/sting9k/seatwork.git
 ```
 
 ```bash
-cd seatwork/slp-room && ./install.sh
+cd seatwork && ./install.sh
 ```
 
 It installs the plugin from the clone's folder, does what Init does, and is
@@ -108,7 +108,7 @@ run `paseo plugin remove seatwork` first, then the script.
   skills kept out of agents. `install.sh` also turns dictation and voice
   mode off; Init only reports them.
 - A mail server on `127.0.0.1` for the agents' mail tool.
-- `~/.config/slp-room`: mail, logs and copies of your agent CLI config,
+- `~/.config/seatwork`: mail, logs and copies of your agent CLI config,
   readable by your user only.
 
 The room's rules guard against mistakes. They are not a security boundary:
@@ -117,7 +117,7 @@ every agent runs under your account.
 ## Working on the room
 
 ```text
-slp-room/
+seatwork/
 ├── install.sh           the terminal setup
 ├── plugin/              the Paseo plugin (id seatwork)
 │   ├── room/            role prompts, skills, the model table
@@ -125,16 +125,17 @@ slp-room/
 │   ├── server/          setup, mail, cleanup, the watcher
 │   ├── client/          the Seatwork screen and the Room screen
 │   └── test/
-└── evals/               prompt evals on real model sessions
+├── evals/               prompt evals on real model sessions
+└── docs/                the guide, in English and Vietnamese
 ```
 
-- After an edit, run `./install.sh` in `slp-room/`. It copies the room's
-  files into `~/.config/slp-room` and reloads the plugin. This needs a room
-  set up from this clone: see [From a terminal](#from-a-terminal).
-- Tests: `npm test` in `slp-room/plugin` (Node 22.15 or later).
-- A prompt change: run `node evals/run.cjs --label <name>` in `slp-room/`
-  before and after. It opens real model sessions and costs tokens; see
-  [slp-room/evals/README.md](slp-room/evals/README.md).
+- After an edit, run `./install.sh` at the top of the clone. It copies the
+  room's files into `~/.config/seatwork` and reloads the plugin. This needs
+  a room set up from this clone: see [From a terminal](#from-a-terminal).
+- Tests: `npm test` in `plugin/` (Node 22.15 or later).
+- A prompt change: run `node evals/run.cjs --label <name>` at the top of
+  the clone, before and after. It opens real model sessions and costs
+  tokens; see [evals/README.md](evals/README.md).
 - Logs: `paseo plugin logs seatwork`.
 
 ## Sources

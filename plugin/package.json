@@ -1,0 +1,28 @@
+{
+  "name": "seatwork",
+  "private": true,
+  "version": "0.19.0",
+  "description": "Paseo plugin: a Supervisor → Lead → Peer room across Claude, Codex, Pi and OpenCode, set up from its own screen in Paseo.",
+  "files": [
+    "paseo-plugin.json",
+    "OVERVIEW.md",
+    "index.server.ts",
+    "index.client.tsx",
+    "server/",
+    "client/",
+    "shared/",
+    "room/",
+    "paseo/"
+  ],
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "node --require ./test/register.cjs --test \"test/*.test.ts\"",
+    "watch:replay": "node --require ./test/register.cjs tools/watch-replay.ts"
+  },
+  "devDependencies": {
+    "@getpaseo/plugin": "0.11.2",
+    "@types/node": "^22.0.0",
+    "typescript": "^5.9.3",
+    "zod": "^4.4.3"
+  }
+}

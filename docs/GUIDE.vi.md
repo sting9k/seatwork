@@ -58,7 +58,7 @@ Trong Paseo mở **Settings → Plugins**. Dán dòng này vào **Plugin source*
 rồi bấm **Install plugin**:
 
 ```
-git:sting9k/seatwork:slp-room/plugin
+git:sting9k/seatwork:plugin
 ```
 
 Bước này chỉ tải plugin về. Chưa có thư mục, seat hay project nào được
@@ -74,7 +74,7 @@ nguyên. Mục 3 giải thích từng phần của màn hình.
 
 Init tạo ra:
 
-- thư mục của room, `~/.config/slp-room`;
+- thư mục của room, `~/.config/seatwork`;
 - các seat trong Paseo, mỗi seat là một provider;
 - bốn profile: **HQ Supervisor**, **Supervisor**, **Lead**, **Peer**;
 - project `hq-seatwork`, nơi HQ làm việc.
@@ -105,7 +105,7 @@ git clone https://github.com/sting9k/seatwork.git
 ```
 
 ```bash
-cd seatwork/slp-room && ./install.sh
+cd seatwork && ./install.sh
 ```
 
 Nó cài plugin từ thư mục của bản clone, làm đúng việc của Init, và chạy lại
@@ -153,8 +153,9 @@ Bấm **Seatwork** ở đầu sidebar của Paseo. Command Center cũng có mụ
 tên là "Seatwork: set up the room". Dòng này ghi "Set up" khi chưa có room
 và "Needs you" khi một phép kiểm tra máy không đạt.
 
-Model và các project nằm bên trái. Trạng thái của room, watcher, âm báo và
-máy này nằm bên phải. Ở cửa sổ hẹp chúng xếp chồng lên nhau.
+Màn hình có hai tab. **Settings** có các model ở bên trái; bên phải là
+trạng thái của room, watcher, âm báo và máy này. Ở cửa sổ hẹp chúng xếp
+chồng lên nhau. **Projects** liệt kê các project của room.
 
 ### Trạng thái của room
 
@@ -190,9 +191,10 @@ là có `codex-lead`.
 
 ### Projects
 
-Mỗi project của room một dòng: **Room table**, hoặc **Own** kèm những gì
-project đó đổi. Bấm một project để đặt model riêng cho nó, chỉ cho project
-đó. Chi tiết ở mục 7.
+Tab thứ hai, có số project cạnh tên tab. Mỗi project của room một dòng:
+**Room table**, hoặc **Own** kèm những gì project đó đổi. Bấm một project
+để đặt model riêng cho nó, chỉ cho project đó; chữ **Projects** ở đầu trang
+đó đưa bạn về lại danh sách. Chi tiết ở mục 7.
 
 ### Watcher
 
@@ -217,6 +219,7 @@ agent CLI đã sẵn sàng trên máy.
 | Pi | Có seat Pi mà máy không có Pi, hoặc Pi cũ hơn 0.99. |
 | Dictation, Voice mode | Một trong hai đang bật. Nó bật cho mọi agent trên máy; tắt trong phần cài đặt của Paseo. |
 | Two copies of this plugin | `slp-seat`, id của plugin trước 0.18.0, vẫn còn cài bên cạnh `seatwork`. Gỡ nó: `paseo plugin remove slp-seat`. |
+| A room from before 0.19.0 | `~/.config/slp-room` vẫn còn đó. Bản này không đọc nó: xem phần Cập nhật ở mục 11. |
 
 ### Remove the room
 
@@ -225,21 +228,21 @@ của room đang mở: hãy lưu trữ các agent đó trước. Sau đó nó:
 
 - gỡ các seat và profile khỏi Paseo;
 - xoá project `hq-seatwork` khỏi danh sách của Paseo;
-- chuyển thư mục của room sang `~/.config/slp-room.removed-<thời điểm>`,
+- chuyển thư mục của room sang `~/.config/seatwork.removed-<thời điểm>`,
   giữ nguyên thư và log;
-- chuyển các file của room ra khỏi `.slp/` ở mọi project nó từng làm việc,
+- chuyển các file của room ra khỏi `.seatwork/` ở mọi project nó từng làm việc,
   vào `projects/` trong chính thư mục đó.
 
 "Mọi project nó từng làm việc" là mỗi project đã đăng ký và mỗi thư mục
 từng có seat của room được tạo ở đó. Project của bạn vẫn nằm trong Paseo,
-và không thứ gì khác trong project bị đụng tới. Trong `.slp/`, room chỉ lấy
-đúng những tên nó tự ghi (mục 4 liệt kê). File của bạn trong `.slp/` được
-giữ lại, và màn hình nêu tên nó; `.slp/` chỉ mất khi không còn gì bên
-trong. `.slp` là một link thì được để yên. Ở project có commit `.slp/` vào
+và không thứ gì khác trong project bị đụng tới. Trong `.seatwork/`, room chỉ lấy
+đúng những tên nó tự ghi (mục 4 liệt kê). File của bạn trong `.seatwork/` được
+giữ lại, và màn hình nêu tên nó; `.seatwork/` chỉ mất khi không còn gì bên
+trong. `.seatwork` là một link thì được để yên. Ở project có commit `.seatwork/` vào
 git, việc chuyển này hiện ra như các file bị xoá.
 
 Không thứ gì bị xoá hẳn. Muốn bỏ hết thì tự xoá
-`~/.config/slp-room.removed-<thời điểm>`.
+`~/.config/seatwork.removed-<thời điểm>`.
 
 Xoá project `hq-seatwork` cần lệnh `paseo`. Khi daemon không tìm thấy lệnh
 đó, project vẫn nằm trong danh sách của Paseo, trống, và màn hình báo điều
@@ -269,10 +272,10 @@ HQ chỉ xem khi bạn viết, vì không có gì tự báo lên nó.
 Sau khi project đầu tiên được đăng ký, Supervisor, Lead, Peer và Lens chỉ
 khởi động được bên trong project đã đăng ký.
 
-Project giờ có thư mục `.slp/`:
+Project giờ có thư mục `.seatwork/`:
 
 ```text
-.slp/
+.seatwork/
 ├── room.json        đánh dấu project; giữ bảng model riêng, nếu có
 ├── mission.md       project để làm gì
 ├── <tên>-law.md     quy tắc riêng của project
@@ -402,7 +405,7 @@ Lead dùng bảng thế này:
 
 ### Bảng riêng của project
 
-Trên màn hình Seatwork, bấm project trong phần **Projects**. Bạn thấy bảng
+Trên màn hình Seatwork, mở tab **Projects** rồi bấm project. Bạn thấy bảng
 của room cho Supervisor, Lead, Peer và Lens. Đổi một vai rồi bấm **Save**:
 vai đó giờ là của riêng project, được đánh dấu **Own**, các vai còn lại
 vẫn theo bảng của room. **Same as the room's table** trả một vai về bảng
@@ -411,7 +414,7 @@ của room; **Use the room's table for every role** trả hết.
 HQ cũng có thể viết bảng này khi đăng ký project.
 
 Lựa chọn riêng của project được lưu trong chính project, ở object `models`
-của `.slp/room.json`. Nó chỉ chứa phần khác với bảng của room, và bạn sửa
+của `.seatwork/room.json`. Nó chỉ chứa phần khác với bảng của room, và bạn sửa
 tay được:
 
 ```json
@@ -503,7 +506,7 @@ thiết lập agent cá nhân của bạn:
   workflows, cloud routines và connector của claude.ai. File
   `~/.claude/CLAUDE.md` của bạn vẫn được nối vào prompt.
 - **Seat Codex, Pi và OpenCode** mỗi cái có một thư mục nhà riêng dưới
-  `~/.config/slp-room/runtimes/`. Nó được dựng từ thư mục của bạn: giữ
+  `~/.config/seatwork/runtimes/`. Nó được dựng từ thư mục của bạn: giữ
   phiên đăng nhập, bỏ plugin, MCP server, hook và memory.
 - Sub-agent riêng của từng CLI bị tắt trong seat. Seat chỉ có thêm người
   bằng cách tạo một seat khác.
@@ -549,7 +552,7 @@ Mười luật đọc các lần gọi tool và brief. Chúng không tốn tiề
 | `repeating` | làm cùng một việc 4 lần liền với cùng kết quả |
 | `shell-wait` | ngồi chờ trong shell một phút (`sleep`, vòng lặp có sleep) |
 | `silent` | ở trong lượt mà không hoạt động gì, quá thời gian cho phép của vai |
-| `incomplete-brief` | là Peer nhận brief thiếu `Outcome`, `Write scope`, `Acceptance evidence`, `Reopen when` hoặc dòng cuối `Reply with slp_mail to: owner` |
+| `incomplete-brief` | là Peer nhận brief thiếu `Outcome`, `Write scope`, `Acceptance evidence`, `Reopen when` hoặc dòng cuối `Reply with seatwork_mail to: owner` |
 
 Bốn luật cần một bên đọc tin nhắn cuối của seat. Code quyết định khi nào
 hỏi, một model quyết định đọc xem tin nhắn khẳng định gì, rồi code so hai
@@ -566,8 +569,8 @@ bên. Luật đầu tiên có gửi thư; ba luật còn lại chỉ ghi log cho
 Bốn luật này cần một key. Model quyết định là Jev, gọi qua OpenRouter. Dán
 key vào ô **Model key** trong thẻ Watcher của màn hình Seatwork. Key được
 lưu ở
-`~/.config/slp-room/watch/key`, chỉ user của bạn đọc được, và không bao giờ
-hiện lại. Biến môi trường `SLP_WATCH_KEY` cũng dùng được. Không có key thì
+`~/.config/seatwork/watch/key`, chỉ user của bạn đọc được, và không bao giờ
+hiện lại. Biến môi trường `SEATWORK_WATCH_KEY` cũng dùng được. Không có key thì
 mười luật ở trên vẫn chạy, và không có gì rời khỏi máy.
 
 Những gì được gửi cho model: các dòng của brief mà câu hỏi cần đọc, tên các
@@ -593,12 +596,35 @@ seat mới, và lỗi nói rõ điều đó.
 Cách trên dành cho plugin cài từ phần cài đặt của Paseo. Room dựng từ bản
 clone thì cập nhật ngay trong bản clone: `git pull`, rồi `./install.sh`.
 
-Trước 0.18.0, id của plugin là `slp-seat`. Bản cài từ thời đó giữ id ấy qua
-các lần cập nhật và vẫn chạy bình thường; khi đó các lệnh `paseo plugin`
-dùng `slp-seat` ở chỗ guide này ghi `seatwork`. Muốn chuyển sang id mới thì
-chạy `paseo plugin remove slp-seat`, cài lại plugin (mục 2, bước 1) rồi bấm
-**Apply**. Thư mục của room được giữ nguyên. Với bản clone, `./install.sh`
-tự chuyển.
+#### Từ bản trước 0.19.0
+
+Bản 0.19.0 đổi tên mọi thứ từng mang chữ `slp`. Bản cài từ trước đó không
+được mang sang:
+
+| Trước | Nay |
+|---|---|
+| Id plugin `slp-seat` (tới 0.18.0) | `seatwork` |
+| Nguồn cài `git:sting9k/seatwork:slp-room/plugin` | `git:sting9k/seatwork:plugin` |
+| Thư mục room `~/.config/slp-room` | `~/.config/seatwork` |
+| `.slp/` trong project | `.seatwork/` |
+| Tool `slp_mail`, `slp_inbox`… | `seatwork_mail`, `seatwork_inbox`… |
+| Skill `slp-…` | `seatwork-…` |
+
+Chuyển một máy sang bản mới:
+
+1. Ở bản cũ, bấm **Remove the room** (từ 0.17.0 nó cũng lấy `.slp/` ra khỏi
+   các project và giữ trong thư mục đã gỡ).
+2. Gỡ plugin: `paseo plugin remove seatwork`, hoặc
+   `paseo plugin remove slp-seat` với bản cài từ trước 0.18.0.
+3. Cài lại từ nguồn mới (mục 2, bước 1) rồi bấm **Init**.
+4. Đưa lại từng project vào room qua HQ. Mission và law của nó nằm trong
+   thư mục đã gỡ, dưới `projects/`.
+
+`paseo plugin update` không làm được việc này: thư mục của plugin đã đổi
+chỗ trong repository. Nếu plugin được cập nhật bằng cách khác trong lúc
+room cũ còn đó, màn hình Seatwork báo ở phần **This host**: hãy xoá
+`~/.config/slp-room` và project `hq-seatwork` cũ trong Paseo, và ở mỗi
+project đổi tên `.slp` thành `.seatwork` trước khi đưa nó vào room lại.
 
 ### Tự dọn dẹp
 
@@ -616,7 +642,7 @@ yên.
 ### File nằm ở đâu
 
 ```text
-~/.config/slp-room/
+~/.config/seatwork/
 ├── hq-seatwork/         thư mục làm việc của HQ
 ├── room/                prompt, skill và bảng model đang dùng
 ├── role-skills/         skill theo vai cho seat Claude
@@ -639,8 +665,8 @@ Seat Claude lưu session trong `~/.claude/projects`, cạnh session của bạn.
 paseo plugin logs seatwork
 ```
 
-Thư được ghi ở `~/.config/slp-room/mail/log.jsonl`, việc dọn dẹp ở
-`~/.config/slp-room/gc.log`.
+Thư được ghi ở `~/.config/seatwork/mail/log.jsonl`, việc dọn dẹp ở
+`~/.config/seatwork/gc.log`.
 
 ## 12. Lỗi
 
@@ -651,9 +677,9 @@ Thư được ghi ở `~/.config/slp-room/mail/log.jsonl`, việc dọn dẹp �
 | `is not a seat the room has set up` | Chọn agent CLI đó cho vai trên màn hình Seatwork, rồi Apply |
 | `may only be created in the hq-seatwork project` | Mở HQ trong project `hq-seatwork` |
 | `it holds only hq seats` | Mở vai này trong project của nó |
-| `is not a registered SLP project` | Bảo HQ đưa project vào room trước |
+| `is not a registered Seatwork project` | Bảo HQ đưa project vào room trước |
 | `lists for … only …` | Seat được gọi với model mà bảng của nó không liệt kê. Dùng model có trong bảng, hoặc đổi bảng trên màn hình Seatwork |
-| `which the room has not enabled` | Mở project trên màn hình Seatwork rồi bấm Save, hoặc sửa `.slp/room.json` |
+| `which the room has not enabled` | Mở project trên màn hình Seatwork rồi bấm Save, hoặc sửa `.seatwork/room.json` |
 | `its runtime could not be built` | Sửa thứ mà thông báo nêu (thường là `~/.codex/config.toml`), rồi tạo lại agent |
 | `still open … archive them first` | Lưu trữ các agent của room, rồi gỡ room |
 | `is too old: the room needs 0.11.2 or later` | Cập nhật Paseo, chạy `paseo daemon restart`, rồi cài lại |

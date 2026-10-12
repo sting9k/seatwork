@@ -58,7 +58,7 @@ In Paseo open **Settings → Plugins**. Paste this into **Plugin source** and
 press **Install plugin**:
 
 ```
-git:sting9k/seatwork:slp-room/plugin
+git:sting9k/seatwork:plugin
 ```
 
 This only downloads the plugin. No folder, no seat and no project exists
@@ -74,7 +74,7 @@ you want or leave it as it is. Section 3 explains every part of the screen.
 
 Init creates:
 
-- the room's folder, `~/.config/slp-room`;
+- the room's folder, `~/.config/seatwork`;
 - the seats in Paseo, one provider per seat;
 - four profiles: **HQ Supervisor**, **Supervisor**, **Lead**, **Peer**;
 - the `hq-seatwork` project, where HQ lives.
@@ -104,7 +104,7 @@ git clone https://github.com/sting9k/seatwork.git
 ```
 
 ```bash
-cd seatwork/slp-room && ./install.sh
+cd seatwork && ./install.sh
 ```
 
 It installs the plugin from the clone's folder, does what Init does, and is
@@ -152,8 +152,9 @@ Press **Seatwork** at the top of Paseo's sidebar. The Command Center has it
 too, as "Seatwork: set up the room". The row says "Set up" while no room
 exists and "Needs you" when a check of this machine fails.
 
-The models and the projects are on the left. The room's state, the watcher,
-the sound and this machine are on the right. In a narrow window they stack.
+The screen has two tabs. **Settings** holds the models on the left and, on
+the right, the room's state, the watcher, the sound and this machine; in a
+narrow window they stack. **Projects** lists the projects of the room.
 
 ### The room's state
 
@@ -191,9 +192,11 @@ A seat is set up when a choice needs it. Put the Lead on Codex, apply, and
 
 ### Projects
 
-One line per project of the room: **Room table**, or **Own** with what the
-project changes. Press a project to give it models of its own, for that
-project only. Section 7 has the details.
+The second tab, with the number of projects beside its name. One line per
+project of the room: **Room table**, or **Own** with what the project
+changes. Press a project to give it models of its own, for that project
+only; **Projects** at the top of that page brings you back to the list.
+Section 7 has the details.
 
 ### Watcher
 
@@ -217,6 +220,7 @@ that are ready here.
 | Pi | A Pi seat is set up and Pi is missing or older than 0.99. |
 | Dictation, Voice mode | One is on. It is on for every agent on this machine; turn it off in Paseo's settings. |
 | Two copies of this plugin | `slp-seat`, the plugin's id until 0.18.0, is still installed beside `seatwork`. Remove it: `paseo plugin remove slp-seat`. |
+| A room from before 0.19.0 | `~/.config/slp-room` is still there. This version does not read it: see Updating in section 11. |
 
 ### Remove the room
 
@@ -225,21 +229,21 @@ seat of the room is still open: archive those agents first. Then it:
 
 - takes the seats and profiles out of Paseo;
 - deletes the `hq-seatwork` project from Paseo's list;
-- moves the room's folder to `~/.config/slp-room.removed-<time>`, mail and
+- moves the room's folder to `~/.config/seatwork.removed-<time>`, mail and
   logs included;
-- moves the room's files out of `.slp/` in every project it worked in, into
+- moves the room's files out of `.seatwork/` in every project it worked in, into
   `projects/` of that same folder.
 
 "Every project it worked in" is each registered project and each folder a
 seat of the room was created in. Your projects stay in Paseo, and nothing
-else in them is touched. In a `.slp/` the room takes only the names it
-writes itself (section 4 lists them). A file of yours in `.slp/` stays, and
-the screen names it; `.slp/` goes only when nothing is left in it. A `.slp`
-that is a link is left alone. In a project that commits `.slp/` to git, the
+else in them is touched. In a `.seatwork/` the room takes only the names it
+writes itself (section 4 lists them). A file of yours in `.seatwork/` stays, and
+the screen names it; `.seatwork/` goes only when nothing is left in it. A `.seatwork`
+that is a link is left alone. In a project that commits `.seatwork/` to git, the
 move shows there as deleted files.
 
 Nothing is deleted. To be rid of it all, delete
-`~/.config/slp-room.removed-<time>` yourself.
+`~/.config/seatwork.removed-<time>` yourself.
 
 Deleting the `hq-seatwork` project needs the `paseo` command. Where the
 daemon cannot find it, the project stays in Paseo's list, empty, and the
@@ -271,10 +275,10 @@ HQ looks only when you write, because nothing reports up to it.
 Once the first project is registered, Supervisors, Leads, Peers and Lenses
 start only inside registered projects.
 
-The project now has a `.slp/` folder:
+The project now has a `.seatwork/` folder:
 
 ```text
-.slp/
+.seatwork/
 ├── room.json        marks the project; holds its own model table, if any
 ├── mission.md       what the project is for
 ├── <name>-law.md    the project's own rules
@@ -407,7 +411,7 @@ Change the table on the Seatwork screen, then apply.
 
 ### A project's own table
 
-On the Seatwork screen, press the project under **Projects**. You see the
+On the Seatwork screen, open the **Projects** tab and press the project. You see the
 room's table for Supervisor, Lead, Peer and Lens. Change a role and press
 **Save**: that role is now the project's own, marked **Own**, and the rest
 still follows the room's table. **Same as the room's table** gives one
@@ -416,7 +420,7 @@ role back; **Use the room's table for every role** gives them all back.
 HQ can also write the table when it registers the project.
 
 The project's own choices are kept in the project, in the `models` object
-of `.slp/room.json`. It holds only what differs from the room's table, and
+of `.seatwork/room.json`. It holds only what differs from the room's table, and
 you can edit it by hand:
 
 ```json
@@ -509,7 +513,7 @@ personal agent setup:
   routines and claude.ai connectors. Your `~/.claude/CLAUDE.md` is still
   added to the prompt.
 - **Codex, Pi and OpenCode seats** each get a home of their own under
-  `~/.config/slp-room/runtimes/`. It is built from yours with the sign-in
+  `~/.config/seatwork/runtimes/`. It is built from yours with the sign-in
   kept and plugins, MCP servers, hooks and memory left out.
 - Each CLI's own sub-agents are off in a seat. A seat gets help only by
   creating another seat.
@@ -555,7 +559,7 @@ Ten rules read the tool calls and the brief. They cost nothing:
 | `repeating` | did the same thing 4 times in a row with the same result |
 | `shell-wait` | waited in the shell for a minute (`sleep`, a loop that sleeps) |
 | `silent` | has been in its turn with no activity past its role's stall time |
-| `incomplete-brief` | is a Peer whose brief lacks `Outcome`, `Write scope`, `Acceptance evidence`, `Reopen when` or the last line `Reply with slp_mail to: owner` |
+| `incomplete-brief` | is a Peer whose brief lacks `Outcome`, `Write scope`, `Acceptance evidence`, `Reopen when` or the last line `Reply with seatwork_mail to: owner` |
 
 Four rules need a reader for the seat's final message. Code decides when to
 ask, a decision model reads what the message claims, and code compares the
@@ -572,8 +576,8 @@ two. The first one mails; the other three only log until you set them to
 These four need a key. The decision model is Jev, reached through
 OpenRouter. Paste the key into **Model key** in the Watcher card of the
 Seatwork screen. It is
-stored in `~/.config/slp-room/watch/key`, readable by your user only, and
-is never shown again. The environment variable `SLP_WATCH_KEY` works too.
+stored in `~/.config/seatwork/watch/key`, readable by your user only, and
+is never shown again. The environment variable `SEATWORK_WATCH_KEY` works too.
 Without a key the ten rules above still work and nothing leaves the
 machine.
 
@@ -600,12 +604,36 @@ new seats, and the error says so.
 That is for a plugin installed from Paseo's settings. A room set up from a
 clone is updated in the clone: `git pull`, then `./install.sh`.
 
-Until 0.18.0 the plugin's id was `slp-seat`. An install from that time
-keeps that id through updates and goes on working; `paseo plugin` commands
-then take `slp-seat` where this guide says `seatwork`. To move to the new
-id, run `paseo plugin remove slp-seat`, install the plugin again (section
-2, step 1) and press **Apply**. The room's folder is kept. In a clone,
-`./install.sh` makes the move by itself.
+#### From a version before 0.19.0
+
+Version 0.19.0 renamed everything that was called `slp`. An install from
+before it is not carried over:
+
+| Before | Now |
+|---|---|
+| Plugin id `slp-seat` (until 0.18.0) | `seatwork` |
+| Install source `git:sting9k/seatwork:slp-room/plugin` | `git:sting9k/seatwork:plugin` |
+| Room folder `~/.config/slp-room` | `~/.config/seatwork` |
+| `.slp/` in a project | `.seatwork/` |
+| Tools `slp_mail`, `slp_inbox`… | `seatwork_mail`, `seatwork_inbox`… |
+| Skills `slp-…` | `seatwork-…` |
+
+To move a machine over:
+
+1. On the old version, press **Remove the room** (0.17.0 or later also
+   takes `.slp/` out of your projects and keeps it in the removed folder).
+2. Remove the plugin: `paseo plugin remove seatwork`, or
+   `paseo plugin remove slp-seat` for an install from before 0.18.0.
+3. Install it again from the new source (section 2, step 1) and press
+   **Init**.
+4. Set each project up again through HQ. Its mission and law are in the
+   removed folder, under `projects/`.
+
+`paseo plugin update` cannot do this: the plugin's folder moved inside the
+repository. If the plugin was updated some other way while an old room was
+still set up, the Seatwork screen says so under **This host**: delete
+`~/.config/slp-room` and the old `hq-seatwork` project in Paseo, and in
+each project rename `.slp` to `.seatwork` before you set it up again.
 
 ### Automatic cleanup
 
@@ -623,7 +651,7 @@ answer is left alone.
 ### Where files live
 
 ```text
-~/.config/slp-room/
+~/.config/seatwork/
 ├── hq-seatwork/         HQ's working folder
 ├── room/                the prompts, skills and model table in use
 ├── role-skills/         per-role skills for Claude seats
@@ -646,8 +674,8 @@ Claude seats keep their sessions in `~/.claude/projects`, next to yours.
 paseo plugin logs seatwork
 ```
 
-Mail is logged in `~/.config/slp-room/mail/log.jsonl`, cleanup in
-`~/.config/slp-room/gc.log`.
+Mail is logged in `~/.config/seatwork/mail/log.jsonl`, cleanup in
+`~/.config/seatwork/gc.log`.
 
 ## 12. Errors
 
@@ -658,9 +686,9 @@ Mail is logged in `~/.config/slp-room/mail/log.jsonl`, cleanup in
 | `is not a seat the room has set up` | Choose that agent CLI for the role on the Seatwork screen, then Apply |
 | `may only be created in the hq-seatwork project` | Open HQ in the `hq-seatwork` project |
 | `it holds only hq seats` | Open this role in its own project |
-| `is not a registered SLP project` | Ask HQ to set the project up first |
+| `is not a registered Seatwork project` | Ask HQ to set the project up first |
 | `lists for … only …` | The seat was asked for on a model its table does not list. Use one it lists, or change the table on the Seatwork screen |
-| `which the room has not enabled` | Open the project on the Seatwork screen and press Save, or fix `.slp/room.json` |
+| `which the room has not enabled` | Open the project on the Seatwork screen and press Save, or fix `.seatwork/room.json` |
 | `its runtime could not be built` | Fix what the message names (often `~/.codex/config.toml`), then create the agent again |
 | `still open … archive them first` | Archive the room's agents, then remove the room |
 | `is too old: the room needs 0.11.2 or later` | Update Paseo, run `paseo daemon restart`, then install again |

@@ -55,16 +55,21 @@ export function isSetUp(roomHome: string): boolean {
   return existsSync(join(roomHome, "policy.json")) && existsSync(join(roomHome, "seats.json"));
 }
 
+/** Marks a room home as set up by this plugin version, once Paseo has its seats. */
+export function stampVersion(roomHome: string, version: string): void {
+  writePrivate(join(roomHome, "setup.json"), json({ ...readSetup(roomHome), version }));
+}
+
 /** Writes the room home for a plan, keeping mail, logs and the registry; `seatsOnly` only adds seats. */
 export function writeRoomHome(input: {
   plan: RoomPlan;
   pluginDir: string;
   roomHome: string;
   setup: Setup;
-  version: string;
   seatsOnly?: boolean;
 }): void {
-  const { plan, pluginDir, roomHome, setup, version } = input;
+  const { plan, pluginDir, roomHome, setup } = input;
+  const { version } = readSetup(roomHome);
   // the room home holds mail and copies of the user's harness config: its owner only
   mkdirSync(roomHome, { recursive: true, mode: 0o700 });
   chmodSync(roomHome, 0o700);

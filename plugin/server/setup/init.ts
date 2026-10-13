@@ -2,7 +2,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { parseSeat } from "../seats";
 import { planRoom, type Catalog, type RoomPlan, type Setup } from "./plan";
-import { readSetup, writeRoomHome } from "./room-home";
+import { readSetup, stampVersion, writeRoomHome } from "./room-home";
 
 export interface RoomSource {
   pluginDir: string;
@@ -11,14 +11,16 @@ export interface RoomSource {
   version: string;
 }
 
-/** Sets the room up in a room home for these choices, or again after they changed. Paseo is told separately. */
+/** Sets the room up: its home, its seats in Paseo through `tell`, then its version. */
 export async function setUpRoom(
   source: RoomSource,
   setup: Setup,
-  options: { seatsOnly?: boolean } = {},
+  tell: (plan: RoomPlan) => void | Promise<unknown>,
 ): Promise<RoomPlan> {
   const plan = await planRoom({ ...source, setup });
-  writeRoomHome({ ...source, plan, setup, seatsOnly: options.seatsOnly });
+  writeRoomHome({ ...source, plan, setup });
+  await tell(plan);
+  stampVersion(source.roomHome, source.version);
   return plan;
 }
 
@@ -34,7 +36,9 @@ export function sourceOf(roomHome: string): string | null {
 export async function addSeats(source: RoomSource, providers: string[]): Promise<RoomPlan> {
   for (const provider of providers)
     if (!parseSeat(provider)) throw new Error(`"${provider}" is not a seat: a seat is <harness>-<role>`);
-  const setup = readSetup(source.roomHome);
-  const seats = [...new Set([...(setup.seats ?? []), ...providers])];
-  return setUpRoom(source, { ...setup, seats }, { seatsOnly: true });
+  const before = readSetup(source.roomHome);
+  const setup = { ...before, seats: [...new Set([...(before.seats ?? []), ...providers])] };
+  const plan = await planRoom({ ...source, setup });
+  writeRoomHome({ ...source, plan, setup, seatsOnly: true });
+  return plan;
 }

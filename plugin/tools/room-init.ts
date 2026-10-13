@@ -79,9 +79,9 @@ async function main(): Promise<void> {
   const plan = await setUpRoom(
     { pluginDir: PLUGIN_DIR, roomHome: ROOM_HOME, catalog: cliCatalog, version: VERSION },
     setup,
+    (planned) => applyToConfigFile(PASEO_HOME, planned),
   );
   for (const warning of plan.warnings) console.error(`warning: ${warning}`);
-  applyToConfigFile(PASEO_HOME, plan);
   const old = await clearOldRoom();
   if (old)
     console.log(

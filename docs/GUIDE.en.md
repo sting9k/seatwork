@@ -204,7 +204,7 @@ that cannot be undone, and outside actions such as push, merge and deploy.
 | The state of every project | "how are the projects doing" |
 | A new project | "set up project X" |
 | An instruction sent down | "project X: stop Y", "do Z first" |
-| What the room did lately | "room stats for the last 7 days" |
+| What the room did lately | "room stats for the last 3 days" |
 | What the watcher found and cost | "watcher stats" |
 
 HQ creates Supervisors and nothing else. A Supervisor does not know that an
@@ -315,7 +315,8 @@ apply them.
 | Check | Warns when |
 |---|---|
 | Paseo's tools for agents | They are off. Seats cannot create or reach each other without them. |
-| Room files | The plugin and the room's files are from different versions. Apply. |
+| Room files | After an update the room could not bring its files to the plugin's version. The row says why. Apply. |
+| Seats from before the update | Seats are open that an earlier version gave their prompt to. Archive one and create it again to have it on this version. |
 | Pi | A Pi seat is set up and Pi is missing or older than 0.99. |
 | Dictation, Voice mode | One is on, for every agent on this machine. Turn it off in Paseo's settings. |
 | Two copies of this plugin | `slp-seat`, the plugin's id until 0.18.0, is still installed. Run `paseo plugin remove slp-seat`. |
@@ -446,9 +447,23 @@ Two limits:
 paseo plugin update seatwork
 ```
 
-Then press **Apply** on the Seatwork screen. Until you do, the room refuses
-new seats. A room set up from a clone is updated in the clone: `git pull`,
-then `./install.sh`.
+Nothing else to do. The next time the app is open or a seat is created,
+the room brings its files and its seats to the new version, on the choices
+it already has.
+
+| What | After an update |
+|---|---|
+| The room's prompts, skills and policy; its seats and profiles in Paseo | Replaced by the new version's |
+| Your choices, mail, logs, the project registry | Kept |
+| A registered project | Nothing is copied into a project. Its next seat starts on the new version |
+| A seat already open | Keeps the prompt it was opened with. The Seatwork screen names it: archive it and create it again |
+| The three switches Init sets for every agent | Left as they are. Only Apply sets them |
+| A hand edit in `~/.config/seatwork/policy.json` | Lost: the file is written again from the plugin |
+
+If the room cannot finish, it refuses new seats and the **Room files** check
+says why. **Apply** on the Seatwork screen does the same step by hand. A
+room set up from a clone is updated in the clone: `git pull`, then
+`./install.sh`.
 
 ### Automatic cleanup
 
@@ -458,16 +473,16 @@ then `./install.sh`.
 | An idle Lead or Peer | After 48 hours |
 | An idle Supervisor | After 7 days |
 | HQ | Never |
-| Lines of the mail log and the cleanup log | After 7 days |
-| The room's backups of Paseo's `config.json` | After 7 days; the newest always stays |
+| Lines of the mail log and the cleanup log | After 3 days |
+| The room's backups of Paseo's `config.json` | After 3 days; the newest always stays |
 | A folder set aside by Remove or by Init | After 30 days |
 | What Codex makes again by itself in a seat's home: its temporary folders, its log database | As soon as no seat of that home is open |
-| Session records in the home of a Codex or Pi seat | After 7 days without a write, once no seat of that home is open |
+| Session records in the home of a Codex or Pi seat | After 3 days without a write, once no seat of that home is open |
 
 - An idle seat is archived, not deleted. A seat that waits for a permission
   or an answer, or still has an open seat below it, is left alone.
-- A mail older than 7 days can no longer be answered by its id, and room
-  stats cover 7 days at most.
+- A mail older than 3 days can no longer be answered by its id, and room
+  stats cover 3 days at most.
 - Kept whole: `registry-log.jsonl`, the watcher's scan log, and the ACCEPT,
   REJECT and REVISED BRIEF lines of the mail log. The watcher's statistics
   are made from them.
@@ -539,7 +554,8 @@ paseo plugin logs seatwork
 | Message | What to do |
 |---|---|
 | `is a room seat and no room is set up on this daemon` | Open the Seatwork screen and press Init |
-| `the room's files were set up by version …` | Press Apply on the Seatwork screen |
+| `the room's files were set up by version …` | The room could not bring itself to the plugin's version; the message says why. Press Apply on the Seatwork screen |
+| `the plugin's folder holds version …` | The plugin's files changed under the running plugin. Run `paseo plugin reload seatwork` |
 | `is not a seat the room has set up` | Choose that agent CLI for the role on the Seatwork screen, then Apply |
 | `may only be created in the hq-seatwork project` | Open HQ in the `hq-seatwork` project |
 | `it holds only hq seats` | Open this role in its own project |

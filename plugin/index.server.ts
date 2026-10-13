@@ -55,7 +55,7 @@ import { Watcher, type SeatView, type TimelineView } from "./server/watch/watche
 
 type CreateRequest = PluginBeforeRequests["agent.create"];
 
-const VERSION = "0.21.0";
+const VERSION = "0.22.0";
 const PLUGIN_ID = "seatwork";
 const MAIL_DIR = join(ROOM_HOME, "mail");
 const MCP_TOKEN_FILE = join(MAIL_DIR, "token");
@@ -85,13 +85,64 @@ export default function contribute(server: PluginServerContext) {
     return next;
   };
 
-  // a seat created while no room runs would start with no role, no isolation and no mail
-  server.before("agent.create", ({ request }) => {
-    if (!room && parseSeat(request.config.provider)) {
+  /** Sets the room up for these choices; `daemon` also sets the daemon's own switches. */
+  const settle = async (paseo: PaseoApi, setup: Setup, daemon: boolean) => {
+    const pluginDir = await ownFolder(paseo);
+    const catalog = catalogFrom(await harnessStates(paseo, HARNESSES));
+    let removed: string[] = [];
+    const source = { pluginDir, roomHome: ROOM_HOME, catalog, version: VERSION };
+    const plan = await setUpRoom(source, setup, async (planned) => {
+      ({ removed } = await applyWithSdk(paseo, planned, { daemonPolicy: daemon }));
+    });
+    return { plan, removed, pluginDir };
+  };
+  const restart = async (paseo: PaseoApi) => {
+    await room?.stop();
+    // a room that fails to start leaves none: its seats are refused
+    room = null;
+    room = startRoom(server);
+    await ensureHqProject(paseo, (message) => console.log(`seatwork: ${message}`));
+  };
+
+  let behind: { why: string; at: number } | null = null;
+  /** Why a room on another version's files refuses something new. */
+  const whyRefused = () =>
+    `the room's files were set up by ${room?.filesFrom ? `version ${room.filesFrom}` : "an earlier version"} of the plugin and this is ${VERSION}${behind ? `; the plugin could not bring them to ${VERSION}: ${behind.why}` : ""}`;
+  /** Brings the room's files to this version after an update, on its saved choices. */
+  const bringUp = (paseo: PaseoApi, asked: boolean): Promise<void> => {
+    if (!room || room.filesFrom === VERSION) return Promise.resolve();
+    // a failed try is repeated when the room is asked for, not at each poll
+    if (!asked && behind && Date.now() - behind.at < 60_000) return Promise.resolve();
+    return oneAtATime(async () => {
+      if (!room || room.filesFrom === VERSION) return;
+      const from = room.filesFrom ?? "an earlier version";
+      try {
+        await settle(paseo, readSetup(ROOM_HOME), false);
+        await restart(paseo);
+        behind = null;
+        console.log(`seatwork: the room's files were brought from ${from} to ${VERSION}`);
+      } catch (error) {
+        const why = error instanceof Error ? error.message : String(error);
+        if (behind?.why !== why) console.error(`seatwork: the room's files stay at ${from}: ${why}`);
+        behind = { why, at: Date.now() };
+      }
+    });
+  };
+
+  // a room seat starts on this version's files or does not start
+  const offCreate = server.before("agent.create", async ({ request }, { paseo }) => {
+    const provider = request.config.provider;
+    if (!parseSeat(provider)) return;
+    await bringUp(paseo, true);
+    if (!room)
       throw new Error(
-        `seatwork: ${request.config.provider} is a room seat and no room is set up on this daemon; set it up on the Seatwork screen (in the sidebar)`,
+        `seatwork: ${provider} is a room seat and no room is set up on this daemon; set it up on the Seatwork screen (in the sidebar)`,
       );
-    }
+    if (room.filesFrom !== VERSION)
+      throw new Error(
+        `seatwork: ${provider} refused: ${whyRefused()}. Press Apply on the Seatwork screen (in the sidebar) or run install.sh, then create the seat again`,
+      );
+    return room.seat(request);
   });
 
   // what the decision model cost this month, for Paseo's Usage screen
@@ -107,17 +158,21 @@ export default function contribute(server: PluginServerContext) {
     });
   }
 
-  server.handle(roomWaiting, async (_input, { paseo }) => (room ? room.waiting(paseo) : { chime: false, waiting: [] }));
+  server.handle(roomWaiting, async (_input, { paseo }) => {
+    await bringUp(paseo, false);
+    return room ? room.waiting(paseo) : { chime: false, waiting: [] };
+  });
   server.handle(roomStatus, async (_input, { paseo }) => (room ? room.status(paseo) : { waiting: [], projects: [] }));
 
   server.handle(setupState, async (_input, { paseo }) => {
+    await bringUp(paseo, true);
     const pluginDir = await ownFolder(paseo);
     const setup = isSetUp(ROOM_HOME) ? readSetup(ROOM_HOME) : null;
     const seats = setup ? enabledSeats().map((seat) => seat.provider) : [];
     // the provider list and the checks run side by side
     const [states, checks] = await Promise.all([
       harnessStates(paseo, HARNESSES),
-      setupChecks(paseo, pluginDir, setup, seats),
+      setupChecks(paseo, pluginDir, setup, seats, room, behind?.why),
     ]);
     const harnesses = states.map((h) => ({
       ...h,
@@ -150,7 +205,6 @@ export default function contribute(server: PluginServerContext) {
 
   server.handle(setupInit, (choices, { paseo }) =>
     oneAtATime(async () => {
-      const pluginDir = await ownFolder(paseo);
       const before = readSetup(ROOM_HOME);
       // what the screen does not show stays: seats HQ added for a project's table, this machine's mail port
       const setup: Setup = {
@@ -160,9 +214,8 @@ export default function contribute(server: PluginServerContext) {
         watcher: choices.watcher,
         chime: choices.chime,
       };
-      const catalog = catalogFrom(await harnessStates(paseo, HARNESSES));
-      const plan = await setUpRoom({ pluginDir, roomHome: ROOM_HOME, catalog, version: VERSION }, setup);
-      const { removed } = await applyWithSdk(paseo, plan, { daemonPolicy: true });
+      const { plan, removed, pluginDir } = await settle(paseo, setup, true);
+      behind = null;
       const notes = [...plan.warnings];
       const old = await clearOldRoom();
       if (old)
@@ -183,9 +236,7 @@ export default function contribute(server: PluginServerContext) {
       const firstWatch = !watching || watching.mode === "off";
       if (firstWatch && choices.watcher !== "off")
         notes.push("The watcher's spending shows in Paseo's Usage once the plugin is reloaded.");
-      await room?.stop();
-      room = startRoom(server);
-      await ensureHqProject(paseo, (message) => console.log(`seatwork: ${message}`));
+      await restart(paseo);
       return { seats: Object.keys(plan.providers), removed, notes };
     }),
   );
@@ -224,9 +275,11 @@ export default function contribute(server: PluginServerContext) {
     }),
   );
 
-  server.handle(setupProject, ({ name, models }, { paseo }) =>
-    oneAtATime(async () => {
+  server.handle(setupProject, async ({ name, models }, { paseo }) => {
+    await bringUp(paseo, true);
+    return oneAtATime(async () => {
       if (!room) throw new Error("no room is set up on this daemon");
+      if (room.filesFrom !== VERSION) throw new Error(`seatwork: ${whyRefused()}. Press Apply first`);
       const pluginDir = await ownFolder(paseo);
       // a table may put a role on an agent CLI the room has no seat for yet: that seat is set up first
       return writeProjectModels(name, models, async (providers) => {
@@ -241,8 +294,8 @@ export default function contribute(server: PluginServerContext) {
         );
         await applyWithSdk(paseo, plan, { daemonPolicy: false });
       });
-    }),
-  );
+    });
+  });
 
   server.handle(setupWatcherKey, ({ key }) =>
     oneAtATime(async () => {
@@ -262,6 +315,7 @@ export default function contribute(server: PluginServerContext) {
 
   return async () => {
     clearInterval(fileSweep);
+    offCreate();
     await busy;
     await room?.stop();
   };
@@ -274,6 +328,14 @@ async function ownFolder(paseo: PaseoApi): Promise<string> {
   const found =
     typeof listed === "string" && existsSync(join(listed, "room", "models.json")) ? listed : sourceOf(ROOM_HOME);
   if (!found) throw new Error("seatwork: Paseo's plugin list does not say where this plugin's folder is");
+  // mid-update Paseo still lists the folder of the version before
+  const shipped = existsSync(join(found, "package.json"))
+    ? (JSON.parse(readFileSync(join(found, "package.json"), "utf8")) as { version?: string }).version
+    : undefined;
+  if (shipped !== VERSION)
+    throw new Error(
+      `seatwork: the plugin's folder holds version ${shipped} and the plugin running is ${VERSION}; reload the plugin (paseo plugin reload seatwork)`,
+    );
   return found;
 }
 
@@ -289,6 +351,8 @@ async function setupChecks(
   pluginDir: string,
   setup: Setup | null,
   seats: string[],
+  room: Room | null,
+  behind: string | undefined,
 ): Promise<{ id: string; label: string; ok: boolean | null; detail: string }[]> {
   const { config } = await paseo.config.get();
   const switches = readSwitches(PASEO_HOME, pluginDir);
@@ -309,7 +373,17 @@ async function setupChecks(
       id: "version",
       label: "Room files",
       ok: false,
-      detail: `Set up by ${setup.version ? `version ${setup.version}` : "an earlier version"}; Apply brings them to ${VERSION}.`,
+      detail: `Set up by ${setup.version ? `version ${setup.version}` : "an earlier version"}; Apply brings them to ${VERSION}.${behind ? ` The plugin tried by itself and could not: ${behind}` : ""}`,
+    });
+  }
+  const olderSeats = room ? await room.olderSeats(paseo) : [];
+  if (olderSeats.length) {
+    const many = olderSeats.length > 1;
+    checks.push({
+      id: "older-seats",
+      label: "Seats from before the update",
+      ok: false,
+      detail: `${olderSeats.length} open seat${many ? "s" : ""} got ${many ? "their" : "its"} prompt from an earlier version of the plugin and ${many ? "keep" : "keeps"} it: ${olderSeats.slice(0, 5).join(", ")}${olderSeats.length > 5 ? ", …" : ""}. Archive a seat and create it again to have it on ${VERSION}.`,
     });
   }
   if (seats.some((seat) => seat.startsWith("pi-"))) {
@@ -350,6 +424,12 @@ async function setupChecks(
 /** A room that is set up on this daemon and running in this plugin process. */
 interface Room {
   policy: RuntimePolicy;
+  /** The plugin version that wrote the room's files: prompts and code are one release. */
+  filesFrom: string | undefined;
+  /** A room seat's request with its role, project, isolation and mail server laid in. */
+  seat(request: CreateRequest): Promise<CreateRequest>;
+  /** The titles of open seats that got their prompt from another plugin version. */
+  olderSeats(paseo: PaseoApi): Promise<string[]>;
   /** The turns that left something for the Owner; the app asks while it is open. */
   waiting(paseo: PaseoApi): Promise<{ chime: boolean; waiting: Awaited<ReturnType<OwedList["current"]>> }>;
   status(paseo: PaseoApi): ReturnType<typeof readRoomStatus>;
@@ -366,7 +446,6 @@ function startRoom(server: Pick<PluginServerContext, "on" | "before">): Room {
   mkdirSync(MAIL_DIR, { recursive: true });
   mkdirSync(hqDir(), { recursive: true });
   const policy = loadPolicy();
-  /** The plugin version the room's files were written by: prompts and code are one release. */
   const filesFrom = readSetup(ROOM_HOME).version;
   /** The hooks this room registered, taken back when it stops. */
   const off: (() => void)[] = [];
@@ -404,11 +483,11 @@ function startRoom(server: Pick<PluginServerContext, "on" | "before">): Room {
   /** Sets up seats the room does not have yet, for a project whose own model table names them. */
   const setUpSeats = async (providers: string[]) => {
     const paseo = client;
-    const pluginDir = sourceOf(ROOM_HOME);
-    if (!paseo || !pluginDir)
+    if (!paseo || filesFrom !== VERSION)
       throw new Error(
         "seatwork: the room cannot set a seat up right now; apply the room's setup screen once, then repeat",
       );
+    const pluginDir = await ownFolder(paseo);
     const plan = await addSeats(
       { pluginDir, roomHome: ROOM_HOME, catalog: catalogFrom(await harnessStates(paseo, HARNESSES)), version: VERSION },
       providers,
@@ -701,13 +780,6 @@ function startRoom(server: Pick<PluginServerContext, "on" | "before">): Room {
     });
 
   // ---- hooks
-  off.push(
-    server.before("agent.create", async ({ request }) => {
-      await starting;
-      return applySeat(request);
-    }),
-  );
-
   // session_open is the first hook that knows the agent id: the nonce from agent.create is tied to it here
   off.push(
     server.before("agent.session_open", ({ request }) => {
@@ -770,6 +842,7 @@ function startRoom(server: Pick<PluginServerContext, "on" | "before">): Room {
         provider: seat.provider,
         title: event.agent.title,
         cwd: event.agent.cwd,
+        version: VERSION,
       });
       const line = JSON.stringify({
         at: new Date().toISOString(),
@@ -779,6 +852,7 @@ function startRoom(server: Pick<PluginServerContext, "on" | "before">): Room {
         role: seat.role,
         cwd: event.agent.cwd,
         title: event.agent.title,
+        version: VERSION,
       });
       try {
         appendFileSync(REGISTRY_LOG, `${line}\n`);
@@ -957,6 +1031,17 @@ function startRoom(server: Pick<PluginServerContext, "on" | "before">): Room {
 
   return {
     policy,
+    filesFrom,
+    async seat(request) {
+      await starting;
+      return applySeat(request);
+    },
+    async olderSeats(paseo) {
+      const eng = getEngine(paseo);
+      return [...(await liveAgents(paseo)).values()]
+        .filter((agent) => parseSeat(agent.provider) && eng.seat(agent.id)?.version !== VERSION)
+        .map((agent) => agent.title ?? agent.id);
+    },
     // after a daemon start the app's question is the first to hand the room a Paseo client: held mail moves
     async waiting(paseo) {
       if (!engine) void getEngine(paseo).sweep();
@@ -985,12 +1070,6 @@ function startRoom(server: Pick<PluginServerContext, "on" | "before">): Room {
     if (!enabledSeats().some((s) => s.provider === seat.provider)) {
       throw new Error(
         `seatwork: ${seat.provider} is not a seat the room has set up (the room's setup screen gives a role its seats; HQ sets one up when a project's model table names it)`,
-      );
-    }
-
-    if (filesFrom !== VERSION) {
-      throw new Error(
-        `seatwork: ${seat.provider} refused: the room's files were set up by ${filesFrom ? `version ${filesFrom}` : "an earlier version"} of the plugin and this is ${VERSION}. Press Apply on the Seatwork screen (in the sidebar) or run install.sh, then create the seat again`,
       );
     }
 

@@ -417,6 +417,8 @@ function writesOf(command: SimpleCommand): Extract<Effect, { kind: "write" }> | 
 const REBUILT =
   /(?:^|\/)(?:node_modules|dist|build|out|target|coverage|\.next|\.nuxt|\.turbo|\.cache|\.venv|venv|__pycache__|\.pytest_cache|\.mypy_cache|\.ruff_cache|\.gradle|\.tox|tmp|temp|\.tmp)(?:\/[^/]*)*\/?$|^(?:\/private)?\/(?:tmp|var\/folders)\/|^\$\{?\w*(?:tmp|temp|scratch|cache|build|dist|out)\w*\}?(?:\/|$)/i;
 
+const SHARED_PATTERN = /^(?:\/private)?\/(?:tmp|var\/folders)\/.*[*?]/;
+
 interface Destruction {
   what: string;
   paths?: string[];
@@ -446,7 +448,8 @@ function destroys(command: SimpleCommand): Destruction | null {
     const targets = operands(argv);
     // through xargs the targets are not on the command line
     if (command.viaXargs) return null;
-    const kept = targets.filter((t) => !REBUILT.test(t.replace(/\/+$/, "")));
+    // a pattern in a shared temporary directory may take another seat's files
+    const kept = targets.filter((t) => !REBUILT.test(t.replace(/\/+$/, "")) || SHARED_PATTERN.test(t));
     return kept.length > 0 ? { what: `recursive delete of ${kept.slice(0, 3).join(", ")}`, paths: kept } : null;
   }
   if (

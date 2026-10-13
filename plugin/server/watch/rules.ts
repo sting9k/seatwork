@@ -1,6 +1,6 @@
 import type { Brief } from "./brief";
 import type { TurnFacts } from "./facts";
-import { DECISION_WORDS, VERIFICATION_WORDS } from "./questions";
+import { VERIFICATION_WORDS } from "./questions";
 
 /** The gate: each rule reads a turn's facts and gives nothing, a finding, or a question about the message. */
 
@@ -9,6 +9,7 @@ export type RuleId =
   | "outside-project"
   | "outside-scope"
   | "edit-after-reopen"
+  | "unreported-test-change"
   | "unverified-completion"
   | "review-without-check"
   | "same-failure"
@@ -17,7 +18,6 @@ export type RuleId =
   | "silent"
   | "incomplete-brief"
   | "external-action"
-  | "decided-beyond-brief"
   | "reopen-condition";
 
 /** When the turn starts, while it is going, or when it has ended. */
@@ -126,6 +126,22 @@ const RULES: readonly Rule[] = [
         : null,
   },
   {
+    id: "unreported-test-change",
+    moments: ["end"],
+    read: ({ facts }) => {
+      if (facts.signal !== "CANDIDATE") return null;
+      const unnamed = facts.testsChanged.filter(
+        (path) => !facts.message.includes(path) && !facts.message.includes(path.split("/").pop()!),
+      );
+      return unnamed.length > 0
+        ? {
+            finding: `changed tests that were there before its turn and its CANDIDATE does not name them: ${list(unnamed)}`,
+            key: unnamed.join("|"),
+          }
+        : null;
+    },
+  },
+  {
     id: "review-without-check",
     moments: ["end"],
     read: ({ facts }) =>
@@ -221,7 +237,9 @@ const RULES: readonly Rule[] = [
         facts.signal === "REVIEW" ||
         brief?.readOnly ||
         !facts.lastEdit ||
-        facts.tests === "passed"
+        facts.tests === "passed" ||
+        // checks ran and their result could not be read: no ground to ask on
+        facts.tests === "unknown"
       )
         return null;
       // a message with no word about checks claims nothing about them
@@ -233,14 +251,6 @@ const RULES: readonly Rule[] = [
     moments: ["live", "end"],
     read: ({ facts, brief }) =>
       facts.external.length > 0 && brief ? { ask: true, key: facts.external.map((deed) => deed.what).join("|") } : null,
-  },
-  {
-    id: "decided-beyond-brief",
-    moments: ["end"],
-    read: ({ facts, brief }) =>
-      facts.closesWork && brief && Object.keys(brief.fields).length > 0 && DECISION_WORDS.test(facts.message)
-        ? { ask: true }
-        : null,
   },
   {
     id: "reopen-condition",

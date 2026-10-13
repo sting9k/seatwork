@@ -27,6 +27,12 @@ export const HQ_DIR = join(ROOM_HOME, HQ_PROJECT);
 /** Append-only log of seats created, read by the HQ Supervisor. */
 export const REGISTRY_LOG = join(ROOM_HOME, "registry-log.jsonl");
 
+/** One temporary directory per seat, `tmp/<first 8 of the agent id>`: a seat's `TMPDIR`. */
+export const SEAT_TMP_DIR = join(ROOM_HOME, "tmp");
+
+/** What each seat used, noted at turn end: Paseo forgets it once the seat closes. */
+export const USAGE_LOG = join(ROOM_HOME, "usage-log.jsonl");
+
 /** The daemon's home, for the schedule store GC reads. */
 export const PASEO_HOME = process.env.PASEO_HOME?.trim() || join(USER_HOME, ".paseo");
 export const PASEO_SCHEDULES = join(PASEO_HOME, "schedules");

@@ -109,8 +109,8 @@ run `paseo plugin remove seatwork` first, then the script.
   skills kept out of agents. `install.sh` also turns dictation and voice
   mode off; Init only reports them.
 - A mail server on `127.0.0.1` for the agents' mail tool.
-- `~/.config/seatwork`: mail, logs and copies of your agent CLI config,
-  readable by your user only.
+- `~/.config/seatwork`: mail, logs, copies of your agent CLI config and
+  each agent's temporary files, readable by your user only.
 
 The room's rules guard against mistakes. They are not a security boundary:
 every agent runs under your account.
@@ -121,7 +121,7 @@ every agent runs under your account.
 seatwork/
 ├── install.sh           the terminal setup
 ├── plugin/              the Paseo plugin (id seatwork)
-│   ├── room/            role prompts, skills, the model table
+│   ├── room/            the system prompt per agent CLI, role prompts, skills, the model table
 │   ├── paseo/           policy.json, seats.json, profiles.json
 │   ├── server/          setup, mail, cleanup, the watcher
 │   ├── client/          the Seatwork screen and the Room screen

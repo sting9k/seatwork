@@ -39,12 +39,6 @@ export function enabledSeats(): Seat[] {
   return (parsed.providers ?? []).map(parseSeat).filter((s): s is Seat => s !== null);
 }
 
-/** `harness/<harness>-harness.md`: how this harness exposes the room's tools. */
-export function harnessSheet(harness: Harness | undefined): string | null {
-  if (!harness) return null;
-  return readIfExists(join(ROOM_DIR, "harness", `${harness}-harness.md`));
-}
-
 /** `specs/<name>.md`, when the seat asked for a specialization. */
 export function specSheet(name: string | undefined): string | null {
   if (!name || !/^[a-z0-9-]+$/.test(name)) return null;
@@ -70,31 +64,37 @@ export function specFromTitle(title: string | null | undefined): string | undefi
 }
 
 export interface PromptContext {
-  harness?: Harness;
+  harness: Harness;
   spec?: string;
   params: RoomParams;
   models?: Models;
 }
 
-/** The system prompt every seat receives: role file, specialization sheet, harness sheet; read on every call. */
+/** A seat's prompt: the room's system prompt for its agent CLI, then its role and specialization; read on every call. */
 export function rolePrompt(role: Role, context: PromptContext): string {
-  const roleText = readIfExists(join(ROOM_DIR, "roles", `${role}.md`));
-  if (!roleText) {
-    throw new Error(`seatwork: missing role prompt ${join(ROOM_DIR, "roles", `${role}.md`)} (set the room up again)`);
-  }
+  const texts = [join(ROOM_DIR, "harness", `${context.harness}-system.md`), join(ROOM_DIR, "roles", `${role}.md`)].map(
+    (file) => {
+      const text = readIfExists(file);
+      if (!text) throw new Error(`seatwork: missing prompt file ${file} (set the room up again)`);
+      return { file, text };
+    },
+  );
   const spec = specSheet(context.spec);
-  const sheet = harnessSheet(context.harness);
   const vars = promptVars(context.models ?? loadModels(), context.params);
-  const missing: string[] = [];
-  const rendered = render(roleText.trim(), vars, (name) => missing.push(name));
-  if (missing.length) console.error(`seatwork: roles/${role}.md uses unknown placeholders: ${missing.join(", ")}`);
+  const [room, own] = texts.map(({ file, text }) => {
+    const missing: string[] = [];
+    const rendered = render(text.trim(), vars, (name) => missing.push(name));
+    if (missing.length) console.error(`seatwork: ${file} uses unknown placeholders: ${missing.join(", ")}`);
+    return rendered;
+  });
   const needsRoomDir = role === "hq"; // a project seat is shown none of the room's directory
+  // what every seat of this CLI shares comes first, word for word the same; what is this seat's own follows
   const parts = [
-    `# Seat: ${role}${context.spec ? ` (specialization: ${context.spec})` : ""}`,
-    `This session is a ${role} seat in a Paseo room.${needsRoomDir ? ` ROOM_DIR=${ROOM_DIR}. ROOM_HOME=${ROOM_HOME}.` : ""} Role skills live in your skills directory: use them for the procedures they name.`,
-    rendered,
-    spec ? `\n---\n\n${spec.trim()}` : null,
-    sheet ? `\n---\n\n${sheet.trim()}` : null,
+    room,
+    `---\n\n# Seat: ${role}${context.spec ? ` (specialization: ${context.spec})` : ""}`,
+    needsRoomDir ? `ROOM_DIR=${ROOM_DIR}. ROOM_HOME=${ROOM_HOME}.` : null,
+    own,
+    spec ? `---\n\n${spec.trim()}` : null,
   ];
   return parts.filter((p): p is string => typeof p === "string" && p.length > 0).join("\n\n");
 }

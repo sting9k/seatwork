@@ -4,7 +4,7 @@ import { hqDir } from "./hq";
 import { missingSeats, projectModels } from "./models";
 import type { PaseoApi } from "./paseo";
 import { REGISTRY_FILE } from "./paths";
-import { loadRegistry, readLaw, realOrSelf } from "./registry";
+import { isInside, loadRegistry, readLaw, realOrSelf } from "./registry";
 import { enabledSeats } from "./seats";
 
 interface PaseoProject {
@@ -198,4 +198,30 @@ export async function registerProject(
   ].filter(Boolean);
   const seats = added.length ? ` Seats set up for this table: ${added.join(", ")}.` : "";
   return `${known ? "already registered" : "registered"}: ${name} at ${project.path}. ${modelsLine(project.path)}.${seats} ${missing.length ? `Still missing: ${missing.join("; ")}.` : "Mission and law are in place."}`;
+}
+
+/** Takes a project out of the registry; refused while a seat of it is open. */
+export async function unregisterProject(
+  project: string,
+  openSeats: () => Promise<{ title: string; cwd: string }[]>,
+): Promise<string> {
+  const raw = existsSync(REGISTRY_FILE)
+    ? (JSON.parse(readFileSync(REGISTRY_FILE, "utf8")) as Record<string, unknown>)
+    : {};
+  const entries = (Array.isArray(raw.projects) ? raw.projects : []) as { name: string; cwd: string }[];
+  const wanted = project.trim();
+  const entry = entries.find((e) => e.name === wanted || realOrSelf(e.cwd) === realOrSelf(wanted));
+  if (!wanted || !entry) throw new Error(`${project} is not a registered project (seatwork_projects lists them)`);
+  const root = realOrSelf(entry.cwd);
+  const open = (await openSeats()).filter((seat) => isInside(realOrSelf(seat.cwd), root));
+  if (open.length)
+    throw new Error(
+      `${open.length} seat${open.length === 1 ? "" : "s"} of ${entry.name} ${open.length === 1 ? "is" : "are"} still open (${open
+        .slice(0, 3)
+        .map((seat) => seat.title)
+        .join(", ")}${open.length > 3 ? ", …" : ""}); archive ${open.length === 1 ? "it" : "them"} first`,
+    );
+  const left = entries.filter((e) => e !== entry);
+  writeFileSync(REGISTRY_FILE, `${JSON.stringify({ ...raw, projects: left }, null, 2)}\n`, { mode: 0o600 });
+  return `unregistered: ${entry.name} at ${root}. Its .seatwork/ files stay where they are, and seatwork_register_project brings it back. Registered now: ${left.map((e) => e.name).join(", ") || "no project, so no project seat can start"}.`;
 }

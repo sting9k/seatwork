@@ -44,6 +44,14 @@ function stamp(file: string): string {
   }
 }
 
+/** Of `paths`, those git already had in the commit a snapshot stood on. */
+export async function trackedAt(at: TreeSnapshot, paths: readonly string[]): Promise<string[]> {
+  if (paths.length === 0) return [];
+  const listed = await git(at.root, ["ls-tree", "-r", "--name-only", "-z", at.head, "--", ...paths.slice(0, 200)]);
+  const tracked = new Set((listed ?? "").split("\0"));
+  return paths.filter((path) => tracked.has(path));
+}
+
 /** Files that changed between two snapshots of one tree: the dirty set's differences plus new commits. */
 export async function changedBetween(before: TreeSnapshot, after: TreeSnapshot): Promise<string[]> {
   const changed = new Set<string>();

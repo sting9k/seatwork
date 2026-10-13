@@ -143,7 +143,7 @@ test("Init sets the room up and starts it without a reload; Apply restarts it on
   assert.deepEqual([policy().watcher.mode, policy().owner.chime, policy().mail.port], ["shadow", false, 0]);
   // the room runs: a seat created now gets its role and the room's mail server
   const seat = await createPeer();
-  assert.match(seat.config.systemPrompt, /^# Seat: peer/);
+  assert.match(seat.config.systemPrompt, /^# The room\n[\s\S]*\n# Seat: peer\n/);
   assert.ok("seatwork" in seat.config.mcpServers);
 
   // the Lead moved to a harness of its own: its seat is set up, and nothing is registered twice
@@ -217,7 +217,7 @@ test("after an update of the plugin the room takes no new seat until its files a
   delete daemon.config.plugins["slp-seat"];
   assert.ok(!(await state()).checks.some((check) => check.id === "two-copies"));
   await init({ models: { seats: { lead: { provider: "pi-lead/m", thinking: "high" } } }, watcher: "on" });
-  assert.match((await createPeer()).config.systemPrompt, /^# Seat: peer/);
+  assert.match((await createPeer()).config.systemPrompt, /^# The room\n[\s\S]*\n# Seat: peer\n/);
 });
 
 test("Init clears a room from before 0.19.0: its home and its notes in a project are kept aside, its key is carried over, nothing of the user's moves", async () => {

@@ -91,6 +91,7 @@ export function promptVars(m: Models, params: RoomParams): Record<string, string
     lead_stall: String(params.leadStallMinutes),
     read_budget: `~${Math.round(params.readBudgetTokens / 1000)}k`,
     cheap_read_budget: `~${Math.round(params.cheapReadBudgetTokens / 1000)}k`,
+    mail_chars: params.mailChars.toLocaleString("en-US"),
   };
 }
 

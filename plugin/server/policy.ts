@@ -62,6 +62,7 @@ export interface RoomParams {
   leadStallMinutes: number;
   readBudgetTokens: number;
   cheapReadBudgetTokens: number;
+  mailChars: number;
 }
 
 /** Who may write to whom and create whom: `routes` keys are "<sender>><recipient>", `spawn` entries `role` or `role:spec`. */

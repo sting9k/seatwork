@@ -12,7 +12,7 @@ import { basename, dirname, join } from "node:path";
 import type { PaseoApi } from "./paseo";
 import { paseoCli as cli } from "./cli";
 import { waitsOnSomeone, type MailEngine } from "./mail";
-import { PASEO_SCHEDULES, ROOM_HOME } from "./paths";
+import { PASEO_SCHEDULES, ROOM_HOME, SEAT_TMP_DIR } from "./paths";
 import type { GcPolicy } from "./policy";
 import { KEEP_REMOVED_DAYS } from "./setup/room-home";
 import { isVerdict } from "./watch/calibrate";
@@ -105,6 +105,7 @@ export class Collector {
       const live = await liveAgents(this.paseo);
       await this.archiveIdleSeats(live);
       if (this.policy.deleteOrphanHeartbeats) await this.deleteHeartbeats((agentId) => !live.has(agentId));
+      for (const dir of dropSeatTmp(SEAT_TMP_DIR, [...live.keys()])) this.log(`gc: deleted ${dir}, a closed seat's`);
     } catch (error) {
       this.log(`gc: pass failed: ${error instanceof Error ? error.message : String(error)}`);
     } finally {
@@ -212,6 +213,7 @@ const LOGS: readonly { file: string; stays?(line: Line): boolean }[] = [
   // verdicts stay: the watcher's statistics need them
   { file: join("mail", "log.jsonl"), stays: (line) => line.kind === "queued" && isVerdict(String(line.subject ?? "")) },
   { file: "gc.log" },
+  { file: "usage-log.jsonl" },
 ];
 
 /** Drops a log's lines dated before `before`; returns how many. */
@@ -279,6 +281,17 @@ export function dropStamped(
     .slice(spare)
     .filter((entry) => now.getTime() - entry.at >= days * 86_400_000)
     .map((entry) => entry.path);
+  for (const path of gone) rmSync(path, { recursive: true, force: true });
+  return gone;
+}
+
+/** Deletes closed seats' temporary directories once untouched for `days`. */
+export function dropSeatTmp(dir: string, open: readonly string[], days = KEEP_LOG_DAYS, now = new Date()): string[] {
+  if (!existsSync(dir)) return [];
+  const gone = readdirSync(dir)
+    .filter((name) => !open.some((agentId) => agentId.startsWith(name)))
+    .map((name) => join(dir, name))
+    .filter((path) => now.getTime() - statSync(path).mtimeMs >= days * 86_400_000);
   for (const path of gone) rmSync(path, { recursive: true, force: true });
   return gone;
 }

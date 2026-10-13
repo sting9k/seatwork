@@ -9,13 +9,26 @@ import { collectFiles, Collector, KEEP_LOG_DAYS, liveAgents } from "./server/gc"
 import { MailEngine, type Mail, type Priority, type Needs } from "./server/mail";
 import { checkHqPlacement, ensureHqProject, hqDir, removeHqProject } from "./server/hq";
 import { McpHttpServer } from "./server/mcp-http";
-import { HQ_PROJECT, PASEO_HOME, REGISTRY_LOG, ROOM_HOME, WATCH_DIR } from "./server/paths";
-import { describeProjects, projectTables, registerProject, writeProjectModels } from "./server/onboard";
+import { HQ_PROJECT, PASEO_HOME, REGISTRY_LOG, ROOM_HOME, SEAT_TMP_DIR, WATCH_DIR } from "./server/paths";
+import {
+  describeProjects,
+  projectTables,
+  registerProject,
+  unregisterProject,
+  writeProjectModels,
+} from "./server/onboard";
 import { OwedList, roomStatus as readRoomStatus } from "./server/room-status";
 import { fitSeat, loadModels, projectModels, type Models } from "./server/models";
 import { loadPolicy, type RuntimePolicy } from "./server/policy";
 import { findProject, findRoomMarker, loadRegistry, projectBlock } from "./server/registry";
-import { claudeRoleDir, describeIsolation, ensureRuntime, envFor, sharedClaudeFiles } from "./server/runtimes";
+import {
+  claudeRoleDir,
+  describeIsolation,
+  ensureRuntime,
+  envFor,
+  roleSkillNames,
+  sharedClaudeFiles,
+} from "./server/runtimes";
 import { enabledSeats, HARNESSES, maySpawn, parseSeat, rolePrompt, specFromTitle, type Role } from "./server/seats";
 import { catalogFrom, harnessStates } from "./server/setup/catalog";
 import { piProblem } from "./server/setup/checks";
@@ -25,8 +38,8 @@ import { clearOldRoom } from "./server/setup/old-room";
 import { roomModels, type Setup } from "./server/setup/plan";
 import { keptAt, roomFolders, takeRoomFiles, type ProjectFiles } from "./server/setup/project-files";
 import { isSetUp, KEEP_REMOVED_DAYS, moveRoomHomeAside, readSetup } from "./server/setup/room-home";
-import { asksOwner, CLOSES_WORK, signalOf, subjectSignal } from "./server/signals";
-import { roomStats } from "./server/stats";
+import { CLOSES_WORK, SUBJECT_SIGNALS, asksOwner, opensWithSignal, signalOf, subjectSignal } from "./server/signals";
+import { noteUsage, roomStats } from "./server/stats";
 import { Budget } from "./server/watch/budget";
 import { calibrate, renderCalibration, type MailLine } from "./server/watch/calibrate";
 import { snapshot } from "./server/watch/git";
@@ -41,7 +54,7 @@ import { Watcher, type SeatView, type TimelineView } from "./server/watch/watche
 
 type CreateRequest = PluginBeforeRequests["agent.create"];
 
-const VERSION = "0.19.2";
+const VERSION = "0.20.0";
 const MAIL_DIR = join(ROOM_HOME, "mail");
 const MCP_TOKEN_FILE = join(MAIL_DIR, "token");
 const NONCES_FILE = join(MAIL_DIR, "nonces.json");
@@ -486,10 +499,13 @@ function startRoom(server: Pick<PluginServerContext, "on" | "before">): Room {
           },
           subject: {
             type: "string",
-            description:
-              "Short subject, ideally starting with a protocol signal (QUESTION, CANDIDATE, ANSWER, ACCEPT, ...).",
+            description: `Short subject that opens with one of the room's signals: ${SUBJECT_SIGNALS.join(", ")}.`,
           },
-          body: { type: "string", description: "The message. Self-contained: the recipient may read it hours later." },
+          body: {
+            type: "string",
+            description:
+              "The message. Self-contained: the recipient may read it hours later. Long text (a log, a full review) goes into a file the message names.",
+          },
           needs: { type: "string", enum: ["reply", "decision", "nothing"], description: "What you need back." },
           priority: {
             type: "string",
@@ -538,6 +554,15 @@ function startRoom(server: Pick<PluginServerContext, "on" | "before">): Room {
       const recipient = engine.seat(to)!;
       const subject = String(args.subject ?? "").trim() || "(no subject)";
       const body = String(args.body ?? "");
+      if (!opensWithSignal(subject))
+        throw new Error(
+          `seatwork_mail: the subject opens with none of the room's signals (${SUBJECT_SIGNALS.join(", ")}); a change to what a seat must do is a REVISED BRIEF, a fact it should know is an FYI. Nothing was sent.`,
+        );
+      const limit = policy.room.params.mailChars;
+      if (body.length > limit)
+        throw new Error(
+          `seatwork_mail: the body is ${body.length} characters and a mail takes ${limit}. Put the long part in a file (.seatwork/reviews/ for a review, .seatwork/plans/ for a plan or a handoff) and send the verdict or the ask, one line per finding, and the file's path. Nothing was sent.`,
+        );
       const needs = (["reply", "decision", "nothing"].includes(String(args.needs)) ? args.needs : "nothing") as Needs;
       const suggested = (["blocking", "action", "fyi"].includes(String(args.priority)) ? args.priority : undefined) as
         Priority | undefined;
@@ -666,8 +691,29 @@ function startRoom(server: Pick<PluginServerContext, "on" | "before">): Room {
 
   mcp.register(
     {
+      name: "seatwork_unregister_project",
+      description:
+        "Take a project out of the registry: no seat of the room starts in it after that. Its `.seatwork/` files stay, and seatwork_register_project brings it back. Refused while a seat of the project is open, and for seats that do not keep the registry.",
+      inputSchema: {
+        type: "object",
+        properties: { project: { type: "string", description: "The project's registry name, or its root." } },
+        required: ["project"],
+      },
+    },
+    async (args, context) => {
+      const paseo = registryOwner(context.nonce, "seatwork_unregister_project");
+      return unregisterProject(String(args.project ?? ""), async () =>
+        [...(await liveAgents(paseo)).values()]
+          .filter((agent) => parseSeat(agent.provider) && agent.cwd)
+          .map((agent) => ({ title: agent.title ?? agent.id, cwd: agent.cwd as string })),
+      );
+    },
+  );
+
+  mcp.register(
+    {
       name: "seatwork_room_stats",
-      description: `What the mail log says happened in the last N days, per project and per signal (candidates accepted or rejected, reopen requests conceded or held, decisions escalated, questions). The log keeps ${KEEP_LOG_DAYS} days. Refused for seats that do not keep the registry.`,
+      description: `What the mail log says happened in the last N days, per project and per signal (candidates accepted or rejected, reopen requests conceded or held, decisions escalated, questions), then what each project's seats used, per role, as their agent CLIs report it. The logs keep ${KEEP_LOG_DAYS} days. Refused for seats that do not keep the registry.`,
       inputSchema: {
         type: "object",
         properties: {
@@ -783,7 +829,10 @@ function startRoom(server: Pick<PluginServerContext, "on" | "before">): Room {
       if (!seat) return request;
       // Paseo saves no env with an agent: a reopened seat would start on the user's own home
       ensureRuntime(seat);
-      return { ...request, env: { ...request.env, ...envFor(seat, policy) } };
+      // a temporary directory per seat: one seat's cleanup cannot take another seat's files
+      const tmp = join(SEAT_TMP_DIR, request.agentId.slice(0, 8));
+      mkdirSync(tmp, { recursive: true, mode: 0o700 });
+      return { ...request, env: { ...request.env, ...envFor(seat, policy), TMPDIR: tmp } };
     }),
   );
 
@@ -882,6 +931,7 @@ function startRoom(server: Pick<PluginServerContext, "on" | "before">): Room {
       const eng = getEngine(paseo);
       const id = event.agent.id;
       const seat = parseSeat(event.agent.provider);
+      if (seat) void noteUsage(paseo, event.agent, seat.role).catch(() => {});
       // what started this turn and what the seat mailed during it; read before the next delivery
       const wake = eng.takeWake(id);
       const kept = eng.takeReport(id);
@@ -1140,7 +1190,9 @@ function startRoom(server: Pick<PluginServerContext, "on" | "before">): Room {
     const spec = specFromTitle(request.config.title) ?? (typeof featureSpec === "string" ? featureSpec : undefined);
     const parts = [
       rolePrompt(seat.role, { harness: seat.harness, spec, params: policy.room.params, models }),
-      project ? projectBlock(project.name, project.root, project.mission, project.law) : null,
+      project
+        ? projectBlock(project.name, project.root, project.mission, project.law, roleSkillNames(seat.role))
+        : null,
       seat.harness === "claude" ? sharedClaudeFiles(policy) : null,
       request.config.systemPrompt,
     ];

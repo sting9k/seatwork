@@ -1,10 +1,10 @@
 import { installRoom, USER_CODEX, USER_PI } from "./support/room";
 import assert from "node:assert/strict";
-import { readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { test } from "node:test";
 import type { CodexRuntimePolicy, RuntimePolicy } from "../server/policy";
-import { ensureRuntime, runtimeDir } from "../server/runtimes";
+import { claudeRoleDir, ensureRuntime, roleSkillNames, runtimeDir } from "../server/runtimes";
 
 const seat = { harness: "codex", role: "peer" } as const;
 const userConfig = join(USER_CODEX, "config.toml");
@@ -140,4 +140,13 @@ test("a Pi seat's home takes the user's settings without their packages and exte
     packages: [],
     extensions: [],
   });
+});
+
+test("a Claude seat's skill folder holds the role's skills as they are named now: a link to a skill that is gone is dropped", () => {
+  ensureRuntime({ harness: "claude", role: "peer" });
+  const skills = join(claudeRoleDir("peer"), ".claude", "skills");
+  symlinkSync(join(skills, "..", "no-such-skill"), join(skills, "seatwork-hard-cut"));
+  ensureRuntime({ harness: "claude", role: "peer" });
+  assert.deepEqual(readdirSync(skills).sort(), roleSkillNames("peer"));
+  assert.ok(existsSync(join(skills, "hard-cut", "SKILL.md")));
 });

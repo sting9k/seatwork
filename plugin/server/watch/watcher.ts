@@ -5,7 +5,8 @@ import type { Budget } from "./budget";
 import { Lru } from "./cache";
 import { letters, prompts, toEvents, turnStartOf, type TimelineInput } from "./events";
 import { turnFacts, type TurnFacts } from "./facts";
-import { changedBetween, type TreeSnapshot } from "./git";
+import { changedBetween, trackedAt, type TreeSnapshot } from "./git";
+import { isTestPath } from "./scope";
 import type { DecisionAnswer, DecisionEngine, DecisionReply } from "./jev";
 import { estimateTokens } from "./jev";
 import { inquiryFor, REVISION, type Inquiry } from "./questions";
@@ -50,6 +51,8 @@ export interface WatcherDeps {
   now(): number;
   log(message: string): void;
 }
+
+const SPANS_KEPT = 20;
 
 interface Turn {
   id: string | null;
@@ -108,6 +111,8 @@ function briefGapOf(
 export class Watcher {
   private readonly seats = new Map<string, Watched>();
   private readonly answers = new Lru<Record<string, DecisionAnswer>>(256);
+  /** When and where each Peer had a turn: a shared tree tells nothing about one of them. */
+  private readonly spans = new Map<string, { cwd: string; from: number; to: number | null }[]>();
 
   constructor(private readonly deps: WatcherDeps) {}
 
@@ -128,6 +133,10 @@ export class Watcher {
   }
 
   turnStarted(seat: SeatView, turnId: string | null): void {
+    if (seat.role === "peer") {
+      const spans = [...(this.spans.get(seat.agentId) ?? []), { cwd: seat.cwd, from: this.deps.now(), to: null }];
+      this.spans.set(seat.agentId, spans.slice(-SPANS_KEPT));
+    }
     if (!this.watches(seat)) return;
     const watched = this.seats.get(seat.agentId) ?? {
       seat,
@@ -154,6 +163,7 @@ export class Watcher {
 
   /** `carried`: the seat's report follows at once, so a notice may wait for it. */
   async turnEnded(seat: SeatView, turnId: string | null, carried: boolean): Promise<void> {
+    this.closeSpan(seat.agentId);
     if (!this.watches(seat)) return;
     const watched = this.seats.get(seat.agentId) ?? {
       seat,
@@ -175,10 +185,25 @@ export class Watcher {
 
   forget(agentId: string): void {
     this.seats.delete(agentId);
+    this.spans.delete(agentId);
+  }
+
+  private closeSpan(agentId: string): void {
+    const open = this.spans.get(agentId)?.findLast((span) => span.to === null);
+    if (open) open.to = this.deps.now();
+  }
+
+  /** Whether another Peer had a turn in the same directory at any time since `from`. */
+  private sharedSince(seat: SeatView, from: number): boolean {
+    for (const [agentId, spans] of this.spans)
+      if (agentId !== seat.agentId && spans.some((span) => span.cwd === seat.cwd && (span.to ?? Infinity) >= from))
+        return true;
+    return false;
   }
 
   /** The seat's runtime closed in mid-turn: that turn gets no end and is not read again. */
   cut(agentId: string): void {
+    this.closeSpan(agentId);
     const watched = this.seats.get(agentId);
     if (watched) watched.turn = watched.ending = null;
   }
@@ -233,8 +258,11 @@ export class Watcher {
     const briefGap =
       seat.role === "peer" && seat.parentRole === "lead" ? briefGapOf(entries, received, turn.id, seat.cwd) : null;
     const before = await turn.before;
-    const after = before && moment === "end" ? await this.deps.snapshot(seat.cwd).catch(() => null) : null;
+    // git shows what changed, not who: it speaks for a Peer that had the tree to itself
+    const alone = !this.sharedSince(seat, turn.startedAt);
+    const after = before && alone && moment === "end" ? await this.deps.snapshot(seat.cwd).catch(() => null) : null;
     const changed = before && after ? await changedBetween(before, after) : null;
+    const changedTests = before && changed ? await trackedAt(before, changed.filter(isTestPath)) : [];
     const facts = turnFacts({
       events,
       turnStart: turnStartOf(entries, events, turn.id),
@@ -243,6 +271,7 @@ export class Watcher {
       brief: watched.brief,
       ended: moment === "end",
       changed,
+      changedTests,
       now: this.deps.now(),
       startedAt: turn.startedAt,
       later: briefAt < 0 ? [] : received.slice(briefAt + 1),

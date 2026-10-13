@@ -2,6 +2,38 @@
 
 export const SIGNAL =
   /\b(DONE|DECISION_NEEDED|BLOCKED|REOPEN_REQUEST|DEPENDENCY_REQUEST|QUESTION|CANDIDATE|REVIEW|STATUS)\b/;
+/** Every word a mail's subject may open with: signals and the answers to them. */
+export const SUBJECT_SIGNALS = [
+  "CANDIDATE",
+  "REVIEW",
+  "DONE",
+  "STATUS",
+  "QUESTION",
+  "REOPEN_REQUEST",
+  "DEPENDENCY_REQUEST",
+  "BLOCKED",
+  "DECISION_NEEDED",
+  "HANDOFF",
+  "ACK",
+  "REVISED BRIEF",
+  "INSTRUCTION",
+  "ANSWER",
+  "ACCEPT",
+  "REJECT",
+  "HOLD",
+  "NOTED",
+  "DEFER",
+  "FYI",
+  "CHALLENGE",
+  "RESPONSE",
+] as const;
+
+/** Whether a subject opens with one of them. */
+export function opensWithSignal(subject: string): boolean {
+  const opening = subject.replace(/^\W+/, "").toUpperCase();
+  return SUBJECT_SIGNALS.some((signal) => opening === signal || new RegExp(`^${signal}\\b`).test(opening));
+}
+
 /** An acknowledgement counts only where a line opens with it: the word turns up inside other reports. */
 const ACK = /^\W*ACK\b/;
 /** Signals that say "my work is finished": the parent acts on the seat when it reads one. */

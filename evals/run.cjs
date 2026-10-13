@@ -34,22 +34,16 @@ const WORK = join(realpathSync(tmpdir()), `sw-${short(OUT)}`);
 const HOME = join(WORK, "home");
 const cases = require("./cases.cjs").filter((c) => !args.only || new RegExp(args.only).test(c.name));
 
-// the room's own tools per role; Paseo's come from policy.json
-const SEATWORK_TOOLS = {
-  hq: [
-    "seatwork_mail",
-    "seatwork_inbox",
-    "seatwork_adopt",
-    "seatwork_projects",
-    "seatwork_register_project",
-    "seatwork_unregister_project",
-    "seatwork_room_stats",
-  ],
-  supervisor: ["seatwork_mail", "seatwork_inbox", "seatwork_adopt"],
-  lead: ["seatwork_mail", "seatwork_inbox", "seatwork_adopt"],
-  peer: ["seatwork_mail", "seatwork_inbox"],
-  lens: ["seatwork_mail", "seatwork_inbox"],
-};
+// A run shows a seat the room tools its role is not refused; a real seat is listed all.
+const ROOM_TOOLS = require("../plugin/shared/tools.json").tools;
+const seatworkTools = (role) =>
+  Object.entries(ROOM_TOOLS)
+    .filter(
+      ([, tool]) =>
+        tool.callers === "any" ||
+        (tool.callers === "spawners" ? plugin.rawPolicy.room.spawn[role]?.length > 0 : tool.callers.includes(role)),
+    )
+    .map(([name]) => name);
 // what a Claude seat may run without asking; cases add Edit/Write when the brief is writable
 const BASE_ALLOW = [
   "Read",
@@ -106,22 +100,16 @@ function setup() {
   writeFileSync(
     join(HOME, "seats.json"),
     JSON.stringify({
-      providers: [
-        "claude-hq",
-        "claude-supervisor",
-        "claude-lead",
-        "claude-peer",
-        "claude-lens",
-        "codex-peer",
-        "codex-lens",
-      ],
+      providers: Object.entries(require("../plugin/paseo/seats.json").seats).flatMap(([role, harnesses]) =>
+        harnesses.map((harness) => `${harness}-${role}`),
+      ),
     }),
   );
   process.env.SEATWORK_ROOM_HOME = HOME;
   require("../plugin/test/register.cjs");
   const { rolePrompt, specFromTitle } = require("../plugin/server/seats");
   const { projectBlock } = require("../plugin/server/registry");
-  const { loadPolicy } = require("../plugin/server/policy");
+  const { loadPolicy, claudeDisallowed } = require("../plugin/server/policy");
   const { loadModels } = require("../plugin/server/models");
   const { ensureRuntime } = require("../plugin/server/runtimes");
   plugin = {
@@ -129,6 +117,7 @@ function setup() {
     specFromTitle,
     projectBlock,
     ensureRuntime,
+    claudeDisallowed,
     policy: loadPolicy(),
     models: loadModels(),
     rawPolicy: JSON.parse(readFileSync(join(ROOM, "plugin", "paseo", "policy.json"), "utf8")),
@@ -365,7 +354,7 @@ function prepare(c, run) {
   writeFileSync(statePath, fill(JSON.stringify({ cwd, ...(c.state ?? {}) })));
   const servers = {};
   for (const server of ["seatwork", "paseo"]) {
-    const tools = (server === "seatwork" ? SEATWORK_TOOLS[c.role] : plugin.rawPolicy.paseoTools.allow[c.role]).filter(
+    const tools = (server === "seatwork" ? seatworkTools(c.role) : plugin.rawPolicy.paseoTools.allow[c.role]).filter(
       (t) => !(c.hide ?? []).includes(t),
     );
     if (tools.length === 0) continue;
@@ -397,7 +386,7 @@ function prepare(c, run) {
 async function runClaude(c, run, p) {
   writeFileSync(join(p.dir, "mcp.json"), JSON.stringify({ mcpServers: p.servers }, null, 2));
   const disallowed = [
-    ...plugin.rawPolicy.claude.disallowedTools[c.role],
+    ...plugin.claudeDisallowed(plugin.rawPolicy, c.role),
     ...plugin.rawPolicy.claude.deniedSkills.map((s) => `Skill(skill:${s})`),
   ];
   // the flags and the env a real Claude seat starts with (policy `claude.launch`)

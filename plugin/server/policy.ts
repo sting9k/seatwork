@@ -1,6 +1,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { ROOM_HOME } from "./paths";
+import type { Harness, Role } from "./seats";
 
 /** Types and loader for policy.json: no defaults here, a broken file stops the plugin. */
 
@@ -49,10 +50,10 @@ export type MidTurnDelivery = "steer" | "hold";
 export interface MailPolicy {
   port: number;
   holdFyiWhileRunning: boolean;
-  midTurn: Record<"claude" | "codex" | "pi" | "opencode", MidTurnDelivery>;
+  midTurn: Record<Harness, MidTurnDelivery>;
 }
 
-export type RoleName = "hq" | "supervisor" | "lead" | "peer" | "lens";
+export type RoleName = Role;
 
 /** Knobs that role prompts quote; rendered into {{...}} placeholders at seat creation. */
 export interface RoomParams {
@@ -116,7 +117,7 @@ export interface RuntimePolicy {
   gc: GcPolicy;
   owner: OwnerPolicy;
   watcher: WatcherPolicy;
-  launch: Record<"claude" | "codex" | "pi" | "opencode", LaunchPolicy>;
+  launch: Record<Harness, LaunchPolicy>;
   claude: ClaudeRuntimePolicy;
   codex: CodexRuntimePolicy;
   pi: PiRuntimePolicy;
@@ -124,6 +125,19 @@ export interface RuntimePolicy {
 }
 
 export const POLICY_FILE = join(ROOM_HOME, "policy.json");
+
+/** A Claude seat's denied tools: the sets its role lists in `claude.disallowedTools`. */
+export function claudeDisallowed(raw: Record<string, any>, role: string): string[] {
+  const { sets, roles } = raw.claude.disallowedTools as {
+    sets: Record<string, string[]>;
+    roles: Record<string, string[]>;
+  };
+  return (roles[role] ?? []).flatMap((name) => {
+    if (!sets[name])
+      throw new Error(`paseo/policy.json: claude.disallowedTools.roles.${role} names an unknown set "${name}"`);
+    return sets[name];
+  });
+}
 
 function need<T>(value: T | undefined, where: string): T {
   if (value === undefined || value === null)

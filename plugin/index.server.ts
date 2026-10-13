@@ -21,6 +21,7 @@ import { OwedList, roomStatus as readRoomStatus } from "./server/room-status";
 import { fitSeat, loadModels, projectModels, type Models } from "./server/models";
 import { loadPolicy, type RuntimePolicy } from "./server/policy";
 import { findProject, findRoomMarker, lawSkills, loadRegistry, projectBlock } from "./server/registry";
+import { namesCaller, roomTool } from "./server/room-tools";
 import {
   claudeRoleDir,
   describeIsolation,
@@ -55,6 +56,7 @@ import { Watcher, type SeatView, type TimelineView } from "./server/watch/watche
 type CreateRequest = PluginBeforeRequests["agent.create"];
 
 const VERSION = "0.21.0";
+const PLUGIN_ID = "seatwork";
 const MAIL_DIR = join(ROOM_HOME, "mail");
 const MCP_TOKEN_FILE = join(MAIL_DIR, "token");
 const NONCES_FILE = join(MAIL_DIR, "nonces.json");
@@ -265,17 +267,12 @@ export default function contribute(server: PluginServerContext) {
   };
 }
 
-/** The plugin's own folder, where the room files ship: Paseo knows it, the plugin's code does not. */
+/** The plugin's own folder, where the room files ship: Paseo lists it under the plugin's id. */
 async function ownFolder(paseo: PaseoApi): Promise<string> {
-  const holdsRoom = (dir: unknown): dir is string =>
-    typeof dir === "string" &&
-    existsSync(join(dir, "room", "models.json")) &&
-    existsSync(join(dir, "paseo", "policy.json"));
   const { config } = await paseo.config.get();
-  const listed = Object.values((config.plugins ?? {}) as Record<string, { path?: unknown }>).map(
-    (plugin) => plugin.path,
-  );
-  const found = listed.find(holdsRoom) ?? sourceOf(ROOM_HOME);
+  const listed = ((config.plugins ?? {}) as Record<string, { path?: unknown }>)[PLUGIN_ID]?.path;
+  const found =
+    typeof listed === "string" && existsSync(join(listed, "room", "models.json")) ? listed : sourceOf(ROOM_HOME);
   if (!found) throw new Error("seatwork: Paseo's plugin list does not say where this plugin's folder is");
   return found;
 }
@@ -326,7 +323,7 @@ async function setupChecks(
   }
   // until 0.18.0 the plugin's id was slp-seat: both ids installed are two copies running one room
   const ids = Object.keys((config.plugins ?? {}) as object);
-  if (ids.includes("slp-seat") && ids.includes("seatwork")) {
+  if (ids.includes("slp-seat") && ids.includes(PLUGIN_ID)) {
     checks.push({
       id: "two-copies",
       label: "Two copies of this plugin",
@@ -485,337 +482,213 @@ function startRoom(server: Pick<PluginServerContext, "on" | "before">): Room {
     };
   };
 
-  mcp.register(
-    {
-      name: "seatwork_mail",
-      description:
-        "Write to another seat of your room. To answer a mail you received, pass reply_to: its id (the #id in its header) and no `to`; the answer goes to whoever sent it. To start a new thread, pass `to`: `owner` (the seat that launched you) or the id of a seat you launched. The plugin wraps it in an envelope and delivers it between the recipient's turns; it never interrupts anyone. A CANDIDATE, REVIEW or DONE to your owner is your turn's report: it is delivered when your turn ends, and your final message is not mailed a second time. Mail to an archived seat is refused.",
-      inputSchema: {
-        type: "object",
-        properties: {
-          to: {
-            type: "string",
-            description:
-              "New thread: `owner` (the seat that launched you) or the id of a seat you launched. Omit when reply_to is given.",
-          },
-          reply_to: {
-            type: "string",
-            description:
-              "Id of the mail you are answering (the #id in its header). The recipient is that mail's sender; use this for every answer so it reaches the right seat.",
-          },
-          subject: {
-            type: "string",
-            description: `Short subject that opens with one of the room's signals: ${SUBJECT_SIGNALS.join(", ")}.`,
-          },
-          body: {
-            type: "string",
-            description:
-              "The message. Self-contained: the recipient may read it hours later. Long text (a log, a full review) goes into a file the message names.",
-          },
-          needs: { type: "string", enum: ["reply", "decision", "nothing"], description: "What you need back." },
-          priority: {
-            type: "string",
-            enum: ["blocking", "action", "fyi"],
-            description: "Suggested priority; the plugin may raise or lower it.",
-          },
-        },
-        required: ["subject", "body"],
-      },
-    },
-    async (args, context) => {
-      if (!engine) throw new Error("mail engine not ready (no room seat has been created on this daemon yet)");
-      const from = resolveCaller(context.nonce);
-      if (!from) throw new Error("seatwork_mail: this session is not a registered room seat (unknown caller)");
-      const replyTo = String(args.reply_to ?? "")
+  const toolVars = { signals: SUBJECT_SIGNALS.join(", "), keep_log_days: String(KEEP_LOG_DAYS) };
+  mcp.register(roomTool("seatwork_mail", toolVars), async (args, context) => {
+    if (!engine) throw new Error("mail engine not ready (no room seat has been created on this daemon yet)");
+    const from = resolveCaller(context.nonce);
+    if (!from) throw new Error("seatwork_mail: this session is not a registered room seat (unknown caller)");
+    const replyTo = String(args.reply_to ?? "")
+      .trim()
+      .replace(/^#/, "");
+    let to: string;
+    let viaReply = false;
+    if (replyTo) {
+      const ref = engine.lookupMail(replyTo);
+      if (!ref) throw new Error(`seatwork_mail: no mail #${replyTo} is known; copy the id from the mail header`);
+      if (ref.to !== from)
+        throw new Error(`seatwork_mail: mail #${replyTo} was not addressed to you; you can only answer your own mail`);
+      if (ref.from === "room")
+        throw new Error(`seatwork_mail: #${replyTo} is a notice from the room; nobody waits for an answer`);
+      to = ref.from;
+      viaReply = true;
+    } else {
+      const rawTo = String(args.to ?? "")
         .trim()
-        .replace(/^#/, "");
-      let to: string;
-      let viaReply = false;
-      if (replyTo) {
-        const ref = engine.lookupMail(replyTo);
-        if (!ref) throw new Error(`seatwork_mail: no mail #${replyTo} is known; copy the id from the mail header`);
-        if (ref.to !== from)
-          throw new Error(
-            `seatwork_mail: mail #${replyTo} was not addressed to you; you can only answer your own mail`,
-          );
-        if (ref.from === "room")
-          throw new Error(`seatwork_mail: #${replyTo} is a notice from the room; nobody waits for an answer`);
-        to = ref.from;
-        viaReply = true;
-      } else {
-        const rawTo = String(args.to ?? "")
-          .trim()
-          .replace(/^(hq|supervisor|lead|peer):/i, "");
-        to = /^(owner|parent|human)$/i.test(rawTo) ? (engine.parentOf(from) ?? "") : rawTo;
-        if (!to)
-          throw new Error(
-            `seatwork_mail: ${rawTo === "" ? "give `to` (owner, or a seat you launched) or reply_to" : "you have no parent seat; the Owner reads your final message, no mail is needed"}`,
-          );
+        .replace(/^(hq|supervisor|lead|peer):/i, "");
+      to = /^(owner|parent|human)$/i.test(rawTo) ? (engine.parentOf(from) ?? "") : rawTo;
+      if (!to)
+        throw new Error(
+          `seatwork_mail: ${rawTo === "" ? "give `to` (owner, or a seat you launched) or reply_to" : "you have no parent seat; the Owner reads your final message, no mail is needed"}`,
+        );
+    }
+    const check = engine.canWrite(from, to, viaReply);
+    if (!check.ok) throw new Error(`seatwork_mail refused: ${check.reason}`);
+    if ((await engine.recipientStatus(to)) === "gone")
+      throw new Error(`seatwork_mail refused: ${to} is archived or gone; nothing was sent`);
+    const sender = engine.seat(from)!;
+    const recipient = engine.seat(to)!;
+    const subject = String(args.subject ?? "").trim() || "(no subject)";
+    const body = String(args.body ?? "");
+    const opening = subjectOpening(subject);
+    if (!opening)
+      throw new Error(
+        `seatwork_mail: the subject opens with none of the room's signals (${SUBJECT_SIGNALS.join(", ")}); a change to what a seat must do is a REVISED BRIEF, a fact it should know is an FYI. Nothing was sent.`,
+      );
+    const limit = policy.room.params.mailChars;
+    if (body.length > limit)
+      throw new Error(
+        `seatwork_mail: the body is ${body.length} characters and a mail takes ${limit}. Put the long part in a file (.seatwork/reviews/ for a review, .seatwork/plans/ for a plan or a handoff) and send the verdict or the ask, one line per finding, and the file's path. Nothing was sent.`,
+      );
+    const needs = (["reply", "decision", "nothing"].includes(String(args.needs)) ? args.needs : "nothing") as Needs;
+    const suggested = (["blocking", "action", "fyi"].includes(String(args.priority)) ? args.priority : undefined) as
+      Priority | undefined;
+    const priority = classifyAgentMail({
+      senderRole: sender.role,
+      recipientRole: recipient.role,
+      subject,
+      needs,
+      suggested,
+    });
+    const signal = subjectSignal(subject);
+    if (signal && engine.parentOf(from) === to) {
+      mailedUp.set(from, (mailedUp.get(from) ?? new Set()).add(signal));
+      // "my work is finished" is true only once the turn has ended: the report is kept until then
+      if (CLOSES_WORK.has(signal)) {
+        const kept = engine.keepReport({
+          from: { agentId: from, role: sender.role },
+          to,
+          priority,
+          subject,
+          body,
+          needs: needs === "nothing" ? "reply" : needs,
+          whyNow: `the seat ended its turn with ${signal}`,
+        });
+        return `kept #${kept.id} as your report to owner: it is delivered once, when your turn ends. End your turn with ${signal} on the first line; do not send it again.`;
       }
-      const check = engine.canWrite(from, to, viaReply);
-      if (!check.ok) throw new Error(`seatwork_mail refused: ${check.reason}`);
-      if ((await engine.recipientStatus(to)) === "gone")
-        throw new Error(`seatwork_mail refused: ${to} is archived or gone; nothing was sent`);
-      const sender = engine.seat(from)!;
-      const recipient = engine.seat(to)!;
-      const subject = String(args.subject ?? "").trim() || "(no subject)";
-      const body = String(args.body ?? "");
-      const opening = subjectOpening(subject);
-      if (!opening)
-        throw new Error(
-          `seatwork_mail: the subject opens with none of the room's signals (${SUBJECT_SIGNALS.join(", ")}); a change to what a seat must do is a REVISED BRIEF, a fact it should know is an FYI. Nothing was sent.`,
-        );
-      const limit = policy.room.params.mailChars;
-      if (body.length > limit)
-        throw new Error(
-          `seatwork_mail: the body is ${body.length} characters and a mail takes ${limit}. Put the long part in a file (.seatwork/reviews/ for a review, .seatwork/plans/ for a plan or a handoff) and send the verdict or the ask, one line per finding, and the file's path. Nothing was sent.`,
-        );
-      const needs = (["reply", "decision", "nothing"].includes(String(args.needs)) ? args.needs : "nothing") as Needs;
-      const suggested = (["blocking", "action", "fyi"].includes(String(args.priority)) ? args.priority : undefined) as
-        Priority | undefined;
-      const priority = classifyAgentMail({
-        senderRole: sender.role,
+    }
+    // an ACK, or a receipt for a candidate under review, asks nothing of anyone: neither starts a turn
+    const waits =
+      signal === "ACK" ||
+      isReceipt({
         recipientRole: recipient.role,
         subject,
-        needs,
-        suggested,
+        needs: args.needs,
+        fromAbove: engine.isAncestor(from, to),
+        recipientEndedWith: lastSignal.get(to),
       });
-      const signal = subjectSignal(subject);
-      if (signal && engine.parentOf(from) === to) {
-        mailedUp.set(from, (mailedUp.get(from) ?? new Set()).add(signal));
-        // "my work is finished" is true only once the turn has ended: the report is kept until then
-        if (CLOSES_WORK.has(signal)) {
-          const kept = engine.keepReport({
-            from: { agentId: from, role: sender.role },
-            to,
-            priority,
-            subject,
-            body,
-            needs: needs === "nothing" ? "reply" : needs,
-            whyNow: `the seat ended its turn with ${signal}`,
-          });
-          return `kept #${kept.id} as your report to owner: it is delivered once, when your turn ends. End your turn with ${signal} on the first line; do not send it again.`;
-        }
-      }
-      // an ACK, or a receipt for a candidate under review, asks nothing of anyone: neither starts a turn
-      const waits =
-        signal === "ACK" ||
-        isReceipt({
-          recipientRole: recipient.role,
-          subject,
-          needs: args.needs,
-          fromAbove: engine.isAncestor(from, to),
-          recipientEndedWith: lastSignal.get(to),
-        });
-      const mail = await engine.post({
-        from: { agentId: from, role: sender.role },
-        to,
-        priority: waits ? "fyi" : priority,
-        subject,
-        body,
-        needs,
-        whyNow: whyNowFor(engine.isAncestor(from, to) ? "owner" : sender.role, needs),
-        ...(waits ? { quiet: true as const } : {}),
-      });
-      const held = engine.held(to).some((m) => m.id === mail.id);
-      // the skill allows two rounds of repair: the third is said where the Lead sends it
-      let round = "";
-      if (sender.role === "lead" && recipient.role === "peer") {
-        if (opening === "REJECT") {
-          const count = (rejectsSinceAccept.get(to) ?? 0) + 1;
-          rejectsSinceAccept.set(to, count);
-          if (count >= 3)
-            round = ` This is REJECT ${count} of this Peer's task since its last ACCEPT or brief: a round past the second is your Owner's call (accept-candidate, step 5). Unless the Owner gave you this round, report DECISION_NEEDED with what each round found and what one more costs; the task holds meanwhile.`;
-        } else if (opening === "ACCEPT" || opening === "REVISED BRIEF" || opening === "DEFER")
-          rejectsSinceAccept.delete(to);
-      }
-      return `sent #${mail.id} to ${engine.isAncestor(to, from) ? "owner" : `${recipient.role} ${to}`} as ${mail.priority}; ${waits ? "it is read with the recipient's next mail" : held ? "held until the recipient can take it" : "delivered"}. Continue your work; do not wait for a reply unless needs=decision blocks you.${round}`;
-    },
-  );
+    const mail = await engine.post({
+      from: { agentId: from, role: sender.role },
+      to,
+      priority: waits ? "fyi" : priority,
+      subject,
+      body,
+      needs,
+      whyNow: whyNowFor(engine.isAncestor(from, to) ? "owner" : sender.role, needs),
+      ...(waits ? { quiet: true as const } : {}),
+    });
+    const held = engine.held(to).some((m) => m.id === mail.id);
+    // the skill allows two rounds of repair: the third is said where the Lead sends it
+    let round = "";
+    if (sender.role === "lead" && recipient.role === "peer") {
+      if (opening === "REJECT") {
+        const count = (rejectsSinceAccept.get(to) ?? 0) + 1;
+        rejectsSinceAccept.set(to, count);
+        if (count >= 3)
+          round = ` This is REJECT ${count} of this Peer's task since its last ACCEPT or brief: a round past the second is your Owner's call (accept-candidate, step 5). Unless the Owner gave you this round, report DECISION_NEEDED with what each round found and what one more costs; the task holds meanwhile.`;
+      } else if (opening === "ACCEPT" || opening === "REVISED BRIEF" || opening === "DEFER")
+        rejectsSinceAccept.delete(to);
+    }
+    return `sent #${mail.id} to ${engine.isAncestor(to, from) ? "owner" : `${recipient.role} ${to}`} as ${mail.priority}; ${waits ? "it is read with the recipient's next mail" : held ? "held until the recipient can take it" : "delivered"}. Continue your work; do not wait for a reply unless needs=decision blocks you.${round}`;
+  });
 
-  mcp.register(
-    {
-      name: "seatwork_inbox",
-      description:
-        "Read the mail the plugin is holding for you: mail that arrived while you were busy, and mail that starts no turn of its own (the newest progress report of a seat you launched, acknowledgements). Returns and clears it.",
-      inputSchema: { type: "object", properties: {}, required: [] },
-    },
-    async (_args, context) => {
-      if (!engine) throw new Error("mail engine not ready");
-      const me = resolveCaller(context.nonce);
-      if (!me) throw new Error("seatwork_inbox: unknown caller");
-      const mails = engine.takeHeld(me);
-      if (mails.length === 0) return "inbox empty";
-      return mails.map((m) => formatForInbox(m)).join("\n\n");
-    },
-  );
+  mcp.register(roomTool("seatwork_inbox", toolVars), async (_args, context) => {
+    if (!engine) throw new Error("mail engine not ready");
+    const me = resolveCaller(context.nonce);
+    if (!me) throw new Error("seatwork_inbox: unknown caller");
+    const mails = engine.takeHeld(me);
+    if (mails.length === 0) return "inbox empty";
+    return mails.map((m) => formatForInbox(m)).join("\n\n");
+  });
 
   // the registry is the top seat's; tool descriptions stay neutral because every seat can read them
   const registryOwner = (nonce: string, tool: string): PaseoApi => {
     const me = resolveCaller(nonce);
-    if (!me || !client || engine?.seat(me)?.role !== "hq")
+    if (!me || !client || !namesCaller(tool, engine?.seat(me)?.role))
       throw new Error(`${tool} refused: your seat does not keep the project registry`);
     return client;
   };
 
-  mcp.register(
-    {
-      name: "seatwork_projects",
-      description:
-        "The project registry, one line per project known to Paseo: registered or not, name, root, whether its mission and law exist, its model table (default or custom) and the Supervisor seat to use. Refused for seats that do not keep the registry.",
-      inputSchema: { type: "object", properties: {}, required: [] },
-    },
-    async (_args, context) => {
-      return describeProjects(registryOwner(context.nonce, "seatwork_projects"));
-    },
-  );
+  mcp.register(roomTool("seatwork_projects", toolVars), async (_args, context) => {
+    return describeProjects(registryOwner(context.nonce, "seatwork_projects"));
+  });
 
-  mcp.register(
-    {
-      name: "seatwork_register_project",
-      description:
-        "Register a project that Paseo already has: writes its room marker, its mission and its own model table when given, and its registry line. A seat the table names that the room does not have yet is set up first. Repeat it with `mission` or `models` to replace them. Refused for seats that do not keep the registry.",
-      inputSchema: {
-        type: "object",
-        properties: {
-          path: { type: "string", description: "The project's root, or its name in Paseo (see seatwork_projects)." },
-          name: { type: "string", description: "Registry name, letters digits dashes. Default: the Paseo name." },
-          mission: {
-            type: "string",
-            description: "What the project is for and what done looks like, a few lines of markdown.",
-          },
-          models: {
-            type: "object",
-            description:
-              "Only the differences from ROOM_DIR/models.json, same shape; objects merge, lists and values replace, null removes a key. Omit to use the room's table.",
-          },
-        },
-        required: ["path"],
+  mcp.register(roomTool("seatwork_register_project", toolVars), async (args, context) => {
+    return registerProject(
+      registryOwner(context.nonce, "seatwork_register_project"),
+      {
+        path: String(args.path ?? ""),
+        name: args.name ? String(args.name) : undefined,
+        mission: args.mission ? String(args.mission) : undefined,
+        models: args.models ?? undefined,
       },
-    },
-    async (args, context) => {
-      return registerProject(
-        registryOwner(context.nonce, "seatwork_register_project"),
-        {
-          path: String(args.path ?? ""),
-          name: args.name ? String(args.name) : undefined,
-          mission: args.mission ? String(args.mission) : undefined,
-          models: args.models ?? undefined,
-        },
-        setUpSeats,
-      );
-    },
-  );
+      setUpSeats,
+    );
+  });
 
-  mcp.register(
-    {
-      name: "seatwork_unregister_project",
-      description:
-        "Take a project out of the registry: no seat of the room starts in it after that. Its `.seatwork/` files stay, and seatwork_register_project brings it back. Refused while a seat of the project is open, and for seats that do not keep the registry.",
-      inputSchema: {
-        type: "object",
-        properties: { project: { type: "string", description: "The project's registry name, or its root." } },
-        required: ["project"],
-      },
-    },
-    async (args, context) => {
-      const paseo = registryOwner(context.nonce, "seatwork_unregister_project");
-      return unregisterProject(String(args.project ?? ""), async () =>
-        [...(await liveAgents(paseo)).values()]
-          .filter((agent) => parseSeat(agent.provider) && agent.cwd)
-          .map((agent) => ({ title: agent.title ?? agent.id, cwd: agent.cwd as string })),
-      );
-    },
-  );
+  mcp.register(roomTool("seatwork_unregister_project", toolVars), async (args, context) => {
+    const paseo = registryOwner(context.nonce, "seatwork_unregister_project");
+    return unregisterProject(String(args.project ?? ""), async () =>
+      [...(await liveAgents(paseo)).values()]
+        .filter((agent) => parseSeat(agent.provider) && agent.cwd)
+        .map((agent) => ({ title: agent.title ?? agent.id, cwd: agent.cwd as string })),
+    );
+  });
 
-  mcp.register(
-    {
-      name: "seatwork_room_stats",
-      description: `What the mail log says happened in the last N days, per project and per signal (candidates accepted or rejected, reopen requests conceded or held, decisions escalated, questions), then what each project's seats used, per role, as their agent CLIs report it. The logs keep ${KEEP_LOG_DAYS} days. Refused for seats that do not keep the registry.`,
-      inputSchema: {
-        type: "object",
-        properties: {
-          days: { type: "number", description: `Window in days, ${KEEP_LOG_DAYS} at most and by default.` },
-        },
-        required: [],
-      },
-    },
-    async (args, context) => {
-      registryOwner(context.nonce, "seatwork_room_stats");
-      return roomStats(Number(args.days) > 0 ? Number(args.days) : KEEP_LOG_DAYS);
-    },
-  );
+  mcp.register(roomTool("seatwork_room_stats", toolVars), async (args, context) => {
+    registryOwner(context.nonce, "seatwork_room_stats");
+    return roomStats(Number(args.days) > 0 ? Number(args.days) : KEEP_LOG_DAYS);
+  });
 
-  mcp.register(
-    {
-      name: "seatwork_watch_stats",
-      description:
-        "What the watcher found and what it cost: this month's spending on its decision model, and per rule how often it spoke and how its findings compare with what the seat above did next. Refused for seats that do not keep the registry.",
-      inputSchema: { type: "object", properties: {}, required: [] },
-    },
-    async (_args, context) => {
-      registryOwner(context.nonce, "seatwork_watch_stats");
-      const spend = budget.summary();
-      const mailLog = join(MAIL_DIR, "log.jsonl");
-      const mail = existsSync(mailLog)
-        ? readFileSync(mailLog, "utf8")
-            .split("\n")
-            .flatMap((line) => {
-              try {
-                return line.trim() ? [JSON.parse(line) as MailLine] : [];
-              } catch {
-                return [];
-              }
-            })
-        : [];
-      const lines = [
-        `watcher mode ${policy.watcher.mode}; ${spend.month}: ${spend.total.calls} calls, ${spend.total.tokens} tokens, $${spend.total.usd.toFixed(4)} of a $${spend.planUsd} plan (cap $${spend.capUsd}); today $${spend.today.usd.toFixed(4)}; asking is ${spend.pace}`,
-        renderCalibration(
-          calibrate(scans.read(), mail, policy.watcher.calibration, Date.now(), REVISION),
-          policy.watcher.calibration,
-        ),
-      ];
-      return lines.join("\n");
-    },
-  );
+  mcp.register(roomTool("seatwork_watch_stats", toolVars), async (_args, context) => {
+    registryOwner(context.nonce, "seatwork_watch_stats");
+    const spend = budget.summary();
+    const mailLog = join(MAIL_DIR, "log.jsonl");
+    const mail = existsSync(mailLog)
+      ? readFileSync(mailLog, "utf8")
+          .split("\n")
+          .flatMap((line) => {
+            try {
+              return line.trim() ? [JSON.parse(line) as MailLine] : [];
+            } catch {
+              return [];
+            }
+          })
+      : [];
+    const lines = [
+      `watcher mode ${policy.watcher.mode}; ${spend.month}: ${spend.total.calls} calls, ${spend.total.tokens} tokens, $${spend.total.usd.toFixed(4)} of a $${spend.planUsd} plan (cap $${spend.capUsd}); today $${spend.today.usd.toFixed(4)}; asking is ${spend.pace}`,
+      renderCalibration(
+        calibrate(scans.read(), mail, policy.watcher.calibration, Date.now(), REVISION),
+        policy.watcher.calibration,
+      ),
+    ];
+    return lines.join("\n");
+  });
 
-  mcp.register(
-    {
-      name: "seatwork_adopt",
-      description:
-        "Take over a seat handed to you (a handoff): from now on it reports to you, its `to: owner` reaches you, and you may mail it. Allowed only for a role you may create, and only when its current owner is archived or sits in your own chain. Then mail it its brief and your disposition of its last signal.",
-      inputSchema: {
-        type: "object",
-        properties: { agent_id: { type: "string", description: "Id of the seat to adopt (from the handoff)." } },
-        required: ["agent_id"],
-      },
-    },
-    async (args, context) => {
-      if (!engine) throw new Error("mail engine not ready");
-      const me = resolveCaller(context.nonce);
-      if (!me) throw new Error("seatwork_adopt: unknown caller");
-      const child = String(args.agent_id ?? "")
-        .trim()
-        .replace(/^(hq|supervisor|lead|peer|lens):/i, "");
-      if (!child) throw new Error("seatwork_adopt: give agent_id");
-      const result = await engine.adopt(me, child);
-      if (!result.ok) throw new Error(`seatwork_adopt refused: ${result.reason}`);
-      const seat = engine.seat(child)!;
-      if (result.previous !== me) {
-        await engine.post({
-          from: { agentId: "room", role: "system" },
-          fromLabel: "room",
-          to: child,
-          priority: "fyi",
-          subject: "OWNER CHANGED: you were handed over",
-          body: "Your Owner seat changed. Mail addressed `to: owner`, your final messages and your permission requests now reach the new Owner; answer its mail with reply_to as usual. Your brief stands until the new Owner writes; continue your current work.",
-          needs: "nothing",
-          whyNow: "a handoff moved you under a new Owner",
-        });
-      }
-      return `adopted ${seat.role} ${child} (${seat.title ?? ""}); it now reports to you. Mail it its brief and your disposition of its last signal.`;
-    },
-  );
+  mcp.register(roomTool("seatwork_adopt", toolVars), async (args, context) => {
+    if (!engine) throw new Error("mail engine not ready");
+    const me = resolveCaller(context.nonce);
+    if (!me) throw new Error("seatwork_adopt: unknown caller");
+    const child = String(args.agent_id ?? "")
+      .trim()
+      .replace(/^(hq|supervisor|lead|peer|lens):/i, "");
+    if (!child) throw new Error("seatwork_adopt: give agent_id");
+    const result = await engine.adopt(me, child);
+    if (!result.ok) throw new Error(`seatwork_adopt refused: ${result.reason}`);
+    const seat = engine.seat(child)!;
+    if (result.previous !== me) {
+      await engine.post({
+        from: { agentId: "room", role: "system" },
+        fromLabel: "room",
+        to: child,
+        priority: "fyi",
+        subject: "OWNER CHANGED: you were handed over",
+        body: "Your Owner seat changed. Mail addressed `to: owner`, your final messages and your permission requests now reach the new Owner; answer its mail with reply_to as usual. Your brief stands until the new Owner writes; continue your current work.",
+        needs: "nothing",
+        whyNow: "a handoff moved you under a new Owner",
+      });
+    }
+    return `adopted ${seat.role} ${child} (${seat.title ?? ""}); it now reports to you. Mail it its brief and your disposition of its last signal.`;
+  });
 
   const starting = mcp
     .listen(port)

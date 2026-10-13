@@ -1,0 +1,163 @@
+{
+  "$comment": "The room's own MCP tools, written once: the plugin serves them from here and the evals' stand-in shows the same text. A string may hold {{signals}} (the mail subjects of signals.json) and {{keep_log_days}} (settings.json). callers says whom the plugin does not refuse: \"any\" seat, \"spawners\" (a role the policy's spawn table lets create seats), or the roles listed. Every seat is listed every tool, so a description names no role above a project.",
+  "tools": {
+    "seatwork_mail": {
+      "callers": "any",
+      "description": "Write to another seat of your room. To answer a mail you received, pass reply_to: its id (the #id in its header) and no `to`; the answer goes to whoever sent it. To start a new thread, pass `to`: `owner` (the seat that launched you) or the id of a seat you launched. The plugin wraps it in an envelope and delivers it between the recipient's turns; it never interrupts anyone. A CANDIDATE, REVIEW or DONE to your owner is your turn's report: it is delivered when your turn ends, and your final message is not mailed a second time. Mail to an archived seat is refused.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "to": {
+            "type": "string",
+            "description": "New thread: `owner` (the seat that launched you) or the id of a seat you launched. Omit when reply_to is given."
+          },
+          "reply_to": {
+            "type": "string",
+            "description": "Id of the mail you are answering (the #id in its header). The recipient is that mail's sender; use this for every answer so it reaches the right seat."
+          },
+          "subject": {
+            "type": "string",
+            "description": "Short subject that opens with one of the room's signals: {{signals}}."
+          },
+          "body": {
+            "type": "string",
+            "description": "The message. Self-contained: the recipient may read it hours later. Long text (a log, a full review) goes into a file the message names."
+          },
+          "needs": {
+            "type": "string",
+            "enum": [
+              "reply",
+              "decision",
+              "nothing"
+            ],
+            "description": "What you need back."
+          },
+          "priority": {
+            "type": "string",
+            "enum": [
+              "blocking",
+              "action",
+              "fyi"
+            ],
+            "description": "Suggested priority; the plugin may raise or lower it."
+          }
+        },
+        "required": [
+          "subject",
+          "body"
+        ]
+      }
+    },
+    "seatwork_inbox": {
+      "callers": "any",
+      "description": "Read the mail the plugin is holding for you: mail that arrived while you were busy, and mail that starts no turn of its own (the newest progress report of a seat you launched, acknowledgements). Returns and clears it.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {},
+        "required": []
+      }
+    },
+    "seatwork_projects": {
+      "callers": [
+        "hq"
+      ],
+      "description": "The project registry, one line per project known to Paseo: registered or not, name, root, whether its mission and law exist, its model table (default or custom) and the Supervisor seat to use. Refused for seats that do not keep the registry.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {},
+        "required": []
+      }
+    },
+    "seatwork_register_project": {
+      "callers": [
+        "hq"
+      ],
+      "description": "Register a project that Paseo already has: writes its room marker, its mission and its own model table when given, and its registry line. A seat the table names that the room does not have yet is set up first. Repeat it with `mission` or `models` to replace them. Refused for seats that do not keep the registry.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string",
+            "description": "The project's root, or its name in Paseo (see seatwork_projects)."
+          },
+          "name": {
+            "type": "string",
+            "description": "Registry name, letters digits dashes. Default: the Paseo name."
+          },
+          "mission": {
+            "type": "string",
+            "description": "What the project is for and what done looks like, a few lines of markdown."
+          },
+          "models": {
+            "type": "object",
+            "description": "Only the differences from ROOM_DIR/models.json, same shape; objects merge, lists and values replace, null removes a key. Omit to use the room's table."
+          }
+        },
+        "required": [
+          "path"
+        ]
+      }
+    },
+    "seatwork_unregister_project": {
+      "callers": [
+        "hq"
+      ],
+      "description": "Take a project out of the registry: no seat of the room starts in it after that. Its `.seatwork/` files stay, and seatwork_register_project brings it back. Refused while a seat of the project is open, and for seats that do not keep the registry.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "project": {
+            "type": "string",
+            "description": "The project's registry name, or its root."
+          }
+        },
+        "required": [
+          "project"
+        ]
+      }
+    },
+    "seatwork_room_stats": {
+      "callers": [
+        "hq"
+      ],
+      "description": "What the mail log says happened in the last N days, per project and per signal (candidates accepted or rejected, reopen requests conceded or held, decisions escalated, questions), then what each project's seats used, per role, as their agent CLIs report it. The logs keep {{keep_log_days}} days. Refused for seats that do not keep the registry.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "days": {
+            "type": "number",
+            "description": "Window in days, {{keep_log_days}} at most and by default."
+          }
+        },
+        "required": []
+      }
+    },
+    "seatwork_watch_stats": {
+      "callers": [
+        "hq"
+      ],
+      "description": "What the watcher found and what it cost: this month's spending on its decision model, and per rule how often it spoke and how its findings compare with what the seat above did next. Refused for seats that do not keep the registry.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {},
+        "required": []
+      }
+    },
+    "seatwork_adopt": {
+      "callers": "spawners",
+      "description": "Take over a seat handed to you (a handoff): from now on it reports to you, its `to: owner` reaches you, and you may mail it. Allowed only for a role you may create, and only when its current owner is archived or sits in your own chain. Then mail it its brief and your disposition of its last signal.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "agent_id": {
+            "type": "string",
+            "description": "Id of the seat to adopt (from the handoff)."
+          }
+        },
+        "required": [
+          "agent_id"
+        ]
+      }
+    }
+  }
+}

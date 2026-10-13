@@ -1,4 +1,4 @@
-import { CLOSES_WORK } from "../signals";
+import { CLOSES_WORK, verdictPattern } from "../signals";
 import type { RuleId } from "./rules";
 import type { ScanRecord } from "./scanlog";
 
@@ -16,8 +16,8 @@ export interface MailLine {
 export type Label = "returned" | "accepted";
 
 // HOLD is no verdict: a Lead writes it for "received, under review", and the verdict follows
-const RETURNS = /^\W*(?:REJECT|REVISED BRIEF)\b/i;
-const ACCEPTS = /^\W*ACCEPT\b/i;
+const RETURNS = verdictPattern("returned");
+const ACCEPTS = verdictPattern("accepted");
 
 /** Whether a mail's subject is a verdict: ACCEPT, REJECT or REVISED BRIEF. */
 export const isVerdict = (subject: string): boolean => RETURNS.test(subject) || ACCEPTS.test(subject);

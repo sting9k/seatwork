@@ -87,6 +87,7 @@ const state = () =>
     watcherKey: boolean;
     harnesses: { id: string; available: boolean; why: string }[];
     checks: { id: string; ok: boolean | null }[];
+    table: unknown;
   }>;
 const createPeer = () =>
   call("before agent.create", {
@@ -212,8 +213,19 @@ test("after an update of the plugin the room takes no new seat until its files a
   await assert.rejects(createPeer(), /set up by version 0\.1\.0 of the plugin.*Press Apply on the Seatwork screen/);
   assert.ok((await state()).checks.some((check) => check.id === "version" && check.ok === false));
   // an install from before 0.18.0, under the old id, beside this one: two copies
-  daemon.config.plugins["slp-seat"] = { path: "/an/old/checkout" };
-  assert.ok((await state()).checks.some((check) => check.id === "two-copies" && check.ok === false));
+  const older = join(ROOM_HOME, "..", "an-old-checkout");
+  for (const [file, text] of [
+    ["room/models.json", '{"seats":{"hq":{"provider":"claude-hq/an-old-model"}}}'],
+    ["paseo/policy.json", "{}"],
+  ]) {
+    mkdirSync(join(older, file, ".."), { recursive: true });
+    writeFileSync(join(older, file), text);
+  }
+  daemon.config.plugins = { "slp-seat": { path: older }, seatwork: { path: PLUGIN_DIR } };
+  const beside = await state();
+  assert.ok(beside.checks.some((check) => check.id === "two-copies" && check.ok === false));
+  // the room's files are this plugin's own, whichever copy Paseo lists first
+  assert.doesNotMatch(JSON.stringify(beside.table), /an-old-model/);
   delete daemon.config.plugins["slp-seat"];
   assert.ok(!(await state()).checks.some((check) => check.id === "two-copies"));
   await init({ models: { seats: { lead: { provider: "pi-lead/m", thinking: "high" } } }, watcher: "on" });

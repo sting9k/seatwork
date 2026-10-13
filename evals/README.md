@@ -1,6 +1,6 @@
 # Prompt evals
 
-Each case opens one real `claude -p` session the way a seat opens: the prompt the plugin assembles from the room files (the room's system prompt for that agent CLI, role, specialization sheet, project block), the role's skills, and two stand-in MCP servers (`seatwork` with the room's tools, `paseo` with the Paseo tools the role may use). The stand-ins answer every call plausibly and record it; nothing runs for real. The transcript is graded: the final message's first and last lines, which tools were called with what, and which were not.
+Each case opens one real `claude -p` session the way a seat opens: the prompt the plugin assembles from the room files (the room's system prompt for that agent CLI, role, specialization sheet, project block), the role's skills, and two stand-in MCP servers (`seatwork` with the room's tools, in the plugin's own words from `plugin/shared/tools.json`, and `paseo` with the Paseo tools the role may use). The stand-ins answer every call plausibly and record it; nothing runs for real. The transcript is graded: the final message's first and last lines, which tools were called with what, and which were not.
 
 ```bash
 node evals/run.cjs --label baseline

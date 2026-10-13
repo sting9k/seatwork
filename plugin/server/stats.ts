@@ -4,28 +4,11 @@ import { KEEP_LOG_DAYS } from "./gc";
 import { hqDir } from "./hq";
 import type { PaseoApi } from "./paseo";
 import { ROOM_HOME, REGISTRY_LOG, USAGE_LOG } from "./paths";
+import { COUNTED } from "./signals";
 
 /** Better-Seatwork input: what the mail log says happened, counted per project and per signal. */
 
 const MAIL_LOG = join(ROOM_HOME, "mail", "log.jsonl");
-const SIGNALS = [
-  "CANDIDATE",
-  "ACCEPT",
-  "REJECT",
-  "REVIEW",
-  "QUESTION",
-  "ANSWER",
-  "REOPEN_REQUEST",
-  "REVISED BRIEF",
-  "HOLD",
-  "DEPENDENCY_REQUEST",
-  "BLOCKED",
-  "DECISION_NEEDED",
-  "FAILED",
-  "PERMISSION",
-  "GC",
-  "SPAWN REFUSED",
-] as const;
 
 interface LogLine {
   at: string;
@@ -51,7 +34,7 @@ function readJsonl<T>(file: string): T[] {
 
 function signalOf(subject: string): string {
   const upper = subject.toUpperCase();
-  return SIGNALS.find((s) => upper.startsWith(s)) ?? "other";
+  return COUNTED.find((s) => upper.startsWith(s)) ?? "other";
 }
 
 interface UsageLine {

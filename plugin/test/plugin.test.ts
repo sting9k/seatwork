@@ -249,6 +249,8 @@ interface TestSeat {
   agent: { id: string; parentAgentId: string | null; provider: string; cwd: string; title: string; workspaceId: null };
   inbox: string[];
   prompt: string;
+  call(name: string, args: Record<string, unknown>): Promise<string>;
+  listed(): Promise<string[]>;
   mail(args: Record<string, unknown>): Promise<string>;
   /** What seatwork_inbox hands this seat. */
   held(): Promise<string>;
@@ -285,10 +287,21 @@ async function seat(
     if (result.isError) throw new Error(result.content[0].text);
     return result.content[0].text;
   };
+  const listed = async () => {
+    const response = await fetch(made.config.mcpServers.seatwork.url, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list" }),
+    });
+    const { result } = (await response.json()) as { result: { tools: { name: string }[] } };
+    return result.tools.map((entry) => entry.name);
+  };
   return {
     agent,
     inbox,
     prompt: made.config.systemPrompt,
+    call: tool,
+    listed,
     mail: (args) => tool("seatwork_mail", args),
     held: () => tool("seatwork_inbox", {}),
     adopt: (agentId) => tool("seatwork_adopt", { agent_id: agentId }),
@@ -839,4 +852,19 @@ test("a Lead's third REJECT of one Peer's task is sent, and the answer says whos
 
 test("the skill the watcher holds a CANDIDATE to is one of the Peer role's skills", () => {
   assert.ok(roleSkillNames("peer").includes(HANDOFF_SKILL));
+});
+
+test("the tools a seat is listed are the ones shared/tools.json defines, and a tool that names its callers refuses the rest", async () => {
+  const defined = JSON.parse(readFileSync(join(__dirname, "..", "shared", "tools.json"), "utf8")).tools as Record<
+    string,
+    { callers: "any" | "spawners" | string[] }
+  >;
+  const lead = await seat("lead-tools", "claude-lead", null, "[Lead] stream");
+  const peer = await seat("peer-tools", "claude-peer", lead.agent.id, "[Peer] task");
+  assert.deepEqual(await peer.listed(), Object.keys(defined));
+  for (const [name, { callers }] of Object.entries(defined)) {
+    const refusal = await peer.call(name, {}).catch((error: Error) => error.message);
+    const refused = /your seat does not keep the project registry/.test(refusal);
+    assert.equal(refused, Array.isArray(callers) && !callers.includes("peer"), name);
+  }
 });

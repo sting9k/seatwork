@@ -1,3 +1,4 @@
+import settings from "../shared/settings.json";
 import {
   appendFileSync,
   existsSync,
@@ -205,7 +206,7 @@ export class Collector {
 
 /* ---------- files ---------- */
 
-export const KEEP_LOG_DAYS = 7;
+export const KEEP_LOG_DAYS: number = settings.keepLogDays;
 
 type Line = Record<string, unknown>;
 

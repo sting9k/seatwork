@@ -1,35 +1,29 @@
-/** The room's protocol signals: the word a seat's final message or a mail subject opens with. */
+import table from "../shared/signals.json";
 
-export const SIGNAL =
-  /\b(DONE|DECISION_NEEDED|BLOCKED|REOPEN_REQUEST|DEPENDENCY_REQUEST|QUESTION|CANDIDATE|REVIEW|STATUS)\b/;
+/** The words a report or a mail subject opens with, from shared/signals.json. */
+
+interface SignalRow {
+  name: string;
+  report?: boolean;
+  closesWork?: boolean;
+  counted?: boolean;
+  verdict?: string;
+}
+
+const ROWS: readonly SignalRow[] = table.signals;
+const named = (pick: (row: SignalRow) => unknown) => ROWS.filter(pick).map((row) => row.name);
+
+export const SIGNAL = new RegExp(`\\b(${named((row) => row.report).join("|")})\\b`);
 /** Every word a mail's subject may open with: signals and the answers to them. */
-export const SUBJECT_SIGNALS = [
-  "CANDIDATE",
-  "REVIEW",
-  "DONE",
-  "STATUS",
-  "QUESTION",
-  "REOPEN_REQUEST",
-  "DEPENDENCY_REQUEST",
-  "BLOCKED",
-  "DECISION_NEEDED",
-  "HANDOFF",
-  "ACK",
-  "REVISED BRIEF",
-  "INSTRUCTION",
-  "ANSWER",
-  "ACCEPT",
-  "REJECT",
-  "HOLD",
-  "NOTED",
-  "DEFER",
-  "FYI",
-  "CHALLENGE",
-  "RESPONSE",
-] as const;
+export const SUBJECT_SIGNALS: readonly string[] = named(() => true);
+/** What room stats count by name: the marked signals and the room's own notices. */
+export const COUNTED: readonly string[] = [...named((row) => row.counted), ...table.notices];
+/** A pattern for the subjects that give this verdict on the work they answer. */
+export const verdictPattern = (verdict: "accepted" | "returned") =>
+  new RegExp(`^\\W*(?:${named((row) => row.verdict === verdict).join("|")})\\b`, "i");
 
 /** The one of them a subject opens with, if any. */
-export function subjectOpening(subject: string): (typeof SUBJECT_SIGNALS)[number] | undefined {
+export function subjectOpening(subject: string): string | undefined {
   const opening = subject.replace(/^\W+/, "").toUpperCase();
   return SUBJECT_SIGNALS.find((signal) => opening === signal || new RegExp(`^${signal}\\b`).test(opening));
 }
@@ -41,7 +35,7 @@ export function opensWithSignal(subject: string): boolean {
 /** An acknowledgement counts only where a line opens with it: the word turns up inside other reports. */
 const ACK = /^\W*ACK\b/;
 /** Signals that say "my work is finished": the parent acts on the seat when it reads one. */
-export const CLOSES_WORK: ReadonlySet<string> = new Set(["CANDIDATE", "REVIEW", "DONE"]);
+export const CLOSES_WORK: ReadonlySet<string> = new Set(named((row) => row.closesWork));
 
 /** The protocol signal of a final message. The first line is where it belongs; the whole text is the fallback. */
 export function signalOf(text: string): string | undefined {

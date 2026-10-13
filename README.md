@@ -122,7 +122,8 @@ seatwork/
 ├── install.sh           the terminal setup
 ├── plugin/              the Paseo plugin (id seatwork)
 │   ├── room/            the system prompt per agent CLI, role prompts, skills, the model table
-│   ├── paseo/           policy.json, seats.json, profiles.json
+│   ├── paseo/           what setup writes for a machine: policy.json, seats.json, profiles.json
+│   ├── shared/          what the plugin itself defines: tools.json, signals.json, settings.json
 │   ├── server/          setup, mail, cleanup, the watcher
 │   ├── client/          the Seatwork screen and the Room screen
 │   └── test/
@@ -133,6 +134,10 @@ seatwork/
 - After an edit, run `./install.sh` at the top of the clone. It copies the
   room's files into `~/.config/seatwork` and reloads the plugin. This needs
   a room set up from this clone: see [From a terminal](#from-a-terminal).
+- A setting is written once, in a data file. A machine's policy is in
+  `plugin/paseo/policy.json`, which setup copies to the room home. What the
+  plugin itself defines (its tools, its signals, its retention days) is in
+  `plugin/shared/`, compiled into the plugin. The evals read the same files.
 - Tests: `npm test` in `plugin/` (Node 22.15 or later).
 - Format: `npm run format` in `plugin/` (Prettier, 120 columns; code only).
 - A prompt change: run `node evals/run.cjs --label <name>` at the top of

@@ -1,7 +1,7 @@
 import "./support/room";
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { modelAllowed, promptVars, type Models } from "../server/models";
+import { modelAllowed, promptVars, type Models } from "../server/orchestration/models";
 
 test("a project's model table matches a model id whole, slashes included", () => {
   const seat = { provider: "claude-lead/opus", thinking: "high" };

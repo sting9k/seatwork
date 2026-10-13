@@ -1,6 +1,6 @@
 import { existsSync, readFileSync, realpathSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
-import { REGISTRY_FILE } from "./paths";
+import { REGISTRY_FILE } from "../paths";
 
 export interface ProjectEntry {
   name: string;

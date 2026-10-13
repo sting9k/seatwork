@@ -1,5 +1,5 @@
 import type { RoomParams, WatcherPolicy } from "../policy";
-import type { Role } from "../seats";
+import type { Role } from "../orchestration/seats";
 import { fromTemplate, missingLines, parseBrief, type Brief } from "./brief";
 import type { Budget } from "./budget";
 import { Lru } from "./cache";

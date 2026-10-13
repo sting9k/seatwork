@@ -3,8 +3,8 @@ import assert from "node:assert/strict";
 import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { beforeEach, test } from "node:test";
-import { registerProject, unregisterProject } from "../server/onboard";
-import { loadRegistry } from "../server/registry";
+import { registerProject, unregisterProject } from "../server/orchestration/onboard";
+import { loadRegistry } from "../server/orchestration/registry";
 import type { PaseoApi } from "../server/paseo";
 
 const ROOM_SEATS = [

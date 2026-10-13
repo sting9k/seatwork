@@ -1,7 +1,7 @@
 import { copyFileSync, chmodSync, existsSync, mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { deleteProjectAt } from "../hq";
-import { HQ_PROJECT, ROOM_HOME, WATCH_DIR } from "../paths";
+import { HQ_PROJECT, ROOM_HOME, WATCH_DIR } from "../../paths";
 import { keptAt, roomFolders, takeRoomFiles } from "./project-files";
 import { isSetUp, moveRoomHomeAside } from "./room-home";
 

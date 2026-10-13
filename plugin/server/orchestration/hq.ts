@@ -1,7 +1,7 @@
 import { mkdirSync } from "node:fs";
-import { paseoCli } from "./cli";
-import type { PaseoApi } from "./paseo";
-import { HQ_DIR, HQ_PROJECT } from "./paths";
+import { paseoCli } from "../cli";
+import type { PaseoApi } from "../paseo";
+import { HQ_DIR, HQ_PROJECT } from "../paths";
 import { isInside, loadRegistry, realOrSelf } from "./registry";
 
 /** Where HQ seats live: `hq` in projects.json when set, else the room's default project. */

@@ -107,11 +107,11 @@ function setup() {
   );
   process.env.SEATWORK_ROOM_HOME = HOME;
   require("../plugin/test/register.cjs");
-  const { rolePrompt, specFromTitle } = require("../plugin/server/seats");
-  const { projectBlock } = require("../plugin/server/registry");
+  const { rolePrompt, specFromTitle } = require("../plugin/server/orchestration/seats");
+  const { projectBlock } = require("../plugin/server/orchestration/registry");
   const { loadPolicy, claudeDisallowed } = require("../plugin/server/policy");
-  const { loadModels } = require("../plugin/server/models");
-  const { ensureRuntime } = require("../plugin/server/runtimes");
+  const { loadModels } = require("../plugin/server/orchestration/models");
+  const { ensureRuntime } = require("../plugin/server/orchestration/runtimes");
   plugin = {
     rolePrompt,
     specFromTitle,

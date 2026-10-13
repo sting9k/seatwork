@@ -1,7 +1,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { ROOM_HOME } from "./paths";
-import type { Harness, Role } from "./seats";
+import type { Harness, Role } from "./orchestration/seats";
 
 /** Types and loader for policy.json: no defaults here, a broken file stops the plugin. */
 

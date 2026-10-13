@@ -1,4 +1,4 @@
-import settings from "../../shared/settings.json";
+import settings from "../../../shared/settings.json";
 import {
   chmodSync,
   cpSync,

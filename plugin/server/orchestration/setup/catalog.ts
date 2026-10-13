@@ -1,5 +1,5 @@
-import { paseoCli } from "../cli";
-import type { PaseoApi } from "../paseo";
+import { paseoCli } from "../../cli";
+import type { PaseoApi } from "../../paseo";
 import type { Harness } from "../seats";
 import type { Catalog, CatalogModel } from "./plan";
 

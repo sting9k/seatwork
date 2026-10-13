@@ -1,7 +1,7 @@
 import { appendFileSync, existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { KEEP_LOG_DAYS } from "./gc";
-import { hqDir } from "./hq";
+import { hqDir } from "./orchestration/hq";
 import type { PaseoApi } from "./paseo";
 import { ROOM_HOME, REGISTRY_LOG, USAGE_LOG } from "./paths";
 import { COUNTED } from "./signals";

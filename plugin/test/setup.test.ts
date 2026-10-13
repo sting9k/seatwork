@@ -5,14 +5,14 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync
 import { join } from "node:path";
 import { beforeEach, test } from "node:test";
 import { loadPolicy } from "../server/policy";
-import { envFor } from "../server/runtimes";
-import { parseSeat } from "../server/seats";
-import { choose, type ChoiceFlags, type Terminal } from "../server/setup/choices";
-import { addSeats, setUpRoom } from "../server/setup/init";
-import { applyToConfigFile, applyWithSdk } from "../server/setup/paseo-config";
-import { planRoom, roomModels, type Catalog, type Setup } from "../server/setup/plan";
+import { envFor } from "../server/orchestration/runtimes";
+import { parseSeat } from "../server/orchestration/seats";
+import { choose, type ChoiceFlags, type Terminal } from "../server/orchestration/setup/choices";
+import { addSeats, setUpRoom } from "../server/orchestration/setup/init";
+import { applyToConfigFile, applyWithSdk } from "../server/orchestration/setup/paseo-config";
+import { planRoom, roomModels, type Catalog, type Setup } from "../server/orchestration/setup/plan";
 import { sweepRemoved } from "../server/gc";
-import { isSetUp, readSetup } from "../server/setup/room-home";
+import { isSetUp, readSetup } from "../server/orchestration/setup/room-home";
 import {
   changedRoles,
   chooseSeat,

@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { test } from "node:test";
-import { ensureHqProject, hqDir, removeHqProject } from "../server/hq";
+import { ensureHqProject, hqDir, removeHqProject } from "../server/orchestration/hq";
 
 test("the HQ project is opened once however many ask at the same moment; when the room goes it is deleted from Paseo, alone, or archived when the CLI cannot", async () => {
   let workspaces: { id: string; projectRootPath: string }[] = [{ id: "other", projectRootPath: "/somewhere/else" }];

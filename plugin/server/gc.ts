@@ -16,7 +16,7 @@ import { paseoCli as cli } from "./cli";
 import { waitsOnSomeone, type MailEngine } from "./mail";
 import { PASEO_SCHEDULES, ROOM_HOME, RUNTIMES_DIR, SEAT_TMP_DIR } from "./paths";
 import type { GcPolicy, RuntimeLeftovers } from "./policy";
-import { KEEP_REMOVED_DAYS } from "./setup/room-home";
+import { KEEP_REMOVED_DAYS } from "./orchestration/setup/room-home";
 import { isVerdict } from "./watch/calibrate";
 
 /** Garbage collection: idle seats, what gone seats left behind, and old files. */

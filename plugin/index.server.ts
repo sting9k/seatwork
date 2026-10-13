@@ -7,7 +7,7 @@ import { z } from "zod";
 import { paseoCli } from "./server/cli";
 import { collectFiles, Collector, KEEP_LOG_DAYS, liveAgents } from "./server/gc";
 import { MailEngine, type Mail, type Priority, type Needs } from "./server/mail";
-import { checkHqPlacement, ensureHqProject, hqDir, removeHqProject } from "./server/hq";
+import { checkHqPlacement, ensureHqProject, hqDir, removeHqProject } from "./server/orchestration/hq";
 import { McpHttpServer } from "./server/mcp-http";
 import { HQ_PROJECT, PASEO_HOME, REGISTRY_LOG, ROOM_HOME, SEAT_TMP_DIR, WATCH_DIR } from "./server/paths";
 import {
@@ -16,11 +16,11 @@ import {
   registerProject,
   unregisterProject,
   writeProjectModels,
-} from "./server/onboard";
+} from "./server/orchestration/onboard";
 import { OwedList, roomStatus as readRoomStatus } from "./server/room-status";
-import { fitSeat, loadModels, projectModels, type Models } from "./server/models";
+import { fitSeat, loadModels, projectModels, type Models } from "./server/orchestration/models";
 import { loadPolicy, type RuntimePolicy } from "./server/policy";
-import { findProject, findRoomMarker, lawSkills, loadRegistry, projectBlock } from "./server/registry";
+import { findProject, findRoomMarker, lawSkills, loadRegistry, projectBlock } from "./server/orchestration/registry";
 import { namesCaller, roomTool } from "./server/room-tools";
 import {
   claudeRoleDir,
@@ -29,16 +29,29 @@ import {
   envFor,
   roleSkillNames,
   sharedClaudeFiles,
-} from "./server/runtimes";
-import { enabledSeats, HARNESSES, maySpawn, parseSeat, rolePrompt, specFromTitle, type Role } from "./server/seats";
-import { catalogFrom, harnessStates } from "./server/setup/catalog";
-import { piProblem } from "./server/setup/checks";
-import { addSeats, setUpRoom, sourceOf } from "./server/setup/init";
-import { applyWithSdk, readSwitches, removeWithSdk, turnBundledSkillsOff } from "./server/setup/paseo-config";
-import { clearOldRoom } from "./server/setup/old-room";
-import { roomModels, type Setup } from "./server/setup/plan";
-import { keptAt, roomFolders, takeRoomFiles, type ProjectFiles } from "./server/setup/project-files";
-import { isSetUp, KEEP_REMOVED_DAYS, moveRoomHomeAside, readSetup } from "./server/setup/room-home";
+} from "./server/orchestration/runtimes";
+import {
+  enabledSeats,
+  HARNESSES,
+  maySpawn,
+  parseSeat,
+  rolePrompt,
+  specFromTitle,
+  type Role,
+} from "./server/orchestration/seats";
+import { catalogFrom, harnessStates } from "./server/orchestration/setup/catalog";
+import { piProblem } from "./server/orchestration/setup/checks";
+import { addSeats, setUpRoom, sourceOf } from "./server/orchestration/setup/init";
+import {
+  applyWithSdk,
+  readSwitches,
+  removeWithSdk,
+  turnBundledSkillsOff,
+} from "./server/orchestration/setup/paseo-config";
+import { clearOldRoom } from "./server/orchestration/setup/old-room";
+import { roomModels, type Setup } from "./server/orchestration/setup/plan";
+import { keptAt, roomFolders, takeRoomFiles, type ProjectFiles } from "./server/orchestration/setup/project-files";
+import { isSetUp, KEEP_REMOVED_DAYS, moveRoomHomeAside, readSetup } from "./server/orchestration/setup/room-home";
 import { CLOSES_WORK, SUBJECT_SIGNALS, asksOwner, signalOf, subjectOpening, subjectSignal } from "./server/signals";
 import { noteUsage, roomStats } from "./server/stats";
 import { Budget } from "./server/watch/budget";

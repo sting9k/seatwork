@@ -10,7 +10,7 @@ import {
   rmSync,
 } from "node:fs";
 import { join } from "node:path";
-import { ROOM_HOME } from "../paths";
+import { ROOM_HOME } from "../../paths";
 import { isInside, realOrSelf } from "../registry";
 
 /** The names the room keeps in a project's `.seatwork/`; a name not listed here is not the room's. */

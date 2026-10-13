@@ -1,8 +1,8 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { merge } from "../../shared/model-choices";
+import { merge } from "../../../shared/model-choices";
 import { allowed, layModels, type Models } from "../models";
-import { claudeDisallowed } from "../policy";
+import { claudeDisallowed } from "../../policy";
 import { HARNESSES, parseSeat, ROLES, type Harness, type Role } from "../seats";
 
 /** This machine's own choices, kept in ROOM_HOME/setup.json and never in the repo. */

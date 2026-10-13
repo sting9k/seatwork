@@ -4,7 +4,7 @@ import { existsSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSy
 import { join } from "node:path";
 import { test } from "node:test";
 import type { CodexRuntimePolicy, RuntimePolicy } from "../server/policy";
-import { claudeRoleDir, ensureRuntime, roleSkillNames, runtimeDir } from "../server/runtimes";
+import { claudeRoleDir, ensureRuntime, roleSkillNames, runtimeDir } from "../server/orchestration/runtimes";
 
 const seat = { harness: "codex", role: "peer" } as const;
 const userConfig = join(USER_CODEX, "config.toml");

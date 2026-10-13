@@ -9,12 +9,12 @@ import {
   statSync,
   writeFileSync,
 } from "node:fs";
-import { maySpawn } from "./seats";
+import { maySpawn } from "./orchestration/seats";
 import { join } from "node:path";
 import type { PaseoApi } from "./paseo";
 import { paseoCli } from "./cli";
 import { REGISTRY_LOG, ROOM_HOME } from "./paths";
-import { parseSeat, type Role } from "./seats";
+import { parseSeat, type Role } from "./orchestration/seats";
 import type { MailPolicy, RoomPolicy } from "./policy";
 import { Lru } from "./watch/cache";
 

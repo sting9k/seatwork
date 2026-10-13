@@ -18,10 +18,10 @@ import {
   ROLE_SKILLS_DIR,
   ROOM_DIR,
   RUNTIMES_DIR,
-} from "./paths";
-import { loadPolicy, type RuntimePolicy } from "./policy";
+} from "../paths";
+import { loadPolicy, type RuntimePolicy } from "../policy";
 import type { Harness, Role, Seat } from "./seats";
-import { formatToml, parseToml, type TomlTable } from "./toml";
+import { formatToml, parseToml, type TomlTable } from "../toml";
 
 /** Keeps a seat apart from the user's setup: a home under runtimes/, or launch flags for Claude. */
 

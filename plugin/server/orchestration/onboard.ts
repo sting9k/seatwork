@@ -2,8 +2,8 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { hqDir } from "./hq";
 import { missingSeats, projectModels } from "./models";
-import type { PaseoApi } from "./paseo";
-import { REGISTRY_FILE } from "./paths";
+import type { PaseoApi } from "../paseo";
+import { REGISTRY_FILE } from "../paths";
 import { isInside, loadRegistry, readLaw, realOrSelf } from "./registry";
 import { enabledSeats } from "./seats";
 

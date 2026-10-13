@@ -1,6 +1,6 @@
 import { copyFileSync, chmodSync, existsSync, readFileSync, realpathSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import type { PaseoApi } from "../paseo";
+import type { PaseoApi } from "../../paseo";
 import { parseSeat } from "../seats";
 import type { RoomPlan } from "./plan";
 import { stamp } from "./room-home";

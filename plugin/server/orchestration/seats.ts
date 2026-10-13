@@ -1,8 +1,8 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { ROOM_DIR, ROOM_HOME, SEATS_FILE } from "./paths";
+import { ROOM_DIR, ROOM_HOME, SEATS_FILE } from "../paths";
 import { loadModels, promptVars, render, type Models } from "./models";
-import type { RoomParams } from "./policy";
+import type { RoomParams } from "../policy";
 
 export const HARNESSES = ["claude", "codex", "pi", "opencode"] as const;
 export const ROLES = ["hq", "supervisor", "lead", "peer", "lens"] as const;

@@ -1,8 +1,8 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { ROOM_DIR } from "./paths";
-import type { RoomParams } from "./policy";
-import { merge } from "../shared/model-choices";
+import { ROOM_DIR } from "../paths";
+import type { RoomParams } from "../policy";
+import { merge } from "../../shared/model-choices";
 
 /** room/models.json: every model id the room uses; role prompts carry {{placeholders}} filled from it. */
 

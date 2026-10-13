@@ -461,6 +461,8 @@ then `./install.sh`.
 | Lines of the mail log and the cleanup log | After 7 days |
 | The room's backups of Paseo's `config.json` | After 7 days; the newest always stays |
 | A folder set aside by Remove or by Init | After 30 days |
+| What Codex makes again by itself in a seat's home: its temporary folders, its log database | As soon as no seat of that home is open |
+| Session records in the home of a Codex or Pi seat | After 7 days without a write, once no seat of that home is open |
 
 - An idle seat is archived, not deleted. A seat that waits for a permission
   or an answer, or still has an open seat below it, is left alone.
@@ -469,6 +471,11 @@ then `./install.sh`.
 - Kept whole: `registry-log.jsonl`, the watcher's scan log, and the ACCEPT,
   REJECT and REVISED BRIEF lines of the mail log. The watcher's statistics
   are made from them.
+- A session record that is cleared takes the transcript of its archived
+  seat with it. What is cleared in a seat's home is listed per agent CLI
+  under `gc.runtimes` in `policy.json`. Claude seats keep their sessions in
+  your own `~/.claude`, and OpenCode in its own storage: the room clears
+  neither.
 - Cleanup runs only while the plugin is installed. If you remove the
   plugin, delete `~/.config/seatwork.removed-<time>` yourself.
 

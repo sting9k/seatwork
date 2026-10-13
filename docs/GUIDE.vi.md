@@ -460,6 +460,8 @@ rồi `./install.sh`.
 | Các dòng của log thư và log dọn dẹp | Sau 7 ngày |
 | Bản sao room tạo cho `config.json` của Paseo | Sau 7 ngày; bản mới nhất luôn được giữ |
 | Thư mục do Remove hoặc Init để sang một bên | Sau 30 ngày |
+| Thứ Codex tự tạo lại trong thư mục nhà của seat: thư mục tạm, cơ sở dữ liệu log | Ngay khi không còn seat nào của thư mục đó đang mở |
+| Bản ghi phiên trong thư mục nhà của seat Codex hoặc Pi | Sau 7 ngày không được ghi, khi không còn seat nào của thư mục đó đang mở |
 
 - Seat rảnh được lưu trữ, không bị xoá. Seat đang chờ cấp quyền hoặc chờ
   trả lời, hoặc còn seat đang mở bên dưới, thì được để yên.
@@ -468,6 +470,11 @@ rồi `./install.sh`.
 - Được giữ nguyên: `registry-log.jsonl`, log quét của watcher, và các dòng
   ACCEPT, REJECT, REVISED BRIEF trong log thư. Thống kê của watcher được
   tính từ chúng.
+- Bản ghi phiên bị dọn thì transcript của seat đã lưu trữ ứng với nó cũng
+  mất. Những gì được dọn trong thư mục nhà của seat được liệt kê theo từng
+  agent CLI ở `gc.runtimes` trong `policy.json`. Seat Claude giữ phiên trong
+  `~/.claude` của bạn, còn OpenCode giữ trong kho riêng của nó: room không
+  dọn hai chỗ đó.
 - Việc dọn chỉ chạy khi plugin còn được cài. Nếu bạn gỡ plugin thì tự xoá
   `~/.config/seatwork.removed-<thời điểm>`.
 

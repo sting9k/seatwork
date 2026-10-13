@@ -187,8 +187,10 @@
         "in_app_browser",
         "computer_use",
         "apps",
-        "memories"
+        "memories",
+        "plugins"
       ],
+      "$comment_featuresOff": "plugins: with it on, Codex syncs its plugin marketplace into every seat's home at each start (93 MB in one home of the run of 2026-10-13, and a temporary clone left behind per start). A seat is given no plugin, so the feature is off. An owner who sets sharePlugins takes it out of this list.",
       "multiAgentV2Off": true,
       "agentsOff": true
     }
@@ -277,7 +279,13 @@
       "lens": 12
     },
     "deleteOrphanHeartbeats": true,
-    "tellParent": true
+    "tellParent": true,
+    "$comment_runtimes": "What an agent CLI leaves in a seat's home (runtimes/<harness>/<role>) and GC clears, per harness. A home is swept only while no seat of it is open, so a running CLI loses nothing and an open seat can still be resumed. rebuilt: entries the CLI makes again by itself (its temporary folders, its log database); deleted whole. sessions: folders of session records; a file there goes once it has not been written for as long as logs are kept (keepLogDays in the plugin's shared/settings.json), and with it the transcript of the archived seat it belonged to. A Claude seat has no home of its own and OpenCode keeps its sessions in the user's own storage: neither is touched.",
+    "runtimes": {
+      "codex": { "rebuilt": [".tmp", "tmp", "shell_snapshots", "logs_2.sqlite", "logs_2.sqlite-shm", "logs_2.sqlite-wal"], "sessions": ["sessions", "archived_sessions"] },
+      "pi": { "rebuilt": [], "sessions": ["sessions"] },
+      "opencode": { "rebuilt": [], "sessions": [] }
+    }
   },
   "watcher": {
     "$comment": "The watcher reads the turns of the roles in `watch` and tells the seat above when a turn goes off (a Peer's to its Lead, a Lead's to its Supervisor). Code computes the facts of a turn from its tool calls; most turns end there, at no cost. A rule either stands on facts alone or opens one question to a decision model about what the seat's message claims. mode: off does nothing; shadow scans and writes watch/scans.jsonl but mails nobody; on also mails. The mode is each machine's own choice: install.sh asks once and writes it into the installed copy (`./install.sh --watcher off|shadow|on` changes it); this file ships it off. It never stops, cancels or edits a seat.",

@@ -1,9 +1,18 @@
 import { MAIL_POLICY, ROOM_HOME } from "./support/room";
 import assert from "node:assert/strict";
-import { existsSync, mkdirSync, readdirSync, readFileSync, utimesSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  statSync,
+  symlinkSync,
+  utimesSync,
+  writeFileSync,
+} from "node:fs";
 import { join } from "node:path";
 import { test } from "node:test";
-import { collectFiles, Collector, dropSeatTmp } from "../server/gc";
+import { collectFiles, Collector, dropSeatTmp, sweepRuntimes } from "../server/gc";
 import { MailEngine } from "../server/mail";
 import { costLines, roomStats } from "../server/stats";
 
@@ -192,4 +201,66 @@ test("room stats add up what each seat used, across a seat's reopening", () => {
   assert.deepEqual(costLines(0, log), [
     "/work/demo: $5.50 as the agent CLIs report it, 8k output tokens (peer 1 seats $3.50, lead 1 seats $2.00)",
   ]);
+});
+
+test("GC clears what agent CLIs left in a seat's home once no seat of it is open, and only what the table names", async () => {
+  const runtimes = join(ROOM_HOME, "runtimes-swept");
+  const old = new Date(Date.now() - 8 * 86_400_000);
+  const put = (path: string, aged = false) => {
+    mkdirSync(join(runtimes, path, ".."), { recursive: true });
+    writeFileSync(join(runtimes, path), "x");
+    if (aged) utimesSync(join(runtimes, path), old, old);
+  };
+  for (const home of ["codex/lens", "codex/peer"]) {
+    put(`${home}/.tmp/plugins/pack`);
+    put(`${home}/tmp/scratch`);
+    put(`${home}/config.toml`, true);
+    put(`${home}/state_5.sqlite`, true);
+    put(`${home}/sessions/2026/10/01/old.jsonl`, true);
+    put(`${home}/sessions/2026/10/13/new.jsonl`);
+    put(`${home}/archived_sessions/old.jsonl`, true);
+  }
+  // the owner's own sessions, shared into a seat's home by a link, are not the room's
+  put("owner/kept.jsonl", true);
+  mkdirSync(join(runtimes, "pi", "peer"), { recursive: true });
+  symlinkSync(join(runtimes, "owner"), join(runtimes, "pi", "peer", "sessions"));
+  const table = {
+    codex: {
+      rebuilt: [".tmp", "tmp", "../../owner", "/etc"],
+      sessions: ["sessions", "archived_sessions", "config.toml"],
+    },
+    pi: { rebuilt: [], sessions: ["sessions"] },
+  };
+
+  const done = sweepRuntimes(runtimes, new Set(["codex-peer"]), table);
+  const left = (home: string) =>
+    (readdirSync(join(runtimes, home), { recursive: true }) as string[])
+      .filter((path) => statSync(join(runtimes, home, path)).isFile())
+      .sort();
+  // a home with no open seat: what the CLI makes again is gone, old session files are gone, the rest stays
+  assert.deepEqual(left("codex/lens"), ["config.toml", "sessions/2026/10/13/new.jsonl", "state_5.sqlite"]);
+  assert.ok(!existsSync(join(runtimes, "codex/lens/sessions/2026/10/01")));
+  // a home with an open seat is left whole
+  assert.equal(left("codex/peer").length, 7);
+  assert.ok(existsSync(join(runtimes, "owner", "kept.jsonl")));
+  assert.equal(done.length, 4);
+  assert.deepEqual(sweepRuntimes(runtimes, new Set(["codex-peer"]), table), []);
+  // a room that has not applied this version has no table: nothing is swept
+  assert.deepEqual(sweepRuntimes(runtimes, new Set(), {}), []);
+
+  // inside a GC pass, Paseo says which seats are open
+  const scratch = (home: string) => join(ROOM_HOME, "runtimes", home, ".tmp");
+  for (const home of ["codex/lens", "codex/peer"]) mkdirSync(scratch(home), { recursive: true });
+  const seat = { id: "a1", status: "running", updatedAt: new Date().toISOString(), provider: "codex-peer" };
+  const paseo = { agents: { list: async () => ({ entries: [{ agent: seat }] }) } };
+  const engine = new MailEngine(paseo as never, MAIL_POLICY, { routes: {}, spawn: {} } as never, () => {});
+  const policy = { idleHoursBeforeArchive: {}, deleteOrphanHeartbeats: false, tellParent: false, runtimes: table };
+  await new Collector(
+    paseo as never,
+    engine,
+    policy as never,
+    () => {},
+    () => {},
+  ).run();
+  assert.deepEqual([existsSync(scratch("codex/lens")), existsSync(scratch("codex/peer"))], [false, true]);
 });

@@ -79,6 +79,13 @@ export interface GcPolicy {
   idleHoursBeforeArchive: Record<RoleName, number>;
   deleteOrphanHeartbeats: boolean;
   tellParent: boolean;
+  runtimes?: Partial<Record<Harness, RuntimeLeftovers>>;
+}
+
+/** What an agent CLI leaves in a seat's home: what it makes again, and its session folders. */
+export interface RuntimeLeftovers {
+  rebuilt: string[];
+  sessions: string[];
 }
 
 /** The watcher (watch/watcher.ts): `off` does nothing, `shadow` scans and logs, `on` also mails the seat above. */

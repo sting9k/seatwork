@@ -203,7 +203,7 @@ deploy.
 | Tình hình mọi project | "các project thế nào rồi" |
 | Thêm project | "set up project X" |
 | Gửi một lệnh xuống | "project X: dừng Y", "làm Z trước" |
-| Room làm gì gần đây | "thống kê room 7 ngày qua" |
+| Room làm gì gần đây | "thống kê room 3 ngày qua" |
 | Watcher thấy gì, tốn bao nhiêu | "thống kê watcher" |
 
 HQ chỉ tạo Supervisor, không tạo vai nào khác. Supervisor không biết một
@@ -313,7 +313,8 @@ Lựa chọn được lưu ngay khi bạn chọn. Room chỉ đổi khi bạn á
 | Kiểm tra | Cảnh báo khi |
 |---|---|
 | Paseo's tools for agents | Bộ công cụ đang tắt. Thiếu nó, seat không tạo được và không liên lạc được với nhau. |
-| Room files | Plugin và file của room thuộc hai phiên bản khác nhau. Hãy áp dụng. |
+| Room files | Sau khi cập nhật, room không tự đưa được file của nó lên phiên bản của plugin. Dòng này nêu lý do. Hãy áp dụng. |
+| Seats from before the update | Có seat đang mở nhận prompt từ phiên bản trước. Lưu trữ seat đó rồi tạo lại để nó chạy phiên bản này. |
 | Pi | Có seat Pi mà máy không có Pi, hoặc Pi cũ hơn 0.99. |
 | Dictation, Voice mode | Một trong hai đang bật, cho mọi agent trên máy. Tắt trong phần cài đặt của Paseo. |
 | Two copies of this plugin | `slp-seat`, id của plugin trước 0.18.0, vẫn còn cài. Chạy `paseo plugin remove slp-seat`. |
@@ -445,9 +446,23 @@ Hai giới hạn:
 paseo plugin update seatwork
 ```
 
-Sau đó bấm **Apply** trên màn hình Seatwork. Chưa bấm thì room từ chối seat
-mới. Room dựng từ bản clone thì cập nhật ngay trong bản clone: `git pull`,
-rồi `./install.sh`.
+Không cần làm gì thêm. Lần tới app đang mở hoặc có seat được tạo, room tự
+đưa file và seat của nó lên phiên bản mới, theo đúng các lựa chọn nó đang
+có.
+
+| Cái gì | Sau khi cập nhật |
+|---|---|
+| Prompt, skill và policy của room; seat và profile của nó trong Paseo | Thay bằng bản của phiên bản mới |
+| Lựa chọn của bạn, thư, log, danh sách project | Giữ nguyên |
+| Project đã đăng ký | Không có gì được chép vào project. Seat kế tiếp của nó chạy phiên bản mới |
+| Seat đang mở | Giữ prompt nó nhận lúc được mở. Màn hình Seatwork nêu tên nó: lưu trữ rồi tạo lại |
+| Ba công tắc Init đặt cho mọi agent | Để nguyên. Chỉ Apply mới đặt lại |
+| Chỗ sửa tay trong `~/.config/seatwork/policy.json` | Mất: file này được ghi lại từ plugin |
+
+Nếu room không tự làm xong được, nó từ chối seat mới và mục kiểm tra
+**Room files** nêu lý do. **Apply** trên màn hình Seatwork làm đúng bước đó
+bằng tay. Room dựng từ bản clone thì cập nhật ngay trong bản clone:
+`git pull`, rồi `./install.sh`.
 
 ### Tự dọn dẹp
 
@@ -457,16 +472,16 @@ rồi `./install.sh`.
 | Lead hoặc Peer đang rảnh | Sau 48 giờ |
 | Supervisor đang rảnh | Sau 7 ngày |
 | HQ | Không bao giờ |
-| Các dòng của log thư và log dọn dẹp | Sau 7 ngày |
-| Bản sao room tạo cho `config.json` của Paseo | Sau 7 ngày; bản mới nhất luôn được giữ |
+| Các dòng của log thư và log dọn dẹp | Sau 3 ngày |
+| Bản sao room tạo cho `config.json` của Paseo | Sau 3 ngày; bản mới nhất luôn được giữ |
 | Thư mục do Remove hoặc Init để sang một bên | Sau 30 ngày |
 | Thứ Codex tự tạo lại trong thư mục nhà của seat: thư mục tạm, cơ sở dữ liệu log | Ngay khi không còn seat nào của thư mục đó đang mở |
-| Bản ghi phiên trong thư mục nhà của seat Codex hoặc Pi | Sau 7 ngày không được ghi, khi không còn seat nào của thư mục đó đang mở |
+| Bản ghi phiên trong thư mục nhà của seat Codex hoặc Pi | Sau 3 ngày không được ghi, khi không còn seat nào của thư mục đó đang mở |
 
 - Seat rảnh được lưu trữ, không bị xoá. Seat đang chờ cấp quyền hoặc chờ
   trả lời, hoặc còn seat đang mở bên dưới, thì được để yên.
-- Thư cũ hơn 7 ngày không trả lời bằng id được nữa, và thống kê room nhìn
-  được tối đa 7 ngày.
+- Thư cũ hơn 3 ngày không trả lời bằng id được nữa, và thống kê room nhìn
+  được tối đa 3 ngày.
 - Được giữ nguyên: `registry-log.jsonl`, log quét của watcher, và các dòng
   ACCEPT, REJECT, REVISED BRIEF trong log thư. Thống kê của watcher được
   tính từ chúng.
@@ -537,7 +552,8 @@ paseo plugin logs seatwork
 | Thông báo | Cách xử lý |
 |---|---|
 | `is a room seat and no room is set up on this daemon` | Mở màn hình Seatwork và bấm Init |
-| `the room's files were set up by version …` | Bấm Apply trên màn hình Seatwork |
+| `the room's files were set up by version …` | Room không tự lên được phiên bản của plugin; thông báo nêu lý do. Bấm Apply trên màn hình Seatwork |
+| `the plugin's folder holds version …` | File của plugin đã đổi trong lúc plugin đang chạy. Chạy `paseo plugin reload seatwork` |
 | `is not a seat the room has set up` | Chọn agent CLI đó cho vai trên màn hình Seatwork, rồi Apply |
 | `may only be created in the hq-seatwork project` | Mở HQ trong project `hq-seatwork` |
 | `it holds only hq seats` | Mở vai này trong project của nó |

@@ -12,7 +12,7 @@ import {
 } from "node:fs";
 import { join } from "node:path";
 import { test } from "node:test";
-import { collectFiles, Collector, dropSeatTmp, sweepRuntimes } from "../server/gc";
+import { collectFiles, Collector, dropSeatTmp, KEEP_LOG_DAYS, sweepRuntimes } from "../server/gc";
 import { MailEngine } from "../server/mail";
 import { costLines, roomStats } from "../server/stats";
 
@@ -70,7 +70,7 @@ const lines = (file: string) =>
         .map((line) => JSON.parse(line) as { subject?: string; kind: string })
     : [];
 
-test("GC's file sweep clears what the room left more than a week ago, and keeps what the watcher and a restore still need", () => {
+test("GC's file sweep clears what the room left longer ago than it keeps logs, and keeps what the watcher and a restore still need", () => {
   const mailLog = join(ROOM_HOME, "mail", "log.jsonl");
   const gcLog = join(ROOM_HOME, "gc.log");
   const paseoHome = join(ROOM_HOME, "..", "paseo-of-tidy");
@@ -147,10 +147,12 @@ test("room stats look no further back than the mail log is kept", () => {
     });
   writeFileSync(
     mailLog,
-    [queued(10, "ACCEPT abc"), queued(3, "CANDIDATE abc"), queued(1, "ACCEPT abc")].join("\n") + "\n",
+    [queued(KEEP_LOG_DAYS + 3, "ACCEPT abc"), queued(KEEP_LOG_DAYS - 1, "CANDIDATE abc"), queued(1, "ACCEPT abc")].join(
+      "\n",
+    ) + "\n",
   );
 
-  assert.match(roomStats(14), /^mail in the last 7 days: 2\n/);
+  assert.match(roomStats(KEEP_LOG_DAYS * 2), new RegExp(`^mail in the last ${KEEP_LOG_DAYS} days: 2\n`));
 });
 
 test("room stats count the seats whose work came back three times or more", () => {

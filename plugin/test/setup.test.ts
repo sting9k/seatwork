@@ -34,6 +34,7 @@ const catalog: Catalog = async () => ({
   "claude-opus-5-5": { label: "Opus", thinking: ["medium", "high"], defaultThinking: "high" },
 });
 const source = { pluginDir: PLUGIN_DIR, roomHome: ROOM_HOME, catalog, version: "9.9.9" };
+const paseoAccepts = () => {};
 const plan = (setup: Setup = {}) => planRoom({ ...source, setup });
 
 /** A terminal with these lines typed at it; the input ends after the last one. */
@@ -236,18 +237,19 @@ test("choices the room cannot run on are refused before anything is written", as
     ], // a table from before the lenses were listed like Peers
     [{ models: { seats: { lead: { provider: "emacs-lead/m-one" } } } }, /"emacs-lead", which is not a seat/],
   ];
-  for (const [setup, error] of cases) await assert.rejects(setUpRoom(source, setup), error, JSON.stringify(setup));
+  for (const [setup, error] of cases)
+    await assert.rejects(setUpRoom(source, setup, paseoAccepts), error, JSON.stringify(setup));
   assert.ok(!isSetUp(ROOM_HOME));
 });
 
 test("setting the room up again replaces the room's files and keeps what the room wrote since", async () => {
-  await setUpRoom(source, { seats: ["pi-peer", "opencode-peer"], watcher: "shadow", chime: false });
+  await setUpRoom(source, { seats: ["pi-peer", "opencode-peer"], watcher: "shadow", chime: false }, paseoAccepts);
   for (const kept of ["mail", "runtimes/pi/peer", "runtimes/opencode/peer", "runtimes/claude/peer"])
     mkdirSync(join(ROOM_HOME, kept), { recursive: true });
   writeFileSync(join(ROOM_HOME, "mail", "log.jsonl"), "{}\n");
   writeFileSync(join(ROOM_HOME, "room", "roles", "dropped-from-the-plugin.md"), "stale");
 
-  await setUpRoom(source, { seats: ["pi-peer"], watcher: "on" });
+  await setUpRoom(source, { seats: ["pi-peer"], watcher: "on" }, paseoAccepts);
 
   const policy = JSON.parse(readFileSync(join(ROOM_HOME, "policy.json"), "utf8"));
   assert.deepEqual([policy.watcher.mode, policy.owner.chime], ["on", true]);
@@ -262,14 +264,16 @@ test("setting the room up again replaces the room's files and keeps what the roo
 });
 
 test("a seat added to a running room is kept by every later setup, and adding it moves nothing else", async () => {
-  await setUpRoom(source, { watcher: "shadow" });
+  await setUpRoom(source, { watcher: "shadow" }, paseoAccepts);
   writeFileSync(join(ROOM_HOME, "room", "roles", "edited-by-hand.md"), "kept");
 
-  const added = await addSeats(source, ["pi-supervisor"]);
+  // the plugin was updated since: adding a seat does not make the room's files this version's
+  const added = await addSeats({ ...source, version: "10.0.0" }, ["pi-supervisor"]);
 
   assert.ok("pi-supervisor" in added.providers);
   assert.ok(existsSync(join(ROOM_HOME, "room", "roles", "edited-by-hand.md")));
-  assert.ok("pi-supervisor" in (await setUpRoom(source, readSetup(ROOM_HOME))).providers);
+  assert.equal(readSetup(ROOM_HOME).version, "9.9.9");
+  assert.ok("pi-supervisor" in (await setUpRoom(source, readSetup(ROOM_HOME), paseoAccepts)).providers);
   await assert.rejects(addSeats(source, ["pi-boss"]), /"pi-boss" is not a seat/);
 });
 

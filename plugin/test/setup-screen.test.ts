@@ -32,7 +32,10 @@ const daemon = {
   },
   workspaces: [] as string[],
   open: [] as { id: string; provider: string; title: string }[],
+  patches: [] as object[],
+  refuses: "",
 };
+const VERSION = JSON.parse(readFileSync(join(PLUGIN_DIR, "package.json"), "utf8")).version as string;
 const paseo = {
   config: {
     get: async () => ({ config: structuredClone(daemon.config) }),
@@ -41,6 +44,8 @@ const paseo = {
       removeProviders?: string[];
       agentProfiles?: { id: string }[];
     }) => {
+      daemon.patches.push(patch);
+      if (daemon.refuses) throw new Error(daemon.refuses);
       for (const id of patch.removeProviders ?? []) delete daemon.config.providers[id];
       Object.assign(daemon.config.providers, patch.providers ?? {});
       if (patch.agentProfiles) daemon.config.agentProfiles = patch.agentProfiles;
@@ -86,13 +91,24 @@ const state = () =>
     applied: { models: unknown; watcher: string; version: string; seats: string[] } | null;
     watcherKey: boolean;
     harnesses: { id: string; available: boolean; why: string }[];
-    checks: { id: string; ok: boolean | null }[];
+    checks: { id: string; ok: boolean | null; detail: string }[];
     table: unknown;
   }>;
 const createPeer = () =>
-  call("before agent.create", {
-    request: { config: { provider: "claude-peer", cwd: PROJECT, title: "[Peer] task" }, env: {} },
-  }) as Promise<{ config: { systemPrompt: string; mcpServers: object } }>;
+  call(
+    "before agent.create",
+    { request: { config: { provider: "claude-peer", cwd: PROJECT, title: "[Peer] task" }, env: {} } },
+    context,
+  ) as Promise<{ config: { systemPrompt: string; mcpServers: object } }>;
+const setupFile = join(ROOM_HOME, "setup.json");
+const stamp = () => JSON.parse(readFileSync(setupFile, "utf8")).version as string;
+/** The plugin as it starts after an update: the room's files are still an earlier version's. */
+async function updated(): Promise<void> {
+  writeFileSync(setupFile, JSON.stringify({ ...JSON.parse(readFileSync(setupFile, "utf8")), version: "0.1.0" }));
+  await dispose();
+  dispose = contribute(paseoSide.server);
+  daemon.patches.length = 0;
+}
 
 before(() => {
   // this machine keeps the room's mail server off the port the policy names
@@ -204,15 +220,71 @@ test("a project's own models are written into the project from the screen and ta
   rmSync(join(ROOM_HOME, "projects.json"));
 });
 
-test("after an update of the plugin the room takes no new seat until its files are applied again", async () => {
-  const file = join(ROOM_HOME, "setup.json");
-  writeFileSync(file, JSON.stringify({ ...JSON.parse(readFileSync(file, "utf8")), version: "0.1.0" }));
-  await dispose();
-  dispose = contribute(paseoSide.server); // the plugin as it starts after the update
+test("an update of the plugin finishes itself: the next seat starts on this version's files, on the choices the room had, and the daemon's own switches are left alone", async () => {
+  const choices = JSON.parse(readFileSync(setupFile, "utf8"));
+  writeFileSync(join(ROOM_HOME, "room", "roles", "peer.md"), "the prompt of 0.1.0");
+  delete daemon.config.providers["claude-peer"];
+  await updated();
 
-  await assert.rejects(createPeer(), /set up by version 0\.1\.0 of the plugin.*Press Apply on the Seatwork screen/);
-  assert.ok((await state()).checks.some((check) => check.id === "version" && check.ok === false));
-  // an install from before 0.18.0, under the old id, beside this one: two copies
+  const seat = await createPeer();
+
+  assert.match(seat.config.systemPrompt, /^# The room\n[\s\S]*\n# Seat: peer\n/);
+  assert.doesNotMatch(seat.config.systemPrompt, /the prompt of 0\.1\.0/);
+  assert.deepEqual(JSON.parse(readFileSync(setupFile, "utf8")), { ...choices, version: VERSION });
+  assert.ok("claude-peer" in daemon.config.providers && "pi-lead" in daemon.config.providers);
+  assert.ok(!daemon.patches.some((patch) => "browserTools" in patch), "a switch of the daemon was set with no click");
+  assert.ok(!(await state()).checks.some((check) => check.id === "version"));
+  assert.deepEqual(paseoSide.names().filter((name) => name === "on agent.turn_ended").length, 1);
+
+  // with the app open its own question is enough: no seat has to be created first
+  await updated();
+  await call("rpc room.waiting", {}, context);
+  assert.equal(stamp(), VERSION);
+});
+
+test("an update the room cannot finish keeps new seats out and says why; it is tried again when a seat is created or the screen opens, not at every question of the app", async () => {
+  await updated();
+  daemon.refuses = "the daemon is busy";
+
+  await assert.rejects(
+    createPeer(),
+    /set up by version 0\.1\.0 .*could not bring them to .*: the daemon is busy.*Press Apply on the Seatwork screen/,
+  );
+  assert.equal(stamp(), "0.1.0", "a room whose seats Paseo refused was marked as brought up");
+  const tried = daemon.patches.length;
+  await call("rpc room.waiting", {}, context);
+  assert.equal(daemon.patches.length, tried, "the app's question tried again within the minute");
+  const row = (await state()).checks.find((check) => check.id === "version");
+  assert.deepEqual([row?.ok, /the daemon is busy/.test(row?.detail ?? "")], [false, true]);
+
+  daemon.refuses = "";
+  assert.ok(!(await state()).checks.some((check) => check.id === "version"));
+  assert.equal(stamp(), VERSION);
+});
+
+test("while Paseo still lists the folder of the version before, the room is not brought up from it", async () => {
+  const older = join(ROOM_HOME, "..", "the-checkout-before");
+  for (const [file, text] of [
+    ["package.json", '{"version":"0.1.0"}'],
+    ["room/models.json", '{"seats":{"hq":{"provider":"claude-hq/an-old-model"}}}'],
+    ["paseo/policy.json", "{}"],
+  ]) {
+    mkdirSync(join(older, file, ".."), { recursive: true });
+    writeFileSync(join(older, file), text);
+  }
+  daemon.config.plugins = { seatwork: { path: older } };
+  await updated();
+
+  await assert.rejects(createPeer(), new RegExp(`folder holds version 0\\.1\\.0 and the plugin running is ${VERSION}`));
+  assert.deepEqual([stamp(), daemon.patches.length], ["0.1.0", 0]);
+
+  daemon.config.plugins = { seatwork: { path: PLUGIN_DIR } };
+  await createPeer();
+  assert.equal(stamp(), VERSION);
+  rmSync(older, { recursive: true });
+});
+
+test("an install from before 0.18.0, still beside this one under its old id, is named, and the room's files stay this plugin's own", async () => {
   const older = join(ROOM_HOME, "..", "an-old-checkout");
   for (const [file, text] of [
     ["room/models.json", '{"seats":{"hq":{"provider":"claude-hq/an-old-model"}}}'],
@@ -222,14 +294,38 @@ test("after an update of the plugin the room takes no new seat until its files a
     writeFileSync(join(older, file), text);
   }
   daemon.config.plugins = { "slp-seat": { path: older }, seatwork: { path: PLUGIN_DIR } };
+
   const beside = await state();
+
   assert.ok(beside.checks.some((check) => check.id === "two-copies" && check.ok === false));
-  // the room's files are this plugin's own, whichever copy Paseo lists first
   assert.doesNotMatch(JSON.stringify(beside.table), /an-old-model/);
   delete daemon.config.plugins["slp-seat"];
   assert.ok(!(await state()).checks.some((check) => check.id === "two-copies"));
-  await init({ models: { seats: { lead: { provider: "pi-lead/m", thinking: "high" } } }, watcher: "on" });
-  assert.match((await createPeer()).config.systemPrompt, /^# The room\n[\s\S]*\n# Seat: peer\n/);
+});
+
+test("a seat opened by an earlier version of the plugin is named on the screen until it is archived", async () => {
+  const opened = (agentId: string, version?: string) =>
+    `${JSON.stringify({ agentId, parentAgentId: null, provider: "claude-lead", role: "lead", title: null, version })}\n`;
+  appendFileSync(join(ROOM_HOME, "registry-log.jsonl"), opened("before-1", "0.1.0") + opened("before-2"));
+  await dispose();
+  dispose = contribute(paseoSide.server);
+  const created = { id: "now-1", provider: "claude-peer", cwd: PROJECT, title: "[Peer] new", parentAgentId: null };
+  await call("on agent.created", { agent: created }, context);
+  daemon.open = [
+    { id: "before-1", provider: "claude-lead", title: "[Lead] billing" },
+    { id: "before-2", provider: "claude-lead", title: "[Lead] search" },
+    { id: "now-1", provider: "claude-peer", title: "[Peer] new" },
+    { id: "a2", provider: "claude", title: "not a seat" },
+  ];
+
+  const row = (await state()).checks.find((check) => check.id === "older-seats");
+
+  assert.equal(row?.ok, false);
+  assert.match(row?.detail ?? "", /^2 open seats .*\[Lead\] billing, \[Lead\] search/);
+  assert.doesNotMatch(row?.detail ?? "", /\[Peer\] new|not a seat/);
+  daemon.open = [daemon.open[2]];
+  assert.ok(!(await state()).checks.some((check) => check.id === "older-seats"));
+  daemon.open = [];
 });
 
 test("Init clears a room from before 0.19.0: its home and its notes in a project are kept aside, its key is carried over, nothing of the user's moves", async () => {

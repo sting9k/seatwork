@@ -47,6 +47,7 @@ export interface SeatRecord {
   provider: string;
   title: string | null;
   cwd?: string;
+  version?: string;
 }
 
 const MAIL_DIR = join(ROOM_HOME, "mail");
@@ -284,6 +285,7 @@ export class MailEngine {
           provider: string;
           title: string | null;
           cwd?: string;
+          version?: string;
         };
         this.seats.set(rec.agentId, {
           agentId: rec.agentId,
@@ -292,6 +294,7 @@ export class MailEngine {
           provider: rec.provider,
           title: rec.title ?? null,
           ...(rec.cwd ? { cwd: rec.cwd } : {}),
+          ...(rec.version ? { version: rec.version } : {}),
         });
       } catch {
         // skip bad line

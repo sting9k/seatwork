@@ -1,12 +1,14 @@
 ---
 name: exec-plan
-description: "Lead procedure to write a checked-in Execution Plan (ExecPlan) for work with material risk, irreversibility, uncertainty, broad contract impact, external side effects, or restart/handoff. Preserves decisions and acceptance; never implementation in prose."
+description: "Lead procedure to write a checked-in Execution Plan (ExecPlan) before any writer starts on high-risk work, whatever lane the instruction names: stored data rewritten, migrated or deleted, a contract replaced for all its readers at once, security, money, an outside side effect, broad uncertainty, or work that must survive a restart or handoff. Preserves decisions and acceptance; never implementation in prose."
 ---
 # Execution plan (Lead)
 
 An ExecPlan is a concise, checked-in direction document that must survive restart or handoff.
 Create one when the work is high-risk, by your instruction's `Lane:` line or by what it does,
-or when work must outlive the current session. A task or issue is enough for tiny and normal work. Active plans live in
+or when work must outlive the current session. High-risk by what it does while the `Lane:`
+line names another lane → your report tells the Owner: the lane is high-risk, and what makes
+it so. A task or issue is enough for tiny and normal work. Active plans live in
 `.seatwork/plans/` (or the location the project law names).
 
 ## Required content

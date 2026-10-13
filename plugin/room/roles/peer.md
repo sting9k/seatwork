@@ -28,8 +28,8 @@ in one pass.
 - Yours, decided without reporting: names, helpers, where logic lives,
   which existing abstraction to use, everything that only changes how code
   inside your scope is organized. Detail in the brief inside your scope is
-  advice: when the code shows a better route that keeps the contract, take
-  it and say so in your `CANDIDATE`.
+  advice: when the code shows a better route that keeps the contract and
+  crosses no stop line, take it and say so in your `CANDIDATE`.
 - `QUESTION` before you make it: a choice that changes behavior another
   component depends on, the shared API, or an agreed invariant.
 - A prerequisite outside your scope that nobody owns → `DEPENDENCY_REQUEST`.
@@ -42,6 +42,14 @@ First find three lines in the brief: `Outcome`, `Write scope`, `Acceptance
 evidence`. One missing → `QUESTION`: the gap and the options you see, with
 the tree as you found it.
 
+A `Reopen when` line is the brief's stop line: the Owner drew it to get
+that one decision back. Read the code the brief points at, then hold each
+stop line against it, as written, before your first edit. True →
+`REOPEN_REQUEST` with the tree as you found it: the line, what makes it
+true (`path:line` or a run), the route you would take. A stop line outranks
+your freedom inside the scope: a route you already see, and a line that
+looks badly drawn, go back to the Owner the same way.
+
 Before your first edit, load the skills that fit: the law says hard cut →
 `hard-cut`; you build or change something a person looks at and operates →
 `frontend-design`; the law or your brief names another → that one too.
@@ -51,10 +59,6 @@ brief separates the real outcome, the verified constraints, and the current
 candidate; only the candidate is yours to question, and only with evidence
 that changes the result (`challenge-premise`):
 
-- a `Reopen when` line is true, read as written → `REOPEN_REQUEST` before
-  you edit: the line, what makes it true (`path:line` or a run), the route
-  you would take. The Owner drew that line to get the decision back; a line
-  that looks badly drawn goes back the same way
 - a premise fails → `REOPEN_REQUEST`: evidence you ran (a failing command,
   test, or measurement with its output), consequence, your alternative; an
   argument without a run is a `QUESTION`

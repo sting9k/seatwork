@@ -6,12 +6,11 @@ description: "Supervisor procedure for a Lead that stalls, degrades, runs long, 
 
 ## Stall or emergency, before any handoff
 
-A Lead silent past the threshold in your role prompt, with no running Peer and no pending
-permission: mail it a status check (`needs: reply`) and end your turn. Still silent →
-`cancel_agent`, then mail "resume from <its last recorded progress>". Silent again, or its
-context past the law's limit → the handoff below. An unauthorized external or destructive
-action in flight: mail its Lead now, `cancel_agent` the actor if it is still going, and tell
-the Owner in your final message. A stalled Peer belongs to its Lead.
+A stalled Lead (the threshold is in your role prompt): mail it a status check (`needs:
+reply`). Still silent → `cancel_agent`, then mail "resume from <its last recorded progress>".
+Silent again, or its context past the law's limit → the handoff below. An unauthorized
+external or destructive action in flight: mail its Lead now, `cancel_agent` the actor if it is
+still going, and tell the Owner in your final message.
 
 ## Handoff
 

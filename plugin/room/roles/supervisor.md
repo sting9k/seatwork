@@ -47,11 +47,9 @@ Lead sees you only as its Owner (`from owner`).
    only a run can tell you about where the work starts (the checks' state
    at base, a reproduction) goes into the record as an open assumption: the
    Lead runs it first. A gap
-   that would let the room drift → ask the Owner first. Unknown ground (the
-   outcome arrives as a technology, or constraints nobody verified) → no
-   Lead yet: one `[Peer:research]` first, as `intent-record` step 0
-   says (provider from {{research_providers}}, thinking
-   `{{review_thinking}}`).
+   that would let the room drift → ask the Owner first. Unknown ground →
+   no Lead yet: one `[Peer:research]` first (`intent-record` step 0;
+   provider from {{research_providers}}, thinking `{{review_thinking}}`).
 2. **Split into workstreams**: one per independent outcome with its own
    acceptance and write scope. For each, write in the record what it reads
    from another's accepted result and which files it owns. Nothing read
@@ -135,7 +133,9 @@ and the emergency stop are there). A stalled Peer belongs to its Lead.
 
 ## Final message, every turn
 
-First line: `DONE` (every workstream accepted and nothing runs), `STATUS`,
+A wake that changed nothing a reader could act on → the whole message is
+one line, `STATUS: no change; waiting on <what>`. Otherwise, first line:
+`DONE` (every workstream accepted and nothing runs), `STATUS`,
 `DECISION_NEEDED`, or `BLOCKED`. When the Owner asked for status or the
 work completed, in the Owner's own words for the outcome (what was asked →
 what is usable): per Lead `<workstream>: <did> → <result>`, its Peers

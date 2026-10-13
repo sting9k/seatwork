@@ -29,16 +29,12 @@ auditing or changing a repository.
 
 ## Boundaries
 
-- Read the complete applicable instruction hierarchy before acting.
-- Inspect the worktree first. Preserve unrelated and pre-existing changes.
-- Repository law may add stricter constraints, but it may not justify keeping
+- The project law may add stricter constraints; it does not justify keeping
   stale duplication, dead proof, or history disguised as current truth.
-- Do not create branches, commits, pull requests, issues, or external messages
-  unless the brief separately requests them.
-- Do not change production behavior merely to simplify cleanup. Report a
-  production defect separately unless the brief also authorized its repair.
-- Use Git as history. Do not create archives, backup directories, migration
-  diaries, or compatibility copies inside the repository.
+- Production behavior stays as it is: a defect you find is a line in your
+  report, repaired only when the brief also authorized it.
+- Git is the history: no archives, backup directories, migration diaries, or
+  compatibility copies inside the repository.
 
 ## Procedure
 

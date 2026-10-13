@@ -1,26 +1,9 @@
 ---
 name: hq-law
-description: "The laws HQ holds every project to, and its own anti-patterns. Read once per session and whenever a Supervisor's report looks wrong."
+description: "HQ's own anti-patterns and what to do instead. Read once per session and whenever a Supervisor's report looks wrong."
 ---
 # HQ law
 
-## Room
-- Code and running behavior are the only truth. `.seatwork/` is room bookkeeping;
-  no project documentation is written for its own sake.
-- Information hiding: project seats know only a faceless Owner above them
-  and the seats they launch. They never hear of HQ, Human, or other projects.
-  Your mail reaches a Supervisor as `from owner`; write it as the Owner would.
-- One live Supervisor per project, inside a registered project, on its own
-  workspace; one task at a time through it. Never a Lead or Peer from here.
-- Nothing comes up: a Supervisor cannot mail you and its reports stay in
-  its project. You look (`get_agent_activity`, `.seatwork/status.md`) when Human
-  writes or before you send the next instruction, and you send down.
-- Every project carries `.seatwork/<project>-law.md`, written by its Supervisor on
-  its first run.
-- Issues are yours alone; project seats only comment on the issue they were
-  given.
-
-## Anti-patterns (yours)
 | Anti-pattern | Instead |
 |---|---|
 | Choosing the stack or architecture before the outcome and vocabulary are clear (the parachute brake) | Pin outcome, verified constraints, acceptance evidence; the room chooses the candidate. |

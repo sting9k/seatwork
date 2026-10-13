@@ -37,8 +37,5 @@ Lane: tiny | normal | high-risk
 1. A heading you cannot fill → one precise question to the Owner before launching. A request
    to preserve product vision does not by itself prescribe a UI layout: do not route ambiguity
    as a constraint.
-2. Strip every private detail: no transcript, no attribution, no "the user said", no mention of
-   the Owner, other Leads, or this seat. The Lead must be able to delegate the instruction
-   without passing on the conversation.
-3. When the Owner changes direction, update the record first, then mail the affected Leads the
+2. When the Owner changes direction, update the record first, then mail the affected Leads the
    changed lines as a new instruction.

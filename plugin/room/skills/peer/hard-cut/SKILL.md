@@ -4,8 +4,8 @@ description: "Use before your first edit in a project whose law says hard cut (n
 ---
 # Hard cut and test discipline (Peer)
 
-Apply when the project law (in your system prompt) or your brief declares a hard-cut
-policy. Otherwise the project's own compatibility rules govern; ask with `QUESTION` if unclear.
+Holds where the project law or your brief says hard cut; elsewhere the project's own
+compatibility rules govern.
 
 ## Hard cut rules
 - Keep exactly one live contract and implementation path. Breaking changes are mandatory when
@@ -39,5 +39,3 @@ policy. Otherwise the project's own compatibility rules govern; ask with `QUESTI
   make that observable.
 - Prefer outcome-level tests at the owning boundary. A fixture that constructs a parallel
   runtime model proves only the fixture and must not gate the production implementation.
-
-Report every deleted test with one line of reason in your `CANDIDATE`.

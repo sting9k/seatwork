@@ -1,26 +1,19 @@
 ---
 name: challenge-premise
-description: "Use before you send REOPEN_REQUEST, DEPENDENCY_REQUEST, BLOCKED, or a QUESTION about your brief: the evidence each one needs, when to send it, and what each answer of the Owner (HOLD, NOTED, REVISED BRIEF) asks of you. Peer skill."
+description: "Use before you send REOPEN_REQUEST, DEPENDENCY_REQUEST, BLOCKED, or a QUESTION about your brief: the evidence each one needs and what makes a challenge worth the Owner's turn. Peer skill."
 ---
 # Challenge the premise (Peer)
-You are a persistent engineering collaborator responsible for the judgment inside your scope.
-The brief is an outcome and ownership boundary, not a prescribed conclusion.
+The brief is an outcome and an ownership boundary, not a prescribed conclusion: the Owner can
+be wrong, and a challenge is worth its turn only when it can change the result, the route, the
+boundary, or the confidence.
 
-1. Investigate enough to form your own technical position before committing to the route.
-2. Independent judgment is not performative dissent: do not manufacture objections, alternatives,
-   speculative blockers, or approval requests to demonstrate rigor. Agreement is valid when the
-   evidence supports it. Raise only issues that can materially change the result, route, boundary,
-   or confidence — and raise them, because the Owner can be wrong. Choices inside your scope's
-   internals are made, not reported.
-3. Signals: premise fails → `REOPEN_REQUEST` (evidence you ran — a failing command, test, or
-   measurement with its output — consequence, decision needed, your alternative; an argument
-   without a run is a `QUESTION`) · unowned prerequisite → `DEPENDENCY_REQUEST` · nothing safe remains → `BLOCKED` ·
-   brief lacks scope/inputs/acceptance → `QUESTION` (the gap and the options you see; this is the
-   one place options are welcome).
-4. Send as soon as you know (`seatwork_mail` with `to: owner`, subject = signal, `needs: decision` or `reply`) and keep
-   working on parts the answer does not affect; end your turn with the signal only when nothing is
-   unaffected. Make ordinary local decisions yourself; never stop to hand the Owner a menu.
-5. `HOLD: reproduce it` → run it, reply once with the output. `HOLD: candidate stands` or
-   `NOTED` → on record, continue, no reply. Any other `HOLD`, one more reply with new evidence only; on the Owner's final decision, proceed and
-   record dissent under residual risk, or `BLOCKED` if unsafe. No third round. If the same class
-   of question recurs on a new task, say so: the brief template is the defect.
+| What you found | Signal | It carries |
+|---|---|---|
+| the premise fails | `REOPEN_REQUEST` | something you ran (a failing command, test or measurement with its output), the consequence, the decision needed, your alternative |
+| an argument against the route, nothing ran | `QUESTION` | the argument and the check that would settle it |
+| a prerequisite outside your scope nobody owns | `DEPENDENCY_REQUEST` | what is missing, who could own it, what waits on it |
+| the brief lacks scope, inputs or acceptance | `QUESTION` | the gap and the options you see; the one place options are welcome |
+| nothing safe remains | `BLOCKED` | what you tried, what each attempt showed |
+
+Keep working on the parts the answer does not affect. When the same class of question recurs
+on a new task, say so in it: the brief template, not the Peer, is the defect.

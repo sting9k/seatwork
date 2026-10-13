@@ -6,9 +6,9 @@ description: "Lead procedure on every CANDIDATE: identify the artifact, check sc
 1. Identity: commit sha or snapshot patch + sha, base, changed paths; anything else → `REJECT`
    asking for the identity.
 2. Scope: paths outside the brief → `REJECT` with "move or justify".
-3. Evidence item by item against what the Peer actually ran. Passing tests prove the tests, not
-   the outcome; a test change needs its one-line justification; a weak
-   proof route → `test-proof-debt-audit` by a reviewer before accepting the claim. A
+3. Evidence item by item against what the Peer actually ran. A test change needs its one-line
+   justification; a weak proof route → `test-proof-debt-audit` by a reviewer before accepting
+   the claim. A
    candidate that answers a `REVISED BRIEF` re-runs the evidence that reopened it: the fix is
    proved on the code that gets accepted, not on the argument that won. A `TEMPORARY:` marker
    without a removal task in the plan → add the task now or `REJECT`.
@@ -27,6 +27,5 @@ description: "Lead procedure on every CANDIDATE: identify the artifact, check sc
    run it. The author still waits.
 6. `ACCEPT <candidate>: <reason>` by `seatwork_mail` to the candidate's owner with `needs: nothing`;
    release or keep write ownership explicitly; archive the reviewer, whose report was its whole
-   job and needs no answer; update `.seatwork/status.md`; pick the next ready task. Technical acceptance
-   never authorizes push, merge, or deploy. The workstream's last candidate → the integrated
-   check from your role file before `DONE`.
+   job and needs no answer; update `.seatwork/status.md`; pick the next ready task. The
+   workstream's last candidate → the integrated check from your role file before `DONE`.

@@ -27,8 +27,8 @@ description: "Lead procedure to split an outcome into Peer tasks along real seam
    compatibility code; a change that only works whole and does not fit → raise the tier, never
    split it in time; unknown scope → one
    `[Peer:research]` first.
-5. Tier per task from the provider table in your role; when unsure, lower. Parallel writers only with disjoint scopes
-   and agreed contracts; otherwise sequence. Three to five live Peers is the healthy band.
+5. Tier per task from the provider table in your role. Parallel writers only with disjoint
+   scopes and agreed contracts; otherwise sequence. Three to five live Peers is the healthy band.
 6. Record the plan (tasks, tier, scope, dependencies, state) in `.seatwork/status.md` and your first
    report. Three or more tasks, or any expensive-tier task → one `[Lens] plan review` before launching (angle: missing or redundant tasks, write-scope overlap, tier
    misroutes, phases that only serve the plan's shape, risks; concrete changes or LGTM). Plan closure → `ultra-review` when the gate says so.

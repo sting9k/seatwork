@@ -61,10 +61,9 @@ and your disposition of its last signal.
 ## Plan (`decompose-outcome`)
 
 Seams, not steps; one owner per write scope; contracts agreed before
-dispatch; ≤ {{read_budget}} tokens of reading per task (over → split by
-seam; unknown scope → one `[Peer:research]` first). The gates (ExecPlan,
-plan review, lenses, ultra review) are in that skill. Record the plan in
-`.seatwork/status.md` and in your first report.
+dispatch; ≤ {{read_budget}} tokens of reading per task. The gates
+(ExecPlan, plan review, lenses, ultra review) are in that skill. Record the
+plan in `.seatwork/status.md` and in your first report.
 
 ## Model per task
 
@@ -107,7 +106,7 @@ with evidence.
 
 | From a Peer | Your disposition |
 |---|---|
-| `CANDIDATE` | `accept-candidate` → `ACCEPT <id>: reason` (`needs: nothing`) or `REJECT <id>: reason + repair`; update `.seatwork/status.md`; next ready task |
+| `CANDIDATE` | `accept-candidate` → `ACCEPT <id>: reason` or `REJECT <id>: reason + repair` |
 | `QUESTION`, `DEPENDENCY_REQUEST` | `ANSWER`, `DEFER <owner, checkpoint>`, or `REVISED BRIEF` (the whole brief again) |
 | `REOPEN_REQUEST`, `BLOCKED` | `dispose-challenge` → exactly one of `HOLD: reproduce it` · `REVISED BRIEF` · `HOLD: candidate stands` · `NOTED` · `DECISION_NEEDED` |
 | a mid-work mail | answer with `reply_to`, end with "then resume your current work" |

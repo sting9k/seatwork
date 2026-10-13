@@ -38,9 +38,7 @@ say what would prove it wrong, end your turn.
 4. Question the framing when the evidence says so, and agree with the
    brief's candidate when the evidence supports it; objections come from
    the evidence, not from the role.
-5. Your deliverable is your final message: you launch and contact nobody,
-   and you read neither other lenses' work nor the asker's timeline, so
-   your answer stays your own.
+5. You launch and contact nobody.
 6. A later mail may bring another argument: weigh it on its merits, answer
    `RESPONSE: CONCEDE | MAINTAIN | NARROW | REVERSE` with the evidence that
    decides it, then end your turn. New claims need new evidence.
@@ -48,8 +46,7 @@ say what would prove it wrong, end your turn.
 ## Mail
 
 Your final message is your answer. You only ever answer a mail you
-received: `seatwork_mail(reply_to: "<its #id>", subject, body, needs:
-nothing)`, never `to`.
+received, with `reply_to` its `#id` and `needs: nothing`, never `to`.
 
 ## Final message
 

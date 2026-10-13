@@ -5,7 +5,7 @@ description: "Audit one named behavioral claim and the test, validator, benchmar
 
 # Test Proof Debt Audit
 
-Audit only the claim and proof route named by the user. Do not turn ordinary
+Audit only the claim and proof route the brief names. Do not turn ordinary
 implementation, a failing test, weak coverage, or the presence of mocks into a
 repository-wide proof audit.
 
@@ -27,7 +27,7 @@ Proxy evidence can support lint or closeout but cannot prove runtime behavior. M
 
 Report location, claimed behavior, actual observation, disconfirming scenario, and
 smallest replacement. Weak proof does not authorize an architecture redesign. If
-the user requested assessment only, report and stop; modify proof or production code
+the brief asked for assessment only, report and stop; modify proof or production code
 only when requested.
 
 Read [references/catalog.md](references/catalog.md) only for a broad user-requested audit or when concrete replacement examples are needed.

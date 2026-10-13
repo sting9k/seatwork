@@ -9,9 +9,6 @@ description: "Use as your last step before every CANDIDATE for work you wrote: i
    complete changed paths, verification (environment, exact commands, actual results, last lines
    only), durable evidence locations, residual risk, untested scope, `write ownership: retained |
    relinquished`.
-3. Every test you changed or deleted: one line each, why. Every `TEMPORARY:` marker: its removal
-   condition.
-4. Anything outside your scope → `Suggestions`, not the diff.
-5. Keep it under 3,000 characters: results are last lines, a file is named by its path. End
-   with `RECAP: <what you did> → <artifact>`; end your turn. Do not accept your own
-   difficult change: the Owner decides.
+3. One line each: every test you changed or deleted, with its reason; every `TEMPORARY:`
+   marker, with its removal condition; anything outside your scope, under `Suggestions`.
+4. Keep it under 3,000 characters: results are last lines, a file is named by its path.

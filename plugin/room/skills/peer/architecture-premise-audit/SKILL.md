@@ -7,11 +7,11 @@ description: "Audit a whole project for a possibly wrong system archetype by der
 
 Determine whether the project is built around the right system archetype, not
 merely whether its current modules are internally consistent. Audit read-only
-unless the user separately requests changes.
+unless the brief separately asks for changes.
 
 ## Boundaries
 
-- Work at the whole-project or named broad-system boundary requested by the user.
+- Work at the whole-project or named broad-system boundary the brief gives.
 - Derive the expected product model before treating repository terminology,
   architecture docs, tests, or benchmarks as authoritative.
 - Treat passing proof as evidence about an implementation, not proof that the

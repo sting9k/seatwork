@@ -4,11 +4,8 @@ description: "Lead procedure for independent read-only opinions on a hard questi
 ---
 # Lenses (the Lead chairs)
 
-A lens is its own seat, not a Peer: a strong model on a `<harness>-lens` provider, title
-`[Lens] <angle>`, that answers one neutral brief by mail and sees neither another lens nor your
-reasoning, plan, or preference. You are the chair and the final arbiter: lenses analyse, you
-decide. The analysis is theirs, the decision is yours, and the chair is always the Lead: a lens
-answers its brief and runs no procedure of its own.
+You are the chair and the final arbiter: lenses analyse, you decide. A lens answers its brief
+and runs no procedure of its own.
 
 ```text
 size    -> how many lenses, which models, which angles (one sentence)
@@ -72,26 +69,8 @@ decision.
 
 ## 3. Sealed launch
 
-Begin every lens prompt with:
-
-```text
-LENS EXECUTION MODE
-Work as a fully autonomous reviewer with independent judgment inside the authorized scope.
-Challenge false premises, choose what evidence to inspect, make ordinary analytical decisions
-without waiting for the chair. This is your own analysis, done alone: the brief and the
-authorized scope are your only inputs, and your final message is your only output. Begin
-directly.
-```
-
-End every lens prompt with:
-
-```text
-Read-only: the tree stays as you found it, and you launch and contact nobody. Agreement and
-disagreement are both valid answers; the evidence decides. Keep direct observations and
-inference in separate sentences, and state what evidence would prove your position wrong.
-End your turn with REVIEW on the first line.
-```
-
+The lens role prompt already tells a lens how to work (read-only, alone, labelled claims, a
+falsifier, `REVIEW` first); the brief carries the case and nothing about how to behave.
 `create_agent` per lens: `title` `[Lens] <angle>`, `provider` from the lens table,
 `settings.modeId` for its harness, `settings.thinkingOptionId` from the lens table,
 `initialPrompt`, `notifyOnFinish: false`. Launch all

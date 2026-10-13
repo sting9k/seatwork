@@ -26,8 +26,6 @@ A challenge is a finding, not a vote: one disposition, recorded, then back to wo
    tie-break (`lens`); never a third round. A Peer's `BLOCKED` after your decision →
    concede, reassign the scope to a fresh Peer with the dissent in `What was tried`, or report
    `BLOCKED`.
-5. The same class of challenge from a second Peer is a brief defect: fix the template line that
-   produced it before the next brief.
 
 ## Examples
 

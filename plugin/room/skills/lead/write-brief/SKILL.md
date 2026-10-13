@@ -22,26 +22,22 @@ description: "Lead procedure to write a Peer or Lens brief that locks the contra
    acceptance check that cannot pass, a contract line that proves false, a change needed outside
    the write scope. Read it against your own plan before sending: when doing the task as briefed
    makes it true, rewrite it, and name an inherited line you rewrote in your report.
-4. Writable briefs forbid stopping to offer a menu of implementation options: the owner decides
-   inside its scope; a genuinely cross-boundary decision may be asked as one short, concrete
-   yes/no question, never as an option-selection ritual.
-5. Read-only briefs say `read-only — do not modify files` in Write scope, use `[Peer:review]` or
+4. Read-only briefs say `read-only — do not modify files` in Write scope, use `[Peer:review]` or
    `[Peer:research]` (a lens is its own seat: `[Lens]`, see `lens`), and end with the
    read-only suffix from the template file, verbatim. In a `[Peer:review]` brief `Candidate:` is
    the sha or snapshot hash with its base, `Contract / invariants` and `Acceptance evidence` are
    the author's lines unchanged, and `Output:` is `REVIEW in the review specialization's shape`;
    a term the author never received goes to the author first, as a `REVISED BRIEF`.
-6. Tier from the provider table in your role; unsure → the lower tier, and size alone keeps
-   the tier. Up one tier only after a same-tier retry with a sharper brief failed for a
-   capability reason (wrong reasoning, broken invariants, lost the thread). Missing context,
-   vague acceptance, too big, or a permission block → fix the brief or split, same tier. An
-   expensive-tier capability failure, or three non-capability failures at one tier →
-   `lens` with three or more lenses. Every retry carries `What was tried`.
-7. `create_agent` with `title`, `provider` from your role's table, `settings.modeId`,
+5. Tier from the provider table in your role; size alone keeps the tier. Up one tier only after
+   a same-tier retry with a sharper brief failed for a capability reason (wrong reasoning,
+   broken invariants, lost the thread). Missing context, vague acceptance, too big, or a
+   permission block → fix the brief or split, same tier. An expensive-tier capability failure,
+   or three non-capability failures at one tier → `lens` with three or more lenses. Every retry
+   carries `What was tried`.
+6. `create_agent` with `title`, `provider` from your role's table, `settings.modeId`,
    `settings.thinkingOptionId`, `initialPrompt`, `notifyOnFinish: false`; `workspaceId` only
    when two writers must run at once (a worktree each, `create_workspace`); leave `cwd` and
-   `background` unset. Then continue unrelated ready work or end your turn; the Peer's report
-   wakes you.
-8. A `REVISED BRIEF` is the whole brief again with the changed lines marked, sent as one mail
+   `background` unset.
+7. A `REVISED BRIEF` is the whole brief again with the changed lines marked, sent as one mail
    (`reply_to` the Peer's signal, or `to` its id): the Peer reads one document, not a thread
    of patches.

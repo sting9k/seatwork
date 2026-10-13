@@ -5,21 +5,21 @@ description: "Use before you build or change a screen, page or component that a 
 
 # Frontend Design
 
-Build the requested product experience using the repository's design language. This skill owns visual and interaction quality, not product discovery or architecture.
+Build the requested product experience in the repository's design language. This skill owns
+visual and interaction quality, not product discovery or architecture.
 
-Before editing, identify the audience, primary job, information density, existing
-components, and material states. Make routine visual choices locally. Ask only when
-different choices would change the product contract.
+Before editing, identify the audience, the primary job, the information density, the existing
+components, and the material states.
 
-Prioritize usable structure before decoration:
+Usable structure before decoration:
 
 - expose the primary workflow and action
 - preserve semantic controls, keyboard and focus behavior
 - handle loading, empty, error, disabled, selected, and recovery states that belong to the flow
 - prevent clipping, overlap, hidden actions, and unintended layout shifts
-- use domain content and established assets instead of generic card grids, gradients, glass, blobs, or oversized marketing headings
+- use domain content and established assets instead of generic card grids, gradients, glass,
+  blobs, or oversized marketing headings
 
-Inspect the rendered result at the representative viewports required by the change
-and exercise the primary affected workflow. Do not add a separate verification
-ceremony or unrelated cleanup. If rendered inspection is unavailable, report that
-limitation without claiming visual completion.
+Inspect the rendered result at the viewports the change must serve and exercise the primary
+affected workflow, with no separate verification ceremony and no unrelated cleanup; a visual
+claim with no rendered inspection behind it is `not checked`.

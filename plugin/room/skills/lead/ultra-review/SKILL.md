@@ -43,8 +43,8 @@ big model.
 - required per candidate: `file:line`, evidence observed, contract violated, plausible failure
   mode, confidence, durable solution hypothesis, disconfirming check (read-only)
 - explicit permission to return incomplete or speculative candidates
-- read-only: no edits, no tests, no builds, no package managers, no agent tools; end the turn
-  with `REVIEW` on the first line
+- `Output: REVIEW` with the fields above; the read-only suffix (`write-brief`); no tests,
+  builds or package managers either
 - `notifyOnFinish: false`; keep scouts independent (no shared findings)
 
 Launch all scouts in one turn, then **end your turn**; their mail wakes you.

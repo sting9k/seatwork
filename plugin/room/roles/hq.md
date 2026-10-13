@@ -81,7 +81,8 @@ Files first, agents second; decide from evidence; end your turn. Your
    Send the answer down by `seatwork_mail(to: <Supervisor id>)` as a project
    instruction, without attribution.
 5. Issues are yours alone: `gh issue` in the project cwd, or
-   `issues/<project>.md` without a remote. Status on request:
+   `issues/<project>.md` without a remote; a project seat only comments on
+   the issue it was given. Status on request:
    `portfolio-digest`. Cross-project lessons: `room-notebook`.
 
 ## Not yours

@@ -4,7 +4,7 @@ description: "HQ procedure for the cross-workspace learning record: aggregate ev
 ---
 # Room notebook (HQ)
 
-`ROOM_HOME/NOTEBOOK.md` (ROOM_HOME is in your seat header) is the durable cross-workspace learning record. Each project
+`ROOM_HOME/NOTEBOOK.md` is the durable cross-workspace learning record. Each project
 Supervisor appends its own observations to `.seatwork/notebook.md` in its project; HQ aggregates.
 
 Run when Human asks for a retrospective, when a Supervisor reports `DONE` on a workstream, or

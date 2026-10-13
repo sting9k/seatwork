@@ -51,6 +51,7 @@ export function installRoom(
 export const MAIL_POLICY = {
   port: 0,
   holdFyiWhileRunning: true,
+  gatherReviews: true,
   midTurn: { claude: "hold", codex: "hold", pi: "hold", opencode: "hold" },
 } as const;
 

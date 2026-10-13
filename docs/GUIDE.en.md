@@ -382,8 +382,9 @@ leaves the machine.
 
 ### Mail
 
-Seats talk by mail. Mail never interrupts: it arrives when the recipient's
-turn ends. A finished result goes up once, when its sender's own turn has
+Seats talk by mail. Mail arrives when the recipient's turn ends. One mail
+does interrupt: a `STOP` from a seat above ends the running turn of its
+recipient and of every seat at work under it. A finished result goes up once, when its sender's own turn has
 ended. A closed seat still gets mail, because mail opens it. Mail to an
 archived seat comes back to its sender as `UNDELIVERABLE`.
 
@@ -399,6 +400,7 @@ The signals you will see in reports:
 | `ACCEPT` / `REJECT` | Lead | Accepted, or sent back with the repair |
 | `REVISED BRIEF` | Lead | The Peer was right; the brief changed |
 | `HOLD` / `NOTED` | Lead | The route stands; the objection is on record |
+| `STOP` | Supervisor, Lead | The work must not go on; running turns under it end at once |
 
 The plugin checks who may create whom and who may mail whom:
 
@@ -412,6 +414,22 @@ The plugin checks who may create whom and who may mail whom:
 
 Mail off this table is refused. A seat created off it is archived, and its
 creator is told.
+
+### What the room does by itself
+
+These steps run in the plugin. They cost no turn of a Supervisor or a Lead.
+
+| When | The room |
+|---|---|
+| A writing Peer hands in a candidate | Returns it once for a pass with fresh eyes; the next hand-in goes up |
+| Several reviewers were launched in one turn | Holds their reports and delivers them together |
+| A candidate comes back after a rejection | Writes the round and the count of rejections under it |
+| A seat's context passes the rotation line | Names the seat and its size under its next report |
+| `seatwork_rotate` is called on a seat | Asks it for a handoff, starts a successor on its brief, hands its seats over, archives it |
+| A turn fails on the model service | Starts the seat again, three times at most; waits out a quota until it lifts |
+
+The numbers and switches are in `policy.json`: `room.handin.freshEyes`,
+`mail.gatherReviews`, `room.params.rotateAtTokens`, `room.recovery`.
 
 ### What a seat is given
 

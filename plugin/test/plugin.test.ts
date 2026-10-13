@@ -1,7 +1,7 @@
 import { installRoom, PROJECT, ROOM_HOME } from "./support/room";
 import { bash, BRIEF, edit, prompt, say } from "./support/watch";
 import assert from "node:assert/strict";
-import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { loadPolicy } from "../server/policy";
 import { projectBlock } from "../server/orchestration/registry";
@@ -321,6 +321,14 @@ function turnEnds(who: TestSeat, finalMessage: string, outcome: object = { kind:
   );
 }
 
+/** A writing Peer's hand-in as its Lead gets it: when the room returns it for a pass with fresh eyes, the Peer hands in again. */
+async function handsIn(who: TestSeat, message: string) {
+  await turnEnds(who, message);
+  if (!/re: HAND-IN RETURNED/.test(who.inbox.at(-1) ?? "")) return;
+  who.inbox.pop();
+  await turnEnds(who, message);
+}
+
 const mailId = (envelope: string) => /SEATWORK MAIL #(\S+)/.exec(envelope)![1];
 
 test("a Peer's own REVIEW mail reaches its Lead once, and only when the Peer's turn has ended", async () => {
@@ -417,7 +425,7 @@ test("what the watcher saw in a Peer's turn reaches its Lead in the same prompt 
   ]);
 
   await call("on agent.turn_started", { agent: peer.agent, turnId: "turn-1" }, context);
-  await turnEnds(peer, "CANDIDATE: hours added");
+  await handsIn(peer, "CANDIDATE: hours added");
 
   assert.equal(lead.inbox.length, 1, "the notice and the report each started a turn of the Lead");
   assert.match(
@@ -485,7 +493,7 @@ test("a Peer's ACK does not start its Lead's turn; the Lead reads it with its ne
   const lead = await seat("lead-ack", "claude-lead", null, "[Lead] stream");
   const peer = await seat("peer-ack", "claude-peer", lead.agent.id, "[Peer] task");
 
-  await turnEnds(peer, "CANDIDATE\nsha abc123\nRECAP: added the unit → abc123");
+  await handsIn(peer, "CANDIDATE\nsha abc123\nRECAP: added the unit → abc123");
   assert.equal(lead.inbox.length, 1);
   await lead.mail({
     reply_to: mailId(lead.inbox[0]),
@@ -548,7 +556,7 @@ test("a HOLD that asks nothing of a Peer whose candidate is under review waits f
   const waiting = await seat("peer-hold", "claude-peer", lead.agent.id, "[Peer] task");
   const stopped = await seat("peer-stopped", "claude-peer", lead.agent.id, "[Peer] other task");
 
-  await turnEnds(waiting, "CANDIDATE\nsha abc123\nRECAP: added the unit → abc123");
+  await handsIn(waiting, "CANDIDATE\nsha abc123\nRECAP: added the unit → abc123");
   await lead.mail({
     reply_to: mailId(lead.inbox[0]),
     subject: "HOLD abc123: inspected, with two lenses",
@@ -671,7 +679,9 @@ test("what a turn leaves for the Owner is listed for the app until that seat wor
     ["DECISION_NEEDED\nkeep or break the old behavior?", undefined, "DECISION_NEEDED"],
     ["BLOCKED\nthe deploy key is missing", undefined, "BLOCKED"],
     ["STATUS\none workstream waits\nWAITING ON YOU: which region goes first", undefined, "WAITING ON YOU"],
-    ["", { kind: "failed", error: { message: "the process exited" } }, "FAILED"],
+    ["", { kind: "failed", error: { message: "Not logged in · run /login" } }, "FAILED"],
+    // a failure of the service is the room's to try again first: nothing waits on the Owner
+    ["", { kind: "failed", error: { message: "API Error: 529 Overloaded" } }, null],
     ["STATUS\none Lead is BLOCKED on a review; I answered it\nWORKING\n- Lead stream: repairing", undefined, null],
     ["DONE\nthe hours unit is accepted\nDONE: hours unit usable", undefined, null],
   ];
@@ -727,7 +737,7 @@ test("the Room screen is given the seats that still exist, project by project wi
     agents[gone.agent.id] = archived;
     // the Lead is in a turn, so the Peer's report waits for it
     Object.assign(agents[lead.agent.id], { current: () => ({ status: "running" }) });
-    await turnEnds(peer, "CANDIDATE\nsha abc123\nRECAP: added the unit → abc123");
+    await handsIn(peer, "CANDIDATE\nsha abc123\nRECAP: added the unit → abc123");
     await turnEnds(supervisor, "DECISION_NEEDED\nkeep or break the old behavior?");
 
     const room = (await call("rpc room.status", {}, context)) as {
@@ -824,30 +834,303 @@ test("a seat's prompt opens with its agent CLI's system prompt, filled in, and a
   }
 });
 
-test("a Lead's third REJECT of one Peer's task is sent, and the answer says whose call that round is", async () => {
+test("a task's rounds are counted by what happened: a revised brief that answers a candidate is a rejection, and the Lead reads the count under the next candidate", async () => {
   const lead = await seat("lead-rounds", "claude-lead", null, "[Lead] stream");
   const peer = await seat("peer-rounds", "claude-peer", lead.agent.id, "[Peer] task");
-  const reject = (round: number) =>
-    lead.mail({
-      to: peer.agent.id,
-      subject: `REJECT abc${round}: one more case`,
-      body: "Repair it.",
-      needs: "nothing",
-    });
-  assert.doesNotMatch(await reject(1), /This is REJECT/);
-  assert.doesNotMatch(await reject(2), /This is REJECT/);
+  const sendsBack = (subject: string) =>
+    lead.mail({ to: peer.agent.id, subject, body: "Repair it.", needs: "nothing" });
+  await handsIn(peer, "CANDIDATE abc1\nfirst try");
+  assert.doesNotMatch(lead.inbox.at(-1)!, /\[room\]/);
+  // the first rejection, written as the Lead of the 2026-10-13 run wrote it
+  assert.doesNotMatch(await sendsBack("REVISED BRIEF (REJECT abc1: six repairs) round 2"), /rejection/);
+  // a second revised brief with no candidate in between changes the task and sends nothing back
+  await sendsBack("REVISED BRIEF: one line decided by the Owner");
+  await handsIn(peer, "CANDIDATE abc2\nsecond try");
+  assert.match(lead.inbox.at(-1)!, /\n\n\[room\] Second candidate of this task: one rejection .* goes to a new Peer /);
+  assert.doesNotMatch(await sendsBack("REJECT abc2: the cost of small ingests"), /rejection/);
+  await handsIn(peer, "CANDIDATE abc3\nthird try");
+  assert.match(lead.inbox.at(-1)!, /\[room\] Candidate 3 of this task: 2 rejections .* your Owner's call/);
   assert.match(
-    await reject(3),
-    /^sent #\S+ to peer .*This is REJECT 3 of this Peer's task since its last ACCEPT or brief: .*accept-candidate, step 5.*DECISION_NEEDED/,
+    await sendsBack("REVISED BRIEF (abc3 not accepted) round 4"),
+    /^sent #\S+ to peer .*This is rejection 3 of this Peer's task since its last ACCEPT: .*accept-candidate, step 5.*DECISION_NEEDED/,
   );
-  // a new brief starts the count again
-  await lead.mail({
-    to: peer.agent.id,
-    subject: "REVISED BRIEF: narrower",
-    body: "The whole brief.",
-    needs: "nothing",
+  // an ACCEPT closes the task: the next one starts at no rejection
+  await handsIn(peer, "CANDIDATE abc4\nfourth try");
+  await lead.mail({ to: peer.agent.id, subject: "ACCEPT abc4: holds", body: "Released.", needs: "nothing" });
+  await handsIn(peer, "CANDIDATE def1\nnext task");
+  assert.doesNotMatch(lead.inbox.at(-1)!, /\[room\]/);
+});
+
+test("a seat whose context has grown past the rotation line is named to the seat above, with its size, under its report", async () => {
+  const supervisor = await seat("sup-rotate", "claude-supervisor", null, "[Supervisor] law");
+  const lead = await seat("lead-rotate", "claude-lead", supervisor.agent.id, "[Lead] stream");
+  const peer = await seat("peer-rotate", "claude-peer", lead.agent.id, "[Peer] task");
+  const holds = (who: TestSeat, tokens: number) =>
+    Object.assign(agents[who.agent.id], {
+      current: () => ({ status: "idle", lastUsage: { contextWindowUsedTokens: tokens } }),
+    });
+  holds(peer, 199_000);
+  await handsIn(peer, "CANDIDATE abc1\nsmall");
+  assert.doesNotMatch(lead.inbox.at(-1)!, /\[room\]/);
+  holds(peer, 268_400);
+  await turnEnds(peer, "QUESTION\nwhich of the two?");
+  assert.match(lead.inbox.at(-1)!, /\[room\] This Peer holds 268K tokens of context .* goes to a new Peer\.\n/);
+  holds(lead, 346_000);
+  await turnEnds(lead, "DECISION_NEEDED\nthe limit or the proof");
+  assert.match(supervisor.inbox.at(-1)!, /\[room\] This Lead holds 346K tokens of context .*lead-handoff/);
+});
+
+test("a STOP from above ends the running turn of its seat and of every seat at work under it; it goes down only", async () => {
+  const supervisor = await seat("sup-stop", "claude-supervisor", null, "[Supervisor] law");
+  const lead = await seat("lead-stop", "claude-lead", supervisor.agent.id, "[Lead] stream");
+  const writer = await seat("peer-stop-a", "claude-peer", lead.agent.id, "[Peer] store");
+  const resting = await seat("peer-stop-b", "claude-peer", lead.agent.id, "[Peer] bench");
+  const how: Record<string, unknown[]> = {};
+  const inTurn = (who: TestSeat, now: object) =>
+    Object.assign(agents[who.agent.id], {
+      current: () => now,
+      send: async (text: string, options: { activeTurnBehavior?: string }) => {
+        who.inbox.push(text);
+        (how[who.agent.id] ??= []).push(options.activeTurnBehavior);
+      },
+    });
+  inTurn(lead, { status: "running" });
+  inTurn(writer, { status: "running" });
+  // a Claude seat in its turn gets ordinary mail when that turn ends
+  await supervisor.mail({ to: lead.agent.id, subject: "FYI: the Owner is back", body: "No change.", needs: "nothing" });
+  assert.equal(lead.inbox.length, 0);
+
+  const answer = await supervisor.mail({
+    to: lead.agent.id,
+    subject: "STOP: the Owner ended the run",
+    body: "Commit nothing more. Reply with the state of each task.",
+    needs: "reply",
   });
-  assert.doesNotMatch(await reject(4), /This is REJECT/);
+  assert.match(
+    answer,
+    /as a stop order; its running turn was ended .* Ended with it: the turns of peer \[Peer\] store\.$/,
+  );
+  assert.deepEqual(how[lead.agent.id], ["interrupt"]);
+  assert.match(lead.inbox[0], /BLOCKING from owner re: STOP: the Owner ended the run/);
+  assert.deepEqual(how[writer.agent.id], ["interrupt"]);
+  assert.match(
+    writer.inbox[0],
+    /from room re: STOP: the work above you was stopped[\s\S]*"STOP: the Owner ended the run"/,
+  );
+  assert.equal(resting.inbox.length, 0);
+
+  await assert.rejects(
+    writer.mail({ to: "owner", subject: "STOP: this plan is wrong", body: "See the trace.", needs: "decision" }),
+    /STOP goes down, .* Nothing was sent\./,
+  );
+});
+
+test("seatwork_seats shows an orchestrating seat every open seat under it: its state, its context, its cost, its last signal and its rounds", async () => {
+  const lead = await seat("lead-view", "claude-lead", null, "[Lead] stream");
+  const writer = await seat("peer-view-a", "claude-peer", lead.agent.id, "[Peer] store");
+  const scout = await seat("peer-view-b", "claude-peer", lead.agent.id, "[Peer] scout-01");
+  const gone = await seat("peer-view-c", "claude-peer", lead.agent.id, "[Peer] bench");
+  await handsIn(writer, "CANDIDATE abc1\nfirst try");
+  await lead.mail({ to: writer.agent.id, subject: "REJECT abc1: two repairs", body: "Repair.", needs: "nothing" });
+  Object.assign(agents[writer.agent.id], {
+    current: () => ({ status: "running", lastUsage: { contextWindowUsedTokens: 267_241, totalCostUsd: 6.133 } }),
+  });
+  Object.assign(agents[scout.agent.id], { current: () => ({ status: "idle", pendingPermissions: [{}] }) });
+  Object.assign(agents[gone.agent.id], { current: () => ({ status: "idle", archivedAt: "2026-10-13T12:00:00Z" }) });
+
+  const view = await lead.call("seatwork_seats", {});
+  const [head, ...lines] = view.split("\n");
+  assert.equal(head, "2 open seats under you, 1 at work.");
+  assert.equal(
+    lines[0],
+    "- peer [Peer] store · peer-view-a · at work · context 267K tokens, past the rotation line: its next task goes to a fresh seat · $6.13 · last turn ended with CANDIDATE · 1 rejection since its last ACCEPT",
+  );
+  assert.equal(lines[1], "- peer [Peer] scout-01 · peer-view-b · waiting for a permission");
+  assert.equal(lines.length, 2);
+  assert.equal(await writer.call("seatwork_seats", {}), "No seat you launched is open.");
+});
+
+test("the reviewers a Lead launched in one turn report together: the Lead is woken once, by the last of them", async () => {
+  const lead = await seat("lead-gate", "claude-lead", null, "[Lead] stream");
+  const lens = await seat("lens-gate", "codex-lens", lead.agent.id, "[Lens] abc1: correctness");
+  const review = await seat("peer-gate-r", "claude-peer", lead.agent.id, "[Peer:review] abc1");
+  const scout = await seat("peer-gate-s", "claude-peer", lead.agent.id, "[Peer] scout-01 closure");
+  const writer = await seat("peer-gate-w", "claude-peer", lead.agent.id, "[Peer] store");
+  await turnEnds(lens, "REVIEW\nACCEPTABLE: holds");
+  await turnEnds(review, "REVIEW\nNOT YET: one case");
+  assert.equal(lead.inbox.length, 0);
+  await turnEnds(scout, "REVIEW\ntwo findings");
+  assert.equal(lead.inbox.length, 1);
+  assert.match(lead.inbox[0], /^SEATWORK MAIL DIGEST — 3 messages/);
+  assert.match(
+    lead.inbox[0],
+    /re: REVIEW from lens [^\n]*\nwhy now: [^\n]*; held for the 2 others of its review round\n/,
+  );
+  assert.match(
+    lead.inbox[0],
+    /re: REVIEW from peer \[Peer\] scout-01 closure\nwhy now: the seat ended its turn with REVIEW\n/,
+  );
+
+  // a writer is no reviewer: its candidate waits for nobody
+  await handsIn(writer, "CANDIDATE abc2\ndone");
+  assert.equal(lead.inbox.length, 2);
+});
+
+test("a reviewer archived before its report holds its round back no longer", async () => {
+  const lead = await seat("lead-gate2", "claude-lead", null, "[Lead] stream");
+  const first = await seat("lens-gate2-a", "codex-lens", lead.agent.id, "[Lens] abc1: correctness");
+  const second = await seat("lens-gate2-b", "claude-lens", lead.agent.id, "[Lens] abc1: compatibility");
+  await turnEnds(first, "REVIEW\nACCEPTABLE");
+  assert.equal(lead.inbox.length, 0);
+  await call("on agent.archived", { agent: second.agent, archivedAt: new Date().toISOString() }, context);
+  assert.equal(lead.inbox.length, 1);
+  assert.match(lead.inbox[0], /re: REVIEW from lens \[Lens\] abc1: correctness/);
+});
+
+test("a turn that fails on the model service is not reported: the room resumes the seat, and tells the Owner when its tries are used or the account is refused", async () => {
+  const lead = await seat("lead-recover", "claude-lead", null, "[Lead] stream");
+  const peer = await seat("peer-recover", "claude-peer", lead.agent.id, "[Peer] store");
+  const other = await seat("peer-recover-b", "claude-peer", lead.agent.id, "[Peer] bench");
+  const fails = (who: TestSeat, message: string) => turnEnds(who, "", { kind: "failed", error: { message } });
+
+  await fails(peer, "API Error: 529 Overloaded");
+  assert.equal(lead.inbox.length, 0);
+  assert.match(
+    await lead.call("seatwork_seats", {}),
+    /- peer \[Peer\] store · peer-recover · its last turn failed on a service error; the room resumes it at \d\d:\d\d, try 1 of 3\n/,
+  );
+  await fails(peer, "API Error: 529 Overloaded");
+  await fails(peer, "socket hang up");
+  assert.equal(lead.inbox.length, 0);
+  await fails(peer, "socket hang up");
+  assert.equal(lead.inbox.length, 1);
+  assert.match(
+    lead.inbox[0],
+    /BLOCKING from peer:peer-recover re: FAILED: socket hang up\nwhy now: the seat's turn failed, and again after the room's 3 tries; its work is stopped\n/,
+  );
+
+  // a quota is waited out; an account the service refuses is the Owner's at once
+  await fails(other, "You've hit your usage limit · resets in 40 minutes");
+  assert.equal(lead.inbox.length, 1);
+  assert.match(
+    await lead.call("seatwork_seats", {}),
+    /peer-recover-b · out of quota; the room resumes it at \d\d:\d\d/,
+  );
+  await fails(other, "Invalid API key");
+  assert.equal(lead.inbox.length, 2);
+  assert.match(lead.inbox[1], /re: FAILED: Invalid API key\nwhy now: the seat's turn failed; its work is stopped\n/);
+});
+
+test("seatwork_rotate replaces a seat with a fresh one: its handoff and brief start the successor, its seats and task go over, it is archived", async () => {
+  const supervisor = await seat("sup-rot", "claude-supervisor", null, "[Supervisor] law");
+  const lead = await seat("lead-rot", "claude-lead", supervisor.agent.id, "[Lead] stream");
+  const peer = await seat("peer-rot", "claude-peer", lead.agent.id, "[Peer] store");
+  const created: { config: object; parent?: string; title?: string; prompt?: string; cwd: string }[] = [];
+  let successor: TestSeat | undefined;
+  let archived = false;
+  Object.assign(context.paseo.agents, {
+    create: async (options: (typeof created)[number]) => {
+      created.push(options);
+      successor = await seat("lead-rot-2", "claude-lead", options.parent ?? null, options.title ?? "");
+      return { id: successor.agent.id };
+    },
+  });
+  const state = { status: "idle", provider: "claude-lead", model: "claude-opus-5-5", cwd: PROJECT };
+  Object.assign(agents[lead.agent.id], {
+    current: () => ({
+      ...state,
+      currentModeId: "bypassPermissions",
+      thinkingOptionId: "medium",
+      ...(archived ? { archivedAt: "x" } : {}),
+    }),
+    archive: async () => void (archived = true),
+  });
+  hasTimeline(lead, [prompt(BRIEF)]);
+
+  await assert.rejects(peer.call("seatwork_rotate", { agent_id: lead.agent.id }), /you replace only a seat under you/);
+  assert.match(
+    await supervisor.call("seatwork_rotate", { agent_id: lead.agent.id, why: "346K tokens of context" }),
+    /^asked lead lead-rot for its handoff\. When it answers, the room starts its successor/,
+  );
+  assert.match(lead.inbox[0], /from room re: HANDOFF: [\s\S]*\(346K tokens of context\)[\s\S]*\nBLOCKERS: /);
+
+  await turnEnds(
+    lead,
+    "HANDOFF\n**CURRENT TASK:** the store's fourth round\nPROGRESS: done 2ea3368; to do: mixed-state reads\nKEY DECISIONS: a log with offset indexes\nACTIVE FILES: src/store.js, uncommitted\nBLOCKERS: none",
+  );
+  assert.equal(created.length, 1);
+  assert.deepEqual(created[0].config, {
+    provider: "claude-lead/claude-opus-5-5",
+    modeId: "bypassPermissions",
+    thinkingOptionId: "medium",
+  });
+  assert.deepEqual(
+    [created[0].parent, created[0].title, created[0].cwd],
+    [supervisor.agent.id, "[Lead] stream (2)", PROJECT],
+  );
+  assert.match(
+    created[0].prompt!,
+    /## The brief in force\n[\s\S]*Outcome: [\s\S]*## The handoff \(kept at [^\n]*\.seatwork\/handoffs\/[^\n]*\)\n\*\*CURRENT TASK:\*\* the store's fourth round\n[\s\S]*trust the tree/,
+  );
+  assert.equal(readdirSync(join(PROJECT, ".seatwork", "handoffs")).length, 1);
+  assert.equal(archived, true);
+  // the old seat's reply is in the handoff file, not in its Owner's mail; the notice waits for the next mail
+  assert.equal(supervisor.inbox.length, 0);
+  assert.match(await supervisor.held(), /ROTATED: lead \[Lead\] stream continues in a fresh seat[\s\S]*\(lead-rot-2\)/);
+  // what was the old seat's is the successor's
+  assert.match(peer.inbox[0], /OWNER CHANGED: your Owner continues in a fresh seat/);
+  await peer.mail({ to: "owner", subject: "QUESTION: which unit", body: "seconds or minutes?", needs: "decision" });
+  assert.match(successor!.inbox.at(-1)!, /re: QUESTION: which unit/);
+});
+
+test("a seat that answers a handoff request with no handoff stays as it is, and whoever asked is told", async () => {
+  const supervisor = await seat("sup-rot2", "claude-supervisor", null, "[Supervisor] law");
+  const lead = await seat("lead-rot2", "claude-lead", supervisor.agent.id, "[Lead] stream");
+  let started = 0;
+  Object.assign(context.paseo.agents, { create: async () => void (started += 1) });
+  await supervisor.call("seatwork_rotate", { agent_id: lead.agent.id });
+  assert.match(
+    await supervisor.call("seatwork_rotate", { agent_id: lead.agent.id }),
+    /was already asked for its handoff/,
+  );
+  await turnEnds(lead, "STATUS\nI am in the middle of the review; nothing to hand over yet");
+  assert.equal(started, 0);
+  // whoever asked is told, and the seat's own report goes up as any other
+  assert.equal(supervisor.inbox.length, 2);
+  assert.match(
+    supervisor.inbox[0],
+    /re: ROTATION FAILED: lead \[Lead\] stream stays as it is[\s\S]*its reply was no handoff/,
+  );
+  assert.match(supervisor.inbox[1], /re: STATUS: lead \[Lead\] stream/);
+});
+
+test("a writing Peer's candidate goes back to it once for a pass with fresh eyes; the next hand-in goes up, and each repair owes the pass again", async () => {
+  const lead = await seat("lead-eyes", "claude-lead", null, "[Lead] stream");
+  const peer = await seat("peer-eyes", "claude-peer", lead.agent.id, "[Peer] store");
+  const scout = await seat("peer-eyes-s", "claude-peer", lead.agent.id, "[Peer] scout-01 closure");
+
+  await turnEnds(peer, "CANDIDATE abc1\nthe store holds");
+  assert.equal(lead.inbox.length, 0);
+  assert.match(
+    peer.inbox[0],
+    /from room re: HAND-IN RETURNED: [\s\S]*needs: reply[\s\S]*a check made weaker than it was[\s\S]*`Fresh eyes: /,
+  );
+  await turnEnds(peer, "CANDIDATE abc2\nFresh eyes: one off-by-one in the index, fixed");
+  assert.equal(lead.inbox.length, 1);
+  assert.match(lead.inbox[0], /re: CANDIDATE from peer[\s\S]*Fresh eyes: one off-by-one/);
+  assert.equal(peer.inbox.length, 1);
+
+  // a rejection makes the repair a new candidate
+  await lead.mail({ to: peer.agent.id, subject: "REJECT abc2: one repair", body: "Repair it.", needs: "reply" });
+  await turnEnds(peer, "CANDIDATE abc3\nrepaired");
+  assert.equal(lead.inbox.length, 1);
+  assert.match(peer.inbox.at(-1)!, /HAND-IN RETURNED/);
+
+  // a question is no hand-in, a reviewer writes no candidate, and a turn cut short is not sent back
+  await turnEnds(peer, "QUESTION\nwhich unit?");
+  assert.equal(lead.inbox.length, 2);
+  await turnEnds(scout, "REVIEW\ntwo findings");
+  assert.equal(lead.inbox.length, 3);
 });
 
 test("the skill the watcher holds a CANDIDATE to is one of the Peer role's skills", () => {

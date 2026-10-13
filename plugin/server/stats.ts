@@ -45,14 +45,26 @@ interface UsageLine {
   usage: { outputTokens?: number; totalCostUsd?: number };
 }
 
-/** Notes what a seat has used at the end of a turn, as its agent CLI reports it. */
-export async function noteUsage(paseo: PaseoApi, agent: { id: string; cwd: string }, role: string): Promise<void> {
+/** What a seat's agent CLI reports after a turn: the dollars are a running total, the context is what it holds now. */
+export interface SeatUsage {
+  totalCostUsd?: number;
+  outputTokens?: number;
+  contextWindowUsedTokens?: number;
+}
+
+/** Notes what a seat has used at the end of a turn, as its agent CLI reports it, and returns it. */
+export async function noteUsage(
+  paseo: PaseoApi,
+  agent: { id: string; cwd: string },
+  role: string,
+): Promise<SeatUsage | null> {
   const handle = paseo.agents.ref(agent.id);
   await handle.refresh();
   const now = handle.current();
-  if (!now?.lastUsage) return;
+  if (!now?.lastUsage) return null;
   const line = { at: new Date().toISOString(), agentId: agent.id, role, cwd: agent.cwd, model: now.model ?? null };
   appendFileSync(USAGE_LOG, `${JSON.stringify({ ...line, usage: now.lastUsage })}\n`, { mode: 0o600 });
+  return now.lastUsage as SeatUsage;
 }
 
 /** Dollars and output tokens per project and role since `since`, one line per project. */

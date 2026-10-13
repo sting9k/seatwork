@@ -186,6 +186,23 @@ test("quiet mail waits for the next mail that starts a turn, and the inbox hands
   );
 });
 
+test("a held review starts no turn until its hold runs out or its round is released", async () => {
+  const sent: string[] = [];
+  const engine = engineFor({ l1: { ...idle, send: async (text) => void sent.push(text) } });
+  const soon = new Date(Date.now() + 60_000).toISOString();
+  const first = await engine.post({ ...mail("l1", "REVIEW one"), round: "l1:1", heldUntil: soon });
+  assert.equal(sent.length, 0);
+  // a hold that has run out is delivered by the next pass
+  await engine.post({ ...mail("l1", "REVIEW late"), round: "l1:0", heldUntil: new Date(Date.now() - 1).toISOString() });
+  assert.equal(sent.length, 1);
+  assert.match(sent[0], /SEATWORK MAIL DIGEST — 2 messages/);
+  const second = await engine.post({ ...mail("l1", "REVIEW two"), round: "l1:2", heldUntil: soon });
+  assert.equal(sent.length, 1);
+  await engine.release("l1", "l1:2");
+  assert.equal(sent.length, 2);
+  assert.ok(sent[1].includes(second.id) && !sent[1].includes(first.id));
+});
+
 test("a report kept for a turn end that never reached the room is posted once its seat is at rest", async () => {
   let status = "running";
   const toLead: string[] = [];

@@ -98,22 +98,23 @@
     }
   },
   "claude": {
-    "$comment": "disallowedTools uses Claude Code's permission syntax. Each tool is written once, in a named set; a role is denied the sets it lists, in that order. subAgents: Claude's own sub-agents. nestedHarness: starting another agent CLI from the shell. paseoShell: driving Paseo from the shell; HQ and the Supervisor are denied only the commands that act (paseoShellActs) and may read. ownOrchestration: Claude's own scheduling (ScheduleWakeup, Cron*, Workflow, RemoteTrigger), messaging (SendMessage, ListAgents), agent teams (Team*) and task list (Task*). edits: a Lens reads and runs, it does not write.",
+    "$comment": "disallowedTools uses Claude Code's permission syntax. Each tool is written once, in a named set; a role is denied the sets it lists, in that order. subAgents: Claude's own sub-agents. nestedHarness: starting another agent CLI from the shell. paseoShell: driving Paseo from the shell; HQ and the Supervisor are denied only the commands that act (paseoShellActs) and may read. ownOrchestration: Claude's own scheduling (ScheduleWakeup, Cron*, Workflow, RemoteTrigger, Monitor), messaging (SendMessage, ListAgents), agent teams (Team*) and task list (Task*). ownDialogs: what Claude Code opens toward its own user or keeps for itself: the question dialog (a seat asks in its final message or by mail, which the room shows the Owner; behind a dialog the seat stays in its turn and the room is told nothing: an HQ seat sat so for 9 minutes in the run of 2026-10-13 evening), plan mode, its own worktrees, phone notifications, design sync. edits: a Lens reads and runs, it does not write.",
     "disallowedTools": {
       "sets": {
         "subAgents": ["Agent", "Task"],
         "nestedHarness": ["Bash(claude:*)", "Bash(codex:*)", "Bash(pi:*)", "Bash(opencode:*)"],
         "paseoShellActs": ["Bash(paseo run:*)", "Bash(paseo send:*)", "Bash(paseo import:*)", "Bash(paseo agent:*)", "Bash(paseo schedule:*)"],
         "paseoShell": ["Bash(paseo:*)"],
-        "ownOrchestration": ["ScheduleWakeup", "CronCreate", "CronDelete", "CronList", "Workflow", "SendMessage", "ListAgents", "TeamCreate", "TeamDelete", "TaskCreate", "TaskGet", "TaskList", "TaskUpdate", "TaskStop", "TaskOutput", "RemoteTrigger"],
+        "ownOrchestration": ["ScheduleWakeup", "CronCreate", "CronDelete", "CronList", "Workflow", "SendMessage", "ListAgents", "TeamCreate", "TeamDelete", "TaskCreate", "TaskGet", "TaskList", "TaskUpdate", "TaskStop", "TaskOutput", "RemoteTrigger", "Monitor"],
+        "ownDialogs": ["AskUserQuestion", "EnterPlanMode", "ExitPlanMode", "EnterWorktree", "ExitWorktree", "PushNotification", "DesignSync"],
         "edits": ["Edit", "Write", "MultiEdit", "NotebookEdit"]
       },
       "roles": {
-        "hq": ["subAgents", "nestedHarness", "paseoShellActs", "ownOrchestration"],
-        "supervisor": ["subAgents", "nestedHarness", "paseoShellActs", "ownOrchestration"],
-        "lead": ["subAgents", "nestedHarness", "paseoShell", "ownOrchestration"],
-        "peer": ["subAgents", "nestedHarness", "paseoShell", "ownOrchestration"],
-        "lens": ["subAgents", "nestedHarness", "paseoShell", "ownOrchestration", "edits"]
+        "hq": ["subAgents", "nestedHarness", "paseoShellActs", "ownOrchestration", "ownDialogs"],
+        "supervisor": ["subAgents", "nestedHarness", "paseoShellActs", "ownOrchestration", "ownDialogs"],
+        "lead": ["subAgents", "nestedHarness", "paseoShell", "ownOrchestration", "ownDialogs"],
+        "peer": ["subAgents", "nestedHarness", "paseoShell", "ownOrchestration", "ownDialogs"],
+        "lens": ["subAgents", "nestedHarness", "paseoShell", "ownOrchestration", "ownDialogs", "edits"]
       }
     },
     "launch": {
@@ -253,9 +254,10 @@
     "bundledSkills": "none"
   },
   "mail": {
-    "$comment": "The room's MCP server (seatwork_mail, seatwork_inbox) and delivery rules. Agents never use send_agent_prompt; every message is an envelope the plugin delivers without interrupting anyone. A CANDIDATE, REVIEW or DONE a seat mails its parent waits for that seat's own turn end and is its one report; an ACK, a DONE that repeats itself after mail that asked nothing, a Lead's STATUS after its first report (only the newest waits), a HOLD or NOTED that asks nothing of a Peer whose candidate is under review, and the bounce of a mail that asked nothing start no turn and are read with the recipient's next mail. A body is delivered whole.",
+    "$comment": "The room's MCP server (seatwork_mail, seatwork_inbox) and delivery rules. Agents never use send_agent_prompt; every message is an envelope the plugin delivers without interrupting anyone. A CANDIDATE, REVIEW or DONE a seat mails its parent waits for that seat's own turn end and is its one report; an ACK, a DONE that repeats itself after mail that asked nothing, a Lead's STATUS after its first report (only the newest waits), a HOLD or NOTED that asks nothing of a Peer whose candidate is under review, and the bounce of a mail that asked nothing start no turn and are read with the recipient's next mail. A body is delivered whole. gatherReviews: the read-only seats an Owner launched in one turn (Lens, review and research Peers, scouts) are one round, and their REVIEW reports are held until the last of the round is in, or for room.params.reviewStallMinutes; in the run of 2026-10-13 evening 32 reports arrived one by one and each cost its Lead a turn.",
     "port": 47611,
     "holdFyiWhileRunning": true,
+    "gatherReviews": true,
     "midTurn": {
       "claude": "hold",
       "codex": "hold",
@@ -375,7 +377,7 @@
       "peer": [],
       "lens": []
     },
-    "$comment_params": "Numbers the role prompts quote through {{placeholders}}; change them here, never in a prompt. heartbeatCron: how often the Supervisor's heartbeat wakes it; every Lead report that asks or closes already wakes it, so the beat only catches what slipped between reports; a quarter hour woke an idle Supervisor for nothing (run of 2026-10-13), hence half an hour. mailChars: the longest body seatwork_mail takes; in that run a REVIEW was 9,000 characters at the median and 28,650 at most, and a Lead read 660,000 characters of reviews and candidates. peerStallMinutes: a Peer silent this long with nothing pending gets a status check (a Peer turn is usually minutes). reviewStallMinutes: review, research and lens seats read for a long time before they write, so they get longer. leadStallMinutes: a Lead silent this long with no running Peer and no pending permission. readBudgetTokens: reading per Peer task before the Lead must split it; ~80k tokens is ~320 KB of source, which a default-tier model still reasons over well. cheapReadBudgetTokens: the same for the cheap tier, which loses the thread sooner.",
+    "$comment_params": "Numbers the role prompts quote through {{placeholders}}; change them here, never in a prompt. heartbeatCron: how often the Supervisor's heartbeat wakes it; every Lead report that asks or closes already wakes it, so the beat only catches what slipped between reports; a quarter hour woke an idle Supervisor for nothing (run of 2026-10-13), hence half an hour. mailChars: the longest body seatwork_mail takes; in that run a REVIEW was 9,000 characters at the median and 28,650 at most, and a Lead read 660,000 characters of reviews and candidates. peerStallMinutes: a Peer silent this long with nothing pending gets a status check (a Peer turn is usually minutes). reviewStallMinutes: review, research and lens seats read for a long time before they write, so they get longer. leadStallMinutes: a Lead silent this long with no running Peer and no pending permission. readBudgetTokens: reading per Peer task before the Lead must split it; ~80k tokens is ~320 KB of source, which a default-tier model still reasons over well. cheapReadBudgetTokens: the same for the cheap tier, which loses the thread sooner. rotateAtTokens: a Lead or Peer whose context has grown past this is named to the seat above, with its size, under its next report: every step of a seat reads its whole context again, so its next task belongs to a fresh seat (run of 2026-10-13 evening: one Peer went from 202K to 590K tokens over four repair rounds and cost a third of the run; a Lead handed over only at 346K).",
     "params": {
       "heartbeatCron": "*/30 * * * *",
       "peerStallMinutes": 6,
@@ -383,7 +385,18 @@
       "leadStallMinutes": 30,
       "readBudgetTokens": 80000,
       "cheapReadBudgetTokens": 40000,
-      "mailChars": 6000
+      "mailChars": 6000,
+      "rotateAtTokens": 200000
+    },
+    "$comment_handin": "freshEyes: a writing Peer's CANDIDATE goes back to it once, before its Owner reads it, for one pass over its own work as a reviewer would read it; the next CANDIDATE goes up. Each repair after a rejection owes the pass again. It costs the Peer one short turn on a warm context, against a review round that costs two or three reviewer seats and as many turns of the Lead. false passes every candidate straight up.",
+    "handin": {
+      "freshEyes": true
+    },
+    "$comment_recovery": "What the room does when a seat's turn fails, before anyone is told. A service error (overload, a dropped connection, anything the service did not call a quota or an account problem) is tried again after delaysSeconds, once per entry; the seat is sent a short note and continues. A quota is waited out: until the time the message names, else limitedMinutes at a time, for limitedMaxHours at most, and those waits use up no try. An account or a prompt the service refuses, and a seat out of tries, go to its Owner as FAILED, as before.",
+    "recovery": {
+      "delaysSeconds": [30, 60, 120],
+      "limitedMinutes": 10,
+      "limitedMaxHours": 6
     }
   }
 }

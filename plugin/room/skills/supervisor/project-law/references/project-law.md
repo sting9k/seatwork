@@ -12,7 +12,7 @@ additionally. Nothing here changes who owns what.
 - Compatibility: <hard cut, one live contract (`hard-cut` applies) | compatibility window until <when>>
 - External actions needing the Owner: <push, merge, deploy, installing a tool or a browser, ...>
 - Models to prefer or avoid here: <none | ...>
-- Lead context limit before handoff: <~60% of its window | ...>
+- Lead context limit before handoff: <the room's rotation line | a lower token count>
 - Points the request leaves open: <the room decides the reversible ones by the Owner's stated
   principles and lists each in its reports | every one comes to the Owner before it is built>
 

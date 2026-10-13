@@ -17,6 +17,7 @@ const VARS = {
     .signals.map((signal) => signal.name)
     .join(", "),
   keep_log_days: String(plugin("shared/settings.json").keepLogDays),
+  rotate_k: String(Math.round(plugin("paseo/policy.json").room.params.rotateAtTokens / 1000)),
 };
 const filled = (value) =>
   JSON.parse(JSON.stringify(value).replace(/\{\{(\w+)\}\}/g, (whole, name) => VARS[name] ?? whole));
@@ -41,6 +42,22 @@ const TOOLS = {
   },
   seatwork_inbox: {
     call: () => "inbox empty",
+  },
+  seatwork_seats: {
+    call: () =>
+      agents.length === 0
+        ? "No seat you launched is open."
+        : [
+            `${agents.length} open seat${agents.length === 1 ? "" : "s"} under you, ${agents.filter((x) => x.status === "running").length} at work.`,
+            ...agents.map(
+              (x) =>
+                `- ${String(x.provider ?? "").split(/[-/]/)[1] ?? "seat"} ${x.title ?? "(no title)"} · ${x.id} · ${x.status === "running" ? "at work" : "at rest"}`,
+            ),
+          ].join("\n"),
+  },
+  seatwork_rotate: {
+    call: (a) =>
+      `asked ${a.agent_id} for its handoff. When it answers, the room starts its successor, hands its open seats over and archives it. You get one notice with the new seat's id.`,
   },
   seatwork_adopt: {
     call: (a) => `adopted ${a.agent_id}: it now reports to you`,

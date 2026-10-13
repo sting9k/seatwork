@@ -14,6 +14,7 @@
     {"name": "ACK"},
     {"name": "REVISED BRIEF", "counted": true, "verdict": "returned"},
     {"name": "INSTRUCTION"},
+    {"name": "STOP"},
     {"name": "ANSWER", "counted": true},
     {"name": "ACCEPT", "counted": true, "verdict": "accepted"},
     {"name": "REJECT", "counted": true, "verdict": "returned"},
@@ -24,5 +25,5 @@
     {"name": "CHALLENGE"},
     {"name": "RESPONSE"}
   ],
-  "notices": ["FAILED", "PERMISSION", "GC", "SPAWN REFUSED"]
+  "notices": ["FAILED", "PERMISSION", "GC", "SPAWN REFUSED", "RESUME", "ROTATED", "ROTATION FAILED", "HAND-IN RETURNED"]
 }

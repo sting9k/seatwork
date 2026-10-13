@@ -3,7 +3,7 @@
   "tools": {
     "seatwork_mail": {
       "callers": "any",
-      "description": "Write to another seat of your room. To answer a mail you received, pass reply_to: its id (the #id in its header) and no `to`; the answer goes to whoever sent it. To start a new thread, pass `to`: `owner` (the seat that launched you) or the id of a seat you launched. The plugin wraps it in an envelope and delivers it between the recipient's turns; it never interrupts anyone. A CANDIDATE, REVIEW or DONE to your owner is your turn's report: it is delivered when your turn ends, and your final message is not mailed a second time. Mail to an archived seat is refused.",
+      "description": "Write to another seat of your room. To answer a mail you received, pass reply_to: its id (the #id in its header) and no `to`; the answer goes to whoever sent it. To start a new thread, pass `to`: `owner` (the seat that launched you) or the id of a seat you launched. The plugin wraps it in an envelope and delivers it between the recipient's turns. One subject is different: `STOP`, to a seat you launched or one below it, ends that seat's running turn and every running turn under it at once, and each of them reads your text next; use it when the work must not go on. A CANDIDATE, REVIEW or DONE to your owner is your turn's report: it is delivered when your turn ends, and your final message is not mailed a second time. Mail to an archived seat is refused.",
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -141,6 +141,35 @@
         "type": "object",
         "properties": {},
         "required": []
+      }
+    },
+    "seatwork_seats": {
+      "callers": "spawners",
+      "description": "The open seats under you in one call, one line each, as the room and the daemon know them now: role, title and id; at work or at rest and for how long, waiting for a permission, failed, or waiting for the retry the room planned; the context it holds and what it has cost; the signal its last turn ended with; a Peer's rejections since its last ACCEPT; mail held for it. A seat past {{rotate_k}}K tokens of context is marked: every step of a seat reads its whole context again, so its next task belongs to a fresh seat.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {},
+        "required": []
+      }
+    },
+    "seatwork_rotate": {
+      "callers": "spawners",
+      "description": "Replace a seat under you whose context has grown large (seatwork_seats marks it) with a fresh one that continues its work. The room asks the seat for a handoff at its next rest, starts a successor on the same model with the brief in force and that handoff, hands the seat's own open seats over to it, and archives the old seat. You get one notice with the new seat's id; a seat that writes no usable handoff stays as it is, and you are told.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "agent_id": {
+            "type": "string",
+            "description": "The seat to replace: one you launched, or one below it."
+          },
+          "why": {
+            "type": "string",
+            "description": "Optional: one clause the seat is told, such as its context size or the task ahead."
+          }
+        },
+        "required": [
+          "agent_id"
+        ]
       }
     },
     "seatwork_adopt": {

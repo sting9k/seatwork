@@ -8,29 +8,26 @@ description: "Supervisor procedure for a Lead that stalls, degrades, runs long, 
 
 A stalled Lead (the threshold is in your role prompt): mail it a status check (`needs:
 reply`). Still silent → `cancel_agent`, then mail "resume from <its last recorded progress>".
-Silent again, or its context past the law's limit → the handoff below. An unauthorized
-external or destructive action in flight: mail its Lead now, `cancel_agent` the actor if it is
-still going, and tell the Owner in your final message.
+Silent again, or its context past the rotation line → the handoff below. An unauthorized
+external or destructive action in flight: a `STOP` mail to its Lead ends the Lead's turn and
+every running turn under it at once; tell the Owner in your final message.
 
 ## Handoff
 
-Trigger: the Lead's context is past the project law's limit (default ~60% of its window), it
-loses the thread after compaction, it stalls twice, or the Owner asks.
+Trigger: the room names the Lead's context under one of its reports (`[room] This Lead holds
+…`; `seatwork_seats` shows the same) or it is past the law's lower limit, it loses the thread
+after compaction, it stalls twice, or the Owner asks.
 
-1. Mail the current Lead (`needs: reply`): finish the step in flight, start no new dispatch, and
-   write a **handoff** to `.seatwork/plans/<workstream>-handoff.md`, one page: accepted
-   candidates (sha), open loops with owners and return checkpoints, owned scopes and their Peers
-   (ids), what changed in the plan and why, decisions and dissent, lessons ("which mistakes would
-   you avoid next time"). What a file already holds (the plan, a brief, a review) is named by
-   its path, never copied. Its reply is the path and five lines.
-2. Create the successor: `create_agent` with the Lead provider and settings from your role,
-   `notifyOnFinish: false`, `initialPrompt` = the workstream's intent record + the handoff file's path +
-   "adopt these Peers with `seatwork_adopt`, then re-prompt each with its brief and your disposition of its last signal, or
-   archive and relaunch its scope".
-3. Verify adoption: the successor's first report lists every adopted Peer with a disposition.
-   Until then, results from those Peers reach no one.
-4. Archive the old Lead only after the successor's first report is in. Record both ids and the
-   handoff location in `.seatwork/status.md`.
-5. Lessons: copy the old Lead's lessons into `.seatwork/notebook.md`. Do not patch the law or role
+1. `seatwork_rotate` with the Lead's id and one clause of why. The room asks the Lead for its
+   handoff when it is next at rest, starts a successor on the same model with the instruction
+   in force and that handoff (kept under `.seatwork/handoffs/`), hands the Lead's open seats
+   over to it, and archives the Lead. End your turn: the notice comes with your next mail.
+2. `ROTATED` names the new seat: record both ids and the handoff's path in
+   `.seatwork/status.md`. The successor's first report holds the handoff against the tree: read
+   it for a seat or an open loop the handoff left out.
+3. `ROTATION FAILED` (no usable handoff, or the successor did not start) → the Lead is as it
+   was. Ask once more; failing that, by hand: its handoff by mail, `create_agent` with the
+   instruction and the handoff, the successor's `seatwork_adopt` of each Peer, then archive.
+4. Lessons: copy the old Lead's lessons into `.seatwork/notebook.md`. Do not patch the law or role
    files on the spot; adjusting immediately makes the next run unpredictable. Let a few sessions
    accumulate, then propose corrections.

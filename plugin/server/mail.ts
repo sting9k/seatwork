@@ -23,7 +23,7 @@ import { Lru } from "./watch/cache";
 export type Priority = "blocking" | "action" | "fyi";
 export type Needs = "reply" | "decision" | "nothing";
 
-/** A mail: `sending` marks a delivery under way, `quiet` starts no turn, `progress` gives way to a newer report. */
+/** A mail: `sending` marks a delivery under way, `quiet` starts no turn, `progress` gives way to a newer report, `urgent` ends the turn it finds, `heldUntil` keeps a review quiet while its `round` is still out. */
 export interface Mail {
   id: string;
   at: string;
@@ -38,6 +38,9 @@ export interface Mail {
   sending?: true;
   quiet?: true;
   progress?: true;
+  urgent?: true;
+  round?: string;
+  heldUntil?: string;
 }
 
 export interface SeatRecord {
@@ -67,6 +70,8 @@ const HANDLING: Record<Priority, string> = {
 };
 
 const PRIORITY_RANK: Record<Priority, number> = { blocking: 0, action: 1, fyi: 2 };
+const startsNoTurn = (mail: Mail) =>
+  mail.quiet === true || (!!mail.heldUntil && Date.now() < Date.parse(mail.heldUntil));
 const RECENT_MAILS = 2000;
 
 function nowId(): string {
@@ -408,6 +413,12 @@ export class MailEngine {
     });
   }
 
+  /** The last reviewer of a round is in, or will not come: its held reports wait no longer. */
+  async release(agentId: string, round: string): Promise<void> {
+    updateQueue(agentId, (mail) => (mail.round === round && !mail.sending ? { ...mail, heldUntil: undefined } : mail));
+    await this.deliver(agentId);
+  }
+
   /** The mail that started this seat's current turn; empty when something else did. Read once. */
   takeWake(agentId: string): Mail[] {
     const mails = this.woke.get(agentId) ?? [];
@@ -459,13 +470,15 @@ export class MailEngine {
         }
         return;
       }
-      if (status === "unknown" || status === "permission") {
+      // a stop order does not wait for the turn, or the permission prompt, it finds
+      const stops = status !== "idle" && queue.some((mail) => mail.urgent);
+      if (status === "unknown" || (status === "permission" && !stops)) {
         return; // hold everything; the next trigger retries
       }
       let send: Mail[];
-      if (status === "idle") {
+      if (status === "idle" || stops) {
         // quiet mail starts no turn; it goes out with the first mail that does
-        send = queue.some((mail) => !mail.quiet) ? queue : [];
+        send = queue.some((mail) => !startsNoTurn(mail)) ? queue : [];
       } else {
         // running: only harnesses whose steer waits for the current tool call get mail mid-turn
         const harness = parseSeat(this.seats.get(agentId)?.provider)?.harness;
@@ -476,13 +489,15 @@ export class MailEngine {
       const asRead = new Map(send.map((mail) => [mail.id, mail]));
       // the mail stays on disk, marked, until the daemon has it: a process that dies here loses nothing
       updateQueue(agentId, (mail) => (asRead.has(mail.id) ? { ...mail, sending: true } : mail));
-      if (status === "idle") this.woke.set(agentId, send);
+      const opensTurn = status === "idle" || stops;
+      if (opensTurn) this.woke.set(agentId, send);
       try {
-        // The SDK's default for a running agent is "interrupt"; the room never interrupts.
-        await this.paseo.agents.ref(agentId).send(digest(send), { activeTurnBehavior: "steer" } as never);
+        // The SDK's default for a running agent is "interrupt"; the room interrupts for a stop order only.
+        const activeTurnBehavior = stops ? "interrupt" : "steer";
+        await this.paseo.agents.ref(agentId).send(digest(send), { activeTurnBehavior } as never);
       } catch (error) {
         // refused, so nothing arrived: the mail waits as it was read
-        if (status === "idle") this.woke.delete(agentId);
+        if (opensTurn) this.woke.delete(agentId);
         updateQueue(agentId, (mail) => asRead.get(mail.id) ?? mail);
         for (const mail of send)
           logLine("delivery-failed", mail, error instanceof Error ? error.message : String(error));
@@ -490,7 +505,8 @@ export class MailEngine {
         return;
       }
       updateQueue(agentId, (mail) => (asRead.has(mail.id) ? null : mail));
-      for (const mail of send) logLine(status === "idle" ? "delivered-idle" : "delivered-steer", mail);
+      const how = status === "idle" ? "delivered-idle" : stops ? "delivered-interrupt" : "delivered-steer";
+      for (const mail of send) logLine(how, mail);
     } finally {
       this.delivering.delete(agentId);
     }

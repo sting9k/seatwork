@@ -5,8 +5,8 @@ import type { PluginBeforeRequests, PluginServerContext } from "@getpaseo/plugin
 import type { PaseoApi } from "./server/paseo";
 import { z } from "zod";
 import { paseoCli } from "./server/cli";
-import { collectFiles, Collector, KEEP_LOG_DAYS, liveAgents } from "./server/gc";
-import { MailEngine, type Mail, type Priority, type Needs } from "./server/mail";
+import { collectFiles, Collector, KEEP_LOG_DAYS, liveAgents, type LiveAgent } from "./server/gc";
+import { MailEngine, waitsOnSomeone, type Mail, type Priority, type Needs, type SeatRecord } from "./server/mail";
 import { checkHqPlacement, ensureHqProject, hqDir, removeHqProject } from "./server/orchestration/hq";
 import { McpHttpServer } from "./server/mcp-http";
 import { HQ_PROJECT, PASEO_HOME, REGISTRY_LOG, ROOM_HOME, SEAT_TMP_DIR, WATCH_DIR } from "./server/paths";
@@ -21,6 +21,18 @@ import { OwedList, roomStatus as readRoomStatus } from "./server/room-status";
 import { fitSeat, loadModels, projectModels, type Models } from "./server/orchestration/models";
 import { loadPolicy, type RuntimePolicy } from "./server/policy";
 import { findProject, findRoomMarker, lawSkills, loadRegistry, projectBlock } from "./server/orchestration/registry";
+import { Recovery, resumeDue, retryNote } from "./server/orchestration/recovery";
+import { isReviewer, ReviewGate } from "./server/orchestration/review-gate";
+import {
+  briefInForce,
+  handoffRequest,
+  nextTitle,
+  parseHandoff,
+  successorPrompt,
+  type Handoff,
+} from "./server/orchestration/rotation";
+import { FRESH_EYES, ownerNote, Rounds } from "./server/orchestration/rounds";
+import { describeSeats, type SeatRow } from "./server/orchestration/seats-view";
 import { namesCaller, roomTool } from "./server/room-tools";
 import {
   claudeRoleDir,
@@ -53,9 +65,10 @@ import { roomModels, type Setup } from "./server/orchestration/setup/plan";
 import { keptAt, roomFolders, takeRoomFiles, type ProjectFiles } from "./server/orchestration/setup/project-files";
 import { isSetUp, KEEP_REMOVED_DAYS, moveRoomHomeAside, readSetup } from "./server/orchestration/setup/room-home";
 import { CLOSES_WORK, SUBJECT_SIGNALS, asksOwner, signalOf, subjectOpening, subjectSignal } from "./server/signals";
-import { noteUsage, roomStats } from "./server/stats";
+import { noteUsage, roomStats, type SeatUsage } from "./server/stats";
 import { Budget } from "./server/watch/budget";
 import { calibrate, renderCalibration, type MailLine } from "./server/watch/calibrate";
+import { prompts } from "./server/watch/events";
 import { snapshot } from "./server/watch/git";
 import { JevEngine } from "./server/watch/jev";
 import { REVISION } from "./server/watch/questions";
@@ -68,7 +81,7 @@ import { Watcher, type SeatView, type TimelineView } from "./server/watch/watche
 
 type CreateRequest = PluginBeforeRequests["agent.create"];
 
-const VERSION = "0.22.2";
+const VERSION = "0.23.0";
 const PLUGIN_ID = "seatwork";
 const MAIL_DIR = join(ROOM_HOME, "mail");
 const MCP_TOKEN_FILE = join(MAIL_DIR, "token");
@@ -511,9 +524,14 @@ function startRoom(server: Pick<PluginServerContext, "on" | "before">): Room {
   const mailedUp = new Map<string, Set<string>>();
   /** seat → the signal its last turn ended with. */
   const lastSignal = new Map<string, string>();
-  const rejectsSinceAccept = new Map<string, number>();
+  const rounds = new Rounds();
+  const gate = new ReviewGate();
+  const rotations = new Map<string, { by: string; mailId: string }>();
+  const rotateAt = policy.room.params.rotateAtTokens ?? Infinity;
+  const lastUsage = new Map<string, SeatUsage>();
   /** What the last turn of a seat nobody above reads by mail left for the Owner to answer. */
   const owed = new OwedList(join(ROOM_HOME, "owed.json"));
+  const recovery = new Recovery(join(ROOM_HOME, "recovery.json"), policy.room.recovery);
   let gc: Collector | null = null;
   const getGc = (paseo: Parameters<typeof getEngine>[0]) => {
     if (!gc) gc = new Collector(paseo, getEngine(paseo), policy.gc, log, forgetAgent);
@@ -574,7 +592,11 @@ function startRoom(server: Pick<PluginServerContext, "on" | "before">): Room {
     };
   };
 
-  const toolVars = { signals: SUBJECT_SIGNALS.join(", "), keep_log_days: String(KEEP_LOG_DAYS) };
+  const toolVars = {
+    signals: SUBJECT_SIGNALS.join(", "),
+    keep_log_days: String(KEEP_LOG_DAYS),
+    rotate_k: String(Math.round(rotateAt / 1000)),
+  };
   mcp.register(roomTool("seatwork_mail", toolVars), async (args, context) => {
     if (!engine) throw new Error("mail engine not ready (no room seat has been created on this daemon yet)");
     const from = resolveCaller(context.nonce);
@@ -605,8 +627,8 @@ function startRoom(server: Pick<PluginServerContext, "on" | "before">): Room {
     }
     const check = engine.canWrite(from, to, viaReply);
     if (!check.ok) throw new Error(`seatwork_mail refused: ${check.reason}`);
-    if ((await engine.recipientStatus(to)) === "gone")
-      throw new Error(`seatwork_mail refused: ${to} is archived or gone; nothing was sent`);
+    const found = await engine.recipientStatus(to);
+    if (found === "gone") throw new Error(`seatwork_mail refused: ${to} is archived or gone; nothing was sent`);
     const sender = engine.seat(from)!;
     const recipient = engine.seat(to)!;
     const subject = String(args.subject ?? "").trim() || "(no subject)";
@@ -615,6 +637,12 @@ function startRoom(server: Pick<PluginServerContext, "on" | "before">): Room {
     if (!opening)
       throw new Error(
         `seatwork_mail: the subject opens with none of the room's signals (${SUBJECT_SIGNALS.join(", ")}); a change to what a seat must do is a REVISED BRIEF, a fact it should know is an FYI. Nothing was sent.`,
+      );
+    // a stop order ends running turns: it travels down only
+    const stops = opening === "STOP";
+    if (stops && !engine.isAncestor(from, to))
+      throw new Error(
+        "seatwork_mail: STOP goes down, to a seat you launched or one below it; to your Owner, write what must stop and why under BLOCKED or QUESTION. Nothing was sent.",
       );
     const limit = policy.room.params.mailChars;
     if (body.length > limit)
@@ -661,24 +689,53 @@ function startRoom(server: Pick<PluginServerContext, "on" | "before">): Room {
     const mail = await engine.post({
       from: { agentId: from, role: sender.role },
       to,
-      priority: waits ? "fyi" : priority,
+      priority: stops ? "blocking" : waits ? "fyi" : priority,
       subject,
       body,
       needs,
-      whyNow: whyNowFor(engine.isAncestor(from, to) ? "owner" : sender.role, needs),
+      whyNow: stops
+        ? "the seat above you stopped this work; the turn you were in was ended to bring you this"
+        : whyNowFor(engine.isAncestor(from, to) ? "owner" : sender.role, needs),
       ...(waits ? { quiet: true as const } : {}),
+      ...(stops ? { urgent: true as const } : {}),
     });
+    if (stops) {
+      // every seat at work under the stopped one is stopped with it
+      const live = client ? await liveAgents(client) : new Map<string, LiveAgent>();
+      const busy = engine
+        .allSeats()
+        .filter((under) => engine!.isAncestor(to, under.agentId))
+        .filter((under) => {
+          const now = live.get(under.agentId);
+          return now !== undefined && (now.status === "running" || waitsOnSomeone(now));
+        });
+      for (const under of busy)
+        await engine.post({
+          from: { agentId: "room", role: "system" },
+          fromLabel: "room",
+          to: under.agentId,
+          priority: "blocking",
+          subject: "STOP: the work above you was stopped",
+          body: `The seat above your Owner stopped this work with: "${subject}". Stop where you are: leave the tree as it is, start nothing new, and end your turn with what is finished, what is half-done and where it lies. Your Owner writes next.`,
+          needs: "nothing",
+          whyNow: "the work you are part of was stopped; the turn you were in was ended to bring you this",
+          urgent: true,
+        });
+      const ended = found === "running" || found === "permission" ? "its running turn was ended" : "it was at rest";
+      const also =
+        busy.length > 0
+          ? ` Ended with it: the turns of ${busy.map((under) => `${under.role} ${under.title ?? under.agentId}`).join("; ")}.`
+          : "";
+      return `sent #${mail.id} to ${recipient.role} ${to} as a stop order; ${ended} and your text opens its next turn.${also}`;
+    }
     const held = engine.held(to).some((m) => m.id === mail.id);
     // the skill allows two rounds of repair: the third is said where the Lead sends it
     let round = "";
     if (sender.role === "lead" && recipient.role === "peer") {
-      if (opening === "REJECT") {
-        const count = (rejectsSinceAccept.get(to) ?? 0) + 1;
-        rejectsSinceAccept.set(to, count);
-        if (count >= 3)
-          round = ` This is REJECT ${count} of this Peer's task since its last ACCEPT or brief: a round past the second is your Owner's call (accept-candidate, step 5). Unless the Owner gave you this round, report DECISION_NEEDED with what each round found and what one more costs; the task holds meanwhile.`;
-      } else if (opening === "ACCEPT" || opening === "REVISED BRIEF" || opening === "DEFER")
-        rejectsSinceAccept.delete(to);
+      const before = rounds.rejected(to);
+      const count = rounds.answered(to, opening);
+      if (count > before && count >= 3)
+        round = ` This is rejection ${count} of this Peer's task since its last ACCEPT: a round past the second is your Owner's call (accept-candidate, step 5). Unless the Owner gave you this round, report DECISION_NEEDED with what each round found and what one more costs; the task holds meanwhile.`;
     }
     return `sent #${mail.id} to ${engine.isAncestor(to, from) ? "owner" : `${recipient.role} ${to}`} as ${mail.priority}; ${waits ? "it is read with the recipient's next mail" : held ? "held until the recipient can take it" : "delivered"}. Continue your work; do not wait for a reply unless needs=decision blocks you.${round}`;
   });
@@ -756,6 +813,78 @@ function startRoom(server: Pick<PluginServerContext, "on" | "before">): Room {
     return lines.join("\n");
   });
 
+  mcp.register(roomTool("seatwork_seats", toolVars), async (_args, context) => {
+    if (!engine || !client) throw new Error("seatwork_seats: the room is not ready (no seat was created yet)");
+    const me = resolveCaller(context.nonce);
+    if (!me) throw new Error("seatwork_seats: unknown caller");
+    const eng = engine;
+    const live = await liveAgents(client);
+    const open = eng.allSeats().filter((seat) => live.has(seat.agentId));
+    const rows: SeatRow[] = [];
+    // each seat under its Owner, the Owner first
+    const under = (owner: string, depth: number) => {
+      for (const seat of open) {
+        if (eng.parentOf(seat.agentId) !== owner || depth > 16) continue;
+        const now = live.get(seat.agentId) as LiveAgent & {
+          lastUsage?: SeatUsage;
+          lastError?: string;
+          activeTurn?: { startedAt: string | null } | null;
+        };
+        const usage = now.lastUsage ?? lastUsage.get(seat.agentId);
+        const retry = recovery.pending(seat.agentId);
+        rows.push({
+          agentId: seat.agentId,
+          role: seat.role,
+          title: seat.title,
+          depth,
+          status: now.status,
+          waiting: waitsOnSomeone(now),
+          updatedAt: now.updatedAt ?? null,
+          turnStartedAt: now.activeTurn?.startedAt ?? null,
+          heldMail: eng.held(seat.agentId).length,
+          retry: retry ? retryNote(retry) : null,
+          error: now.status === "error" ? (now.lastError ?? "").slice(0, 160) || null : null,
+          contextTokens: usage?.contextWindowUsedTokens ?? null,
+          costUsd: usage?.totalCostUsd ?? null,
+          lastSignal: lastSignal.get(seat.agentId) ?? null,
+          rejected: rounds.rejected(seat.agentId),
+        });
+        under(seat.agentId, depth + 1);
+      }
+    };
+    under(me, 0);
+    return describeSeats(rows, rotateAt, Date.now());
+  });
+
+  mcp.register(roomTool("seatwork_rotate", toolVars), async (args, context) => {
+    if (!engine) throw new Error("seatwork_rotate: the room is not ready (no seat was created yet)");
+    const me = resolveCaller(context.nonce);
+    if (!me) throw new Error("seatwork_rotate: unknown caller");
+    const target = String(args.agent_id ?? "")
+      .trim()
+      .replace(/^(hq|supervisor|lead|peer|lens):/i, "");
+    const seat = engine.seat(target);
+    if (!seat)
+      throw new Error("seatwork_rotate: give agent_id, the id of a seat under you (seatwork_seats lists them)");
+    if (!engine.isAncestor(me, target)) throw new Error("seatwork_rotate refused: you replace only a seat under you");
+    const status = await engine.recipientStatus(target);
+    if (status === "gone") throw new Error(`seatwork_rotate refused: ${target} is archived or gone`);
+    if (rotations.has(target))
+      return `${seat.role} ${target} was already asked for its handoff; the notice comes when it answers.`;
+    const asked = await engine.post({
+      from: { agentId: "room", role: "system" },
+      fromLabel: "room",
+      to: target,
+      priority: "action",
+      subject: "HANDOFF: write your handoff; a fresh seat continues your work",
+      body: handoffRequest(String(args.why ?? "").trim()),
+      needs: "reply",
+      whyNow: "the seat above you is replacing this seat with a fresh one, for the size of its context",
+    });
+    rotations.set(target, { by: me, mailId: asked.id });
+    return `asked ${seat.role} ${target} for its handoff${status === "running" ? "; it reads the request when its turn ends" : ""}. When it answers, the room starts its successor, hands its open seats over and archives it. You get one notice with the new seat's id.`;
+  });
+
   mcp.register(roomTool("seatwork_adopt", toolVars), async (args, context) => {
     if (!engine) throw new Error("mail engine not ready");
     const me = resolveCaller(context.nonce);
@@ -791,6 +920,59 @@ function startRoom(server: Pick<PluginServerContext, "on" | "before">): Room {
     .catch((error) => {
       console.error(`seatwork: mail MCP server failed to listen on ${port}; seatwork_mail unavailable`, error);
     });
+
+  /** Starts the successor of a seat on its brief and handoff, moves what was the seat's to it, archives the seat. */
+  const rotate = async (paseo: PaseoApi, old: SeatRecord, handoff: Handoff): Promise<{ id: string; file: string }> => {
+    const eng = getEngine(paseo);
+    const handle = paseo.agents.ref(old.agentId);
+    await handle.refresh();
+    const now = handle.current();
+    if (!now) throw new Error("the daemon no longer has the seat");
+    const view = await readTimeline(paseo, old.agentId, 4000);
+    const stamp = new Date().toISOString().slice(0, 16).replace(/[T:]/g, "-");
+    const dir = join(now.cwd, ".seatwork", "handoffs");
+    mkdirSync(dir, { recursive: true });
+    const file = join(dir, `${stamp}_${old.agentId.slice(0, 8)}.md`);
+    writeFileSync(file, `# Handoff of ${old.title ?? old.agentId}\n\n${handoff.text}\n`);
+    const owner = eng.parentOf(old.agentId);
+    const thinking = now.thinkingOptionId ?? now.effectiveThinkingOptionId;
+    const title = nextTitle(old.title);
+    const successor = await paseo.agents.create({
+      config: {
+        provider: now.model ? `${now.provider}/${now.model}` : now.provider,
+        ...(now.currentModeId ? { modeId: now.currentModeId } : {}),
+        ...(thinking ? { thinkingOptionId: thinking } : {}),
+      },
+      cwd: now.cwd,
+      ...(owner ? { parent: owner } : {}),
+      title,
+      prompt: successorPrompt({
+        brief: view ? briefInForce(prompts(view.entries), now.cwd) : null,
+        handoff: handoff.text,
+        file,
+      }),
+    });
+    // the successor must be a seat of the room before anything is handed to it
+    eng.rememberSeat({ ...old, agentId: successor.id, parentAgentId: owner, title, version: VERSION });
+    for (const child of eng.allSeats().filter((seat) => eng.parentOf(seat.agentId) === old.agentId)) {
+      const adopted = await eng.adopt(successor.id, child.agentId);
+      if (!adopted.ok) continue;
+      await eng.post({
+        from: { agentId: "room", role: "system" },
+        fromLabel: "room",
+        to: child.agentId,
+        priority: "fyi",
+        subject: "OWNER CHANGED: your Owner continues in a fresh seat",
+        body: "Your Owner was replaced by a fresh seat that holds its brief and its handoff. Mail addressed `to: owner`, your final messages and your permission requests reach the new seat; your brief stands. Continue your work.",
+        needs: "nothing",
+        whyNow: "the seat that launched you was rotated out",
+      });
+    }
+    for (const mail of eng.takeHeld(old.agentId)) await eng.post({ ...mail, to: successor.id });
+    rounds.move(old.agentId, successor.id);
+    await handle.archive();
+    return { id: successor.id, file };
+  };
 
   // ---- hooks
   // session_open is the first hook that knows the agent id: the nonce from agent.create is tied to it here
@@ -857,6 +1039,8 @@ function startRoom(server: Pick<PluginServerContext, "on" | "before">): Room {
         cwd: event.agent.cwd,
         version: VERSION,
       });
+      if (parent && policy.mail.gatherReviews && isReviewer(seat.role, event.agent.title))
+        gate.launched(parent.agentId, event.agent.id);
       const line = JSON.stringify({
         at: new Date().toISOString(),
         agentId: event.agent.id,
@@ -879,6 +1063,7 @@ function startRoom(server: Pick<PluginServerContext, "on" | "before">): Room {
   off.push(
     server.on("agent.turn_started", (event, { paseo }) => {
       owed.clear(event.agent.id);
+      gate.turnStarted(event.agent.id);
       getGc(paseo);
       const view = viewOf(paseo, event.agent);
       if (view) getWatcher(paseo).turnStarted(view, event.turnId);
@@ -890,7 +1075,15 @@ function startRoom(server: Pick<PluginServerContext, "on" | "before">): Room {
       owed.clear(event.agent.id);
       mailedUp.delete(event.agent.id);
       lastSignal.delete(event.agent.id);
+      rounds.forget(event.agent.id);
+      lastUsage.delete(event.agent.id);
+      recovery.forget(event.agent.id);
+      rotations.delete(event.agent.id);
       watcher?.forget(event.agent.id);
+      // a reviewer archived before its report holds its round back no longer
+      const round = gate.gone(event.agent.id);
+      const owner = round ? getEngine(paseo).parentOf(event.agent.id) : null;
+      if (round && owner) await getEngine(paseo).release(owner, round);
       await getGc(paseo).onArchived(event.agent.id);
     }),
   );
@@ -909,10 +1102,11 @@ function startRoom(server: Pick<PluginServerContext, "on" | "before">): Room {
       const eng = getEngine(paseo);
       const id = event.agent.id;
       const seat = parseSeat(event.agent.provider);
-      if (seat) void noteUsage(paseo, event.agent, seat.role).catch(() => {});
+      const usage = seat ? await noteUsage(paseo, event.agent, seat.role).catch(() => null) : null;
+      if (usage) lastUsage.set(id, usage);
       // what started this turn and what the seat mailed during it; read before the next delivery
       const wake = eng.takeWake(id);
-      const kept = eng.takeReport(id);
+      let kept = eng.takeReport(id);
       const mailed = mailedUp.get(id) ?? new Set<string>();
       mailedUp.delete(id);
       const parentId = eng.parentOf(id) ?? event.agent.parentAgentId;
@@ -920,8 +1114,14 @@ function startRoom(server: Pick<PluginServerContext, "on" | "before">): Room {
       // nothing travels up to hq: it reads the Supervisor's final message and status.md when it looks
       const reportsTo = seat && parentId && parent && parent.role !== "hq" ? parentId : null;
       const canceled = event.outcome.kind === "canceled";
+      // a failed turn is the room's to mend first: a quota is waited out, a service error tried again
+      const failure =
+        seat && event.outcome.kind === "failed" ? recovery.failed(id, event.outcome.error.message, Date.now()) : null;
+      const retried = failure !== null && "retry" in failure;
+      if (retried) log(`turn of ${id} failed (${failure.retry.kind}); the room resumes it, nobody is told`);
+      if (seat && event.outcome.kind === "completed") recovery.forget(id);
       // a seat nobody above reads by mail: the Owner reads its final message, and the app is told
-      if (seat && !reportsTo && !canceled) {
+      if (seat && !reportsTo && !canceled && !retried) {
         const what = event.outcome.kind === "failed" ? "FAILED" : asksOwner(lastAssistantText(event.timeline));
         if (what)
           owed.set({
@@ -951,6 +1151,7 @@ function startRoom(server: Pick<PluginServerContext, "on" | "before">): Room {
           subject = `FAILED: ${event.outcome.error.message.slice(0, 120)}`;
           needs = "decision";
           quiet = progress = false;
+          send = !retried;
         } else if (signal ? mailed.has(signal) : kept) {
           // one report per turn
           log(`turn end of ${id} not mailed again: the seat mailed ${signal ?? "its report"} to its parent itself`);
@@ -978,7 +1179,7 @@ function startRoom(server: Pick<PluginServerContext, "on" | "before">): Room {
             needs,
             whyNow:
               event.outcome.kind === "failed"
-                ? "the seat's turn failed; its work is stopped"
+                ? `the seat's turn failed${failure && "gaveUpAfter" in failure && failure.gaveUpAfter > 0 ? `, and again after the room's ${failure.gaveUpAfter} tries` : ""}; its work is stopped`
                 : progress
                   ? "progress only: the seat ended its turn with STATUS and asks nothing of you"
                   : quiet
@@ -989,11 +1190,96 @@ function startRoom(server: Pick<PluginServerContext, "on" | "before">): Room {
           };
         }
       }
+      // a writing Peer's candidate goes back to it once, for a pass with fresh eyes, before its Owner reads it
+      const handIn = kept ?? report;
+      const rereads =
+        seat?.role === "peer" &&
+        event.outcome.kind === "completed" &&
+        policy.room.handin?.freshEyes === true &&
+        !!handIn &&
+        subjectSignal(handIn.subject) === "CANDIDATE" &&
+        rounds.owesFreshEyes(id);
+      if (rereads) kept = report = null;
+      // under what goes up, the room's own line: the task's round, and a context past the rotation line
+      const up = kept ?? report;
+      if (seat && up) {
+        const candidate = seat.role === "peer" && subjectSignal(up.subject) === "CANDIDATE";
+        const note = ownerNote({
+          role: seat.role,
+          candidate,
+          rejected: candidate ? rounds.handedIn(id) : 0,
+          contextTokens: usage?.contextWindowUsedTokens ?? null,
+          rotateAtTokens: rotateAt,
+        });
+        if (note) up.body = `${up.body.trimEnd()}\n\n${note}`;
+      }
+      // a reviewer's report waits for the others of its round: the Owner reads the round in one turn
+      if (up && subjectSignal(up.subject) === "REVIEW") {
+        const round = gate.reported(id);
+        if (round) up.round = round.round;
+        if (round && round.awaited > 0) {
+          up.heldUntil = new Date(Date.now() + policy.room.params.reviewStallMinutes * 60_000).toISOString();
+          up.whyNow = `${up.whyNow}; held for the ${round.awaited} other${round.awaited === 1 ? "" : "s"} of its review round`;
+        }
+      }
+      // the reply to a handoff request: the room starts the successor, or says why it did not
+      const rotation = rotations.get(id);
+      const record = eng.seat(id);
+      if (rotation && record && wake.some((mail) => mail.id === rotation.mailId)) {
+        rotations.delete(id);
+        const handoff = event.outcome.kind === "completed" ? parseHandoff(lastAssistantText(event.timeline)) : null;
+        let problem = "its reply was no handoff (CURRENT TASK and PROGRESS are needed)";
+        if (handoff) {
+          try {
+            const next = await rotate(paseo, record, handoff);
+            watcher?.forget(id);
+            if (kept && reportsTo) await eng.post({ ...kept, to: reportsTo });
+            for (const told of new Set([rotation.by, ...(reportsTo ? [reportsTo] : [])]))
+              await eng.post({
+                from: { agentId: "room", role: "system" },
+                fromLabel: "room",
+                to: told,
+                priority: "fyi",
+                subject: `ROTATED: ${record.role} ${record.title ?? id} continues in a fresh seat`,
+                body: `The room started ${nextTitle(record.title)} (${next.id}) on the brief in force and the handoff at ${next.file}. The seats the old one launched report to it now. The old seat ${id} is archived: write to ${next.id} from here on.`,
+                needs: "nothing",
+                whyNow: "a seat under you was replaced by a fresh one",
+                quiet: true,
+              });
+            // the handoff is the old seat's last word: nothing more goes up from it
+            return;
+          } catch (error) {
+            problem = `its successor could not be started (${error instanceof Error ? error.message : String(error)})`;
+          }
+        }
+        await eng.post({
+          from: { agentId: "room", role: "system" },
+          fromLabel: "room",
+          to: rotation.by,
+          priority: "action",
+          subject: `ROTATION FAILED: ${record.role} ${record.title ?? id} stays as it is`,
+          body: `The room did not replace this seat: ${problem}. It is as it was. Ask again with seatwork_rotate, or brief a new seat yourself and archive this one.`,
+          needs: "nothing",
+          whyNow: "the rotation you asked for did not happen",
+        });
+      }
       // the watcher reads the turn before anything goes up: its notice rides with the report, or goes alone
       const view = canceled ? null : viewOf(paseo, event.agent);
-      const carried = [kept, report].some((mail) => mail && !mail.quiet);
+      // what the watcher saw in a hand-in that went back rides with the hand-in that follows
+      const carried = rereads || [kept, report].some((mail) => mail && !mail.quiet);
       if (view) await getWatcher(paseo).turnEnded(view, event.turnId, carried);
       else watcher?.forget(id);
+      if (rereads)
+        await eng.post({
+          from: { agentId: "room", role: "system" },
+          fromLabel: "room",
+          to: id,
+          priority: "action",
+          subject: "HAND-IN RETURNED: one pass with fresh eyes, then hand in again",
+          body: FRESH_EYES,
+          needs: "reply",
+          whyNow: "the room returns a first hand-in once before the Owner reads it",
+        });
       // the watcher has read the turn: held mail may now start the next one
       await eng.deliver(id);
       if (!reportsTo) return;
@@ -1026,6 +1312,10 @@ function startRoom(server: Pick<PluginServerContext, "on" | "before">): Room {
   // safety net: anything still held gets another delivery attempt every minute
   const sweep = setInterval(() => {
     void engine?.sweep();
+    if (engine)
+      void resumeDue(recovery, engine, Date.now()).catch((error) =>
+        console.error("seatwork: resuming a failed seat did not work", error),
+      );
   }, 60_000);
   // garbage collection: idle seats and orphan heartbeats
   const collect = setInterval(
@@ -1215,7 +1505,8 @@ function startRoom(server: Pick<PluginServerContext, "on" | "before">): Room {
 
   /** An archived seat can never call seatwork_mail again: drop its nonce. */
   function forgetAgent(agentId: string): void {
-    rejectsSinceAccept.delete(agentId);
+    rounds.forget(agentId);
+    lastUsage.delete(agentId);
     const stale = Object.keys(nonces).filter((nonce) => nonces[nonce] === agentId);
     if (stale.length === 0) return;
     for (const nonce of stale) delete nonces[nonce];

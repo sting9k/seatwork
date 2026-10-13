@@ -1,5 +1,6 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import type { RecoveryPolicy } from "./orchestration/recovery";
 import { ROOM_HOME } from "./paths";
 import type { Harness, Role } from "./orchestration/seats";
 
@@ -50,6 +51,7 @@ export type MidTurnDelivery = "steer" | "hold";
 export interface MailPolicy {
   port: number;
   holdFyiWhileRunning: boolean;
+  gatherReviews?: boolean;
   midTurn: Record<Harness, MidTurnDelivery>;
 }
 
@@ -64,6 +66,7 @@ export interface RoomParams {
   readBudgetTokens: number;
   cheapReadBudgetTokens: number;
   mailChars: number;
+  rotateAtTokens?: number;
 }
 
 /** Who may write to whom and create whom: `routes` keys are "<sender>><recipient>", `spawn` entries `role` or `role:spec`. */
@@ -71,6 +74,8 @@ export interface RoomPolicy {
   routes: Record<string, boolean>;
   spawn: Record<RoleName, string[]>;
   params: RoomParams;
+  recovery?: RecoveryPolicy;
+  handin?: { freshEyes: boolean };
 }
 
 /** Garbage collection, see gc.ts. Hours of 0 mean "never archive that role". */
@@ -162,6 +167,9 @@ export function loadPolicy(): RuntimePolicy {
       routes: need(room.routes, "room.routes"),
       spawn: need(room.spawn, "room.spawn"),
       params: need(room.params, "room.params"),
+      // absent in a home an earlier version wrote, until the update has brought it up
+      recovery: room.recovery,
+      handin: room.handin,
     },
     mail: need(parsed.mail, "mail"),
     gc: need(parsed.gc, "gc"),

@@ -49,6 +49,7 @@ test("the Lead is shown the lenses as one role's models with what each is for, a
     readBudgetTokens: 80000,
     cheapReadBudgetTokens: 40000,
     mailChars: 6000,
+    rotateAtTokens: 200000,
   };
 
   const shown = promptVars(table, params).lens_table;
@@ -79,6 +80,7 @@ test("a harness without session modes is one a seat is told to create with no mo
     readBudgetTokens: 80000,
     cheapReadBudgetTokens: 40000,
     mailChars: 6000,
+    rotateAtTokens: 200000,
   };
 
   const shown = promptVars(table, params).modes;

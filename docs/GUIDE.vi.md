@@ -380,8 +380,9 @@ có gì rời khỏi máy.
 
 ### Thư
 
-Các seat nói chuyện bằng thư. Thư không cắt ngang ai: nó tới khi lượt của
-người nhận kết thúc. Kết quả đã xong chỉ đi lên một lần, khi lượt của chính
+Các seat nói chuyện bằng thư. Thư tới khi lượt của người nhận kết thúc. Chỉ
+một loại thư cắt ngang: `STOP` từ seat phía trên kết thúc ngay lượt đang chạy
+của người nhận và của mọi seat đang làm bên dưới nó. Kết quả đã xong chỉ đi lên một lần, khi lượt của chính
 người gửi đã kết thúc. Seat đang đóng vẫn nhận được thư, vì thư mở nó ra.
 Thư gửi cho seat đã lưu trữ quay về người gửi với nhãn `UNDELIVERABLE`.
 
@@ -397,6 +398,7 @@ Các tín hiệu bạn sẽ thấy trong báo cáo:
 | `ACCEPT` / `REJECT` | Lead | Nhận, hoặc trả lại kèm chỗ cần sửa |
 | `REVISED BRIEF` | Lead | Peer đúng; brief đã đổi |
 | `HOLD` / `NOTED` | Lead | Giữ hướng cũ; phản đối đã được ghi lại |
+| `STOP` | Supervisor, Lead | Việc không được chạy tiếp; các lượt đang chạy bên dưới kết thúc ngay |
 
 Plugin kiểm tra ai được tạo ai và ai được gửi thư cho ai:
 
@@ -410,6 +412,23 @@ Plugin kiểm tra ai được tạo ai và ai được gửi thư cho ai:
 
 Thư ngoài bảng này bị từ chối. Seat được tạo ngoài bảng này bị lưu trữ, và
 người tạo được báo.
+
+### Room tự làm những gì
+
+Các bước này chạy trong plugin. Chúng không tốn lượt nào của Supervisor hay
+Lead.
+
+| Khi nào | Room làm gì |
+|---|---|
+| Peer viết code nộp một candidate | Trả lại một lần để Peer tự soát bằng mắt mới; lần nộp kế đi lên |
+| Nhiều reviewer được dựng trong cùng một lượt | Giữ các báo cáo lại và giao cùng lúc |
+| Một candidate quay lại sau khi bị bác | Ghi số vòng và số lần bị bác ngay dưới nó |
+| Context của một seat vượt ngưỡng thay seat | Nêu tên seat và cỡ context dưới báo cáo kế của nó |
+| Có lệnh `seatwork_rotate` cho một seat | Xin bản bàn giao, dựng seat kế nhiệm trên brief của nó, chuyển các seat con sang, lưu trữ seat cũ |
+| Một lượt hỏng vì dịch vụ model | Cho seat chạy tiếp, tối đa ba lần; hết hạn mức thì chờ tới lúc được mở lại |
+
+Các con số và công tắc nằm trong `policy.json`: `room.handin.freshEyes`,
+`mail.gatherReviews`, `room.params.rotateAtTokens`, `room.recovery`.
 
 ### Seat được cấp những gì
 

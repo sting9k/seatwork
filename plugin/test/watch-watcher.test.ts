@@ -41,6 +41,7 @@ const PARAMS = {
   readBudgetTokens: 0,
   cheapReadBudgetTokens: 0,
   mailChars: 6000,
+  rotateAtTokens: 200000,
 };
 const PEER: SeatView = {
   agentId: "peer-1",

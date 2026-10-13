@@ -2,6 +2,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { merge } from "../../shared/model-choices";
 import { allowed, layModels, type Models } from "../models";
+import { claudeDisallowed } from "../policy";
 import { HARNESSES, parseSeat, ROLES, type Harness, type Role } from "../seats";
 
 /** This machine's own choices, kept in ROOM_HOME/setup.json and never in the repo. */
@@ -46,6 +47,14 @@ export interface Profile {
   model?: string;
   modeId?: string;
   thinkingOptionId?: string;
+  [key: string]: unknown;
+}
+
+/** A profile as paseo/profiles.json writes it: a role; the model table says the rest. */
+interface ProfileSpec {
+  id: string;
+  name: string;
+  role: Role;
   [key: string]: unknown;
 }
 
@@ -167,7 +176,7 @@ export async function planRoom(input: {
     restrictModels?: boolean;
   };
   const policy = readJson(join(pluginDir, "paseo", "policy.json")) as Record<string, any>;
-  const profiles = readJson(join(pluginDir, "paseo", "profiles.json")) as Profile[];
+  const shown = readJson(join(pluginDir, "paseo", "profiles.json")) as ProfileSpec[];
   const models = machineModels(roomModels(pluginDir), setup);
   const warnings: string[] = [];
 
@@ -229,7 +238,7 @@ export async function planRoom(input: {
     if (launch.extraArgs && Object.keys(launch.extraArgs).length) entry.options = { extraArgs: launch.extraArgs };
     if (harness === "claude") {
       const deniedSkills = ((policy.claude.deniedSkills ?? []) as string[]).map((name) => `Skill(skill:${name})`);
-      entry.disallowedTools = [...(policy.claude.disallowedTools[role] as string[]), ...deniedSkills];
+      entry.disallowedTools = [...claudeDisallowed(policy, role), ...deniedSkills];
     }
     const assigned = used.get(id);
     if ((seatsFile.restrictModels ?? true) && assigned?.size) {
@@ -267,31 +276,33 @@ export async function planRoom(input: {
     providers[id] = entry;
   }
 
-  for (const profile of profiles) {
-    const role = parseSeat(profile.provider)?.role;
-    const seat = role ? profileSeat(models, role) : null;
-    if (seat) {
-      const [provider, model] = splitModel(seat.entry);
-      const harness = parseSeat(provider)!.harness;
-      Object.assign(profile, { provider, model });
-      const known = (await catalogOf(harness))?.[model];
-      // a harness without session modes, or a model without that thinking option, takes no such setting
-      const thinking =
-        seat.thinking && seat.thinking !== "default" && (!known || known.thinking.includes(seat.thinking))
-          ? seat.thinking
-          : undefined;
-      for (const [key, value] of [
-        ["modeId", models.modes[harness]],
-        ["thinkingOptionId", thinking],
-      ] as const) {
-        delete profile[key];
-        if (value) profile[key] = value;
-      }
-    }
-    if (!(profile.provider in providers))
+  const profiles: Profile[] = [];
+  for (const { role, ...rest } of shown) {
+    const seat = profileSeat(models, role);
+    if (!seat)
       throw new Error(
-        `paseo/profiles.json: profile ${profile.id} uses provider ${profile.provider}, which is not a seat the room sets up`,
+        `paseo/profiles.json: profile ${rest.id} is for role ${role}, which the model table gives no seat`,
       );
+    const [provider, model] = splitModel(seat.entry);
+    if (!(provider in providers))
+      throw new Error(
+        `paseo/profiles.json: profile ${rest.id} uses provider ${provider}, which is not a seat the room sets up`,
+      );
+    const harness = parseSeat(provider)!.harness;
+    const known = (await catalogOf(harness))?.[model];
+    // a harness without session modes, or a model without that thinking option, takes no such setting
+    const mode = models.modes[harness];
+    const thinking =
+      seat.thinking && seat.thinking !== "default" && (!known || known.thinking.includes(seat.thinking))
+        ? seat.thinking
+        : undefined;
+    profiles.push({
+      ...rest,
+      provider,
+      model,
+      ...(mode ? { modeId: mode } : {}),
+      ...(thinking ? { thinkingOptionId: thinking } : {}),
+    });
   }
 
   policy.watcher.mode = setup.watcher ?? "off";

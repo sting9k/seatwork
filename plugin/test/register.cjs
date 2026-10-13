@@ -6,7 +6,7 @@ const ts = require("typescript");
 
 registerHooks({
   resolve(specifier, context, nextResolve) {
-    const local = specifier.startsWith(".") && !/\.[cm]?[jt]s$/.test(specifier);
+    const local = specifier.startsWith(".") && !/\.(?:[cm]?[jt]s|json)$/.test(specifier);
     return nextResolve(local ? `${specifier}.ts` : specifier, context);
   },
   load(url, context, nextLoad) {

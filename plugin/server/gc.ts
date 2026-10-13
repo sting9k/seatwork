@@ -1,6 +1,8 @@
+import settings from "../shared/settings.json";
 import {
   appendFileSync,
   existsSync,
+  lstatSync,
   readdirSync,
   readFileSync,
   renameSync,
@@ -8,12 +10,12 @@ import {
   statSync,
   writeFileSync,
 } from "node:fs";
-import { basename, dirname, join } from "node:path";
+import { basename, dirname, isAbsolute, join } from "node:path";
 import type { PaseoApi } from "./paseo";
 import { paseoCli as cli } from "./cli";
 import { waitsOnSomeone, type MailEngine } from "./mail";
-import { PASEO_SCHEDULES, ROOM_HOME, SEAT_TMP_DIR } from "./paths";
-import type { GcPolicy } from "./policy";
+import { PASEO_SCHEDULES, ROOM_HOME, RUNTIMES_DIR, SEAT_TMP_DIR } from "./paths";
+import type { GcPolicy, RuntimeLeftovers } from "./policy";
 import { KEEP_REMOVED_DAYS } from "./setup/room-home";
 import { isVerdict } from "./watch/calibrate";
 
@@ -106,6 +108,8 @@ export class Collector {
       await this.archiveIdleSeats(live);
       if (this.policy.deleteOrphanHeartbeats) await this.deleteHeartbeats((agentId) => !live.has(agentId));
       for (const dir of dropSeatTmp(SEAT_TMP_DIR, [...live.keys()])) this.log(`gc: deleted ${dir}, a closed seat's`);
+      const open = new Set([...live.values()].flatMap((agent) => agent.provider ?? []));
+      for (const line of sweepRuntimes(RUNTIMES_DIR, open, this.policy.runtimes ?? {})) this.log(`gc: ${line}`);
     } catch (error) {
       this.log(`gc: pass failed: ${error instanceof Error ? error.message : String(error)}`);
     } finally {
@@ -205,7 +209,7 @@ export class Collector {
 
 /* ---------- files ---------- */
 
-export const KEEP_LOG_DAYS = 7;
+export const KEEP_LOG_DAYS: number = settings.keepLogDays;
 
 type Line = Record<string, unknown>;
 
@@ -294,6 +298,61 @@ export function dropSeatTmp(dir: string, open: readonly string[], days = KEEP_LO
     .filter((path) => now.getTime() - statSync(path).mtimeMs >= days * 86_400_000);
   for (const path of gone) rmSync(path, { recursive: true, force: true });
   return gone;
+}
+
+/** Drops the files under `dir` unwritten since `before`, and emptied folders; follows no link. */
+function dropUnwritten(dir: string, before: number): number {
+  let gone = 0;
+  for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    const path = join(dir, entry.name);
+    if (entry.isDirectory()) {
+      gone += dropUnwritten(path, before);
+      if (readdirSync(path).length === 0) rmSync(path, { recursive: true, force: true });
+    } else if (entry.isFile() && statSync(path).mtimeMs < before) {
+      rmSync(path, { force: true });
+      gone += 1;
+    }
+  }
+  return gone;
+}
+
+/** Clears what agent CLIs left in seats' homes; `open` are the providers that have a seat. */
+export function sweepRuntimes(
+  dir: string,
+  open: ReadonlySet<string>,
+  leftovers: Partial<Record<string, RuntimeLeftovers>>,
+  days = KEEP_LOG_DAYS,
+  now = new Date(),
+): string[] {
+  const done: string[] = [];
+  const before = now.getTime() - days * 86_400_000;
+  // a name is an entry of the home itself: nothing above it, nothing reached through a link
+  const own = (home: string, name: string) => {
+    if (isAbsolute(name) || name.split(/[\\/]/).includes("..")) return null;
+    const path = join(home, name);
+    const found = lstatSync(path, { throwIfNoEntry: false });
+    return found && !found.isSymbolicLink() ? { path, folder: found.isDirectory() } : null;
+  };
+  for (const [harness, left] of Object.entries(leftovers)) {
+    const homes = join(dir, harness);
+    if (!left || !existsSync(homes)) continue;
+    for (const role of readdirSync(homes)) {
+      if (open.has(`${harness}-${role}`)) continue;
+      const home = join(homes, role);
+      for (const name of left.rebuilt) {
+        const entry = own(home, name);
+        if (!entry) continue;
+        rmSync(entry.path, { recursive: true, force: true });
+        done.push(`deleted ${entry.path}, which ${harness} makes again`);
+      }
+      for (const name of left.sessions) {
+        const entry = own(home, name);
+        const gone = entry?.folder ? dropUnwritten(entry.path, before) : 0;
+        if (gone > 0) done.push(`deleted ${gone} session files not written for ${days} days in ${entry!.path}`);
+      }
+    }
+  }
+  return done;
 }
 
 /** Deletes the folders set aside beside a room home after `days`. */

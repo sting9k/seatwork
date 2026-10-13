@@ -17,6 +17,18 @@ export const edit = (filePath: string, turnId?: string) =>
 export const read = (filePath: string, turnId?: string) =>
   entry({ type: "tool_call", name: "Read", status: "completed", detail: { type: "read", filePath } }, turnId);
 
+/** A skill loaded through the harness's skill tool: Paseo keeps the skill's name as the label. */
+export const skill = (name: string, turnId?: string) =>
+  entry(
+    {
+      type: "tool_call",
+      name: "Skill",
+      status: "completed",
+      detail: { type: "plain_text", label: name, icon: "sparkles" },
+    },
+    turnId,
+  );
+
 export function bash(
   command: string,
   result: { fails?: boolean; running?: boolean; output?: string; exitCode?: number; took?: number } = {},

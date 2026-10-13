@@ -7,6 +7,7 @@ import { loadPolicy } from "../server/policy";
 import { projectBlock } from "../server/registry";
 import { roleSkillNames } from "../server/runtimes";
 import { rolePrompt } from "../server/seats";
+import { HANDOFF_SKILL } from "../server/watch/rules";
 import { after, before, test } from "node:test";
 import contribute from "../index.server";
 import { fakeServer } from "./support/server";
@@ -248,6 +249,8 @@ interface TestSeat {
   agent: { id: string; parentAgentId: string | null; provider: string; cwd: string; title: string; workspaceId: null };
   inbox: string[];
   prompt: string;
+  call(name: string, args: Record<string, unknown>): Promise<string>;
+  listed(): Promise<string[]>;
   mail(args: Record<string, unknown>): Promise<string>;
   /** What seatwork_inbox hands this seat. */
   held(): Promise<string>;
@@ -284,10 +287,21 @@ async function seat(
     if (result.isError) throw new Error(result.content[0].text);
     return result.content[0].text;
   };
+  const listed = async () => {
+    const response = await fetch(made.config.mcpServers.seatwork.url, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list" }),
+    });
+    const { result } = (await response.json()) as { result: { tools: { name: string }[] } };
+    return result.tools.map((entry) => entry.name);
+  };
   return {
     agent,
     inbox,
     prompt: made.config.systemPrompt,
+    call: tool,
+    listed,
     mail: (args) => tool("seatwork_mail", args),
     held: () => tool("seatwork_inbox", {}),
     adopt: (agentId) => tool("seatwork_adopt", { agent_id: agentId }),
@@ -807,5 +821,50 @@ test("a seat's prompt opens with its agent CLI's system prompt, filled in, and a
     const prompt = rolePrompt("peer", { harness, params: loadPolicy().room.params });
     assert.match(shared(prompt), /^# The room\n[\s\S]*\n## This runtime: /);
     assert.doesNotMatch(prompt, /\{\{|Claude Code/);
+  }
+});
+
+test("a Lead's third REJECT of one Peer's task is sent, and the answer says whose call that round is", async () => {
+  const lead = await seat("lead-rounds", "claude-lead", null, "[Lead] stream");
+  const peer = await seat("peer-rounds", "claude-peer", lead.agent.id, "[Peer] task");
+  const reject = (round: number) =>
+    lead.mail({
+      to: peer.agent.id,
+      subject: `REJECT abc${round}: one more case`,
+      body: "Repair it.",
+      needs: "nothing",
+    });
+  assert.doesNotMatch(await reject(1), /This is REJECT/);
+  assert.doesNotMatch(await reject(2), /This is REJECT/);
+  assert.match(
+    await reject(3),
+    /^sent #\S+ to peer .*This is REJECT 3 of this Peer's task since its last ACCEPT or brief: .*accept-candidate, step 5.*DECISION_NEEDED/,
+  );
+  // a new brief starts the count again
+  await lead.mail({
+    to: peer.agent.id,
+    subject: "REVISED BRIEF: narrower",
+    body: "The whole brief.",
+    needs: "nothing",
+  });
+  assert.doesNotMatch(await reject(4), /This is REJECT/);
+});
+
+test("the skill the watcher holds a CANDIDATE to is one of the Peer role's skills", () => {
+  assert.ok(roleSkillNames("peer").includes(HANDOFF_SKILL));
+});
+
+test("the tools a seat is listed are the ones shared/tools.json defines, and a tool that names its callers refuses the rest", async () => {
+  const defined = JSON.parse(readFileSync(join(__dirname, "..", "shared", "tools.json"), "utf8")).tools as Record<
+    string,
+    { callers: "any" | "spawners" | string[] }
+  >;
+  const lead = await seat("lead-tools", "claude-lead", null, "[Lead] stream");
+  const peer = await seat("peer-tools", "claude-peer", lead.agent.id, "[Peer] task");
+  assert.deepEqual(await peer.listed(), Object.keys(defined));
+  for (const [name, { callers }] of Object.entries(defined)) {
+    const refusal = await peer.call(name, {}).catch((error: Error) => error.message);
+    const refused = /your seat does not keep the project registry/.test(refusal);
+    assert.equal(refused, Array.isArray(callers) && !callers.includes("peer"), name);
   }
 });

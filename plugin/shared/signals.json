@@ -1,0 +1,28 @@
+{
+  "$comment": "The room's protocol words, each written once. A row is a word a mail subject may open with, in the order a seat is shown them. report: a seat's final message may open with it. closesWork: it says the seat's work is finished, so the seat above acts on it. counted: room stats count it by name (the rest are \"other\"). verdict: what it says of the work it answers, which is how the watcher labels a turn. notices: subjects the room itself writes, counted by room stats.",
+  "signals": [
+    {"name": "CANDIDATE", "report": true, "closesWork": true, "counted": true},
+    {"name": "REVIEW", "report": true, "closesWork": true, "counted": true},
+    {"name": "DONE", "report": true, "closesWork": true},
+    {"name": "STATUS", "report": true},
+    {"name": "QUESTION", "report": true, "counted": true},
+    {"name": "REOPEN_REQUEST", "report": true, "counted": true},
+    {"name": "DEPENDENCY_REQUEST", "report": true, "counted": true},
+    {"name": "BLOCKED", "report": true, "counted": true},
+    {"name": "DECISION_NEEDED", "report": true, "counted": true},
+    {"name": "HANDOFF"},
+    {"name": "ACK"},
+    {"name": "REVISED BRIEF", "counted": true, "verdict": "returned"},
+    {"name": "INSTRUCTION"},
+    {"name": "ANSWER", "counted": true},
+    {"name": "ACCEPT", "counted": true, "verdict": "accepted"},
+    {"name": "REJECT", "counted": true, "verdict": "returned"},
+    {"name": "HOLD", "counted": true},
+    {"name": "NOTED"},
+    {"name": "DEFER"},
+    {"name": "FYI"},
+    {"name": "CHALLENGE"},
+    {"name": "RESPONSE"}
+  ],
+  "notices": ["FAILED", "PERMISSION", "GC", "SPAWN REFUSED"]
+}

@@ -14,7 +14,8 @@ projects under 30 lines) and checkable. It adds rules; it cannot change who owns
    repository and the request: strictness; review lane on a candidate; when an ultra review or
    an ExecPlan is forced; hard cut or compatibility window; external actions that need the
    Owner; models to prefer or avoid; files or boundaries that need one owner; the commands that
-   define acceptance here.
+   define acceptance here; how the running product is checked and with which tool already on
+   the machine.
 3. One bullet per rule, each checkable. No implementation detail, no project documentation.
 4. Revise only from concrete friction recorded in `.seatwork/notebook.md`, with the Owner's yes;
    note version and date at the top. Never mid-workstream.

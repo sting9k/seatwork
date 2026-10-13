@@ -36,9 +36,10 @@ export interface EditEvent extends EventBase {
   status: RunStatus;
 }
 
-/** A read or a search: activity that changes nothing. */
+/** A read or a search: activity that changes nothing; `path` is the file a read opened. */
 export interface LookEvent extends EventBase {
   kind: "look";
+  path?: string;
   status: RunStatus;
 }
 
@@ -218,11 +219,17 @@ export function toEvents(entries: readonly TimelineInput[], cwd: string): TurnEv
       }
       case "read":
       case "search":
-      case "fetch":
-        events.push({ ...base, kind: "look", status });
+      case "fetch": {
+        const opened = text(detail.filePath);
+        events.push({ ...base, kind: "look", ...(opened ? { path: absolute(opened, cwd) } : {}), status });
         break;
-      default:
-        events.push({ ...base, kind: "tool", name: text(item.name), input: record(detail.input), status });
+      }
+      default: {
+        // Paseo keeps a skill call as text under the skill's name, without the call's input
+        const skill = /^skill$/i.test(text(item.name)) ? text(detail.label) : "";
+        const input = skill ? { skill } : record(detail.input);
+        events.push({ ...base, kind: "tool", name: text(item.name), input, status });
+      }
     }
   });
   return events;

@@ -31,7 +31,8 @@ OpenCode's own instructions say "the user", read your Owner.
   gets a question when the answer changes the result or the authority is
   not yours; it costs the Owner a turn and you the wait, so ask once, with
   the options you see and your default. Pushing, publishing, deploying,
-  calling an outside service and deleting what you did not create need
+  calling an outside service, installing a tool or a browser beyond the
+  project's own dependencies, and deleting what you did not create need
   authority written in your instruction: without it, report what you would
   do and end your turn.
 - **Truth.** Code and running behavior are the only truth; `.seatwork/` is

@@ -9,16 +9,21 @@ const state = process.env.SEATWORK_EVAL_STATE ? JSON.parse(readFileSync(process.
 const agents = [...(state.agents ?? [])];
 // the registry as seatwork_projects prints it; a registration rewrites its project's line
 let projects = state.projects ? String(state.projects).split("\n") : [];
-// the seats every install has (plugin/paseo/seats.json); the real tool sets up any other a table names
-const ROOM_SEATS = [
-  "claude-hq",
-  "claude-supervisor",
-  "claude-lead",
-  "claude-peer",
-  "claude-lens",
-  "codex-peer",
-  "codex-lens",
-];
+// the plugin's own definitions, read from its files: a seat here sees the real text
+const plugin = (file) => JSON.parse(readFileSync(new URL(`../plugin/${file}`, import.meta.url), "utf8"));
+const ROOM_TOOLS = plugin("shared/tools.json").tools;
+const VARS = {
+  signals: plugin("shared/signals.json")
+    .signals.map((signal) => signal.name)
+    .join(", "),
+  keep_log_days: String(plugin("shared/settings.json").keepLogDays),
+};
+const filled = (value) =>
+  JSON.parse(JSON.stringify(value).replace(/\{\{(\w+)\}\}/g, (whole, name) => VARS[name] ?? whole));
+// the seats every install has; the real tool sets up any other a table names
+const ROOM_SEATS = Object.entries(plugin("paseo/seats.json").seats).flatMap(([role, harnesses]) =>
+  harnesses.map((harness) => `${harness}-${role}`),
+);
 let counter = 0;
 const next = (prefix) => `${prefix}${++counter}`;
 const object = (properties, required = []) => ({ type: "object", properties, required, additionalProperties: true });
@@ -28,27 +33,6 @@ const findAgent = (id) => agents.find((a) => a.id === id || a.id === String(id).
 
 const TOOLS = {
   seatwork_mail: {
-    description:
-      "Write to another seat of your room. To answer a mail you received, pass reply_to: its id (the #id in its header) and no `to`; the answer goes to whoever sent it. To start a new thread, pass `to`: `owner` (the seat that launched you) or the id of a seat you launched. The plugin wraps it in an envelope and delivers it between the recipient's turns; it never interrupts anyone.",
-    inputSchema: object(
-      {
-        to: string(
-          "New thread: `owner` (the seat that launched you) or the id of a seat you launched. Omit when reply_to is given.",
-        ),
-        reply_to: string(
-          "Id of the mail you are answering (the #id in its header). The recipient is that mail's sender; use this for every answer so it reaches the right seat.",
-        ),
-        subject: string(
-          "Short subject, ideally starting with a protocol signal (QUESTION, CANDIDATE, ANSWER, ACCEPT, ...).",
-        ),
-        body: string("The message. Self-contained: the recipient may read it hours later."),
-        needs: string("What you need back.", { enum: ["reply", "decision", "nothing"] }),
-        priority: string("Suggested priority; the plugin may raise or lower it.", {
-          enum: ["blocking", "action", "fyi"],
-        }),
-      },
-      ["subject", "body"],
-    ),
     call: (a) => {
       if (!a.to && !a.reply_to)
         throw new Error("seatwork_mail: give `to` for a new thread or `reply_to` for an answer");
@@ -56,39 +40,15 @@ const TOOLS = {
     },
   },
   seatwork_inbox: {
-    description:
-      "Read the mail the plugin is holding for you (fyi mail that arrived while you were busy). Returns and clears it.",
-    inputSchema: object({}),
     call: () => "inbox empty",
   },
   seatwork_adopt: {
-    description:
-      "Take over a seat handed to you (a handoff): from now on it reports to you, its `to: owner` reaches you, and you may mail it. Allowed only for a role you may create, and only when its current owner is archived or in your chain.",
-    inputSchema: object({ agent_id: string("Id of the seat to adopt (from the handoff).") }, ["agent_id"]),
     call: (a) => `adopted ${a.agent_id}: it now reports to you`,
   },
   seatwork_projects: {
-    description:
-      "The project registry, one line per project known to Paseo: registered or not, name, root, whether its mission and law exist, its model table (default or custom) and the Supervisor seat to use.",
-    inputSchema: object({}),
     call: () => projects.join("\n") || "no projects known to Paseo",
   },
   seatwork_register_project: {
-    description:
-      "Register a project that Paseo already has: writes its room marker, its mission and its own model table when given, and its registry line. A seat the table names that the room does not have yet is set up first. Repeat it with `mission` or `models` to replace them.",
-    inputSchema: object(
-      {
-        path: string("The project's root, or its name in Paseo (see seatwork_projects)."),
-        name: string("Registry name, letters digits dashes. Default: the Paseo name."),
-        mission: string("What the project is for and what done looks like, a few lines of markdown."),
-        models: {
-          type: "object",
-          description:
-            "Only the differences from ROOM_DIR/models.json, same shape; objects merge, lists and values replace, null removes a key. Omit to use the room's table.",
-        },
-      },
-      ["path"],
-    ),
     call: (a) => {
       const at = projects.findIndex((row) => row.includes(` | ${a.path} | `));
       const [, roomSupervisor = "claude-supervisor/claude-opus-5-5", roomThinking = "high"] =
@@ -107,9 +67,6 @@ const TOOLS = {
     },
   },
   seatwork_unregister_project: {
-    description:
-      "Take a project out of the registry: no seat of the room starts in it after that. Its `.seatwork/` files stay, and seatwork_register_project brings it back. Refused while a seat of the project is open.",
-    inputSchema: object({ project: string("The project's registry name, or its root.") }, ["project"]),
     call: (a) => {
       const at = projects.findIndex(
         (row) => row.startsWith(`registered as ${a.project} |`) || row.includes(` | ${a.project} | `),
@@ -120,9 +77,6 @@ const TOOLS = {
     },
   },
   seatwork_room_stats: {
-    description:
-      "What the mail log says happened in the last N days, per project and per signal (candidates, rejects, reopen requests, escalations).",
-    inputSchema: object({ days: { type: "number", description: "How many days back; default 14." } }),
     call: (a) => state.roomStats ?? `no mail in the last ${a.days ?? 14} days`,
   },
   create_agent: {
@@ -321,6 +275,13 @@ const TOOLS = {
     call: () => "see the model table in your role prompt",
   },
 };
+
+for (const [name, tool] of Object.entries(TOOLS))
+  if (ROOM_TOOLS[name])
+    Object.assign(
+      tool,
+      filled({ description: ROOM_TOOLS[name].description, inputSchema: ROOM_TOOLS[name].inputSchema }),
+    );
 
 function log(entry) {
   if (!process.env.SEATWORK_EVAL_LOG) return;

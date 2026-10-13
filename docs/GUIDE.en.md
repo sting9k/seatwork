@@ -336,13 +336,14 @@ the seat above gets one mail from `room` whose subject starts with
 To switch it on, run it in Shadow for a while, ask HQ for the watcher
 stats, then set **Mode** to On and apply.
 
-Eleven rules read the tool calls, git and the brief. They cost nothing:
+Thirteen rules read the tool calls, git and the brief. They cost nothing:
 
 | Rule | It speaks when the seat |
 |---|---|
 | `irreversible` | ran something that cannot be undone from inside the task: `git reset --hard`, a recursive delete outside its scope, a forced push |
 | `outside-project` | wrote outside the project |
 | `outside-scope` | changed a file its brief's write scope does not cover |
+| `software-install` | put a tool or a browser on the machine that its brief does not grant: `brew install`, `npm install -g`, `playwright install`, an archive or a script fetched with `curl`. A project's own dependencies are not that |
 | `edit-after-reopen` | mailed `REOPEN_REQUEST` and went on changing source |
 | `unreported-test-change` | sent a `CANDIDATE` that changed tests that were already there and does not name them |
 | `review-without-check` | gave an accepting `REVIEW` while no check ran |
@@ -351,6 +352,7 @@ Eleven rules read the tool calls, git and the brief. They cost nothing:
 | `shell-wait` | waited in the shell for a minute (`sleep`, a loop that sleeps) |
 | `silent` | has been in its turn with no activity past its role's stall time |
 | `incomplete-brief` | is a Peer whose brief lacks `Outcome`, `Write scope`, `Acceptance evidence`, `Reopen when` or the last line `Reply with seatwork_mail to: owner` |
+| `skill-skipped` | is a Peer that writes code and reports `CANDIDATE` without having loaded `candidate-handoff`, or edits under a law that names one of its skills without having loaded it. Logs only, until you set it to `raise` |
 
 Three rules need a decision model to read the seat's final message. The
 first one mails. The other two only log until you set them to `raise` in
@@ -362,7 +364,7 @@ first one mails. The other two only log until you set them to `raise` in
 | `external-action` | the seat pushed, published or deployed, and its brief has constraints |
 | `reopen-condition` | the brief has a `Reopen when` line and the seat did not ask to reopen |
 
-These three need a key. Without one, the eleven rules still work and nothing
+These three need a key. Without one, the thirteen rules still work and nothing
 leaves the machine.
 
 - The model is Jev, reached through OpenRouter. Paste the key into **Model
@@ -459,6 +461,8 @@ then `./install.sh`.
 | Lines of the mail log and the cleanup log | After 7 days |
 | The room's backups of Paseo's `config.json` | After 7 days; the newest always stays |
 | A folder set aside by Remove or by Init | After 30 days |
+| What Codex makes again by itself in a seat's home: its temporary folders, its log database | As soon as no seat of that home is open |
+| Session records in the home of a Codex or Pi seat | After 7 days without a write, once no seat of that home is open |
 
 - An idle seat is archived, not deleted. A seat that waits for a permission
   or an answer, or still has an open seat below it, is left alone.
@@ -467,6 +471,11 @@ then `./install.sh`.
 - Kept whole: `registry-log.jsonl`, the watcher's scan log, and the ACCEPT,
   REJECT and REVISED BRIEF lines of the mail log. The watcher's statistics
   are made from them.
+- A session record that is cleared takes the transcript of its archived
+  seat with it. What is cleared in a seat's home is listed per agent CLI
+  under `gc.runtimes` in `policy.json`. Claude seats keep their sessions in
+  your own `~/.claude`, and OpenCode in its own storage: the room clears
+  neither.
 - Cleanup runs only while the plugin is installed. If you remove the
   plugin, delete `~/.config/seatwork.removed-<time>` yourself.
 

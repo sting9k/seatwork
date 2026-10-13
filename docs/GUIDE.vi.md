@@ -334,13 +334,14 @@ không bao giờ dừng hay sửa một seat.
 Muốn bật: cho nó chạy Shadow một thời gian, hỏi HQ thống kê watcher, rồi
 đặt **Mode** thành On và áp dụng.
 
-Mười một luật đọc các lần gọi tool, git và brief. Chúng không tốn tiền:
+Mười ba luật đọc các lần gọi tool, git và brief. Chúng không tốn tiền:
 
 | Luật | Lên tiếng khi seat |
 |---|---|
 | `irreversible` | chạy một lệnh không hoàn tác được từ bên trong việc đó: `git reset --hard`, xoá đệ quy ngoài phạm vi, force push |
 | `outside-project` | ghi ra ngoài project |
 | `outside-scope` | sửa một file ngoài phạm vi ghi mà brief cho |
+| `software-install` | cài một công cụ hay tải một trình duyệt về máy mà brief không cho: `brew install`, `npm install -g`, `playwright install`, một file nén hay một script tải bằng `curl`. Dependency của chính project thì không tính |
 | `edit-after-reopen` | đã gửi `REOPEN_REQUEST` mà vẫn sửa source |
 | `unreported-test-change` | gửi `CANDIDATE` có sửa test đã có từ trước mà không nêu tên các test đó |
 | `review-without-check` | đưa ra `REVIEW` chấp nhận trong khi không chạy phép kiểm tra nào |
@@ -349,6 +350,7 @@ Mười một luật đọc các lần gọi tool, git và brief. Chúng không 
 | `shell-wait` | ngồi chờ trong shell một phút (`sleep`, vòng lặp có sleep) |
 | `silent` | ở trong lượt mà không hoạt động gì, quá thời gian cho phép của vai |
 | `incomplete-brief` | là Peer nhận brief thiếu `Outcome`, `Write scope`, `Acceptance evidence`, `Reopen when` hoặc dòng cuối `Reply with seatwork_mail to: owner` |
+| `skill-skipped` | là Peer viết code, gửi `CANDIDATE` mà chưa nạp `candidate-handoff`, hoặc sửa code dưới một luật dự án có nêu skill của nó mà chưa nạp skill đó. Chỉ ghi log, cho tới khi bạn đặt thành `raise` |
 
 Ba luật cần một model quyết định để đọc tin nhắn cuối của seat. Luật đầu
 tiên có gửi thư. Hai luật còn lại chỉ ghi log cho tới khi bạn đặt chúng
@@ -360,7 +362,7 @@ thành `raise` trong `policy.json`.
 | `external-action` | seat đã push, publish hoặc deploy, và brief có ràng buộc |
 | `reopen-condition` | brief có dòng `Reopen when` mà seat không xin mở lại |
 
-Ba luật này cần một key. Không có key thì mười một luật kia vẫn chạy, và không
+Ba luật này cần một key. Không có key thì mười ba luật kia vẫn chạy, và không
 có gì rời khỏi máy.
 
 - Model là Jev, gọi qua OpenRouter. Dán key vào ô **Model key** trên màn
@@ -458,6 +460,8 @@ rồi `./install.sh`.
 | Các dòng của log thư và log dọn dẹp | Sau 7 ngày |
 | Bản sao room tạo cho `config.json` của Paseo | Sau 7 ngày; bản mới nhất luôn được giữ |
 | Thư mục do Remove hoặc Init để sang một bên | Sau 30 ngày |
+| Thứ Codex tự tạo lại trong thư mục nhà của seat: thư mục tạm, cơ sở dữ liệu log | Ngay khi không còn seat nào của thư mục đó đang mở |
+| Bản ghi phiên trong thư mục nhà của seat Codex hoặc Pi | Sau 7 ngày không được ghi, khi không còn seat nào của thư mục đó đang mở |
 
 - Seat rảnh được lưu trữ, không bị xoá. Seat đang chờ cấp quyền hoặc chờ
   trả lời, hoặc còn seat đang mở bên dưới, thì được để yên.
@@ -466,6 +470,11 @@ rồi `./install.sh`.
 - Được giữ nguyên: `registry-log.jsonl`, log quét của watcher, và các dòng
   ACCEPT, REJECT, REVISED BRIEF trong log thư. Thống kê của watcher được
   tính từ chúng.
+- Bản ghi phiên bị dọn thì transcript của seat đã lưu trữ ứng với nó cũng
+  mất. Những gì được dọn trong thư mục nhà của seat được liệt kê theo từng
+  agent CLI ở `gc.runtimes` trong `policy.json`. Seat Claude giữ phiên trong
+  `~/.claude` của bạn, còn OpenCode giữ trong kho riêng của nó: room không
+  dọn hai chỗ đó.
 - Việc dọn chỉ chạy khi plugin còn được cài. Nếu bạn gỡ plugin thì tự xoá
   `~/.config/seatwork.removed-<thời điểm>`.
 

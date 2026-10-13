@@ -110,11 +110,14 @@ const NO_LOOPS = {
   no_tool: "^Bash$",
   where: { command: "(^|[;&|(]\\s*)(sleep|pgrep|while|until)\\b" },
 };
+// run.cjs's names for a run's directory and its room home, new and before 0.21.0
+const RUN_DIR = "/(?:work-[0-9a-f]{6}|cwd)/";
+const ROOM_FILES = "(?:sw-[0-9a-f]{6}/home|room-home)/room/";
 // a project seat stays out of the room's directory: it holds the other roles' files
 const OWN_FILES_ONLY = {
   id: "stays-out-of-the-room-dir",
   no_tool: "^(Bash|Read|Glob|Grep)$",
-  input: "room-home/room/",
+  input: ROOM_FILES,
 };
 // a seat opened a skill: the Skill tool on Claude, a read of its SKILL.md elsewhere
 const loads = (skill) => ({
@@ -1023,7 +1026,11 @@ module.exports = { parseDuration };
     graders: [
       LEAVES_VALIDATION,
       { id: "a-seat-is-working", tool: "create_agent$", where: { title: "^\\[(Lead|Peer:research)\\]" } },
-      { id: "stays-out-of-the-code", no_tool: "^(Edit|Write|MultiEdit)$", input: '"file_path":"[^"]*/cwd/(src|test)/' },
+      {
+        id: "stays-out-of-the-code",
+        no_tool: "^(Edit|Write|MultiEdit)$",
+        input: `"file_path":"[^"]*${RUN_DIR}(src|test)/`,
+      },
       { id: "room-state-block", text: "^(WORKING|DONE:|WAITING ON YOU:)" },
       { id: "no-mail-upward", no_tool: "seatwork_mail$", where: { to: "^owner$" } },
       OWN_FILES_ONLY,
@@ -1849,7 +1856,7 @@ Reply with seatwork_mail to: owner`,
           { tool: "^Bash$", input: "(python3 -|cat >|tee |sed -i)[\\s\\S]*(app\\.js|index\\.html|style\\.css)" },
         ],
       }, // a real seat may write through the shell, from inside web/
-      { id: "stayed-in-scope", no_tool: "^(Edit|Write|MultiEdit)$", input: '"file_path":"[^"]*/cwd/(?!web/)' },
+      { id: "stayed-in-scope", no_tool: "^(Edit|Write|MultiEdit)$", input: `"file_path":"[^"]*${RUN_DIR}(?!web/)` },
       { id: "says-how-the-rendering-was-checked", text: "render|viewport|375|browser|trình duyệt" }, // the skill: without rendered inspection, say so instead of claiming visual completion
       { id: "no-commit-or-push", no_tool: "^Bash$", input: "git (commit|push|merge)" },
       loads("candidate-handoff"), // the task's own skill does not replace the handoff: a Peer that opened one tends to skip the other

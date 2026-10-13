@@ -1,5 +1,5 @@
 import { PROJECT, ROOM_HOME } from "./support/room";
-import { bash, BRIEF, edit, letter, prompt, say } from "./support/watch";
+import { bash, BRIEF, edit, letter, prompt, read, say, skill } from "./support/watch";
 import assert from "node:assert/strict";
 import { join } from "node:path";
 import { test } from "node:test";
@@ -23,6 +23,7 @@ const POLICY: WatcherPolicy = {
     "incomplete-brief": "raise",
     "unverified-completion": "raise",
     "reopen-condition": "off",
+    "skill-skipped": "off",
   },
   thresholds: { sleepSeconds: 60, repeatRun: 4, cycleRepeats: 3, sameFailure: 4, inFlightFactor: 3 },
   scores: { "unverified-completion": 0.85 },
@@ -60,6 +61,7 @@ function room(
     budget?: Partial<WatcherPolicy["budget"]>;
     rules?: WatcherPolicy["rules"];
     snapshots?: TreeSnapshot[];
+    lawSkills?: string[];
   } = {},
 ) {
   run += 1;
@@ -101,6 +103,7 @@ function room(
     timeline: async () => ({ entries, pendingPermission: false }),
     // the tree as git saw it, one reading per call; without readings there is no git
     snapshot: async () => options.snapshots?.shift() ?? null,
+    lawSkills: () => options.lawSkills ?? [],
     notify: async (notice) => (mail.push(notice), `m${mail.length}`),
     now: () => Date.parse("2026-10-11T00:10:00Z"),
     log: () => {},
@@ -542,4 +545,101 @@ test("what git saw change is held against a Peer that had the tree to itself, an
   shared.turn(quiet);
   await shared.watcher.turnEnded(PEER, "turn-1", true);
   assert.deepEqual(shared.mail, []);
+});
+
+test("a Peer that hands in a CANDIDATE or edits under a law that names a skill, without loading it, is told; a reviewer is not", async () => {
+  const rules = { "skill-skipped": "raise" as const, "unverified-completion": "off" as const };
+  const done = say("CANDIDATE: hours added.");
+  const first = room({ rules, lawSkills: ["hard-cut"] });
+  first.watcher.turnStarted(PEER, "turn-1");
+  first.turn([prompt(BRIEF), edit(src("src/duration.js")), done]);
+  await first.watcher.turnEnded(PEER, "turn-1", true);
+  assert.equal(first.mail.length, 1);
+  assert.match(
+    first.mail[0].subject,
+    /reports CANDIDATE and has not loaded `candidate-handoff`; changed source under a project law that names `hard-cut` and has not loaded it/,
+  );
+
+  // said once for a seat: its next CANDIDATE without the skills brings no second notice
+  first.watcher.turnStarted(PEER, "turn-2");
+  first.turn([
+    prompt(BRIEF),
+    prompt("REJECT: one more case", "turn-2"),
+    edit(src("src/duration.js"), "turn-2"),
+    say("CANDIDATE: fixed.", "turn-2"),
+  ]);
+  await first.watcher.turnEnded(PEER, "turn-2", true);
+  assert.equal(first.mail.length, 1);
+
+  // loaded either way: the skill tool, or a read of the skill's file where the harness has no such tool
+  const loaded = room({ rules, lawSkills: ["hard-cut"] });
+  loaded.watcher.turnStarted(PEER, "turn-1");
+  loaded.turn([
+    prompt(BRIEF),
+    skill("hard-cut"),
+    edit(src("src/duration.js")),
+    read("/home/room/runtimes/pi/peer/skills/candidate-handoff/SKILL.md"),
+    done,
+  ]);
+  await loaded.watcher.turnEnded(PEER, "turn-1", true);
+  assert.deepEqual(
+    loaded.mail.map((notice) => notice.subject),
+    [],
+  );
+
+  // a skill loaded in an earlier turn is still loaded when the history no longer shows it
+  const later = room({ rules });
+  later.watcher.turnStarted(PEER, "turn-1");
+  later.turn([prompt(BRIEF), skill("candidate-handoff"), edit(src("src/duration.js")), done]);
+  await later.watcher.turnEnded(PEER, "turn-1", true);
+  later.watcher.turnStarted(PEER, "turn-2");
+  later.turn([
+    prompt(BRIEF),
+    prompt("REJECT: one more case", "turn-2"),
+    edit(src("src/duration.js"), "turn-2"),
+    say("CANDIDATE: fixed.", "turn-2"),
+  ]);
+  await later.watcher.turnEnded(PEER, "turn-2", true);
+  assert.deepEqual(
+    later.mail.map((notice) => notice.subject),
+    [],
+  );
+
+  const reviewer = room({ rules, lawSkills: ["hard-cut"] });
+  const review = { ...PEER, agentId: "peer-r", title: "[Peer:review] abc123" };
+  reviewer.watcher.turnStarted(review, "turn-1");
+  reviewer.turn([prompt(BRIEF), say("CANDIDATE: nothing to hand in.")]);
+  await reviewer.watcher.turnEnded(review, "turn-1", true);
+  assert.deepEqual(
+    reviewer.mail.map((notice) => notice.subject),
+    [],
+  );
+});
+
+test("a seat that puts software on the machine is told, unless its brief grants it", async () => {
+  const rules = { "software-install": "raise" as const, "unverified-completion": "off" as const };
+  const { watcher, mail, turn } = room({ rules });
+  watcher.turnStarted(PEER, "turn-1");
+  turn([prompt(BRIEF), bash("npx playwright install firefox"), say("STATUS: checking the page.")]);
+  await watcher.turnEnded(PEER, "turn-1", false);
+  assert.equal(mail.length, 1);
+  assert.match(
+    mail[0].subject,
+    /put software on this machine that its brief does not grant \(a browser download \(playwright install\)\): `npx playwright install firefox`/,
+  );
+
+  const granted = room({ rules });
+  granted.watcher.turnStarted(PEER, "turn-1");
+  granted.turn([
+    prompt(
+      BRIEF.replace("Constraints: no new dependency; no push", "Constraints: no push; may install Chromium headless"),
+    ),
+    bash("npx playwright install chromium"),
+    say("STATUS: checking the page."),
+  ]);
+  await granted.watcher.turnEnded(PEER, "turn-1", false);
+  assert.deepEqual(
+    granted.mail.map((notice) => notice.subject),
+    [],
+  );
 });

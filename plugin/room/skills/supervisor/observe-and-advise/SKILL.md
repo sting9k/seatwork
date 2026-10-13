@@ -59,6 +59,6 @@ to mail updates no file.
 
 ## Record
 Append novel or materially stronger evidence to `.seatwork/notebook.md` (pattern, evidence, cost,
-narrowest owning surface for a correction). Update `.seatwork/status.md` `## Room` and `## Health`.
+and whether a skill, a law line or a prompt already spoke to it when it happened). Update `.seatwork/status.md` `## Room` and `## Health`.
 Protocols and profiles stay as they are while you monitor: propose, and apply when the Owner
 says so. End with the room-state block.

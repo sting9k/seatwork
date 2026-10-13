@@ -20,7 +20,7 @@ import {
 import { OwedList, roomStatus as readRoomStatus } from "./server/room-status";
 import { fitSeat, loadModels, projectModels, type Models } from "./server/models";
 import { loadPolicy, type RuntimePolicy } from "./server/policy";
-import { findProject, findRoomMarker, loadRegistry, projectBlock } from "./server/registry";
+import { findProject, findRoomMarker, lawSkills, loadRegistry, projectBlock } from "./server/registry";
 import {
   claudeRoleDir,
   describeIsolation,
@@ -38,7 +38,7 @@ import { clearOldRoom } from "./server/setup/old-room";
 import { roomModels, type Setup } from "./server/setup/plan";
 import { keptAt, roomFolders, takeRoomFiles, type ProjectFiles } from "./server/setup/project-files";
 import { isSetUp, KEEP_REMOVED_DAYS, moveRoomHomeAside, readSetup } from "./server/setup/room-home";
-import { CLOSES_WORK, SUBJECT_SIGNALS, asksOwner, opensWithSignal, signalOf, subjectSignal } from "./server/signals";
+import { CLOSES_WORK, SUBJECT_SIGNALS, asksOwner, signalOf, subjectOpening, subjectSignal } from "./server/signals";
 import { noteUsage, roomStats } from "./server/stats";
 import { Budget } from "./server/watch/budget";
 import { calibrate, renderCalibration, type MailLine } from "./server/watch/calibrate";
@@ -54,7 +54,7 @@ import { Watcher, type SeatView, type TimelineView } from "./server/watch/watche
 
 type CreateRequest = PluginBeforeRequests["agent.create"];
 
-const VERSION = "0.20.0";
+const VERSION = "0.21.0";
 const MAIL_DIR = join(ROOM_HOME, "mail");
 const MCP_TOKEN_FILE = join(MAIL_DIR, "token");
 const NONCES_FILE = join(MAIL_DIR, "nonces.json");
@@ -422,6 +422,7 @@ function startRoom(server: Pick<PluginServerContext, "on" | "before">): Room {
   const mailedUp = new Map<string, Set<string>>();
   /** seat → the signal its last turn ended with. */
   const lastSignal = new Map<string, string>();
+  const rejectsSinceAccept = new Map<string, number>();
   /** What the last turn of a seat nobody above reads by mail left for the Owner to answer. */
   const owed = new OwedList(join(ROOM_HOME, "owed.json"));
   let gc: Collector | null = null;
@@ -441,6 +442,11 @@ function startRoom(server: Pick<PluginServerContext, "on" | "before">): Room {
       scans,
       timeline: (agentId) => readTimeline(paseo, agentId, policy.watcher.historyEntries),
       snapshot,
+      lawSkills: (seat) => {
+        const registry = loadRegistry();
+        const project = registry ? findProject(registry, seat.cwd) : findRoomMarker(seat.cwd);
+        return lawSkills(project?.law ?? null, roleSkillNames(seat.role));
+      },
       notify: async (notice) => {
         const mail = await getEngine(paseo).post({
           from: { agentId: "room", role: "system" },
@@ -554,7 +560,8 @@ function startRoom(server: Pick<PluginServerContext, "on" | "before">): Room {
       const recipient = engine.seat(to)!;
       const subject = String(args.subject ?? "").trim() || "(no subject)";
       const body = String(args.body ?? "");
-      if (!opensWithSignal(subject))
+      const opening = subjectOpening(subject);
+      if (!opening)
         throw new Error(
           `seatwork_mail: the subject opens with none of the room's signals (${SUBJECT_SIGNALS.join(", ")}); a change to what a seat must do is a REVISED BRIEF, a fact it should know is an FYI. Nothing was sent.`,
         );
@@ -611,7 +618,18 @@ function startRoom(server: Pick<PluginServerContext, "on" | "before">): Room {
         ...(waits ? { quiet: true as const } : {}),
       });
       const held = engine.held(to).some((m) => m.id === mail.id);
-      return `sent #${mail.id} to ${engine.isAncestor(to, from) ? "owner" : `${recipient.role} ${to}`} as ${mail.priority}; ${waits ? "it is read with the recipient's next mail" : held ? "held until the recipient can take it" : "delivered"}. Continue your work; do not wait for a reply unless needs=decision blocks you.`;
+      // the skill allows two rounds of repair: the third is said where the Lead sends it
+      let round = "";
+      if (sender.role === "lead" && recipient.role === "peer") {
+        if (opening === "REJECT") {
+          const count = (rejectsSinceAccept.get(to) ?? 0) + 1;
+          rejectsSinceAccept.set(to, count);
+          if (count >= 3)
+            round = ` This is REJECT ${count} of this Peer's task since its last ACCEPT or brief: a round past the second is your Owner's call (accept-candidate, step 5). Unless the Owner gave you this round, report DECISION_NEEDED with what each round found and what one more costs; the task holds meanwhile.`;
+        } else if (opening === "ACCEPT" || opening === "REVISED BRIEF" || opening === "DEFER")
+          rejectsSinceAccept.delete(to);
+      }
+      return `sent #${mail.id} to ${engine.isAncestor(to, from) ? "owner" : `${recipient.role} ${to}`} as ${mail.priority}; ${waits ? "it is read with the recipient's next mail" : held ? "held until the recipient can take it" : "delivered"}. Continue your work; do not wait for a reply unless needs=decision blocks you.${round}`;
     },
   );
 
@@ -1232,6 +1250,7 @@ function startRoom(server: Pick<PluginServerContext, "on" | "before">): Room {
 
   /** An archived seat can never call seatwork_mail again: drop its nonce. */
   function forgetAgent(agentId: string): void {
+    rejectsSinceAccept.delete(agentId);
     const stale = Object.keys(nonces).filter((nonce) => nonces[nonce] === agentId);
     if (stale.length === 0) return;
     for (const nonce of stale) delete nonces[nonce];

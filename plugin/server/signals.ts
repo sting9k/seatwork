@@ -28,10 +28,14 @@ export const SUBJECT_SIGNALS = [
   "RESPONSE",
 ] as const;
 
-/** Whether a subject opens with one of them. */
-export function opensWithSignal(subject: string): boolean {
+/** The one of them a subject opens with, if any. */
+export function subjectOpening(subject: string): (typeof SUBJECT_SIGNALS)[number] | undefined {
   const opening = subject.replace(/^\W+/, "").toUpperCase();
-  return SUBJECT_SIGNALS.some((signal) => opening === signal || new RegExp(`^${signal}\\b`).test(opening));
+  return SUBJECT_SIGNALS.find((signal) => opening === signal || new RegExp(`^${signal}\\b`).test(opening));
+}
+
+export function opensWithSignal(subject: string): boolean {
+  return subjectOpening(subject) !== undefined;
 }
 
 /** An acknowledgement counts only where a line opens with it: the word turns up inside other reports. */

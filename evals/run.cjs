@@ -7,16 +7,19 @@
  */
 "use strict";
 const { spawn, execFileSync } = require("node:child_process");
+const { createHash } = require("node:crypto");
 const {
   cpSync,
   existsSync,
   mkdirSync,
   readFileSync,
   readdirSync,
+  realpathSync,
   rmSync,
   symlinkSync,
   writeFileSync,
 } = require("node:fs");
+const { tmpdir } = require("node:os");
 const { dirname, join, resolve } = require("node:path");
 
 const EVALS = __dirname;
@@ -24,7 +27,11 @@ const ROOM = resolve(EVALS, "..");
 const args = parseArgs(process.argv.slice(2));
 const label = args.regrade ?? args.label ?? new Date().toISOString().slice(0, 19).replace(/[:T]/g, "-");
 const OUT = join(EVALS, "results", label);
-const HOME = join(OUT, "room-home");
+// What a seat can see (its directory, its skills, the room home) is named after
+// nothing: "evals" or a case's name in a path tells it that it is graded, and on what.
+const short = (text) => createHash("sha1").update(text).digest("hex").slice(0, 6);
+const WORK = join(realpathSync(tmpdir()), `sw-${short(OUT)}`);
+const HOME = join(WORK, "home");
 const cases = require("./cases.cjs").filter((c) => !args.only || new RegExp(args.only).test(c.name));
 
 // the room's own tools per role; Paseo's come from policy.json
@@ -89,7 +96,8 @@ function parseArgs(argv) {
 
 /** A throwaway room home with this checkout's room files (or --room-from's), then the plugin's own code. */
 function setup() {
-  rmSync(OUT, { recursive: true, force: true });
+  for (const stale of [OUT, WORK]) rmSync(stale, { recursive: true, force: true });
+  mkdirSync(OUT, { recursive: true });
   mkdirSync(HOME, { recursive: true });
   cpSync(args["room-from"] ? resolve(args["room-from"]) : join(ROOM, "plugin", "room"), join(HOME, "room"), {
     recursive: true,
@@ -172,7 +180,7 @@ const skillDirs = new Map();
 /** A directory whose .claude/skills holds the role's skills, as the plugin links them for a Claude seat. */
 function skillsDirFor(role) {
   if (skillDirs.has(role)) return skillDirs.get(role);
-  const dir = join(OUT, "skills", role);
+  const dir = join(WORK, "skills", role);
   const target = join(dir, ".claude", "skills");
   mkdirSync(target, { recursive: true });
   const source = join(HOME, "room", "skills", role); // the copy taken at start, so edits during a run change nothing
@@ -182,7 +190,7 @@ function skillsDirFor(role) {
 }
 
 function git(cwd, ...argv) {
-  execFileSync("git", ["-c", "user.email=eval@room", "-c", "user.name=eval", ...argv], { cwd, stdio: "ignore" });
+  execFileSync("git", ["-c", "user.email=dev@example.com", "-c", "user.name=dev", ...argv], { cwd, stdio: "ignore" });
 }
 
 const live = new Set();
@@ -329,7 +337,9 @@ const runDir = (c, run) => join(OUT, "runs", `${c.name}@${run.model}`.replace(/[
 /** The working directory, stub servers and prompts a run starts with, whichever harness runs it. */
 function prepare(c, run) {
   const dir = runDir(c, run);
-  const cwd = join(dir, "cwd");
+  mkdirSync(dir, { recursive: true });
+  const cwd = join(WORK, `work-${short(dir)}`);
+  rmSync(cwd, { recursive: true, force: true });
   mkdirSync(cwd, { recursive: true });
   // {{cwd}} is the run's project directory; {{minutes_ago:N}} an ISO time N minutes before the run starts
   const startedAt = Date.now();
@@ -528,6 +538,12 @@ async function runOne(c, run) {
   });
   writeFileSync(join(p.dir, "result.json"), JSON.stringify(outcome, null, 2));
   writeFileSync(join(p.dir, "final.md"), outcome.text);
+  try {
+    // what the seat left in its directory is kept beside the transcript
+    cpSync(p.cwd, join(p.dir, "cwd"), { recursive: true });
+  } catch {
+    // the transcript stands without it
+  }
   console.log(line(outcome));
   return outcome;
 }

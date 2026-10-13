@@ -46,6 +46,8 @@ export interface WatcherDeps {
   /** The seat's recent history; null when the daemon cannot say. */
   timeline(agentId: string): Promise<TimelineView | null>;
   snapshot(cwd: string): Promise<TreeSnapshot | null>;
+  /** The skills of the seat's role that its project's law names. */
+  lawSkills(seat: SeatView): string[];
   /** Mails the seat above as the room; returns the mail's id. */
   notify(notice: Notice): Promise<string>;
   now(): number;
@@ -70,6 +72,8 @@ interface Watched {
   brief: Brief | null;
   mails: number;
   briefsTold: Set<string>;
+  skills: Set<string>;
+  skillsTold: Set<string>;
   turn: Turn | null;
   ending: Turn | null;
   busy: Promise<void>;
@@ -143,6 +147,8 @@ export class Watcher {
       brief: null,
       mails: 0,
       briefsTold: new Set(),
+      skills: new Set(),
+      skillsTold: new Set(),
       turn: null,
       ending: null,
       busy: Promise.resolve(),
@@ -170,6 +176,8 @@ export class Watcher {
       brief: null,
       mails: 0,
       briefsTold: new Set(),
+      skills: new Set(),
+      skillsTold: new Set(),
       turn: null,
       ending: null,
       busy: Promise.resolve(),
@@ -276,6 +284,9 @@ export class Watcher {
       startedAt: turn.startedAt,
       later: briefAt < 0 ? [] : received.slice(briefAt + 1),
     });
+    // the history read is a window: what a seat loaded before it is kept from scan to scan
+    for (const skill of facts.skillsSoFar) watched.skills.add(skill);
+    const writes = seat.role === "peer" && !READ_ONLY_TITLE.test(seat.title ?? "") && watched.brief?.readOnly !== true;
     const silent = this.silentMinutes(seat);
     const result = gate({
       facts,
@@ -284,6 +295,9 @@ export class Watcher {
       briefGap,
       now: this.deps.now(),
       pendingPermission: view.pendingPermission,
+      ...(writes && moment === "end"
+        ? { skills: { loaded: watched.skills, law: this.deps.lawSkills(seat), told: watched.skillsTold } }
+        : {}),
       thresholds: {
         ...policy.thresholds,
         silentMinutes: silent,
@@ -320,6 +334,9 @@ export class Watcher {
     for (const finding of findings) {
       turn.told.add(finding.key);
       if (ABOUT_BRIEF.has(finding.rule)) watched.briefsTold.add(finding.key);
+      // the key of a skipped skill is the names it lists
+      if (finding.rule === "skill-skipped")
+        for (const name of finding.key.slice(finding.key.indexOf(":") + 1).split("|")) watched.skillsTold.add(name);
     }
     const record: ScanRecord = {
       at: new Date(this.deps.now()).toISOString(),

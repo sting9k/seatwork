@@ -52,8 +52,11 @@ export interface TurnFacts {
 
   destroyed: Deed[];
   external: Deed[];
+  installed: Deed[];
   waited: number;
   waitLoop: Deed | undefined;
+
+  skillsSoFar: string[];
 
   repeat: { count: number; what: string } | undefined;
   cycle: Cycle | undefined;
@@ -103,6 +106,7 @@ interface ShellReading {
   checks: CheckRun[];
   destroyed: (Deed & { targets?: Target[] })[];
   external: Deed[];
+  installed: Deed[];
   sleeps: number;
   waitLoop: Deed | undefined;
   opaque: { at: number; text: string }[];
@@ -118,6 +122,7 @@ function readShell(event: ShellEvent, cwd: string, namedChecks: readonly string[
     checks: checkRuns(event, line, context),
     destroyed: [],
     external: [],
+    installed: [],
     sleeps: 0,
     waitLoop: undefined,
     opaque: [],
@@ -138,8 +143,10 @@ function readShell(event: ShellEvent, cwd: string, namedChecks: readonly string[
       else outer = moved;
       return;
     }
-    const effects = effectsOf(command, context);
+    const effects = effectsOf(command, context, line.commands[index + 1]);
     if (effects.length === 0) reading.opaque.push({ at, text: `${command.argv.join(" ")}\n${command.script ?? ""}` });
+    // a line that failed on its last command did not get that command through
+    const wentThrough = !(event.status === "failed" && index === line.commands.length - 1);
     for (const effect of effects) {
       if (effect.kind === "write") {
         for (const path of effect.paths)
@@ -154,9 +161,9 @@ function readShell(event: ShellEvent, cwd: string, namedChecks: readonly string[
         });
         reading.destroyed.push({ at, what: effect.what, command: event.command, ...(targets ? { targets } : {}) });
       } else if (effect.kind === "external") {
-        // a line that failed on its last command did not get that command through
-        if (!(event.status === "failed" && index === line.commands.length - 1))
-          reading.external.push({ at, what: effect.what, command: event.command });
+        if (wentThrough) reading.external.push({ at, what: effect.what, command: event.command });
+      } else if (effect.kind === "install") {
+        if (wentThrough) reading.installed.push({ at, what: effect.what, command: event.command });
       } else if (effect.kind === "wait") {
         if (command.inLoop || !Number.isFinite(effect.seconds))
           reading.waitLoop ??= {
@@ -169,6 +176,20 @@ function readShell(event: ShellEvent, cwd: string, namedChecks: readonly string[
     }
   });
   return reading;
+}
+
+const SKILL_FILE = /(?:^|[\s/"'=])skills\/([a-z0-9][a-z0-9-]*)\/SKILL\.md\b/g;
+const skillFiles = (text: string) => [...text.matchAll(SKILL_FILE)].map((match) => match[1]);
+
+/** The skills an event loaded: a skill tool call, or a read of a skill's `SKILL.md`. */
+function skillsOf(event: TurnEvent): string[] {
+  if (event.kind === "say" || event.status === "failed" || event.status === "canceled") return [];
+  if (event.kind === "tool")
+    return /^skill$/i.test(event.name)
+      ? [String(event.input.skill ?? event.input.name ?? "").trim()].filter(Boolean)
+      : [];
+  if (event.kind === "look") return event.path ? skillFiles(event.path) : [];
+  return event.kind === "shell" ? skillFiles(event.command) : [];
 }
 
 function fingerprint(event: TurnEvent): string | null {
@@ -217,6 +238,8 @@ export function turnFacts(input: FactsInput): TurnFacts {
   const checks: CheckRun[] = [];
   const destroyed: Deed[] = [];
   const external: Deed[] = [];
+  const installed: Deed[] = [];
+  const skills = new Set<string>();
   const mailed: string[] = [];
   let waited = 0;
   let waitLoop: Deed | undefined;
@@ -249,6 +272,7 @@ export function turnFacts(input: FactsInput): TurnFacts {
   };
 
   for (const event of events) {
+    for (const skill of skillsOf(event)) skills.add(skill);
     if (event.kind === "edit") {
       if (event.status !== "failed" && event.status !== "canceled") noteWrite(event.seq, event.path);
     } else if (event.kind === "shell") {
@@ -268,6 +292,7 @@ export function turnFacts(input: FactsInput): TurnFacts {
           destroyed.push({ at: deed.at, what: deed.what, command: deed.command });
       }
       external.push(...reading.external);
+      installed.push(...reading.installed);
       const seconds = waitedSeconds(event, reading, input.now);
       waited += seconds;
       if (seconds > 0) waitLoop ??= reading.waitLoop;
@@ -334,8 +359,10 @@ export function turnFacts(input: FactsInput): TurnFacts {
     testsChanged: [...(input.changedTests ?? [])],
     destroyed,
     external,
+    installed,
     waited,
     waitLoop,
+    skillsSoFar: [...skills].sort(),
     repeat: run >= 2 && lastActed ? { count: run, what: describe(lastActed) } : undefined,
     cycle: trailingCycle(prints.slice(-24), 4, 3) ?? undefined,
     sameFailure: sameFailure(turnChecks),

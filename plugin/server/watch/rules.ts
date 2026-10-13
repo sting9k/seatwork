@@ -8,6 +8,7 @@ export type RuleId =
   | "irreversible"
   | "outside-project"
   | "outside-scope"
+  | "software-install"
   | "edit-after-reopen"
   | "unreported-test-change"
   | "unverified-completion"
@@ -17,6 +18,7 @@ export type RuleId =
   | "shell-wait"
   | "silent"
   | "incomplete-brief"
+  | "skill-skipped"
   | "external-action"
   | "reopen-condition";
 
@@ -32,6 +34,13 @@ export interface Thresholds {
   inFlightMinutes: number;
 }
 
+/** What a writing seat's skills are held against: loaded, named by the law, told once. */
+export interface SkillsView {
+  loaded: ReadonlySet<string>;
+  law: readonly string[];
+  told: ReadonlySet<string>;
+}
+
 export interface Situation {
   facts: TurnFacts;
   brief: Brief | null;
@@ -40,12 +49,24 @@ export interface Situation {
   now: number;
   pendingPermission: boolean;
   thresholds: Thresholds;
+  skills?: SkillsView;
 }
 
 export interface BriefGap {
   lines: readonly string[];
   mail?: { id: string; subject: string };
 }
+
+/** The skill the Peer role asks for before every CANDIDATE. */
+export const HANDOFF_SKILL = "candidate-handoff";
+
+const GRANTS = /\b(?:install|download)/i;
+const WITHHELD = /\b(?:no|not|never|without|don't|do not)\b/i;
+/** Whether a brief lets its seat put software on the machine, read a clause at a time. */
+const mayInstall = (brief: Brief | null) =>
+  [brief?.fields.constraints, brief?.fields.authority]
+    .flatMap((line) => (line ?? "").split(/[;.\n]/))
+    .some((clause) => GRANTS.test(clause) && !WITHHELD.test(clause));
 
 /** The key of the gap in the brief a Peer was created with; a mailed brief's is its mail. */
 export const CREATED_WITH = "created";
@@ -113,6 +134,19 @@ const RULES: readonly Rule[] = [
         ? "its brief is read-only"
         : `its write scope is ${list(brief.scope.patterns, 6)}${brief.scope.except.length > 0 ? ` except ${list(brief.scope.except, 3)}` : ""}`;
       return { finding: `changed ${list(facts.outsideScope)}; ${scope}`, key: facts.outsideScope.join("|") };
+    },
+  },
+  {
+    id: "software-install",
+    moments: ["live", "end"],
+    read: ({ facts, brief }) => {
+      const deed = facts.installed[0];
+      return deed && !mayInstall(brief)
+        ? {
+            finding: `put software on this machine that its brief does not grant (${deed.what}): ${quote(deed.command)}`,
+            key: deed.what,
+          }
+        : null;
     },
   },
   {
@@ -224,6 +258,28 @@ const RULES: readonly Rule[] = [
       return {
         finding: `was mailed a brief ("${briefGap.mail.subject.slice(0, 80)}") without these template lines: ${lines}`,
         key: briefGap.mail.id,
+      };
+    },
+  },
+  {
+    id: "skill-skipped",
+    moments: ["end"],
+    read: ({ facts, skills }) => {
+      if (!skills) return null;
+      const missing = (names: readonly string[]) =>
+        names.filter((name) => !skills.loaded.has(name) && !skills.told.has(name));
+      const handoff = facts.signal === "CANDIDATE" ? missing([HANDOFF_SKILL]) : [];
+      const named = facts.edits.length > 0 ? missing(skills.law) : [];
+      if (handoff.length + named.length === 0) return null;
+      const tick = (names: readonly string[]) => names.map((name) => `\`${name}\``).join(", ");
+      return {
+        finding: [
+          ...(handoff.length > 0 ? [`reports CANDIDATE and has not loaded ${tick(handoff)}`] : []),
+          ...(named.length > 0
+            ? [`changed source under a project law that names ${tick(named)} and has not loaded it`]
+            : []),
+        ].join("; "),
+        key: [...handoff, ...named].join("|"),
       };
     },
   },

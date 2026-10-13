@@ -7,6 +7,7 @@ import { loadPolicy } from "../server/policy";
 import { projectBlock } from "../server/registry";
 import { roleSkillNames } from "../server/runtimes";
 import { rolePrompt } from "../server/seats";
+import { HANDOFF_SKILL } from "../server/watch/rules";
 import { after, before, test } from "node:test";
 import contribute from "../index.server";
 import { fakeServer } from "./support/server";
@@ -808,4 +809,34 @@ test("a seat's prompt opens with its agent CLI's system prompt, filled in, and a
     assert.match(shared(prompt), /^# The room\n[\s\S]*\n## This runtime: /);
     assert.doesNotMatch(prompt, /\{\{|Claude Code/);
   }
+});
+
+test("a Lead's third REJECT of one Peer's task is sent, and the answer says whose call that round is", async () => {
+  const lead = await seat("lead-rounds", "claude-lead", null, "[Lead] stream");
+  const peer = await seat("peer-rounds", "claude-peer", lead.agent.id, "[Peer] task");
+  const reject = (round: number) =>
+    lead.mail({
+      to: peer.agent.id,
+      subject: `REJECT abc${round}: one more case`,
+      body: "Repair it.",
+      needs: "nothing",
+    });
+  assert.doesNotMatch(await reject(1), /This is REJECT/);
+  assert.doesNotMatch(await reject(2), /This is REJECT/);
+  assert.match(
+    await reject(3),
+    /^sent #\S+ to peer .*This is REJECT 3 of this Peer's task since its last ACCEPT or brief: .*accept-candidate, step 5.*DECISION_NEEDED/,
+  );
+  // a new brief starts the count again
+  await lead.mail({
+    to: peer.agent.id,
+    subject: "REVISED BRIEF: narrower",
+    body: "The whole brief.",
+    needs: "nothing",
+  });
+  assert.doesNotMatch(await reject(4), /This is REJECT/);
+});
+
+test("the skill the watcher holds a CANDIDATE to is one of the Peer role's skills", () => {
+  assert.ok(roleSkillNames("peer").includes(HANDOFF_SKILL));
 });

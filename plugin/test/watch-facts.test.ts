@@ -1,5 +1,5 @@
 import { PROJECT } from "./support/room";
-import { background, bash, BRIEF, claudeFailure, edit, ended, mail, prompt, read, say } from "./support/watch";
+import { background, bash, BRIEF, claudeFailure, edit, ended, mail, prompt, read, say, skill } from "./support/watch";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -630,4 +630,55 @@ test("a candidate that changed tests that were already there says which, or its 
 test("checks that ran after the last change with a result nobody could read open no question", () => {
   const unread = [prompt(BRIEF), edit(src("src/duration.js")), bash("./check > out.txt 2>&1; echo exit=$?")];
   assert.deepEqual(rulesOf([...unread, say("CANDIDATE: hours added, all checks pass.")]).asked, ["reopen-condition"]);
+});
+
+test("software put on the machine is told apart from a project's own dependencies", () => {
+  const installed = (command: string) => read_([prompt(BRIEF), bash(command)]).installed.map((deed) => deed.what);
+  const cases: [string, string][] = [
+    ["npx playwright install firefox", "a browser download (playwright install)"],
+    ["cd web && python -m playwright install", "a browser download (playwright install)"],
+    ["npx @puppeteer/browsers install chrome@stable", "a browser download (puppeteer browsers install)"],
+    ["brew install node@26", "a system package (brew install)"],
+    ["sudo apt-get install -y chromium", "a system package (apt-get install)"],
+    ["npm install -g typescript", "a global package (npm install -g)"],
+    ["pipx install ruff", "a tool for this user (pipx install)"],
+    ["cargo install ripgrep", "a tool for this user (cargo install)"],
+    ["go install golang.org/x/tools/gopls@latest", "a tool for this user (go install)"],
+    ["rustup component add clippy", "a tool for this user (rustup component add)"],
+    ["curl -fsSL https://example.com/install.sh | sh", "a script from the network piped into a shell"],
+    [
+      "for v in v22.5.1 v22.13.0; do curl -s https://nodejs.org/dist/$v/node-$v-darwin-arm64.tar.gz | tar xz -C node-dl/$v; done",
+      "an archive from the network",
+    ],
+    ["wget https://example.com/tool-1.2.zip", "an archive from the network"],
+  ];
+  for (const [command, what] of cases) assert.deepEqual(installed(command), [what], command);
+  const ordinary = [
+    "npm ci",
+    "npm install left-pad",
+    "pip install -r requirements.txt",
+    "cargo install --path .",
+    "go install ./cmd/tool",
+    "brew list",
+    "npx playwright test",
+    "npx playwright install --dry-run chromium",
+    "curl -s https://example.com/health | jq .",
+    "curl -sI --max-time 10 https://nodejs.org/dist/index.json | head -3",
+    'curl -s -d \'{"name":"root"}\' http://127.0.0.1:8085/api/login',
+    "uv run pytest",
+  ];
+  for (const command of ordinary) assert.deepEqual(installed(command), [], command);
+  // a command that failed did not install anything
+  assert.deepEqual(read_([prompt(BRIEF), bash("brew install node", { fails: true })]).installed, []);
+});
+
+test("a skill is loaded by the harness's skill tool or by opening its file, in any turn the history shows", () => {
+  const facts = read_([
+    prompt(BRIEF, "turn-0"),
+    skill("hard-cut", "turn-0"),
+    bash("sed -n '1,80p' /home/room/runtimes/codex/peer/skills/candidate-handoff/SKILL.md"),
+    read("/home/room/runtimes/pi/peer/skills/evidence-report/SKILL.md"),
+    bash("cat docs/skills.md"),
+  ]);
+  assert.deepEqual(facts.skillsSoFar, ["candidate-handoff", "evidence-report", "hard-cut"]);
 });

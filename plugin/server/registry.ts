@@ -90,6 +90,11 @@ export function findRoomMarker(
   return null;
 }
 
+/** The skills of a role that a law names in backticks, the old `seatwork-` prefix included. */
+export function lawSkills(law: string | null, roleSkills: readonly string[]): string[] {
+  return roleSkills.filter((skill) => new RegExp(`\`(?:seatwork-)?${skill}\``).test(law ?? ""));
+}
+
 /** A project seat's block: project, mission, law, and its own skills the law names. */
 export function projectBlock(
   name: string,
@@ -108,8 +113,7 @@ export function projectBlock(
     lines.push("", "## Mission (from .seatwork/mission.md)", mission);
   }
   lines.push("", `## Law (from .seatwork/${name}-law.md)`, law ?? "No law recorded for this project yet.");
-  // a law names a skill in backticks; one written before 0.20.0 carries the old `seatwork-` prefix
-  const named = roleSkills.filter((skill) => new RegExp(`\`(?:seatwork-)?${skill}\``).test(law ?? ""));
+  const named = lawSkills(law, roleSkills);
   if (named.length)
     lines.push(
       "",

@@ -10,7 +10,7 @@ additionally. Nothing here changes who owns what.
 - Review lane on a candidate: <one cross-family reviewer | two lenses | three or more lenses>
 - Ultra review: <plan closure only | also before <boundary>>
 - Compatibility: <hard cut, one live contract (`hard-cut` applies) | compatibility window until <when>>
-- External actions needing the Owner: <push, merge, deploy, ...>
+- External actions needing the Owner: <push, merge, deploy, installing a tool or a browser, ...>
 - Models to prefer or avoid here: <none | ...>
 - Lead context limit before handoff: <~60% of its window | ...>
 - Points the request leaves open: <the room decides the reversible ones by the Owner's stated
@@ -21,4 +21,6 @@ additionally. Nothing here changes who owns what.
 - <shared machine, if any: who may run heavy jobs or benchmarks, and how a free machine is
   verified before a measurement (a message is not evidence)>
 - <the commands that define acceptance here, e.g. `make check`>
+- <how the running product is checked here: the command, or the tool already on this machine
+  (a headless browser, a simulator); none means a rendered check is reported `not checked`>
 - <anything the Owner decided that every seat must know>

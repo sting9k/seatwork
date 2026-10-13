@@ -144,6 +144,17 @@ test("room stats look no further back than the mail log is kept", () => {
   assert.match(roomStats(14), /^mail in the last 7 days: 2\n/);
 });
 
+test("room stats count the seats whose work came back three times or more", () => {
+  const queued = (to: string, subject: string) =>
+    JSON.stringify({ at: new Date().toISOString(), kind: "queued", id: "r", from: "lead", to, subject });
+  writeFileSync(
+    join(ROOM_HOME, "mail", "log.jsonl"),
+    [...["p1", "p1", "p1", "p2"].map((to) => queued(to, "REJECT abc: repair")), queued("p1", "ACCEPT abc")].join("\n") +
+      "\n",
+  );
+  assert.match(roomStats(1), /seats sent back 3 times or more: 1/);
+});
+
 test("GC deletes a closed seat's temporary directory after a week and leaves an open seat's", () => {
   const tmp = join(ROOM_HOME, "tmp");
   const old = new Date(Date.now() - 8 * 86_400_000);

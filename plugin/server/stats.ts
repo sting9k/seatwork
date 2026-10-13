@@ -115,6 +115,7 @@ export function roomStats(asked: number): string {
   // a mail between hq and a project counts for the project, whichever side wrote it
   const hq = hqDir();
   const perProject = new Map<string, Map<string, number>>();
+  const sentBack = new Map<string, Map<string, number>>();
   for (const line of lines) {
     const candidates = [cwdOf.get(line.from), cwdOf.get(line.to)].filter((c): c is string => !!c);
     const project = candidates.find((c) => c !== hq) ?? candidates[0] ?? "(unknown)";
@@ -122,6 +123,10 @@ export function roomStats(asked: number): string {
     const signal = signalOf(line.subject);
     counts.set(signal, (counts.get(signal) ?? 0) + 1);
     perProject.set(project, counts);
+    if (signal === "REJECT") {
+      const seats = sentBack.get(project) ?? new Map<string, number>();
+      sentBack.set(project, seats.set(line.to, (seats.get(line.to) ?? 0) + 1));
+    }
   }
 
   const out: string[] = [`mail in the last ${days} days: ${lines.length}`];
@@ -139,6 +144,8 @@ export function roomStats(asked: number): string {
       notes.push(
         `candidates ${n("CANDIDATE")} → accepted ${n("ACCEPT")}, rejected ${n("REJECT")}, reviews ${n("REVIEW")}`,
       );
+    const thrice = [...(sentBack.get(project)?.values() ?? [])].filter((count) => count >= 3).length;
+    if (thrice > 0) notes.push(`seats sent back 3 times or more: ${thrice}`);
     if (n("DECISION_NEEDED") > 0) notes.push(`decisions escalated ${n("DECISION_NEEDED")}`);
     if (n("QUESTION") >= 3)
       notes.push(`questions ${n("QUESTION")}: a recurring class means the brief template is the defect`);

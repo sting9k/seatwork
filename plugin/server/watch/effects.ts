@@ -9,6 +9,7 @@ export type Effect =
   | { kind: "write"; paths: string[]; tree?: true }
   | { kind: "destroy"; what: string; paths?: string[]; bounded?: boolean }
   | { kind: "external"; what: string }
+  | { kind: "install"; what: string }
   | { kind: "wait"; seconds: number }
   | { kind: "look" };
 
@@ -550,6 +551,83 @@ function leavesMachine(command: SimpleCommand): string | null {
   return null;
 }
 
+const SYSTEM_INSTALLERS: Record<string, readonly string[]> = {
+  brew: ["install", "reinstall", "upgrade", "tap"],
+  apt: ["install"],
+  "apt-get": ["install"],
+  dnf: ["install"],
+  yum: ["install"],
+  zypper: ["install"],
+  apk: ["add"],
+  port: ["install"],
+  snap: ["install"],
+  winget: ["install"],
+  choco: ["install"],
+  scoop: ["install"],
+};
+const TOOL_INSTALLERS: Record<string, readonly string[]> = {
+  pipx: ["install"],
+  gem: ["install"],
+  nvm: ["install"],
+  fnm: ["install"],
+  volta: ["install"],
+  asdf: ["install"],
+  pyenv: ["install"],
+  mise: ["install", "use"],
+};
+const TWO_WORD_INSTALLERS: Record<string, readonly string[]> = {
+  uv: ["tool install"],
+  dotnet: ["tool install"],
+  rustup: ["toolchain install", "component add", "target add"],
+};
+const BROWSER_FETCHERS = new Set(["playwright", "playwright-core", "@playwright/test", "cypress"]);
+
+const FETCHERS = new Set(["curl", "wget"]);
+const SHELL_PROGRAMS = new Set(["sh", "bash", "zsh", "dash", "ksh"]);
+const UNPACKERS = new Set(["tar", "bsdtar", "gtar"]);
+const ARCHIVE = /\.(?:tar(?:\.(?:gz|xz|bz2|zst))?|tgz|zip|dmg|pkg|deb|rpm|appimage|exe|msi)(?:[?#].*)?$/i;
+
+/** Software a command puts on the machine, the project's own dependencies aside. */
+function installs(command: SimpleCommand, next: SimpleCommand | undefined): string | null {
+  const raw = command.argv;
+  const name = (of: SimpleCommand) => (of.argv[0] ?? "").split("/").pop() ?? "";
+  // asking what an install would do installs nothing
+  if (hasLong(raw, "--dry-run", "--help") || flags(raw).includes("-h")) return null;
+  if (FETCHERS.has(name(command))) {
+    const into = command.joiner === "|" && next ? name(next) : "";
+    if (SHELL_PROGRAMS.has(into)) return "a script from the network piped into a shell";
+    return UNPACKERS.has(into) || raw.some((word) => ARCHIVE.test(word)) ? "an archive from the network" : null;
+  }
+  const tool = (raw[0] ?? "").split("/").pop() ?? "";
+  const first = operands(raw)[0] ?? "";
+  if (SYSTEM_INSTALLERS[tool]?.includes(first)) return `a system package (${tool} ${first})`;
+  if (tool === "pacman" && flags(raw).some((flag) => /^-S/.test(flag))) return "a system package (pacman -S)";
+  if (TOOL_INSTALLERS[tool]?.includes(first)) return `a tool for this user (${tool} ${first})`;
+  const pair = `${first} ${operands(raw)[1] ?? ""}`;
+  if (TWO_WORD_INSTALLERS[tool]?.includes(pair)) return `a tool for this user (${tool} ${pair})`;
+  // a project's own binary goes in the same way: `cargo install --path .`
+  if (tool === "cargo" && first === "install" && !hasLong(raw, "--path")) return "a tool for this user (cargo install)";
+  if (tool === "go" && first === "install" && operands(raw).some((word) => word.includes("@")))
+    return "a tool for this user (go install)";
+  if (/^pip[0-9.]*$/.test(tool) && first === "install" && hasLong(raw, "--user"))
+    return `a package for this user (${tool} install --user)`;
+  if (["npm", "pnpm", "bun"].includes(tool) && ["install", "i", "add"].includes(first)) {
+    if (flags(raw).includes("-g") || hasLong(raw, "--global")) return `a global package (${tool} ${first} -g)`;
+  }
+  if (tool === "yarn" && first === "global" && operands(raw)[1] === "add") return "a global package (yarn global add)";
+  const argv = unwrapRunner(raw);
+  const program = (argv[0] ?? "").split("/").pop() ?? "";
+  const words = operands(argv);
+  const fetcher = [program, argv[0] ?? ""].find((name) => BROWSER_FETCHERS.has(name));
+  if (fetcher && /^install(?:-deps)?$/.test(words[0] ?? "")) return `a browser download (${fetcher} ${words[0]})`;
+  if (
+    (program === "puppeteer" && words[0] === "browsers" && words[1] === "install") ||
+    ((argv[0] ?? "") === "@puppeteer/browsers" && words[0] === "install")
+  )
+    return "a browser download (puppeteer browsers install)";
+  return null;
+}
+
 const UNIT_SECONDS: Record<string, number> = { "": 1, s: 1, m: 60, h: 3600, d: 86_400 };
 
 /** Seconds this command waits by itself; Infinity when it never ends alone. */
@@ -680,7 +758,7 @@ function looksOnly(command: SimpleCommand): boolean {
 
 /* ---------- the reading of one command ---------- */
 
-export function effectsOf(command: SimpleCommand, context: EffectContext): Effect[] {
+export function effectsOf(command: SimpleCommand, context: EffectContext, next?: SimpleCommand): Effect[] {
   const effects: Effect[] = [];
   const check = checkOf(command, context);
   if (check) effects.push(check);
@@ -688,6 +766,8 @@ export function effectsOf(command: SimpleCommand, context: EffectContext): Effec
   if (destroyed) effects.push({ kind: "destroy", ...destroyed });
   const external = leavesMachine(command);
   if (external) effects.push({ kind: "external", what: external });
+  const installed = installs(command, next);
+  if (installed) effects.push({ kind: "install", what: installed });
   const seconds = waits(command);
   if (seconds > 0) effects.push({ kind: "wait", seconds });
   const written = writesOf(command);

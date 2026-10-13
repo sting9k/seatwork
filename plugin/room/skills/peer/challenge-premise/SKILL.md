@@ -9,6 +9,7 @@ boundary, or the confidence.
 
 | What you found | Signal | It carries |
 |---|---|---|
+| a stop line of your brief (`Reopen when`) is true as written | `REOPEN_REQUEST`, before any edit | the line, what makes it true (`path:line` or a run), the route you would take |
 | the premise fails | `REOPEN_REQUEST` | something you ran (a failing command, test or measurement with its output), the consequence, the decision needed, your alternative |
 | an argument against the route, nothing ran | `QUESTION` | the argument and the check that would settle it |
 | a prerequisite outside your scope nobody owns | `DEPENDENCY_REQUEST` | what is missing, who could own it, what waits on it |

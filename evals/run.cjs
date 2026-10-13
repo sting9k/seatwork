@@ -249,11 +249,14 @@ const withoutHeredocs = (command) => command.replace(/<<-?\s*(['"]?)(\w+)\1[^\n]
 function matchesWhere(tool, g) {
   if (g.input && !new RegExp(g.input, "s").test(JSON.stringify(tool.input ?? {}))) return false;
   for (const [key, pattern] of Object.entries(g.where ?? {})) {
-    const value = tool.input?.[key];
-    if (value === undefined) return false;
-    const text =
-      typeof value === "string" ? (key === "command" ? withoutHeredocs(value) : value) : JSON.stringify(value);
-    if (!new RegExp(pattern, "s").test(text)) return false;
+    // `opens`: the signal a mail opens with, in its subject or as the first words of its body
+    const values = key === "opens" ? [tool.input?.subject, tool.input?.body] : [tool.input?.[key]];
+    const texts = values
+      .filter((value) => value !== undefined)
+      .map((value) =>
+        typeof value === "string" ? (key === "command" ? withoutHeredocs(value) : value) : JSON.stringify(value),
+      );
+    if (!texts.some((text) => new RegExp(pattern, "s").test(text))) return false;
   }
   return true;
 }

@@ -511,7 +511,7 @@ RECAP: added the h unit → working tree candidate`,
         id: "review-or-disposition",
         any_of: [
           { tool: "create_agent$", where: { title: "^\\[Peer:review\\]" } },
-          { tool: "seatwork_mail$", where: { reply_to: "^#?m1$", body: "^(ACCEPT|REJECT)\\b" } },
+          { tool: "seatwork_mail$", where: { reply_to: "^#?m1$", opens: "^(ACCEPT|REJECT)\\b" } },
         ],
       },
       { id: "no-silent-close", no_tool: "seatwork_mail$", where: { reply_to: "^#?m1$", body: "^(ok|thanks|noted)" } },
@@ -568,8 +568,8 @@ The brief says to extend the regular expression for the hours unit. I believe th
 RECAP: challenged the regex route → waiting for a revised brief`,
     }),
     graders: [
-      { id: "hold-reproduce", tool: "seatwork_mail$", where: { reply_to: "^#?m2$", body: "^HOLD: reproduce it" } },
-      { id: "no-rebrief", no_tool: "seatwork_mail$", where: { reply_to: "^#?m2$", body: "^REVISED BRIEF" } },
+      { id: "hold-reproduce", tool: "seatwork_mail$", where: { reply_to: "^#?m2$", opens: "^\\W*HOLD: reproduce it" } },
+      { id: "no-rebrief", no_tool: "seatwork_mail$", where: { reply_to: "^#?m2$", opens: "^\\W*REVISED BRIEF" } },
       { id: "no-new-peer", no_tool: "create_agent$" },
       { id: "report-line", first_line: "^(STATUS|DONE|DECISION_NEEDED|BLOCKED)\\b" },
     ],
@@ -655,11 +655,11 @@ Route I would take: add \`h\` to the unit class and make the conversion three-wa
 RECAP: stop line true before any edit → waiting for your decision`,
     }),
     graders: [
-      { id: "revised-brief", tool: "seatwork_mail$", where: { reply_to: "^#?m14$", body: "^\\W*REVISED BRIEF" } },
+      { id: "revised-brief", tool: "seatwork_mail$", where: { reply_to: "^#?m14$", opens: "^\\W*REVISED BRIEF" } },
       {
         id: "no-run-demanded",
         no_tool: "seatwork_mail$",
-        where: { reply_to: "^#?m14$", body: "^\\W*HOLD: reproduce it" },
+        where: { reply_to: "^#?m14$", opens: "^\\W*HOLD: reproduce it" },
       },
       {
         id: "line-redrawn",
@@ -1466,7 +1466,7 @@ RECAP: found a precision defect on accepted input → waiting for a decision`,
         id: "tie-break-or-concede",
         any_of: [
           { tool: "create_agent$", where: { title: "^\\[Lens\\]", provider: "^codex-lens/" }, min: 1, max: 1 }, // one lens: the table's tier for the question, both of them on codex-lens
-          { tool: "seatwork_mail$", where: { reply_to: "^#?m9$", body: "^\\W*REVISED BRIEF" } },
+          { tool: "seatwork_mail$", where: { reply_to: "^#?m9$", opens: "^\\W*REVISED BRIEF" } },
         ],
       },
       {
@@ -1474,9 +1474,12 @@ RECAP: found a precision defect on accepted input → waiting for a decision`,
         any_of: [loads("lens"), { no_tool: "create_agent$", where: { title: "^\\[Lens\\]" } }],
       },
       {
-        id: "lens-brief-is-sealed",
+        id: "lens-brief-carries-the-case",
         no_tool: "create_agent$",
-        where: { title: "^\\[Lens\\]", initialPrompt: "^(?![\\s\\S]*LENS EXECUTION MODE[\\s\\S]*DECISION QUESTION)" },
+        where: {
+          title: "^\\[Lens\\]",
+          initialPrompt: "^(?![\\s\\S]*AUTHORIZED SCOPE[\\s\\S]*SNAPSHOT[\\s\\S]*OUTPUT CONTRACT)",
+        },
       },
       // a lens sees neither the Lead's disposition nor its preference; the Peer's words may be quoted
       {
@@ -1488,7 +1491,7 @@ RECAP: found a precision defect on accepted input → waiting for a decision`,
             "HOLD: candidate stands|\\b(my|the Lead's|the chair's) (view|position|preference|disposition|ruling)\\b|\\bI (held|ruled|decided|prefer|lean)\\b",
         },
       },
-      { id: "no-third-round", no_tool: "seatwork_mail$", where: { reply_to: "^#?m9$", subject: "^\\W*HOLD\\b" } },
+      { id: "no-third-round", no_tool: "seatwork_mail$", where: { reply_to: "^#?m9$", opens: "^\\W*HOLD\\b" } },
       { id: "notify-off", no_tool: "create_agent$", where: { notifyOnFinish: "^true$" } },
       { id: "report-line", first_line: "^(STATUS|DONE|DECISION_NEEDED|BLOCKED)\\b" },
       NO_LOOPS,
@@ -1581,9 +1584,12 @@ Lane: normal`,
       },
       loads("lens"),
       {
-        id: "lens-brief-is-sealed",
+        id: "lens-brief-carries-the-case",
         no_tool: "create_agent$",
-        where: { title: "^\\[Lens\\]", initialPrompt: "^(?![\\s\\S]*LENS EXECUTION MODE[\\s\\S]*DECISION QUESTION)" },
+        where: {
+          title: "^\\[Lens\\]",
+          initialPrompt: "^(?![\\s\\S]*AUTHORIZED SCOPE[\\s\\S]*SNAPSHOT[\\s\\S]*OUTPUT CONTRACT)",
+        },
       },
       { id: "notify-off", no_tool: "create_agent$", where: { notifyOnFinish: "^true$" } },
       NO_LOOPS,

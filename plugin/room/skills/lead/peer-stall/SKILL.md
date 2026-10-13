@@ -8,7 +8,8 @@ A stall is silence past the threshold in your role prompt with no pending permis
 long command running (`get_agent_status`, then `get_agent_activity` with a small limit). A
 Peer that is reading, thinking, or running a test is working.
 
-1. Mail a status check (`needs: reply`): where it is, what the next step is.
+1. Mail a status check (`needs: reply`): where it is, what the next step is. End your turn;
+   the answer wakes you.
 2. Still silent → `cancel_agent`, then mail "resume from <its last recorded progress>".
 3. Silent again → `archive_agent`, then relaunch the scope at the same tier with a brief that
    carries `What was tried: <tier>: <approach> → stalled twice at <point>`.

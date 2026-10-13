@@ -36,8 +36,6 @@ What the plugin adds to Paseo:
 - **A watcher** (optional). It reads the turns of Leads and Peers and tells
   the agent above when one goes wrong.
 
-Guide: [English](docs/GUIDE.en.md) · [Tiếng Việt](docs/GUIDE.vi.md)
-
 ## Install
 
 You need Paseo 0.11.2 or later, and at least one of Claude Code, Codex, Pi
@@ -93,7 +91,7 @@ cd seatwork && ./install.sh
 ```
 
 It installs the plugin from the clone's folder, does what Init does, and is
-safe to run again. The flags are in the guide.
+safe to run again. The flags are at the top of the script.
 
 The script refuses to run over a plugin installed from Paseo's settings:
 Paseo would keep running its own copy while the room's folder was filled
@@ -127,8 +125,7 @@ seatwork/
 │   ├── server/          setup, mail, cleanup, the watcher
 │   ├── client/          the Seatwork screen and the Room screen
 │   └── test/
-├── evals/               prompt evals on real model sessions
-└── docs/                the guide, in English and Vietnamese
+└── evals/               prompt evals on real model sessions
 ```
 
 - After an edit, run `./install.sh` at the top of the clone. It copies the

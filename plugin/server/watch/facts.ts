@@ -48,6 +48,7 @@ export interface TurnFacts {
 
   outsideScope: string[];
   outsideProject: string[];
+  testsChanged: string[];
 
   destroyed: Deed[];
   external: Deed[];
@@ -75,10 +76,14 @@ export interface FactsInput {
   brief: Brief | null;
   ended: boolean;
   changed: readonly string[] | null;
+  changedTests?: readonly string[];
   now?: number;
   startedAt?: number;
   later?: readonly string[];
 }
+
+/** Programs that make a path: what a seat made in a turn is its own to remove. */
+const MAKERS = new Set(["mkdir", "touch", "mktemp", "cp", "tee"]);
 
 /** Targets of a delete that no scope can excuse. */
 const SWEEPING = /^(?:\/|~|\.{1,2}|\*|\$HOME|\$\{HOME\})\/?\*?$/;
@@ -93,7 +98,7 @@ function resolveIn(dir: string, path: string): string | null {
 
 interface ShellReading {
   line: ShellLine;
-  writes: { at: number; path: string | null }[];
+  writes: { at: number; path: string | null; by: string }[];
   treeWrite: number | undefined;
   checks: CheckRun[];
   destroyed: (Deed & { targets?: Target[] })[];
@@ -119,18 +124,26 @@ function readShell(event: ShellEvent, cwd: string, namedChecks: readonly string[
   };
   // a command that never ran did nothing; one that failed may still have written before it failed
   if (event.status === "canceled") return { ...reading, checks: [] };
-  let dir: string | null = event.cwd ?? cwd;
+  let outer: string | null = event.cwd ?? cwd;
+  // a nested shell starts where the line stands and takes its own `cd` away with it
+  let nested: { shell: number; dir: string | null } | null = null;
   line.commands.forEach((command, index) => {
     const at = event.seq + (index + 1) / (line.commands.length + 1);
-    if (command.argv[0] === "cd" && !command.substituted) {
-      dir = dir && command.argv[1] ? resolveIn(dir, command.argv[1]) : null;
+    if (command.shell === undefined) nested = null;
+    else if (nested?.shell !== command.shell) nested = { shell: command.shell, dir: outer };
+    const dir = nested ? nested.dir : outer;
+    if (command.argv[0] === "cd") {
+      const moved = dir && command.argv[1] ? resolveIn(dir, command.argv[1]) : null;
+      if (nested) nested.dir = moved;
+      else outer = moved;
       return;
     }
     const effects = effectsOf(command, context);
     if (effects.length === 0) reading.opaque.push({ at, text: `${command.argv.join(" ")}\n${command.script ?? ""}` });
     for (const effect of effects) {
       if (effect.kind === "write") {
-        for (const path of effect.paths) reading.writes.push({ at, path: dir ? resolveIn(dir, path) : null });
+        for (const path of effect.paths)
+          reading.writes.push({ at, path: dir ? resolveIn(dir, path) : null, by: command.argv[0] });
         if (effect.tree) reading.treeWrite = at;
       } else if (effect.kind === "destroy") {
         const targets = effect.paths?.map((path): Target => {
@@ -214,12 +227,16 @@ export function turnFacts(input: FactsInput): TurnFacts {
   // the brief may name a project directory other than the one the seat stands in
   const project = /^\s*(\/\S+)/.exec(brief?.fields.project ?? "")?.[1].replace(/\/+$/, "");
   const underProject = (path: string) => project !== undefined && (path === project || path.startsWith(`${project}/`));
+  const made = new Set<string>();
   /** A seat may delete what is temporary, or inside the project and inside its scope. */
   const ownToDelete = (targets: readonly Target[]) =>
     targets.every((target) => {
       if (target.where !== "path") return target.where === "unknown";
       const inside = relativeToRoot(root, target.path);
-      if (inside === null) return pathKind(root, target.path) === "scratch" || underProject(target.path);
+      if (made.has(target.path)) return true;
+      // a pattern in a shared temporary directory may take their files
+      if (inside === null)
+        return (pathKind(root, target.path) === "scratch" && !/[*?]/.test(target.path)) || underProject(target.path);
       // a find that picks files by a test: what it took outside the scope shows in git at the turn's end
       return target.bounded || !scope || inScope(scope, inside);
     });
@@ -237,7 +254,11 @@ export function turnFacts(input: FactsInput): TurnFacts {
     } else if (event.kind === "shell") {
       const reading = readShell(event, cwd, namedChecks);
       checks.push(...reading.checks);
-      for (const write of reading.writes) if (write.path) noteWrite(write.at, write.path);
+      for (const write of reading.writes) {
+        if (!write.path) continue;
+        if (inTurn(event.seq) && MAKERS.has(write.by)) made.add(write.path);
+        noteWrite(write.at, write.path);
+      }
       if (reading.treeWrite !== undefined)
         sourceEdits.push({ at: reading.treeWrite, path: "(working tree)", kind: "source" });
       if (!inTurn(event.seq)) continue;
@@ -310,6 +331,7 @@ export function turnFacts(input: FactsInput): TurnFacts {
     checksThisTurn: turnChecks,
     outsideScope,
     outsideProject,
+    testsChanged: [...(input.changedTests ?? [])],
     destroyed,
     external,
     waited,

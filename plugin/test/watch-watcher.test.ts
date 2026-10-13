@@ -8,6 +8,7 @@ import { Budget } from "../server/watch/budget";
 import type { TimelineInput } from "../server/watch/events";
 import type { DecisionEngine, DecisionReply, DecisionRequest } from "../server/watch/jev";
 import { ScanLog } from "../server/watch/scanlog";
+import type { TreeSnapshot } from "../server/watch/git";
 import { Watcher, type Notice, type SeatView } from "../server/watch/watcher";
 
 const POLICY: WatcherPolicy = {
@@ -22,7 +23,6 @@ const POLICY: WatcherPolicy = {
     "incomplete-brief": "raise",
     "unverified-completion": "raise",
     "reopen-condition": "off",
-    "decided-beyond-brief": "off",
   },
   thresholds: { sleepSeconds: 60, repeatRun: 4, cycleRepeats: 3, sameFailure: 4, inFlightFactor: 3 },
   scores: { "unverified-completion": 0.85 },
@@ -39,6 +39,7 @@ const PARAMS = {
   leadStallMinutes: 30,
   readBudgetTokens: 0,
   cheapReadBudgetTokens: 0,
+  mailChars: 6000,
 };
 const PEER: SeatView = {
   agentId: "peer-1",
@@ -58,6 +59,7 @@ function room(
     engine?: DecisionEngine;
     budget?: Partial<WatcherPolicy["budget"]>;
     rules?: WatcherPolicy["rules"];
+    snapshots?: TreeSnapshot[];
   } = {},
 ) {
   run += 1;
@@ -97,7 +99,8 @@ function room(
     budget,
     scans,
     timeline: async () => ({ entries, pendingPermission: false }),
-    snapshot: async () => null,
+    // the tree as git saw it, one reading per call; without readings there is no git
+    snapshot: async () => options.snapshots?.shift() ?? null,
     notify: async (notice) => (mail.push(notice), `m${mail.length}`),
     now: () => Date.parse("2026-10-11T00:10:00Z"),
     log: () => {},
@@ -521,4 +524,22 @@ test("roles outside the watch list and a watcher that is off see nothing", async
     [supervisor.mail.length, supervisor.scans.read().length, off.mail.length, off.scans.read().length],
     [0, 0, 0, 0],
   );
+});
+
+test("what git saw change is held against a Peer that had the tree to itself, and against neither of two that shared it", async () => {
+  const tree = (dirty: [string, string][]): TreeSnapshot => ({ root: PROJECT, head: "h", dirty: new Map(dirty) });
+  const quiet = [prompt(BRIEF), bash("npm test"), say("STATUS: tests run")];
+
+  const alone = room({ snapshots: [tree([]), tree([["src/legacy/month.js", "9:1"]])] });
+  alone.watcher.turnStarted(PEER, "turn-1");
+  alone.turn(quiet);
+  await alone.watcher.turnEnded(PEER, "turn-1", true);
+  assert.match(alone.mail[0].subject, /changed src\/legacy\/month\.js; its write scope is/);
+
+  const shared = room({ snapshots: [tree([]), tree([]), tree([["src/legacy/month.js", "9:1"]])] });
+  shared.watcher.turnStarted(PEER, "turn-1");
+  shared.watcher.turnStarted({ ...PEER, agentId: "peer-2", title: "[Peer] months" }, "turn-9");
+  shared.turn(quiet);
+  await shared.watcher.turnEnded(PEER, "turn-1", true);
+  assert.deepEqual(shared.mail, []);
 });

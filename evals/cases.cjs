@@ -26,10 +26,10 @@ const LAW = `# durations law
 - Strictness: side project
 - Review lane on a candidate: one cross-family reviewer
 - Ultra review: plan closure only
-- Compatibility: hard cut, one live contract (\`seatwork-hard-cut\` applies)
+- Compatibility: hard cut, one live contract (\`hard-cut\` applies)
 - External actions needing the Owner: push, deploy
 - Models to prefer or avoid here: none
-- Lead context limit before handoff: ~45% of its window
+- Lead context limit before handoff: ~60% of its window
 
 ## Local rules
 - \`npm test\` defines acceptance
@@ -125,7 +125,7 @@ const loads = (skill) => ({
   ],
 });
 // what a Supervisor reads on a wake lives in a skill; the role only points at it
-const WAKE_SKILL = loads("seatwork-observe-and-advise");
+const WAKE_SKILL = loads("observe-and-advise");
 // the acceptance evidence is the Lead's to run and to sign; a Supervisor reads the room and the tree
 const LEAVES_VALIDATION = {
   id: "leaves-validation-to-the-lead",
@@ -187,9 +187,9 @@ Reply with seatwork_mail to: owner`,
       { id: "ran-tests", tool: "^Bash$", input: "npm test|node --test" },
       { id: "no-commit-or-push", no_tool: "^Bash$", input: "git (commit|push|merge)" },
       // the handoff procedure lives in a skill: without it a candidate has no identity
-      loads("seatwork-candidate-handoff"),
+      loads("candidate-handoff"),
       // the law names a skill for its hard cut: a Peer opens it before it edits
-      loads("seatwork-hard-cut"),
+      loads("hard-cut"),
       { id: "names-the-frozen-candidate", text: "\\b[0-9a-f]{40,64}\\b" },
       RECAP,
     ],
@@ -295,7 +295,7 @@ Reply with seatwork_mail to: owner
 
 ${READ_ONLY}`,
     graders: [
-      loads("seatwork-evidence-report"),
+      loads("evidence-report"),
       NO_EDITS,
       { id: "signal-review", signal: "REVIEW" },
       { id: "ran-a-check", tool: "^Bash$", input: "parseDuration|npm test|node --test" },
@@ -1332,7 +1332,7 @@ src/duration.js, test/duration.test.js → [Peer] hours unit (writing)
       body: "Your last report said the hours Peer was launched. That was 25 minutes ago and nothing has come back from this workstream. What is its state?",
     }),
     graders: [
-      loads("seatwork-peer-stall"),
+      loads("peer-stall"),
       { id: "looked-at-the-peer", tool: "get_agent_(status|activity)$", where: { agentId: "agent-P1" } },
       { id: "status-check-to-the-peer", tool: "seatwork_mail$", where: { to: "agent-P1$", needs: "^reply$" } },
       { id: "first-step-only", no_tool: "(cancel_agent|archive_agent|create_agent)$" }, // cancel, archive and relaunch are the later steps, after silence again
@@ -1348,7 +1348,7 @@ src/duration.js, test/duration.test.js → [Peer] hours unit (writing)
     project: project(),
     prompt: timersCut("Lane: high-risk\nReason: an irreversible rewrite of data that has no other copy."),
     graders: [
-      loads("seatwork-exec-plan"),
+      loads("exec-plan"),
       { id: "plan-checked-in", tool: "^(Write|Edit|MultiEdit|Bash)$", input: "\\.seatwork/plans/" },
       {
         id: "plan-has-acceptance-and-recovery",
@@ -1464,7 +1464,7 @@ RECAP: found a precision defect on accepted input → waiting for a decision`,
       },
       {
         id: "lens-procedure-from-its-skill",
-        any_of: [loads("seatwork-lens"), { no_tool: "create_agent$", where: { title: "^\\[Lens\\]" } }],
+        any_of: [loads("lens"), { no_tool: "create_agent$", where: { title: "^\\[Lens\\]" } }],
       },
       {
         id: "lens-brief-is-sealed",
@@ -1572,7 +1572,7 @@ Lane: normal`,
         no_tool: "create_agent$",
         where: { title: "^\\[Lens\\]", settings: '^(?![\\s\\S]*"thinkingOptionId":"high")' },
       },
-      loads("seatwork-lens"),
+      loads("lens"),
       {
         id: "lens-brief-is-sealed",
         no_tool: "create_agent$",
@@ -1629,7 +1629,7 @@ Outcome: parseDuration accepts h and d; bin/duration prints a readable form. Acc
     prompt:
       "[supervisor-heartbeat] Inspect room state changed since your last checkpoint against the intent record; mail a Lead only for a new actionable deviation; end with the room-state block.",
     graders: [
-      loads("seatwork-lead-handoff"),
+      loads("lead-handoff"),
       { id: "looked-at-the-room", tool: "(get_agent_status|get_agent_activity|list_agents)$" },
       // a Lead's STATUS starts no turn of the Supervisor: the beat is where it reads the one that waits
       { id: "read-what-waits", tool: "seatwork_inbox$" },
@@ -1727,7 +1727,7 @@ WAITING ON YOU: nightly import or manual import
     },
     prompt: "Cho tôi bức tranh tất cả project lúc này: cái gì đã dùng được, cái gì đang chờ tôi quyết.",
     graders: [
-      loads("seatwork-portfolio-digest"),
+      loads("portfolio-digest"),
       { id: "checked-registry", tool: "seatwork_projects$" },
       { id: "wrote-the-digest", tool: "^(Write|Bash)$", input: 'reports/[^"]*digest\\.md' },
       // these facts are in the two status.md files and nowhere else: naming them proves it read them
@@ -1794,7 +1794,7 @@ WAITING ON YOU: nightly import or manual import
     prompt:
       "Hai project vừa xong việc tuần này. Làm retrospective cho tôi: room học được gì, và nên sửa gì. Đề xuất thôi, đừng tự sửa.",
     graders: [
-      loads("seatwork-room-notebook"),
+      loads("room-notebook"),
       { id: "numbers-first", tool: "seatwork_room_stats$" },
       { id: "wrote-the-room-notebook", tool: "^(Write|Edit|MultiEdit|Bash)$", input: "NOTEBOOK\\.md" },
       {
@@ -1840,7 +1840,7 @@ Reopen when: a state needs data loadTimers() does not return
 What was tried: —
 Reply with seatwork_mail to: owner`,
     graders: [
-      loads("seatwork-frontend-design"),
+      loads("frontend-design"),
       { id: "signal-candidate", signal: "CANDIDATE" },
       {
         id: "edited-the-page",
@@ -1852,7 +1852,7 @@ Reply with seatwork_mail to: owner`,
       { id: "stayed-in-scope", no_tool: "^(Edit|Write|MultiEdit)$", input: '"file_path":"[^"]*/cwd/(?!web/)' },
       { id: "says-how-the-rendering-was-checked", text: "render|viewport|375|browser|trình duyệt" }, // the skill: without rendered inspection, say so instead of claiming visual completion
       { id: "no-commit-or-push", no_tool: "^Bash$", input: "git (commit|push|merge)" },
-      loads("seatwork-candidate-handoff"), // the task's own skill does not replace the handoff: a Peer that opened one tends to skip the other
+      loads("candidate-handoff"), // the task's own skill does not replace the handoff: a Peer that opened one tends to skip the other
       RECAP,
     ],
   },
@@ -1880,7 +1880,7 @@ Reply with seatwork_mail to: owner
 
 ${READ_ONLY}`,
     graders: [
-      loads("seatwork-repo-refresh"),
+      loads("repo-refresh"),
       { id: "read-the-standard", tool: "^(Read|Bash)$", input: "refresh-standard\\.md" },
       NO_EDITS,
       {
@@ -1919,7 +1919,7 @@ Reply with seatwork_mail to: owner
 
 ${READ_ONLY}`,
     graders: [
-      loads("seatwork-architecture-premise-audit"),
+      loads("architecture-premise-audit"),
       NO_EDITS,
       { id: "signal-review", signal: "REVIEW" },
       {

@@ -18,11 +18,18 @@ export interface SimpleCommand {
   substituted: boolean;
   viaXargs: boolean;
   script?: string;
+  /** Its nested shell (`( … )`, `sh -c`, `$( … )`): a `cd` there ends with it. */
+  shell?: number;
 }
 
 export interface ShellLine {
   commands: SimpleCommand[];
   complete: boolean;
+}
+
+interface ParseState {
+  complete: boolean;
+  shells: number;
 }
 
 /** Longest command line read in full; agents paste whole files into heredocs. */
@@ -60,7 +67,7 @@ const TIMEOUT_VALUE_FLAGS = ["-s", "--signal", "-k", "--kill-after"];
 
 export function parseShell(source: string): ShellLine {
   const cut = source.length > MAX_CHARS;
-  const state = { complete: !cut };
+  const state: ParseState = { complete: !cut, shells: 0 };
   const commands = parse(cut ? source.slice(0, MAX_CHARS) : source, 0, state);
   return { commands, complete: state.complete };
 }
@@ -309,7 +316,7 @@ interface Draft {
   subs: string[];
 }
 
-function parse(source: string, depth: number, state: { complete: boolean }): SimpleCommand[] {
+function parse(source: string, depth: number, state: ParseState): SimpleCommand[] {
   if (depth > MAX_DEPTH) {
     state.complete = false;
     return [];
@@ -321,15 +328,20 @@ function parse(source: string, depth: number, state: { complete: boolean }): Sim
   let skippingHeader = false;
   /** A group just closed: the next operator joins its last command to what follows. */
   let groupClosed = false;
+  /** The `( … )` groups open at this point, innermost last. */
+  const groups: number[] = [];
+  const inGroup = (command: SimpleCommand): SimpleCommand =>
+    groups.length === 0 || command.shell !== undefined ? command : { ...command, shell: groups[groups.length - 1] };
 
   const finish = (joiner: Joiner | null) => {
     const current = draft;
     draft = { words: [], redirects: [], subs: [] };
     for (const sub of current.subs) {
+      const shell = (state.shells += 1);
       for (const inner of parse(sub, depth + 1, state))
-        out.push({ ...inner, substituted: true, joiner: inner.joiner ?? ";" });
+        out.push({ ...inner, substituted: true, joiner: inner.joiner ?? ";", shell: inner.shell ?? shell });
     }
-    out.push(...build(current, joiner, loops > 0, depth, state));
+    out.push(...build(current, joiner, loops > 0, depth, state).map(inGroup));
   };
 
   for (const token of lex(source, state)) {
@@ -357,6 +369,8 @@ function parse(source: string, depth: number, state: { complete: boolean }): Sim
       const joinsGroup = groupClosed && joiner === token.value && draft.words.length === 0 && out.length > 0;
       if (joinsGroup) out[out.length - 1] = { ...out[out.length - 1], joiner };
       else finish(joiner);
+      if (token.value === "(") groups.push((state.shells += 1));
+      if (token.value === ")") groups.pop();
       groupClosed = token.value === ")";
       continue;
     }
@@ -415,7 +429,7 @@ function build(
   joiner: Joiner | null,
   inLoop: boolean,
   depth: number,
-  state: { complete: boolean },
+  state: ParseState,
 ): SimpleCommand[] {
   let words = draft.words;
   let viaXargs = false;
@@ -443,7 +457,8 @@ function build(
       : -1;
   if (scriptAt >= 0 && words[scriptAt + 1] !== undefined) {
     const script = program === "eval" ? words.slice(1).join(" ") : words[scriptAt + 1];
-    const inner = parse(script, depth + 1, state);
+    const shell = program === "eval" ? undefined : (state.shells += 1);
+    const inner = parse(script, depth + 1, state).map((command) => ({ ...command, shell: command.shell ?? shell }));
     if (inner.length > 0) {
       const tail = inner[inner.length - 1];
       inner[inner.length - 1] = { ...tail, joiner, redirects: [...tail.redirects, ...draft.redirects] };

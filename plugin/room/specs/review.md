@@ -20,8 +20,11 @@ Do, in this order:
    contract, the invariants and the outcome is an improvement, not a finding.
 
 A finding is a broken contract, invariant or outcome, a change outside the scope, an
-unlabelled temporary, or a test change without its stated reason. Style, the plan's wording,
-and what you would have done instead stay out of the report.
+unlabelled temporary, or a test change without its stated reason: a test that was there before
+the candidate and now asserts less or pushes less (sizes, counts, time limits) is one. Style,
+the plan's wording, what you would have done instead, and what might go wrong but breaks none of
+these stay out of the report. A brief that says `fixes only` holds you to the findings it names
+and to what their repair changed.
 
 Output, first line `REVIEW`, then:
 ```text
@@ -32,4 +35,7 @@ Findings (P0 blocks acceptance · P1 fix before merge · P2 should · P3 note):
 Checked: <commands run, last lines>
 Not checked: <what you could not or did not run, and why>
 ```
-`RECAP:` last line. No finding above P3 means say so.
+`RECAP:` last line. No finding above P3 means say so. At most ten findings, the gravest first,
+and the whole report under 4,000 characters: a long reproduction or a log goes into
+`.seatwork/reviews/<candidate>-<your title>.md`, the one file you may write, and the finding
+names it.

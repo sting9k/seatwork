@@ -35,6 +35,7 @@ const SEATWORK_TOOLS = {
     "seatwork_adopt",
     "seatwork_projects",
     "seatwork_register_project",
+    "seatwork_unregister_project",
     "seatwork_room_stats",
   ],
   supervisor: ["seatwork_mail", "seatwork_inbox", "seatwork_adopt"],

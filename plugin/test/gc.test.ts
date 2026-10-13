@@ -1,11 +1,11 @@
 import { MAIL_POLICY, ROOM_HOME } from "./support/room";
 import assert from "node:assert/strict";
-import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, utimesSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { test } from "node:test";
-import { collectFiles, Collector } from "../server/gc";
+import { collectFiles, Collector, dropSeatTmp } from "../server/gc";
 import { MailEngine } from "../server/mail";
-import { roomStats } from "../server/stats";
+import { costLines, roomStats } from "../server/stats";
 
 test("GC archives a seat that is at rest, never one that waits on someone or went back to work", async () => {
   const longAgo = new Date(Date.now() - 72 * 3_600_000).toISOString();
@@ -142,4 +142,43 @@ test("room stats look no further back than the mail log is kept", () => {
   );
 
   assert.match(roomStats(14), /^mail in the last 7 days: 2\n/);
+});
+
+test("GC deletes a closed seat's temporary directory after a week and leaves an open seat's", () => {
+  const tmp = join(ROOM_HOME, "tmp");
+  const old = new Date(Date.now() - 8 * 86_400_000);
+  for (const name of ["aaaaaaaa", "bbbbbbbb", "cccccccc"]) {
+    mkdirSync(join(tmp, name), { recursive: true });
+    writeFileSync(join(tmp, name, "scratch.txt"), "x");
+  }
+  utimesSync(join(tmp, "aaaaaaaa"), old, old);
+  utimesSync(join(tmp, "bbbbbbbb"), old, old);
+  // aaaaaaaa is closed and old, bbbbbbbb is old and still open, cccccccc was closed today
+  assert.deepEqual(dropSeatTmp(tmp, ["bbbbbbbb-1111-2222"]), [join(tmp, "aaaaaaaa")]);
+  assert.deepEqual(readdirSync(tmp).sort(), ["bbbbbbbb", "cccccccc"]);
+});
+
+test("room stats add up what each seat used, across a seat's reopening", () => {
+  const log = join(ROOM_HOME, "usage-test.jsonl");
+  const line = (agentId: string, role: string, usd: number, out: number) =>
+    JSON.stringify({
+      at: new Date().toISOString(),
+      agentId,
+      role,
+      cwd: "/work/demo",
+      usage: { totalCostUsd: usd, outputTokens: out },
+    });
+  // the first seat's total runs up, then starts again at zero after it was reopened
+  writeFileSync(
+    log,
+    [
+      line("p1", "peer", 1, 1000),
+      line("p1", "peer", 3, 2000),
+      line("p1", "peer", 0.5, 500),
+      line("l1", "lead", 2, 4000),
+    ].join("\n"),
+  );
+  assert.deepEqual(costLines(0, log), [
+    "/work/demo: $5.50 as the agent CLIs report it, 8k output tokens (peer 1 seats $3.50, lead 1 seats $2.00)",
+  ]);
 });

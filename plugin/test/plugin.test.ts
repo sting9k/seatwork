@@ -3,6 +3,10 @@ import { bash, BRIEF, edit, prompt, say } from "./support/watch";
 import assert from "node:assert/strict";
 import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { loadPolicy } from "../server/policy";
+import { projectBlock } from "../server/registry";
+import { roleSkillNames } from "../server/runtimes";
+import { rolePrompt } from "../server/seats";
 import { after, before, test } from "node:test";
 import contribute from "../index.server";
 import { fakeServer } from "./support/server";
@@ -166,14 +170,22 @@ const CLAUDE_SWITCHES = {
   CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS: "0",
   CLAUDE_CODE_DISABLE_AGENT_VIEW: "1",
   CLAUDE_CODE_DISABLE_WORKFLOWS: "1",
+  CLAUDE_CODE_DISABLE_BUNDLED_SKILLS: "1",
   ENABLE_CLAUDEAI_MCP_SERVERS: "false",
 };
 
 test("a seat's session opens with the seat's own environment every time, not only when the seat is created", async () => {
+  // each seat also gets a temporary directory of its own, named after its agent
+  const tmp = (provider: string) => ({ TMPDIR: join(ROOM_HOME, "tmp", `opened-${provider}`.slice(0, 8)) });
   for (const reason of ["resume", "refresh", "import"]) {
-    assert.deepEqual(await opened("pi-peer", reason), { PI_CODING_AGENT_DIR: join(runtimes, "pi", "peer") }, reason);
-    assert.deepEqual(await opened("claude-peer", reason), CLAUDE_SWITCHES, reason);
+    assert.deepEqual(
+      await opened("pi-peer", reason),
+      { PI_CODING_AGENT_DIR: join(runtimes, "pi", "peer"), ...tmp("pi-peer") },
+      reason,
+    );
+    assert.deepEqual(await opened("claude-peer", reason), { ...CLAUDE_SWITCHES, ...tmp("claude-peer") }, reason);
   }
+  assert.ok(existsSync(tmp("claude-peer").TMPDIR));
   // an agent that is no seat of the room keeps what it came with
   assert.deepEqual(await opened("claude", "resume", { MINE: "1" }), { MINE: "1" });
 });
@@ -738,4 +750,62 @@ test("a Supervisor's prompt names no path of the room's own files", async () => 
     !supervisor.prompt.includes(ROOM_HOME),
     "the seat header points a project seat at the room home, where the other roles' files live",
   );
+});
+
+test("a project seat is told which of its own skills the project law names", () => {
+  const law = "## Policy\n- Compatibility: hard cut, one live contract (`hard-cut` applies)";
+  const block = (role: string) => projectBlock("demo", PROJECT, null, law, roleSkillNames(role));
+  assert.match(block("peer"), /Skills of your seat this law names: `hard-cut`\. Load each before your first edit\.$/);
+  // the law names a Peer's skill: a Lead has none of that name
+  assert.doesNotMatch(block("lead"), /Skills of your seat/);
+  // a law written before the skills lost their prefix still names it; a plain word names nothing
+  const old = projectBlock("demo", PROJECT, null, "- Compatibility: hard cut (`seatwork-hard-cut` applies)", [
+    "hard-cut",
+  ]);
+  assert.match(old, /Skills of your seat this law names: `hard-cut`\./);
+  assert.doesNotMatch(projectBlock("demo", PROJECT, null, "- Review lane: one lens", ["lens"]), /Skills of your seat/);
+});
+
+test("a mail whose subject opens with no signal of the room, or whose body is too long for a mail, is not sent", async () => {
+  const lead = await seat("lead-form", "claude-lead", null, "[Lead] stream");
+  const peer = await seat("peer-form", "claude-peer", lead.agent.id, "[Peer] task");
+  await assert.rejects(
+    lead.mail({
+      to: peer.agent.id,
+      subject: "STAGE RULE for your long files",
+      body: "Run them last.",
+      needs: "nothing",
+    }),
+    /the subject opens with none of the room's signals \(CANDIDATE, .*a change to what a seat must do is a REVISED BRIEF/,
+  );
+  await assert.rejects(
+    peer.mail({ to: "owner", subject: "QUESTION: which unit", body: "x".repeat(6001), needs: "reply" }),
+    /the body is 6001 characters and a mail takes 6000\. Put the long part in a file/,
+  );
+  assert.deepEqual([lead.inbox.length, peer.inbox.length], [0, 0]);
+  await lead.mail({
+    to: peer.agent.id,
+    subject: "revised brief: run them last",
+    body: "Run them last.",
+    needs: "nothing",
+  });
+  assert.equal(peer.inbox.length, 1);
+});
+
+test("a seat's prompt opens with its agent CLI's system prompt, filled in, and a project seat's names nothing above its Owner", async () => {
+  const lead = await seat("lead-shared", "claude-lead", null, "[Lead] stream");
+  const peer = await seat("peer-shared", "claude-peer", lead.agent.id, "[Peer:review] abc123");
+  const shared = (prompt: string) => prompt.slice(0, prompt.indexOf("\n\n---\n\n# Seat: "));
+  assert.match(shared(peer.prompt), /^# The room\n[\s\S]*\n## This runtime: Claude Code\n/);
+  assert.equal(shared(lead.prompt), shared(peer.prompt));
+  assert.match(peer.prompt, /\n\n---\n\n# Seat: peer \(specialization: review\)\n\n# Peer\n/);
+  // the body limit is the policy's number, filled in
+  assert.match(shared(peer.prompt), /stays under 6,000 characters/);
+  assert.doesNotMatch(peer.prompt, /\bHQ\b|\bHuman\b|\{\{/);
+  // the other CLIs' system prompts render the same way, each naming its own runtime
+  for (const harness of ["codex", "pi", "opencode"] as const) {
+    const prompt = rolePrompt("peer", { harness, params: loadPolicy().room.params });
+    assert.match(shared(prompt), /^# The room\n[\s\S]*\n## This runtime: /);
+    assert.doesNotMatch(prompt, /\{\{|Claude Code/);
+  }
 });

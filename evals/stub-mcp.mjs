@@ -106,6 +106,19 @@ const TOOLS = {
       return `registered: ${name} at ${a.path}. ${table}.${added.length ? ` Seats set up for this table: ${added.join(", ")}.` : ""} Still missing: law (.seatwork/${name}-law.md, written by the project's Supervisor on its first task).`;
     },
   },
+  seatwork_unregister_project: {
+    description:
+      "Take a project out of the registry: no seat of the room starts in it after that. Its `.seatwork/` files stay, and seatwork_register_project brings it back. Refused while a seat of the project is open.",
+    inputSchema: object({ project: string("The project's registry name, or its root.") }, ["project"]),
+    call: (a) => {
+      const at = projects.findIndex(
+        (row) => row.startsWith(`registered as ${a.project} |`) || row.includes(` | ${a.project} | `),
+      );
+      if (at < 0) throw new Error(`${a.project} is not a registered project (seatwork_projects lists them)`);
+      projects[at] = projects[at].replace(/^registered as \S+/, "NOT registered");
+      return `unregistered: ${a.project}. Its .seatwork/ files stay where they are, and seatwork_register_project brings it back.`;
+    },
+  },
   seatwork_room_stats: {
     description:
       "What the mail log says happened in the last N days, per project and per signal (candidates, rejects, reopen requests, escalations).",

@@ -334,7 +334,7 @@ không bao giờ dừng hay sửa một seat.
 Muốn bật: cho nó chạy Shadow một thời gian, hỏi HQ thống kê watcher, rồi
 đặt **Mode** thành On và áp dụng.
 
-Mười luật đọc các lần gọi tool và brief. Chúng không tốn tiền:
+Mười một luật đọc các lần gọi tool, git và brief. Chúng không tốn tiền:
 
 | Luật | Lên tiếng khi seat |
 |---|---|
@@ -342,6 +342,7 @@ Mười luật đọc các lần gọi tool và brief. Chúng không tốn tiề
 | `outside-project` | ghi ra ngoài project |
 | `outside-scope` | sửa một file ngoài phạm vi ghi mà brief cho |
 | `edit-after-reopen` | đã gửi `REOPEN_REQUEST` mà vẫn sửa source |
+| `unreported-test-change` | gửi `CANDIDATE` có sửa test đã có từ trước mà không nêu tên các test đó |
 | `review-without-check` | đưa ra `REVIEW` chấp nhận trong khi không chạy phép kiểm tra nào |
 | `same-failure` | chạy cùng một phép kiểm tra 4 lần với cùng một lỗi |
 | `repeating` | làm cùng một việc 4 lần liền với cùng kết quả |
@@ -349,18 +350,17 @@ Mười luật đọc các lần gọi tool và brief. Chúng không tốn tiề
 | `silent` | ở trong lượt mà không hoạt động gì, quá thời gian cho phép của vai |
 | `incomplete-brief` | là Peer nhận brief thiếu `Outcome`, `Write scope`, `Acceptance evidence`, `Reopen when` hoặc dòng cuối `Reply with seatwork_mail to: owner` |
 
-Bốn luật cần một model quyết định để đọc tin nhắn cuối của seat. Luật đầu
-tiên có gửi thư. Ba luật còn lại chỉ ghi log cho tới khi bạn đặt chúng
+Ba luật cần một model quyết định để đọc tin nhắn cuối của seat. Luật đầu
+tiên có gửi thư. Hai luật còn lại chỉ ghi log cho tới khi bạn đặt chúng
 thành `raise` trong `policy.json`.
 
 | Luật | Hỏi khi |
 |---|---|
 | `unverified-completion` | tin nhắn nói về kiểm tra, mà không có test nào đứng sau thay đổi cuối |
 | `external-action` | seat đã push, publish hoặc deploy, và brief có ràng buộc |
-| `decided-beyond-brief` | tin nhắn báo một quyết định do seat tự đưa ra |
 | `reopen-condition` | brief có dòng `Reopen when` mà seat không xin mở lại |
 
-Bốn luật này cần một key. Không có key thì mười luật kia vẫn chạy, và không
+Ba luật này cần một key. Không có key thì mười một luật kia vẫn chạy, và không
 có gì rời khỏi máy.
 
 - Model là Jev, gọi qua OpenRouter. Dán key vào ô **Model key** trên màn

@@ -90,8 +90,14 @@ export function findRoomMarker(
   return null;
 }
 
-/** The project block appended to a project seat's system prompt. */
-export function projectBlock(name: string, root: string, mission: string | null, law: string | null): string {
+/** A project seat's block: project, mission, law, and its own skills the law names. */
+export function projectBlock(
+  name: string,
+  root: string,
+  mission: string | null,
+  law: string | null,
+  roleSkills: string[] = [],
+): string {
   const lines = [
     "# Project",
     `Project: ${name}`,
@@ -102,5 +108,12 @@ export function projectBlock(name: string, root: string, mission: string | null,
     lines.push("", "## Mission (from .seatwork/mission.md)", mission);
   }
   lines.push("", `## Law (from .seatwork/${name}-law.md)`, law ?? "No law recorded for this project yet.");
+  // a law names a skill in backticks; one written before 0.20.0 carries the old `seatwork-` prefix
+  const named = roleSkills.filter((skill) => new RegExp(`\`(?:seatwork-)?${skill}\``).test(law ?? ""));
+  if (named.length)
+    lines.push(
+      "",
+      `Skills of your seat this law names: ${named.map((skill) => `\`${skill}\``).join(", ")}. Load each before your first edit.`,
+    );
   return lines.join("\n");
 }

@@ -82,7 +82,7 @@ test("a scope line is read leniently: directories, bare names and globs all admi
 
 test("the room's own brief template parses", () => {
   const template = readFileSync(
-    join(__dirname, "..", "room", "skills", "lead", "seatwork-write-brief", "references", "brief-template.md"),
+    join(__dirname, "..", "room", "skills", "lead", "write-brief", "references", "brief-template.md"),
     "utf8",
   );
   const example = template.slice(
@@ -564,7 +564,7 @@ test("a question is opened only where its answer could matter", () => {
   );
   assert.deepEqual(
     rulesOf([...work, bash("npm test"), say("CANDIDATE: I decided to return null instead of throwing.")]).asked,
-    ["decided-beyond-brief", "reopen-condition"],
+    ["reopen-condition"],
   );
 });
 
@@ -584,4 +584,50 @@ test("a review that accepts without running anything is told", () => {
     }).told,
     [],
   );
+});
+
+test("a nested shell's cd ends with it: what the line writes afterwards is placed where the line stands", () => {
+  const line = `cd ${PROJECT}; mkdir -p test/probe\nenv -i /bin/bash -c 'cd /; ./check' > /tmp/null 2>&1 || true\n(cd / && ls)\nrm -rf test/probe\nmv test/a.js test/b.js`;
+  const facts = read_([prompt(BRIEF), bash(line), say("STATUS")]);
+  assert.deepEqual(facts.outsideProject, []);
+  assert.deepEqual(facts.destroyed, []);
+});
+
+test("a seat removes what it made in the same turn; a pattern in a shared temporary directory is told", () => {
+  // outside its scope it should not have written, but the delete took nothing that was there before
+  assert.deepEqual(rulesOf([prompt(BRIEF), bash("mkdir -p docs/probe && rm -rf docs/probe"), say("STATUS")]).told, [
+    "outside-scope",
+  ]);
+  assert.deepEqual(rulesOf([prompt(BRIEF), bash("rm -rf docs/probe"), say("STATUS")]).told, [
+    "irreversible",
+    "outside-scope",
+  ]);
+  assert.deepEqual(rulesOf([prompt(BRIEF), bash("rm -rf /tmp/duration-run-1"), say("STATUS")]).told, []);
+  assert.deepEqual(rulesOf([prompt(BRIEF), bash("rm -rf /tmp/duration-*"), say("STATUS")]).told, ["irreversible"]);
+});
+
+test("a candidate that changed tests that were already there says which, or its Owner is told", () => {
+  const work = [prompt(BRIEF), edit(src("src/duration.js")), bash("npm test")];
+  const changedTests = ["test/duration.test.js"];
+  const told = (message: string, signalled = changedTests) => {
+    const facts = { ...read_([...work, say(message)]), testsChanged: signalled };
+    return gate({
+      facts,
+      brief,
+      moment: "end",
+      briefGap: null,
+      now: 0,
+      pendingPermission: false,
+      thresholds: THRESHOLDS,
+    }).findings.map((finding) => finding.rule);
+  };
+  assert.deepEqual(told("CANDIDATE: hours added. npm test: 14 passing."), ["unreported-test-change"]);
+  assert.deepEqual(told("CANDIDATE: hours added. Changed test/duration.test.js: the 90m case moved to the table."), []);
+  assert.deepEqual(told("CANDIDATE: hours added.", []), []);
+  assert.deepEqual(told("QUESTION: which unit?"), []);
+});
+
+test("checks that ran after the last change with a result nobody could read open no question", () => {
+  const unread = [prompt(BRIEF), edit(src("src/duration.js")), bash("./check > out.txt 2>&1; echo exit=$?")];
+  assert.deepEqual(rulesOf([...unread, say("CANDIDATE: hours added, all checks pass.")]).asked, ["reopen-condition"]);
 });

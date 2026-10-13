@@ -3,7 +3,8 @@ import assert from "node:assert/strict";
 import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { beforeEach, test } from "node:test";
-import { registerProject } from "../server/onboard";
+import { registerProject, unregisterProject } from "../server/onboard";
+import { loadRegistry } from "../server/registry";
 import type { PaseoApi } from "../server/paseo";
 
 const ROOM_SEATS = [
@@ -62,4 +63,21 @@ test("a table the room refuses sets up no seat and is not written", async () => 
 
   assert.deepEqual(asked, []);
   assert.ok(!existsSync(marker));
+});
+
+test("a project leaves the registry only when none of its seats is open, and keeps its files", async () => {
+  await registerProject(paseo, { path: PROJECT, mission: "Parse durations." }, setUpSeats);
+  const open = async () => [{ title: "[Supervisor] demo", cwd: PROJECT }];
+  await assert.rejects(
+    unregisterProject("demo", open),
+    /1 seat of demo is still open \(\[Supervisor\] demo\); archive/,
+  );
+  await assert.rejects(
+    unregisterProject("shop", async () => []),
+    /shop is not a registered project/,
+  );
+  const result = await unregisterProject("demo", async () => [{ title: "[Lead] elsewhere", cwd: "/work/other" }]);
+  assert.match(result, /^unregistered: demo at .*no project, so no project seat can start/);
+  assert.deepEqual(loadRegistry()?.projects, []);
+  assert.ok(existsSync(join(PROJECT, ".seatwork", "mission.md")));
 });

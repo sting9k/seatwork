@@ -135,11 +135,21 @@ function installRoleSkills(runtime: string, seat: Pick<Seat, "harness" | "role">
   const source = join(ROOM_DIR, "skills", role);
   const target = seat.harness === "claude" ? join(claudeRoleDir(role), ".claude", "skills") : join(runtime, "skills");
   ensureDir(target);
-  if (!existsSync(source)) return;
-  for (const name of readdirSync(source)) {
-    if (!existsSync(join(source, name, "SKILL.md"))) continue;
-    share(target, source, name);
+  // a skill the room renamed or dropped leaves a link to nothing
+  for (const name of readdirSync(target)) {
+    const link = join(target, name);
+    if (lstatSync(link).isSymbolicLink() && !existsSync(link)) unlinkSync(link);
   }
+  for (const name of roleSkillNames(role)) share(target, source, name);
+}
+
+/** The names of the skills the room gives a role. */
+export function roleSkillNames(role: string): string[] {
+  const source = join(ROOM_DIR, "skills", role);
+  if (!existsSync(source)) return [];
+  return readdirSync(source)
+    .filter((name) => existsSync(join(source, name, "SKILL.md")))
+    .sort();
 }
 
 /** The home of a Codex, Pi or OpenCode seat. Claude seats have none. */

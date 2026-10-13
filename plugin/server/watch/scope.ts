@@ -190,8 +190,13 @@ function inClass(set: string, c: string): boolean {
 export type PathKind = "source" | "doc" | "generated" | "room" | "vcs" | "scratch" | "outside";
 
 const GENERATED =
-  /^(?:.*\/)?(?:node_modules|dist|build|out|target|coverage|\.next|\.nuxt|\.turbo|\.cache|\.venv|venv|__pycache__|\.pytest_cache|\.mypy_cache|\.ruff_cache|\.gradle|\.tox)(?:\/|$)/;
+  /^(?:.*\/)?(?:node_modules|dist|build|out|target|coverage|\.next|\.nuxt|\.turbo|\.cache|\.venv|venv|__pycache__|\.pytest_cache|\.mypy_cache|\.ruff_cache|\.gradle|\.tox|tmp|\.tmp|temp)(?:\/|$)/;
 const DOC = /\.(?:md|mdx|markdown|txt|rst|adoc)$/i;
+/** A file that is a test or a test's fixture, by where it lies or how it is named. */
+const TEST =
+  /(?:^|\/)(?:tests?|__tests__|specs?|e2e)\/|\.(?:test|spec)\.[cm]?[jt]sx?$|_test\.(?:go|py|rb)$|(?:^|\/)test_[^/]+\.py$/;
+export const isTestPath = (path: string): boolean => TEST.test(path);
+
 /** What a run leaves behind: `npm test > out.log` changes no source. */
 const LEFTOVER = /\.(?:log|out|tmp|temp|bak|orig|rej|pid|tsbuildinfo)$|(?:^|\/)\.DS_Store$/i;
 const SCRATCH_ROOTS = [

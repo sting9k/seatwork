@@ -78,10 +78,12 @@ import { merge } from "./shared/model-choices";
 import { roomStatus, roomWaiting } from "./shared/room";
 import { roomSettings, setupInit, setupProject, setupRemove, setupState, setupWatcherKey } from "./shared/setup";
 import { Watcher, type SeatView, type TimelineView } from "./server/watch/watcher";
+import { WorkError, WorkStore } from "./server/tasks/store";
+import { graph, projectPolicy, refusal, work, WORK_DIR } from "./server/tasks/tools";
 
 type CreateRequest = PluginBeforeRequests["agent.create"];
 
-const VERSION = "0.23.0";
+const VERSION = "0.24.0";
 const PLUGIN_ID = "seatwork";
 const MAIL_DIR = join(ROOM_HOME, "mail");
 const MCP_TOKEN_FILE = join(MAIL_DIR, "token");
@@ -526,6 +528,7 @@ function startRoom(server: Pick<PluginServerContext, "on" | "before">): Room {
   const lastSignal = new Map<string, string>();
   const rounds = new Rounds();
   const gate = new ReviewGate();
+  const stores = new Map<string, WorkStore>();
   const rotations = new Map<string, { by: string; mailId: string }>();
   const rotateAt = policy.room.params.rotateAtTokens ?? Infinity;
   const lastUsage = new Map<string, SeatUsage>();
@@ -813,6 +816,53 @@ function startRoom(server: Pick<PluginServerContext, "on" | "before">): Room {
     return lines.join("\n");
   });
 
+  /** The project a directory lies in, by the registry or by the room's marker above it. */
+  const projectRoot = (cwd: string): string | null => {
+    const registry = loadRegistry();
+    return (registry ? findProject(registry, cwd)?.root : undefined) ?? findRoomMarker(cwd)?.root ?? null;
+  };
+  /** The work store and policy of a seat's project; one open store per project. */
+  const workOf = (tool: string, nonce: string) => {
+    const me = resolveCaller(nonce);
+    const seat = me ? engine?.seat(me) : undefined;
+    if (!me || !seat?.cwd) throw new Error(`${tool}: this session is not a registered room seat (unknown caller)`);
+    if (!policy.room.work)
+      throw new Error(`${tool}: the room's files are from an earlier version; set the room up again`);
+    const root = projectRoot(seat.cwd);
+    if (!root)
+      throw new Error(`${tool}: ${seat.cwd} lies in no project of the room; a work store belongs to a project`);
+    const rules = projectPolicy(root, policy.room.work);
+    let store = stores.get(root);
+    if (!store) stores.set(root, (store = new WorkStore(join(root, WORK_DIR), rules)));
+    return { me, store, rules };
+  };
+  /** Runs one call on a work store; a refusal reaches the seat as JSON. */
+  const answering = (run: () => unknown): string => {
+    try {
+      return JSON.stringify(run());
+    } catch (error) {
+      if (error instanceof WorkError) throw new Error(refusal(error));
+      throw error;
+    }
+  };
+  mcp.register(roomTool("seatwork_work", toolVars), async (args, context) => {
+    const { me, store, rules } = workOf("seatwork_work", context.nonce);
+    return answering(() => work(store, rules, me, args));
+  });
+  mcp.register(roomTool("seatwork_graph", toolVars), async (args, context) => {
+    const { store, rules } = workOf("seatwork_graph", context.nonce);
+    return answering(() => graph(store, rules, args, new Date()));
+  });
+  /** What a seat held goes to the seat that follows it, or is open again. */
+  const releaseWork = (cwd: string | undefined, from: string, to: string | null) => {
+    const root = cwd ? projectRoot(cwd) : null;
+    if (!root || !policy.room.work || !existsSync(join(root, WORK_DIR, "work.db"))) return;
+    let store = stores.get(root);
+    if (!store) stores.set(root, (store = new WorkStore(join(root, WORK_DIR), projectPolicy(root, policy.room.work))));
+    const moved = store.release(from, to, "room");
+    if (moved.length > 0) log(`work: ${moved.join(", ")} of ${from} ${to ? `now held by ${to}` : "open again"}`);
+  };
+
   mcp.register(roomTool("seatwork_seats", toolVars), async (_args, context) => {
     if (!engine || !client) throw new Error("seatwork_seats: the room is not ready (no seat was created yet)");
     const me = resolveCaller(context.nonce);
@@ -970,6 +1020,7 @@ function startRoom(server: Pick<PluginServerContext, "on" | "before">): Room {
     }
     for (const mail of eng.takeHeld(old.agentId)) await eng.post({ ...mail, to: successor.id });
     rounds.move(old.agentId, successor.id);
+    releaseWork(old.cwd, old.agentId, successor.id);
     await handle.archive();
     return { id: successor.id, file };
   };
@@ -1078,6 +1129,11 @@ function startRoom(server: Pick<PluginServerContext, "on" | "before">): Room {
       rounds.forget(event.agent.id);
       lastUsage.delete(event.agent.id);
       recovery.forget(event.agent.id);
+      try {
+        releaseWork(event.agent.cwd, event.agent.id, null);
+      } catch (error) {
+        console.error(`seatwork: the work of ${event.agent.id} could not be released`, error);
+      }
       rotations.delete(event.agent.id);
       watcher?.forget(event.agent.id);
       // a reviewer archived before its report holds its round back no longer
@@ -1359,6 +1415,8 @@ function startRoom(server: Pick<PluginServerContext, "on" | "before">): Room {
       clearInterval(sweep);
       clearInterval(collect);
       clearInterval(watch);
+      for (const store of stores.values()) store.close();
+      stores.clear();
       // a mail server still binding would stay open behind a close that came first
       await starting;
       await mcp.close();

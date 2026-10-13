@@ -1,0 +1,23 @@
+{
+  "$comment": "The work store's vocabulary and triage numbers. dependencyTypes: one with orders may close no cycle; one with holdsBack keeps its issue out of the ready list until its target is closed. schemaVersion: the work.db layout this code writes; a store with a higher number is refused. triage: impact is the weighted sum of the factors (weights sum to 1); score is impactShare of it, plus up to unblockBoost for what closing frees, plus readyBoost when nothing is in the way. Betweenness is exact up to exactBetweennessUpTo open issues, sampled from sampledSources above.",
+  "idPrefix": "sw",
+  "schemaVersion": 1,
+  "titleChars": 500,
+  "statuses": ["open", "in_progress", "deferred", "closed"],
+  "issueTypes": ["task", "bug", "feature", "epic", "chore", "docs", "question"],
+  "dependencyTypes": {
+    "blocks": {"orders": true, "holdsBack": true},
+    "parent-child": {"orders": true},
+    "discovered-from": {},
+    "related": {}
+  },
+  "triage": {
+    "weights": {"pagerank": 0.26, "betweenness": 0.22, "blocks": 0.15, "priority": 0.12, "depth": 0.12, "urgency": 0.08, "staleness": 0.05},
+    "urgentLabels": ["urgent", "critical", "blocker", "hotfix", "asap"],
+    "impactShare": 0.7,
+    "unblockBoost": 0.15,
+    "readyBoost": 0.15,
+    "exactBetweennessUpTo": 500,
+    "sampledSources": 50
+  }
+}

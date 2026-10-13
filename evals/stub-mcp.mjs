@@ -55,6 +55,19 @@ const TOOLS = {
             ),
           ].join("\n"),
   },
+  seatwork_work: {
+    call: (a) =>
+      a.do === "ready" || a.do === "list"
+        ? "[]"
+        : JSON.stringify({
+            id: a.id ?? `sw-${next("w")}`,
+            title: a.title ?? "",
+            status: a.do === "close" ? "closed" : "open",
+          }),
+  },
+  seatwork_graph: {
+    call: (a) => (a.view === "next" ? '{"claimable":false,"message":"nothing is ready and unassigned"}' : "{}"),
+  },
   seatwork_rotate: {
     call: (a) =>
       `asked ${a.agent_id} for its handoff. When it answers, the room starts its successor, hands its open seats over and archives it. You get one notice with the new seat's id.`,

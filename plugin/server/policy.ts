@@ -1,6 +1,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { RecoveryPolicy } from "./orchestration/recovery";
+import type { WorkPolicy } from "./tasks/store";
 import { ROOM_HOME } from "./paths";
 import type { Harness, Role } from "./orchestration/seats";
 
@@ -76,6 +77,7 @@ export interface RoomPolicy {
   params: RoomParams;
   recovery?: RecoveryPolicy;
   handin?: { freshEyes: boolean };
+  work?: WorkPolicy;
 }
 
 /** Garbage collection, see gc.ts. Hours of 0 mean "never archive that role". */
@@ -170,6 +172,7 @@ export function loadPolicy(): RuntimePolicy {
       // absent in a home an earlier version wrote, until the update has brought it up
       recovery: room.recovery,
       handin: room.handin,
+      work: room.work,
     },
     mail: need(parsed.mail, "mail"),
     gc: need(parsed.gc, "gc"),

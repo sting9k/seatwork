@@ -1133,6 +1133,78 @@ test("a writing Peer's candidate goes back to it once for a pass with fresh eyes
   assert.equal(lead.inbox.length, 3);
 });
 
+test("the work store through the room's tools: a Lead writes a plan, a Peer takes what is ready, only the Owner closes, and a seat that is gone holds nothing", async () => {
+  // a project of the room, by its marker; a seat in a worktree under it shares the one store
+  const project = join(PROJECT, "..", "work-project");
+  mkdirSync(join(project, ".seatwork"), { recursive: true });
+  mkdirSync(join(project, ".worktrees", "store"), { recursive: true });
+  writeFileSync(join(project, ".seatwork", "room.json"), "{}");
+  const lead = await seat("lead-work", "claude-lead", null, "[Lead] stream", project);
+  const peer = await seat(
+    "peer-work-a",
+    "claude-peer",
+    lead.agent.id,
+    "[Peer] schema",
+    join(project, ".worktrees", "store"),
+  );
+  const other = await seat("peer-work-b", "claude-peer", lead.agent.id, "[Peer] api", project);
+  const does = async (who: TestSeat, tool: string, args: Record<string, unknown>) =>
+    JSON.parse(await who.call(tool, args));
+  const refused = async (who: TestSeat, args: Record<string, unknown>) =>
+    JSON.parse(
+      await who.call("seatwork_work", args).then(
+        () => "{}",
+        (error: Error) => error.message,
+      ),
+    ).error?.code;
+
+  const made = await does(lead, "seatwork_work", {
+    do: "create",
+    issues: [
+      { key: "schema", title: "schema", priority: 1, write_scope: "src/schema.js" },
+      { key: "api", title: "api", deps: ["schema"], write_scope: "src/api/" },
+      { key: "docs", title: "docs", priority: 3, write_scope: "docs/" },
+    ],
+  });
+  const [schema, api, docs] = made.map((issue: { id: string }) => issue.id);
+  assert.deepEqual(
+    (await does(peer, "seatwork_work", { do: "ready" })).map((issue: { id: string }) => issue.id),
+    [schema, docs],
+  );
+  assert.equal((await does(peer, "seatwork_graph", { view: "next" })).id, schema);
+
+  assert.equal((await does(peer, "seatwork_work", { do: "claim", id: schema })).assignee, peer.agent.id);
+  assert.equal(await refused(other, { do: "claim", id: schema }), "ALREADY_ASSIGNED");
+  assert.equal(await refused(other, { do: "claim", id: api }), "BLOCKED");
+  await does(peer, "seatwork_work", { do: "note", id: schema, text: "tables written, migration next" });
+  assert.equal(
+    await refused(peer, { do: "close", id: schema, reason: "done in 4f2a91c, npm test 88/88" }),
+    "POLICY_VIOLATION",
+  );
+  assert.equal(await refused(lead, { do: "close", id: schema, reason: "ok" }), "POLICY_VIOLATION");
+  const closed = await does(lead, "seatwork_work", {
+    do: "close",
+    id: schema,
+    reason: "done in 4f2a91c, npm test 88/88",
+  });
+  assert.deepEqual(
+    closed.unblocked.map((issue: { id: string }) => issue.id),
+    [api],
+  );
+
+  const triaged = await does(lead, "seatwork_graph", { view: "triage" });
+  assert.deepEqual(triaged.counts, { open: 2, ready: 2, blocked: 0, in_progress: 0 });
+  assert.equal((await does(lead, "seatwork_graph", { view: "plan" })).tracks.length, 2);
+
+  // the store never learns of a seat's end by itself: the room frees what the seat held
+  await does(other, "seatwork_work", { do: "claim", id: api });
+  await call("on agent.archived", { agent: other.agent, archivedAt: new Date().toISOString() }, context);
+  const freed = await does(lead, "seatwork_work", { do: "show", id: api });
+  assert.deepEqual([freed.assignee, freed.status], [null, "open"]);
+  assert.ok(existsSync(join(project, ".seatwork", ".work", "work.db")));
+  assert.equal(existsSync(join(project, ".worktrees", "store", ".seatwork")), false);
+});
+
 test("the skill the watcher holds a CANDIDATE to is one of the Peer role's skills", () => {
   assert.ok(roleSkillNames("peer").includes(HANDOFF_SKILL));
 });

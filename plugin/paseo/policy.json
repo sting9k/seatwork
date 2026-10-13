@@ -1,5 +1,5 @@
 {
-  "$comment": "Single source of truth for what each seat may touch. Setting the room up (the plugin's setup screen, or install.sh) turns the paseo part into the seats' providers in Paseo and copies the whole file to ~/.config/seatwork/policy.json, where the plugin reads the harness part when it builds runtimes.",
+  "$comment": "What each seat may touch, written once. Setup (plugin screen or install.sh) builds the seats' Paseo providers from the paseo part and copies the file to ~/.config/seatwork/policy.json, where the plugin reads the harness part to build runtimes.",
   "paseoTools": {
     "all": [
       "speak",
@@ -98,7 +98,7 @@
     }
   },
   "claude": {
-    "$comment": "disallowedTools uses Claude Code's permission syntax. Each tool is written once, in a named set; a role is denied the sets it lists, in that order. subAgents: Claude's own sub-agents. nestedHarness: starting another agent CLI from the shell. paseoShell: driving Paseo from the shell; HQ and the Supervisor are denied only the commands that act (paseoShellActs) and may read. ownOrchestration: Claude's own scheduling (ScheduleWakeup, Cron*, Workflow, RemoteTrigger, Monitor), messaging (SendMessage, ListAgents), agent teams (Team*) and task list (Task*). ownDialogs: what Claude Code opens toward its own user or keeps for itself: the question dialog (a seat asks in its final message or by mail, which the room shows the Owner; behind a dialog the seat stays in its turn and the room is told nothing: an HQ seat sat so for 9 minutes in the run of 2026-10-13 evening), plan mode, its own worktrees, phone notifications, design sync. edits: a Lens reads and runs, it does not write.",
+    "$comment": "Claude Code's permission syntax. A tool sits in one named set; a role is denied the sets it lists, in that order. paseoShell: Paseo from the shell; HQ and the Supervisor may read and lose only the commands that act (paseoShellActs). ownOrchestration: Claude's own scheduling, messaging, teams and task list. ownDialogs: what Claude Code opens toward its own user or keeps for itself; behind its question dialog a seat stays in its turn and the room hears nothing, so a seat asks in its final message or by mail. edits: a Lens reads and runs, never writes.",
     "disallowedTools": {
       "sets": {
         "subAgents": ["Agent", "Task"],
@@ -132,11 +132,11 @@
         "strict-mcp-config": null
       }
     },
-    "$comment_launch": "How a seat starts, per harness. Claude seats run on the user's ~/.claude: the flags make them take the sign-in only (no user settings, no personal MCP server), and the env switches off what Claude Code adds of its own: auto memory and organization memory, agent teams, the agent view, workflows, the skills bundled with Claude Code (a seat is listed its role's skills only), and claude.ai connectors (strict-mcp-config alone still loads those). Claude Code also asks every session to end its commits with a Co-Authored-By line; its settings flag would empty that, but Paseo sends a settings flag of its own (fastMode) that replaces any other, so the room's Claude system prompt (room/harness/claude-system.md) tells the seat instead. The other harnesses start on a home of their own: {runtime} is ~/.config/seatwork/runtimes/<harness>/<role>. Setting the room up writes each launch block into the harness's providers (env, and extraArgs under options), so a seat starts this way when the plugin is not running; the plugin gives every session it opens the same env.",
+    "$comment_launch": "How a seat starts. Claude seats run on the user's ~/.claude: extraArgs keep the sign-in only (no user settings, no personal MCP server) and env turns off what Claude Code adds itself; strict-mcp-config alone still loads claude.ai connectors. Paseo's own settings flag (fastMode) replaces any other, so the Co-Authored-By reminder is called off in room/harness/claude-system.md instead. Other harnesses get a home of their own: {runtime} is ~/.config/seatwork/runtimes/<harness>/<role>. Setup writes each launch block into the harness's providers (env; extraArgs under options), so a seat starts this way with the plugin off too.",
     "shareFiles": [
       "CLAUDE.md"
     ],
-    "$comment_shareFiles": "Claude seats run on ~/.claude with personal settings off; these files of it are appended to the seat's prompt.",
+    "$comment_shareFiles": "Files of ~/.claude appended to a Claude seat's prompt; its personal settings are off.",
     "deniedSkills": [
       "loop",
       "schedule",
@@ -153,7 +153,7 @@
       "batch",
       "debug"
     ],
-    "$comment_deniedSkills": "Claude Code bundled skills that overlap the room (scheduling, orchestration, config editing, sub-agent reviews). Applied as Skill(skill:<name>) deny rules in the provider's disallowedTools: the guard for a Claude Code that does not know CLAUDE_CODE_DISABLE_BUNDLED_SKILLS."
+    "$comment_deniedSkills": "Bundled Claude Code skills that overlap the room, denied as Skill(skill:<name>) in the provider's disallowedTools: the guard for a Claude Code that does not know CLAUDE_CODE_DISABLE_BUNDLED_SKILLS."
   },
   "codex": {
     "launch": {
@@ -191,7 +191,7 @@
         "memories",
         "plugins"
       ],
-      "$comment_featuresOff": "plugins: with it on, Codex syncs its plugin marketplace into every seat's home at each start (93 MB in one home of the run of 2026-10-13, and a temporary clone left behind per start). A seat is given no plugin, so the feature is off. An owner who sets sharePlugins takes it out of this list.",
+      "$comment_featuresOff": "plugins: left on, Codex syncs its marketplace into every seat's home at each start, and a seat gets no plugin. An owner who sets sharePlugins removes it from this list.",
       "multiAgentV2Off": true,
       "agentsOff": true
     }
@@ -203,7 +203,7 @@
       }
     },
     "runtime": {
-      "$comment": "A Pi seat gets the room's and Paseo's tools through Pi's built-in MCP (Pi 0.99 or later): Paseo registers its servers there. settings is laid over the user's settings.json: no user package or extension reaches the seat, and none can stand in for the built-in MCP.",
+      "$comment": "A Pi seat gets the room's and Paseo's tools through Pi's built-in MCP (Pi 0.99+), where Paseo registers its servers. settings overlays the user's settings.json: no user package or extension reaches the seat or stands in for that MCP.",
       "shareFiles": [
         "auth.json",
         "models.json",
@@ -246,7 +246,7 @@
     }
   },
   "daemon": {
-    "$comment": "Daemon-wide switches, applied when the room is set up. These affect every agent on the host, not only seats. The setup screen sets browserTools, enableTerminalAgentHooks and bundledSkills and reports dictation and voiceMode; install.sh sets all five.",
+    "$comment": "Daemon-wide switches applied at setup; they reach every agent on the host, not only seats. The setup screen sets browserTools, enableTerminalAgentHooks and bundledSkills and only reports dictation and voiceMode; install.sh sets all five.",
     "browserTools": false,
     "enableTerminalAgentHooks": false,
     "dictation": false,
@@ -254,7 +254,7 @@
     "bundledSkills": "none"
   },
   "mail": {
-    "$comment": "The room's MCP server (seatwork_mail, seatwork_inbox) and delivery rules. Agents never use send_agent_prompt; every message is an envelope the plugin delivers without interrupting anyone. A CANDIDATE, REVIEW or DONE a seat mails its parent waits for that seat's own turn end and is its one report; an ACK, a DONE that repeats itself after mail that asked nothing, a Lead's STATUS after its first report (only the newest waits), a HOLD or NOTED that asks nothing of a Peer whose candidate is under review, and the bounce of a mail that asked nothing start no turn and are read with the recipient's next mail. A body is delivered whole. gatherReviews: the read-only seats an Owner launched in one turn (Lens, review and research Peers, scouts) are one round, and their REVIEW reports are held until the last of the round is in, or for room.params.reviewStallMinutes; in the run of 2026-10-13 evening 32 reports arrived one by one and each cost its Lead a turn.",
+    "$comment": "The room's MCP server (seatwork_mail, seatwork_inbox) and delivery rules. Seats never use send_agent_prompt; the plugin delivers each mail whole and interrupts only for a STOP order. A CANDIDATE, REVIEW or DONE to a parent waits for the sender's turn end and is its one report. Starting no turn, read with the next mail: an ACK; a DONE repeated after mail that asked nothing; a Lead's STATUS after its first (only the newest waits); a HOLD or NOTED asking nothing of a Peer under review; the bounce of a mail that asked nothing. gatherReviews: the read-only seats one Owner turn launches (Lens, review and research Peers, scouts) are one round: their REVIEWs wait for the last one, or room.params.reviewStallMinutes, and reach the Owner in one turn.",
     "port": 47611,
     "holdFyiWhileRunning": true,
     "gatherReviews": true,
@@ -264,14 +264,14 @@
       "pi": "hold",
       "opencode": "hold"
     },
-    "$comment_midTurn": "Mail to a RUNNING seat. 'steer' hands it to Paseo's steer; observed on 2026-10-07: Claude cancels the running tool ('[Request interrupted by user for tool use]') and Pi aborts it ('Command aborted'), so every harness is 'hold': mail is delivered the moment the recipient's turn ends. Keep 'hold' unless you verify a harness applies steer after the tool call."
+    "$comment_midTurn": "Mail to a running seat. hold: delivered when its turn ends. steer: Paseo's steer, under which Claude cancels its running tool and Pi aborts it. Keep hold until a harness is seen to apply steer after the tool call."
   },
   "owner": {
-    "$comment": "What the room does for the Owner in the Paseo app. chime: while the app is open, a short sound when a seat nobody above reads by mail (HQ, a Supervisor, a seat you opened yourself) ends a turn with DECISION_NEEDED, BLOCKED, a WAITING ON YOU row, or a failure.",
+    "$comment": "chime: while the Paseo app is open, a short sound when a seat nobody above reads by mail (HQ, a Supervisor, a seat you opened yourself) ends a turn with DECISION_NEEDED, BLOCKED, a WAITING ON YOU row or a failure.",
     "chime": true
   },
   "gc": {
-    "$comment": "Room garbage collection, run by the plugin every everyMinutes and on agent.archived. A seat idle longer than its role's hours (0 = never) is archived unless one of its descendants is still alive; heartbeats whose seat is archived or gone are deleted; mail still held for an archived seat is bounced to its sender. It never kills processes and never touches agents that are not room seats.",
+    "$comment": "Room garbage collection, every everyMinutes and on agent.archived. A seat idle past its role's hours (0 = never) is archived unless a descendant is alive; a heartbeat of a seat archived or gone is deleted; mail held for an archived seat bounces to its sender. It kills no process and touches no agent that is not a room seat.",
     "everyMinutes": 10,
     "idleHoursBeforeArchive": {
       "hq": 0,
@@ -282,7 +282,7 @@
     },
     "deleteOrphanHeartbeats": true,
     "tellParent": true,
-    "$comment_runtimes": "What an agent CLI leaves in a seat's home (runtimes/<harness>/<role>) and GC clears, per harness. A home is swept only while no seat of it is open, so a running CLI loses nothing and an open seat can still be resumed. rebuilt: entries the CLI makes again by itself (its temporary folders, its log database); deleted whole. sessions: folders of session records; a file there goes once it has not been written for as long as logs are kept (keepLogDays in the plugin's shared/settings.json), and with it the transcript of the archived seat it belonged to. A Claude seat has no home of its own and OpenCode keeps its sessions in the user's own storage: neither is touched.",
+    "$comment_runtimes": "What an agent CLI leaves in a seat's home (runtimes/<harness>/<role>) and GC clears, only while none of its seats is open: a running CLI loses nothing and an open seat can still be resumed. rebuilt: entries the CLI makes again (temporary folders, log database), deleted whole. sessions: folders of session records; a file goes once unwritten for keepLogDays (shared/settings.json), with the transcript of its archived seat. Untouched: a Claude seat has no home of its own, and OpenCode keeps sessions in the user's own storage.",
     "runtimes": {
       "codex": { "rebuilt": [".tmp", "tmp", "shell_snapshots", "logs_2.sqlite", "logs_2.sqlite-shm", "logs_2.sqlite-wal"], "sessions": ["sessions", "archived_sessions"] },
       "pi": { "rebuilt": [], "sessions": ["sessions"] },
@@ -290,12 +290,12 @@
     }
   },
   "watcher": {
-    "$comment": "The watcher reads the turns of the roles in `watch` and tells the seat above when a turn goes off (a Peer's to its Lead, a Lead's to its Supervisor). Code computes the facts of a turn from its tool calls; most turns end there, at no cost. A rule either stands on facts alone or opens one question to a decision model about what the seat's message claims. mode: off does nothing; shadow scans and writes watch/scans.jsonl but mails nobody; on also mails. The mode is each machine's own choice: install.sh asks once and writes it into the installed copy (`./install.sh --watcher off|shadow|on` changes it); this file ships it off. It never stops, cancels or edits a seat.",
+    "$comment": "Reads the turns of the roles in `watch` and tells the seat above when one goes off (Peer to Lead, Lead to Supervisor); it never stops, cancels or edits a seat. Code computes a turn's facts from its tool calls, and most turns end there at no cost; a rule stands on facts alone or asks a decision model one question about what the seat's message claims. mode: off does nothing; shadow scans into watch/scans.jsonl and mails nobody; on also mails. Shipped off; each machine chooses: install.sh asks once and writes the installed copy (`./install.sh --watcher off|shadow|on` changes it).",
     "mode": "off",
     "watch": ["lead", "peer"],
     "pollSeconds": 20,
     "historyEntries": 200,
-    "$comment_rules": "Per rule: raise (mail the seat above when mode is on), log (scan log only), off. The first thirteen stand on facts read from tool calls, from git and from the brief. The last three ask the model. software-install speaks when a seat puts a tool or a browser on the machine and its brief does not grant it; a project's own dependencies are not that. Replayed on the 2,367 shell commands of the run of 2026-10-13 it speaks on six, four browser downloads and two downloads of Node archives, and on nothing else. skill-skipped speaks when a Peer that writes code reports CANDIDATE without having loaded candidate-handoff, or edits under a law that names one of its skills without having loaded it (same run: 3 of 9 Peers that handed in a CANDIDATE had not loaded the first, 8 of 11 had not loaded hard-cut under a law that names it); each skill is said once per seat. It logs until its count on a real room says whether the seat above should hear it. unverified-completion mails: measured on this room's seats it caught 22 of 23 claims of checks that had not run, with 0 of 14 false; it is not asked when checks ran and their result could not be read. The other two stay on log until this room's own labels show they separate (seatwork_watch_stats prints the numbers). decided-beyond-brief was taken out on 2026-10-13: over 46 real turns its score told sent-back work from accepted work no better than chance (AUROC 0.46).",
+    "$comment_rules": "raise: mail the seat above when mode is on; log: scan log only; off. The first thirteen stand on facts (tool calls, git, the brief); the last three ask the model. software-install: a tool or a browser put on the machine without the brief granting it; a project's own dependencies do not count. skill-skipped: a code-writing Peer reports CANDIDATE without candidate-handoff loaded, or edits under a law naming a skill it has not loaded; said once per skill and seat. It logs until a real room's count says the seat above should hear it. unverified-completion is not asked when checks ran but their result could not be read. external-action and reopen-condition log until this room's labels show they separate (seatwork_watch_stats).",
     "rules": {
       "irreversible": "raise",
       "outside-project": "raise",
@@ -314,12 +314,12 @@
       "external-action": "log",
       "reopen-condition": "log"
     },
-    "$comment_thresholds": "sleepSeconds: seconds of waiting in the shell in one turn (sleep, a loop that sleeps), by the clock, before it is told. repeatRun: the same action with the same result, back to back. cycleRepeats: rounds of a pattern of two to four actions. sameFailure: the same check failing the same way. inFlightFactor: one running command may take this many times the role's stall minutes (room.params) before its silence is told.",
+    "$comment_thresholds": "sleepSeconds: clock seconds a turn may wait in the shell (sleep, a sleeping loop) before it is told. repeatRun: the same action and result, back to back. cycleRepeats: rounds of a pattern of two to four actions. sameFailure: one check failing the same way. inFlightFactor: a running command may take this many times the role's stall minutes (room.params) before its silence is told.",
     "thresholds": { "sleepSeconds": 60, "repeatRun": 4, "cycleRepeats": 3, "sameFailure": 4, "inFlightFactor": 3 },
-    "$comment_scores": "For a rule that asks the model: the score (0 to 1) from which its finding counts. Fitted to one model version and one revision of the questions (watch/questions.ts).",
+    "$comment_scores": "The score (0 to 1) from which a model-asking rule's finding counts; fitted to one model version and one revision of the questions (watch/questions.ts).",
     "scores": { "unverified-completion": 0.85, "external-action": 0.85, "reopen-condition": 0.85 },
     "maxMailsPerSeat": 5,
-    "$comment_engine": "The decision model. url is the full endpoint (TypeSafe's /v1/systemone or OpenRouter's /api/alpha/decisions take the same body). The key is read from the environment variable keyEnv, else from the file keyFile under the room home; without a key the rules that ask are logged as facts only. The seat's last message and a few lines of its brief go to that endpoint; tool output never does.",
+    "$comment_engine": "The decision model. url: the full endpoint (TypeSafe's /v1/systemone and OpenRouter's /api/alpha/decisions take the same body). The key comes from the env var keyEnv, else the file keyFile under the room home; with none, the asking rules are logged as facts only. The endpoint gets the seat's last message and a few lines of its brief, never tool output.",
     "engine": {
       "url": "https://openrouter.ai/api/alpha/decisions",
       "model": "typesafe/jev-1.13",
@@ -329,15 +329,15 @@
       "restAfterFailures": 3,
       "restMinutes": 10
     },
-    "$comment_budget": "What the model may cost, counted from the tokens each reply reports. When a day has spent its share of the plan, only end-of-turn questions are asked; at the cap nothing is asked until the next month.",
+    "$comment_budget": "The model's cost, counted from the tokens each reply reports. Once a day has spent its share of the plan only end-of-turn questions are asked; at the cap, none until next month.",
     "budget": { "usdPerMillionTokens": 0.042, "monthlyPlanUsd": 6, "monthlyCapUsd": 10 },
-    "$comment_state": "What of a seat's final message goes to the model: the whole of it up to messageChars (the longest hand-over report seen in a room was 9,500). A longer one is cut to the lines a question reads; a question whose lines do not fit is not asked that turn, and the scan log names it. briefLineChars cuts each line of the brief.",
+    "$comment_state": "messageChars: a seat's final message goes to the model whole up to this; a longer one is cut to the lines a question reads, and a question whose lines do not fit is skipped that turn and named in the scan log. briefLineChars cuts each line of the brief.",
     "state": { "messageChars": 12000, "briefLineChars": 400 },
-    "$comment_calibration": "How a rule that asks earns `raise`: a turn is labelled by what the seat above did with it within labelWindowMinutes (ACCEPT, or REJECT / REVISED BRIEF; a HOLD is no verdict). Work comes back for many reasons, so for unverified-completion a returned turn counts against the seat only when the seat above ran a test of its own before its verdict and saw it fail; returned with no such run, the turn is left out. A rule is fit once it has minLabels labelled turns and separates them with at least minAuroc, at a threshold that flags at most maxFalseRaiseRate of the accepted ones.",
+    "$comment_calibration": "How an asking rule earns `raise`. A turn is labelled by what the seat above did within labelWindowMinutes: ACCEPT, or REJECT / REVISED BRIEF (a HOLD is no verdict). Work returns for many reasons, so for unverified-completion a returned turn counts only if the seat above ran its own test before the verdict and saw it fail; else it is left out. A rule is fit with minLabels labelled turns separated at minAuroc or better, at a threshold flagging at most maxFalseRaiseRate of the accepted ones.",
     "calibration": { "labelWindowMinutes": 60, "minLabels": 100, "minAuroc": 0.75, "maxFalseRaiseRate": 0.05 }
   },
   "room": {
-    "$comment": "Who may mail whom and who may create whom; the plugin checks both. They guard against mistakes and are not a security boundary: every seat runs as the same user. Nothing travels up from a Supervisor to hq (turn ends, permissions, GC notices, mail): hq looks at the room and sends down. A spawn entry role:spec allows only that specialization (supervisor: peer:research). A mail off the route table or outside the tree is refused; a seat created outside spawn is archived and its parent told (its first prompt may have started by then). params are quoted by the role prompts through {{placeholders}}.",
+    "$comment": "routes: who may mail whom; spawn: who may create whom. The plugin checks both, against mistakes: no security boundary, every seat runs as the same user. Nothing goes up from a Supervisor to hq (turn ends, permissions, GC notices, mail); hq looks at the room and sends down. role:spec in spawn allows that specialization only (supervisor: peer:research). Mail off the table or outside the tree is refused; a seat created outside spawn is archived and its parent told, though its first prompt may have started.",
     "routes": {
       "hq>supervisor": true,
       "supervisor>hq": false,
@@ -377,7 +377,7 @@
       "peer": [],
       "lens": []
     },
-    "$comment_params": "Numbers the role prompts quote through {{placeholders}}; change them here, never in a prompt. heartbeatCron: how often the Supervisor's heartbeat wakes it; every Lead report that asks or closes already wakes it, so the beat only catches what slipped between reports; a quarter hour woke an idle Supervisor for nothing (run of 2026-10-13), hence half an hour. mailChars: the longest body seatwork_mail takes; in that run a REVIEW was 9,000 characters at the median and 28,650 at most, and a Lead read 660,000 characters of reviews and candidates. peerStallMinutes: a Peer silent this long with nothing pending gets a status check (a Peer turn is usually minutes). reviewStallMinutes: review, research and lens seats read for a long time before they write, so they get longer. leadStallMinutes: a Lead silent this long with no running Peer and no pending permission. readBudgetTokens: reading per Peer task before the Lead must split it; ~80k tokens is ~320 KB of source, which a default-tier model still reasons over well. cheapReadBudgetTokens: the same for the cheap tier, which loses the thread sooner. rotateAtTokens: a Lead or Peer whose context has grown past this is named to the seat above, with its size, under its next report: every step of a seat reads its whole context again, so its next task belongs to a fresh seat (run of 2026-10-13 evening: one Peer went from 202K to 590K tokens over four repair rounds and cost a third of the run; a Lead handed over only at 346K).",
+    "$comment_params": "Quoted by role prompts as {{placeholders}}; change them here, never in a prompt. heartbeatCron: the Supervisor's beat; Lead reports that ask or close already wake it, so it only catches what slipped between. mailChars: the longest body seatwork_mail takes. peerStallMinutes: a Peer silent this long with nothing pending gets a status check; its turns take minutes. reviewStallMinutes: longer, for review, research and lens seats, which read long before writing. leadStallMinutes: a Lead silent this long with no running Peer or pending permission. readBudgetTokens: reading per Peer task before the Lead must split it; ~80k tokens (~320 KB of source) is what a default-tier model reasons over well. cheapReadBudgetTokens: the same for the cheap tier, which loses the thread sooner. rotateAtTokens: a Lead or Peer past this is named with its size to the seat above under its next report; each step rereads the whole context, so its next task goes to a fresh seat.",
     "params": {
       "heartbeatCron": "*/30 * * * *",
       "peerStallMinutes": 6,
@@ -388,11 +388,21 @@
       "mailChars": 6000,
       "rotateAtTokens": 200000
     },
-    "$comment_handin": "freshEyes: a writing Peer's CANDIDATE goes back to it once, before its Owner reads it, for one pass over its own work as a reviewer would read it; the next CANDIDATE goes up. Each repair after a rejection owes the pass again. It costs the Peer one short turn on a warm context, against a review round that costs two or three reviewer seats and as many turns of the Lead. false passes every candidate straight up.",
+    "$comment_handin": "freshEyes: a writing Peer's CANDIDATE returns to it once before its Owner reads it, for a pass over its own work as a reviewer would; the next one goes up, and each repair after a rejection owes the pass again. One short Peer turn, against a review round of two or three seats.",
     "handin": {
       "freshEyes": true
     },
-    "$comment_recovery": "What the room does when a seat's turn fails, before anyone is told. A service error (overload, a dropped connection, anything the service did not call a quota or an account problem) is tried again after delaysSeconds, once per entry; the seat is sent a short note and continues. A quota is waited out: until the time the message names, else limitedMinutes at a time, for limitedMaxHours at most, and those waits use up no try. An account or a prompt the service refuses, and a seat out of tries, go to its Owner as FAILED, as before.",
+    "$comment_work": "The work store in <project>/.seatwork/.work/ (work.db, with issues.jsonl as its text copy). busyTimeoutMs: a write waits this long on another process's, then fails as DATABASE_LOCKED. flushAfterMs: the text copy is written once per burst of writes, this long after the first. staleClaimMinutes: an issue in progress untouched this long shows in the graph's alerts. close.minReasonChars: a close says what was done and its commit or evidence. close.forbidSelfClose: an issue's holder cannot close it; its Owner does. A project's own .seatwork/.work/policy.json overrides any of these.",
+    "work": {
+      "busyTimeoutMs": 30000,
+      "flushAfterMs": 250,
+      "staleClaimMinutes": 120,
+      "close": {
+        "minReasonChars": 20,
+        "forbidSelfClose": true
+      }
+    },
+    "$comment_recovery": "A failed turn, before anyone is told. A service error (anything but a quota, an account problem or a refused prompt) is retried after delaysSeconds, once per entry: the seat gets a short note and continues. A quota is waited out until the time its message names, else limitedMinutes at a time, limitedMaxHours at most; those waits use up no try. An account, a refused prompt, and a seat out of tries go to its Owner as FAILED.",
     "recovery": {
       "delaysSeconds": [30, 60, 120],
       "limitedMinutes": 10,

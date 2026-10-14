@@ -22,8 +22,13 @@ export function valueOf(word: Word, known: Known): Value {
       if (part.quote !== "none") quoted = true;
       else if (GLOB.test(part.text)) glob = true;
       add(part.text);
-    } else if (part.kind === "tilde") add(part.user ? `~${part.user}` : known.place.home);
-    else {
+    } else if (part.kind === "tilde") {
+      const home = part.user ? `~${part.user}` : homeOf(known);
+      if (home === null) {
+        if (text !== null) prefix = text;
+        text = null;
+      } else add(home);
+    } else {
       const found = fill(part, known);
       if (found.temp) temp = true;
       if (found.text === null) {
@@ -33,6 +38,12 @@ export function valueOf(word: Word, known: Known): Value {
     }
   }
   return { text, prefix: text ?? prefix, quoted, glob, temp, word };
+}
+
+/** The folder `~` stands for: the machine's home unless the line set `HOME`; null when it set it to something not known. */
+export function homeOf(known: Known): string | null {
+  const set = known.vars.get("HOME");
+  return set ? set.value : known.place.home;
 }
 
 /** What one run-time part of a word is worth: a variable's value, a substitution's text, or nothing known. */
@@ -67,6 +78,8 @@ export function substitution(script: Script, known: Known): Variable & { text: s
   const name = words[0]?.split("/").pop();
   if (name === "mktemp") return { text: null, value: null, temp: true };
   if (name === "pwd" && words.length === 1) return { text: known.cwd, value: known.cwd, temp: false };
+  const found = lookup(command.words, name, known);
+  if (found !== null) return { text: found, value: found, temp: false };
   if (
     (name === "echo" || name === "printf") &&
     words.slice(1).every((w): w is string => w !== null && !w.includes("%"))
@@ -76,6 +89,15 @@ export function substitution(script: Script, known: Known): Variable & { text: s
     return { text: out, value: out, temp: false };
   }
   return none;
+}
+
+/** The program a lookup command (`which`, `command -v`, `type -p`, `readlink`, `realpath`) names, which stands for the path it prints; null for any other command. */
+function lookup(words: Word[], name: string | undefined, known: Known): string | null {
+  const flags = name === "command" ? ["-v"] : name === "type" ? ["-p", "-P"] : null;
+  const start = flags ? (flags.includes(literal(words[1] ?? words[0]) ?? "") ? 2 : -1) : 1;
+  if (start < 0 || !["which", "readlink", "greadlink", "realpath", "command", "type"].includes(name ?? "")) return null;
+  const operands = words.slice(start).filter((w) => !(literal(w) ?? "x").startsWith("-"));
+  return operands.length === 1 ? valueOf(operands[0], known).text : null;
 }
 
 /** The absolute path a value names, against the command's folder; null when unknown. */

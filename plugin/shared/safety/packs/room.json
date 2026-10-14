@@ -70,6 +70,13 @@
           "explanation": "What the repository's config names runs on every git call there, the room's own included, outside the guard.",
           "safer": ["Ask your Owner; the person changes a repository's git configuration"]
         },
+        "git-attributes-driver": {
+          "severity": "critical",
+          "grant": "human",
+          "reason": "a .gitattributes line that names a filter or driver of the repository's own",
+          "explanation": "git runs the program the repository's config gives such a name, on every git call there, the room's own included, outside the guard.",
+          "safer": ["Ask your Owner; the person changes how a repository's files are converted"]
+        },
         "paseo-cli": {
           "severity": "critical",
           "grant": "human",

@@ -29,6 +29,7 @@ import {
   type Needs,
   type PostedLine,
   type Priority,
+  type WakeAdded,
   type WakeUp,
 } from "./store";
 import { dueOf, noteOf, wakeBody, wakeSubject, type WakeAsk } from "./wakeup";
@@ -108,8 +109,9 @@ const DEFAULTS: MailLimits = {
 const PRIORITY_RANK: Record<Priority, number> = { blocking: 0, action: 1, fyi: 2 };
 const ASKS_WEIGHED = 8;
 
-/** Whether a mail waits for the next one that starts a turn: it is quiet, or held until a time not yet come. */
-const startsNoTurn = (mail: Held, now: number) => mail.quiet || (!!mail.heldUntil && now < Date.parse(mail.heldUntil));
+/** Whether a mail is held until a time after `now`. */
+const heldAt = (mail: { heldUntil?: string | null }, now: number) =>
+  !!mail.heldUntil && now < Date.parse(mail.heldUntil);
 
 const sum = (counts: readonly number[]) => counts.reduce((total, count) => total + count, 0);
 
@@ -118,18 +120,21 @@ const signalFor = (subject: string) =>
   subjectOpening(subject) ?? subject.split(":")[0].replace(/^\W+/, "").trim().slice(0, 40).toUpperCase();
 
 /**
- * The room's mail: its seats, its stores, and delivery to a seat at rest. Other districts set two hooks: `appendix`
- * adds to the mail a seat is handed, `chooseAsk` picks which open ask an answer that names none settles.
+ * The room's mail: its seats, its stores, and delivery to a seat at rest. Other districts set three hooks: `appendix`
+ * adds to the mail a seat is handed, `chooseAsk` picks which open ask an answer that names none settles, `holds` says
+ * why a seat takes no mail now; the mail waits in its store.
  */
 export class MailEngine implements Directory {
   appendix: ((agentId: string) => { text: string; told(): void } | null) | null = null;
   chooseAsk: ((answer: Mail, asks: readonly Message[]) => Promise<{ ask: number | null } | null>) | null = null;
+  holds: ((agentId: string) => string | null) | null = null;
 
   private readonly seats = new Map<string, SeatRecord>();
   private readonly adoptions = new Map<string, string>();
   private readonly stores = new Map<string, MailStore>();
   private readonly delivering = new Set<string>();
   private readonly again = new Set<string>();
+  private readonly firing = new Set<MailStore>();
   private readonly woke = new Map<string, Mail[]>();
   private readonly roots = new Map<string, string | null>();
   private readonly paused = new Set<string>();
@@ -213,7 +218,7 @@ export class MailEngine implements Directory {
   /** What a store just opened gets: its mail back from the files when it lost its file, reports taken by a stopped process kept again, a check against the files. */
   private settleOpening(store: MailStore, dir: string, fresh: boolean, since: string): void {
     this.unwell.delete(dir);
-    // a store that lost its file, or was set aside as damaged, gets its mail back from the files
+    // a store that lost its file, or was set aside as damaged, gets its mail and its wake-ups back from their files
     if ((fresh || store.startedOver) && store.count() === 0) {
       const archived = readArchive(dir);
       if (archived.length > 0) {
@@ -225,6 +230,8 @@ export class MailEngine implements Directory {
           detail: `${store.startedOver ? "its database was damaged and set aside" : "its database was gone"}; ${back} mails were read back from their files`,
         });
       }
+      const woken = store.restoreWakeUps();
+      if (woken > 0) this.log(`mail: ${woken} wake-ups of ${dir} read back from their copy`);
     }
     // a report taken to go out by a process that stopped is posted by the next sweep
     const taken = store.keepTaken();
@@ -635,6 +642,8 @@ export class MailEngine implements Directory {
       store.hold(input.id, to[0], input.round ?? null, input.heldUntil ?? null);
       mail = this.heldBy(store, input.id, to[0])!;
     } else mail = this.write(store, input, "queued");
+    // the last report of a round is in: the reports held for it go out with it
+    if (input.round && !heldAt(input, this.now().getTime())) store.release(to[0], input.round);
     this.file(store, dir, mail.id);
     await this.settle(store, mail, to);
     for (const seat of recipients) await this.deliver(seat);
@@ -721,9 +730,9 @@ export class MailEngine implements Directory {
     return mails;
   }
 
-  /** How many mails are held for a seat and since when the oldest has been; undefined when none is. Reads no body. */
+  /** How many mails wait for a seat and since when the oldest has; undefined when none does. A report held for its round is not waiting yet. Reads no body. */
   holding(agentId: string): { mails: number; oldestAt: string } | undefined {
-    const waiting = this.storeOf(agentId, false)?.waitingFor(agentId);
+    const waiting = this.storeOf(agentId, false)?.waitingFor(agentId, this.now().toISOString());
     return waiting && { mails: waiting.count, oldestAt: waiting.since };
   }
 
@@ -733,11 +742,22 @@ export class MailEngine implements Directory {
     return owed && { asks: owed.count, oldestAt: owed.since };
   }
 
-  /** Hands a seat its held mail; mail on its way out is left alone. */
+  /** Of a seat's queue, the mail that may go out: a report still held for its round waits for its time, and once one report of a round is due the round goes whole. */
+  private deliverable(store: MailStore, agentId: string, queue: readonly Held[], now: number): Held[] {
+    const ripe = new Set(
+      queue.flatMap((mail) => (mail.round && mail.heldUntil && !heldAt(mail, now) ? [mail.round] : [])),
+    );
+    for (const round of ripe) store.release(agentId, round);
+    return queue.filter((mail) => !heldAt(mail, now) || (mail.round !== null && ripe.has(mail.round)));
+  }
+
+  /** Hands a seat the mail waiting for it; mail on its way out and reports not yet due are left alone. */
   takeHeld(agentId: string, peek = false): Mail[] {
     const store = this.storeOf(agentId, false);
-    const mails = store?.queued(agentId).filter((mail) => mail.state === "queued") ?? [];
-    if (store && !peek)
+    if (!store) return [];
+    const queued = store.queued(agentId).filter((mail) => mail.state === "queued");
+    const mails = this.deliverable(store, agentId, queued, this.now().getTime());
+    if (!peek)
       store.mark(
         agentId,
         mails.map((mail) => mail.id),
@@ -794,28 +814,32 @@ export class MailEngine implements Directory {
     }
     const store = this.storeOf(agentId, false);
     if (!store) return;
+    // a held seat takes only a stop order, which ends a running turn and its spending
+    const held = this.holds?.(agentId) != null;
+    if (held && !store.queued(agentId).some((mail) => mail.urgent)) return;
     this.delivering.add(agentId);
     try {
-      if (store.queued(agentId).length === 0) return;
+      if (this.deliverable(store, agentId, store.queued(agentId), this.now().getTime()).length === 0) return;
       const status = await this.host.state(agentId);
       // read after the wait: mail posted meanwhile is in the store now
       const queue = store.queued(agentId);
       if (status === "gone") return await this.bounce(store, agentId, queue);
+      const ready = this.deliverable(store, agentId, queue, this.now().getTime());
       // a stop order does not wait for the turn, or the permission prompt, it finds
-      const stops = status !== "idle" && queue.some((mail) => mail.urgent);
+      const stops = status !== "idle" && ready.some((mail) => mail.urgent);
       if (status === "unknown" || (status === "permission" && !stops)) return;
-      const now = this.now().getTime();
       let send: Mail[];
-      if (status === "idle" || stops) {
+      if (held) send = stops ? ready.filter((mail) => mail.urgent) : [];
+      else if (status === "idle" || stops) {
         // quiet mail starts no turn; it goes out with the first mail that does
-        send = queue.some((mail) => !startsNoTurn(mail, now)) ? queue : [];
+        send = ready.some((mail) => !mail.quiet) ? ready : [];
       } else {
         // running: only harnesses whose steer waits for the current tool call get mail mid-turn
         // a seat is the provider <agent CLI>-<role>: how its CLI takes mail mid-turn is its own
         const provider = this.seats.get(agentId)?.provider ?? "";
         const midTurn: Partial<Record<string, MidTurnDelivery>> = this.policy.midTurn;
         const mode = midTurn[provider.split("-")[0]] ?? "hold";
-        send = mode === "steer" ? queue.filter((m) => m.priority !== "fyi" || !this.policy.holdFyiWhileRunning) : [];
+        send = mode === "steer" ? ready.filter((m) => m.priority !== "fyi" || !this.policy.holdFyiWhileRunning) : [];
       }
       if (send.length === 0) return;
       const ids = send.map((mail) => mail.id);
@@ -853,7 +877,9 @@ export class MailEngine implements Directory {
   async sweep(): Promise<void> {
     await this.each(this.known(), "the sweep of one store", async (store) => {
       await this.each([store], "the wake-ups of one store", (one) => this.fireWakeUps(one));
-      await this.each(store.waiting().keys(), "a delivery of the sweep", (seat) => this.deliver(seat));
+      await this.each(store.waiting(this.now().toISOString()).keys(), "a delivery of the sweep", (seat) =>
+        this.deliver(seat),
+      );
       await this.each(store.kept(), "a kept report of the sweep", async (kept) => {
         const status = await this.host.state(kept.sender);
         if (status !== "idle" && status !== "gone") return;
@@ -863,12 +889,16 @@ export class MailEngine implements Directory {
     });
   }
 
-  /** Sets a wake-up of `seat` for `by` after reading its time and note; null when `seat` already has the most waiting. */
-  setWakeUp(by: string, seat: string, ask: WakeAsk): WakeUp | null {
+  /** Sets a wake-up of `seat` for `by` after reading its time and note; the one waiting that this repeats, or the share that is full, when there is one. */
+  setWakeUp(by: string, seat: string, ask: WakeAsk): WakeAdded {
     const now = this.now();
     const due = dueOf(ask, now);
     const note = noteOf(ask.note);
-    return this.storeOf(seat)!.addWakeUp({ seat, by, at: now.toISOString(), due, note }, config.wake.perSeat);
+    const { perSeat, perSetter, sameWithinMinutes } = config.wake;
+    return this.storeOf(seat)!.addWakeUp(
+      { seat, by, at: now.toISOString(), due, note },
+      { own: perSeat, others: perSeat, setter: perSetter, sameWithinMs: sameWithinMinutes * 60_000 },
+    );
   }
 
   /** The soonest `limit` wake-ups waiting for a seat or set by it, in every project. */
@@ -896,9 +926,21 @@ export class MailEngine implements Directory {
     return found.length === 1 && found[0].store.closeWakeUp(id, "canceled") ? found[0].wake : null;
   }
 
-  /** Sends the wake-ups of a store that fell due, at most a pass's worth: each a WAKE mail, or dropped with a seat that is gone. */
+  /** Sends the wake-ups of a store that fell due; one pass of a store at a time. */
   private async fireWakeUps(store: MailStore): Promise<void> {
+    if (this.firing.has(store)) return;
+    this.firing.add(store);
+    try {
+      await this.fireDue(store);
+    } finally {
+      this.firing.delete(store);
+    }
+  }
+
+  /** Sends the due wake-ups of a store, the oldest first and at most `turnsPerPass` of them, so a crowd set for one minute does not start a crowd of turns: each a WAKE mail, or dropped with a seat that is gone. */
+  private async fireDue(store: MailStore): Promise<void> {
     const states = new Map<string, Status>();
+    let started = 0;
     await this.each(store.dueWakeUps(this.now().toISOString(), config.wake.perPass), "a wake-up", async (wake) => {
       if (!states.has(wake.seat))
         states.set(wake.seat, this.seats.has(wake.seat) ? await this.host.state(wake.seat) : "gone");
@@ -913,7 +955,9 @@ export class MailEngine implements Directory {
       const key = `wake-${wake.id}`;
       // a pass that stopped before the wake-up was closed finds its mail by this key and sends no second
       const since = new Date(this.now().getTime() - this.limits.keyHours * 3_600_000).toISOString();
-      if (!this.storeOf(wake.seat)!.byKey("room", key, since))
+      if (!this.storeOf(wake.seat)!.byKey("room", key, since)) {
+        if (started >= config.wake.turnsPerPass) return;
+        started += 1;
         await this.post({
           from: { agentId: "room", role: "system" },
           to: wake.seat,
@@ -924,6 +968,7 @@ export class MailEngine implements Directory {
           why: "a wake-up set earlier has come due",
           key,
         });
+      }
       store.closeWakeUp(wake.id, "fired");
     });
   }

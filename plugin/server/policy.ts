@@ -3,6 +3,7 @@ import { join } from "node:path";
 import type { RecoveryPolicy } from "./orchestration/recovery";
 import type { JevPolicy } from "./jev/index";
 import type { KnowledgePolicy } from "./knowledge/index";
+import type { BudgetPolicy } from "./operations/budget";
 import type { SafetyPolicy } from "./safety/guard";
 import type { WorkPolicy } from "./tasks/store";
 import { ROOM_HOME } from "./paths";
@@ -107,6 +108,7 @@ export interface RuntimePolicy {
   safety?: SafetyPolicy;
   jev?: JevPolicy;
   knowledge?: KnowledgePolicy;
+  budget?: BudgetPolicy;
 }
 
 export const POLICY_FILE = join(ROOM_HOME, "policy.json");
@@ -162,5 +164,6 @@ export function loadPolicy(): RuntimePolicy {
     safety: parsed.safety,
     jev: parsed.jev,
     knowledge: parsed.knowledge,
+    budget: parsed.budget,
   };
 }

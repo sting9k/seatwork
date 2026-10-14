@@ -1,6 +1,7 @@
 import { join } from "node:path";
 import config from "../../shared/mail.json";
 import { SQL_DIR } from "../paths";
+import { readJson, writeJson } from "../persisted";
 import { Sqlite, keptOutOfGit, type Row, type SqliteFailure } from "../sqlite";
 import { noteSettled, type Settled, type SettledLine } from "./archive";
 
@@ -77,6 +78,17 @@ export interface WakeUp {
   note: string;
 }
 
+/** The most wake-ups waiting for a seat: `own` set by itself, `others` by all other seats together, `setter` by one other seat; a wake-up of the same setter, seat and note within `sameWithinMs` of a waiting one repeats it. */
+export interface WakeShares {
+  own: number;
+  others: number;
+  setter: number;
+  sameWithinMs: number;
+}
+
+/** The answer to a request for a wake-up: the one now waiting, and whether it was waiting already; or the share that is full. */
+export type WakeAdded = { wake: WakeUp; repeat: boolean } | { full: "own" | "others" | "setter" };
+
 export interface Hit {
   id: number;
   at: string;
@@ -104,6 +116,7 @@ const MESSAGE = `m.id, m.at, m.thread, m.reply_to, m.sender, m.sender_role, m.si
 const DELIVERY = `d.seat, d.kind, d.priority, d.state, d.quiet, d.progress, d.urgent, d.round, d.held_until,
   d.delivered_at, d.how`;
 const WAKEUP = "id, seat, by, at, due, note";
+const WAKE_COPY = "wakeups.json";
 const RECLAIM_PAGES = 4000;
 const MAX_ID = Number.MAX_SAFE_INTEGER;
 const LIVE = `EXISTS (SELECT 1 FROM deliveries l WHERE l.message_id = m.id AND l.state NOT IN ('replaced', 'withdrawn', 'bounced'))`;
@@ -236,7 +249,7 @@ export class MailStore extends Sqlite {
     });
   }
 
-  /** Puts back mail read from its files; a delivery the journal names no settled state for is sent once more. */
+  /** Puts back mail read from its files, a report's round and hold with it; a delivery the journal names no settled state for is sent once more. */
   restore(entries: readonly { message: Message; deliveries: readonly NewDelivery[] }[], settled: Settled): number {
     return this.transaction("write", () => {
       for (const { message, deliveries } of entries) {
@@ -265,13 +278,15 @@ export class MailStore extends Sqlite {
           // settled in the journal stays settled; any other is sent again as a possible repeat
           const state = settled.states.get(`${message.id}|${to.seat}`) ?? "sending";
           this.run(
-            "INSERT INTO deliveries (message_id, seat, kind, priority, state, quiet, delivered_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            "INSERT INTO deliveries (message_id, seat, kind, priority, state, quiet, round, held_until, delivered_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
             message.id,
             to.seat,
             to.kind,
             to.priority,
             state,
             to.quiet ? 1 : 0,
+            state === "sending" ? (to.round ?? null) : null,
+            state === "sending" ? (to.heldUntil ?? null) : null,
             state === "sending" ? null : message.at,
           );
           // the record of what was posted comes back with the mail, at the mail's own time
@@ -381,21 +396,23 @@ export class MailStore extends Sqlite {
     ).map(toHeld);
   }
 
-  /** How many mails wait for each seat that has any, and since when the oldest does. */
-  waiting(): Map<string, { count: number; since: string }> {
+  /** How many mails wait for each seat that has any, and since when the oldest does; a mail held until a time after `now` is not waiting yet. */
+  waiting(now: string): Map<string, { count: number; since: string }> {
     const rows = this.rows<{ seat: string; n: number; since: string }>(
       `SELECT d.seat, count(*) AS n, min(m.at) AS since FROM deliveries d CROSS JOIN messages m ON m.id = d.message_id
-       WHERE d.state IN ('queued', 'sending') GROUP BY d.seat`,
+       WHERE d.state IN ('queued', 'sending') AND (d.held_until IS NULL OR d.held_until <= ?) GROUP BY d.seat`,
+      now,
     );
     return new Map(rows.map((row) => [row.seat, { count: Number(row.n), since: row.since }]));
   }
 
-  /** How many mails wait for one seat, and since when the oldest does; undefined when none does. Reads no body. */
-  waitingFor(seat: string): { count: number; since: string } | undefined {
+  /** How many mails wait for one seat, and since when the oldest does; undefined when none does. A mail held until a time after `now` is not waiting yet. Reads no body. */
+  waitingFor(seat: string, now: string): { count: number; since: string } | undefined {
     const row = this.row<{ n: number; since: string | null }>(
       `SELECT count(*) AS n, min(m.at) AS since FROM deliveries d CROSS JOIN messages m ON m.id = d.message_id
-       WHERE d.seat = ? AND d.state IN ('queued', 'sending')`,
+       WHERE d.seat = ? AND d.state IN ('queued', 'sending') AND (d.held_until IS NULL OR d.held_until <= ?)`,
       seat,
+      now,
     );
     return row && row.n > 0 ? { count: Number(row.n), since: String(row.since) } : undefined;
   }
@@ -588,7 +605,7 @@ export class MailStore extends Sqlite {
 
   /** What waits for one seat waits for another: a successor takes its mail, and the wake-ups it holds or set; returns how many mails moved. */
   readdress(from: string, to: string): number {
-    return this.transaction("write", () => {
+    const done = this.transaction("write", () => {
       const woken = this.run(
         `UPDATE wakeups SET seat = CASE WHEN seat = ?1 THEN ?2 ELSE seat END, by = CASE WHEN by = ?1 THEN ?2 ELSE by END
          WHERE seat = ?1 OR by = ?1`,
@@ -604,15 +621,37 @@ export class MailStore extends Sqlite {
         to,
       ).changes;
       if (moved + woken > 0) this.event("readdressed", null, to, { from, moved, woken });
-      return moved;
+      return { moved, woken };
     });
+    if (done.woken > 0) this.copyWakeUps();
+    return done.moved;
   }
 
-  /** Keeps a wake-up; null when `seat` already has `most` waiting. */
-  addWakeUp(input: Omit<WakeUp, "id">, most: number): WakeUp | null {
-    return this.transaction("write", () => {
-      const held = this.row<{ n: number }>("SELECT count(*) AS n FROM wakeups WHERE seat = ?", input.seat);
-      if (Number(held?.n ?? 0) >= most) return null;
+  /** Keeps a wake-up, or answers with the one waiting that it repeats, or with the share that is full. */
+  addWakeUp(input: Omit<WakeUp, "id">, shares: WakeShares): WakeAdded {
+    const added = this.transaction("write", (): WakeAdded => {
+      const due = Date.parse(input.due);
+      const same = this.row(
+        `SELECT ${WAKEUP} FROM wakeups WHERE seat = ?1 AND due BETWEEN ?2 AND ?3 AND by = ?4 AND note = ?5 ORDER BY due, id LIMIT 1`,
+        input.seat,
+        new Date(due - shares.sameWithinMs).toISOString(),
+        new Date(due + shares.sameWithinMs).toISOString(),
+        input.by,
+        input.note,
+      );
+      if (same) return { wake: toWakeUp(same), repeat: true };
+      const counts = this.row<{ own: number; others: number; setter: number }>(
+        `SELECT count(CASE WHEN by = seat THEN 1 END) AS own, count(CASE WHEN by <> seat THEN 1 END) AS others,
+                count(CASE WHEN by = ?2 AND by <> seat THEN 1 END) AS setter FROM wakeups WHERE seat = ?1`,
+        input.seat,
+        input.by,
+      );
+      if (input.by === input.seat) {
+        if (Number(counts?.own ?? 0) >= shares.own) return { full: "own" };
+      } else {
+        if (Number(counts?.setter ?? 0) >= shares.setter) return { full: "setter" };
+        if (Number(counts?.others ?? 0) >= shares.others) return { full: "others" };
+      }
       const { lastInsertRowid: id } = this.run(
         "INSERT INTO wakeups (seat, by, at, due, note) VALUES (?, ?, ?, ?, ?)",
         input.seat,
@@ -622,8 +661,10 @@ export class MailStore extends Sqlite {
         input.note,
       );
       this.event("wakeup-set", null, input.seat, { id, by: input.by, due: input.due });
-      return { id, ...input };
+      return { wake: { id, ...input }, repeat: false };
     });
+    if ("wake" in added && !added.repeat) this.copyWakeUps();
+    return added;
   }
 
   /** One waiting wake-up by id. */
@@ -649,12 +690,59 @@ export class MailStore extends Sqlite {
 
   /** A wake-up is over: it fired, was dropped with its seat, or was canceled; false when it was over already. */
   closeWakeUp(id: number, outcome: "fired" | "dropped" | "canceled"): boolean {
-    return this.transaction("write", () => {
+    const closed = this.transaction("write", () => {
       const wake = this.wakeUp(id);
       if (!wake) return false;
       this.run("DELETE FROM wakeups WHERE id = ?", id);
       this.event(`wakeup-${outcome}`, null, wake.seat, { id, by: wake.by, due: wake.due });
       return true;
+    });
+    if (closed) this.copyWakeUps();
+    return closed;
+  }
+
+  /** Writes the pending wake-ups and the highest id given beside the database, so a rebuilt store has them back and gives no id twice; a copy that cannot be written is said and never undoes the change. */
+  private copyWakeUps(): void {
+    try {
+      const after = this.row<{ seq: number }>("SELECT seq FROM sqlite_sequence WHERE name = 'wakeups'")?.seq ?? 0;
+      const wakeups = this.rows(`SELECT ${WAKEUP} FROM wakeups ORDER BY id`).map(toWakeUp);
+      writeJson(join(this.folder, WAKE_COPY), { after: Number(after), wakeups });
+    } catch (error) {
+      console.error(`seatwork: the wake-ups of ${this.folder} were not copied`, error);
+    }
+  }
+
+  /** Puts back, in a store that was started anew, the wake-ups of the copy beside its database; returns how many. */
+  restoreWakeUps(): number {
+    const copy = readJson<{ after?: unknown; wakeups?: unknown }>(join(this.folder, WAKE_COPY), {});
+    const text = (value: unknown) => typeof value === "string" && value !== "";
+    const wakes = (Array.isArray(copy.wakeups) ? copy.wakeups : []).filter(
+      (wake): wake is WakeUp =>
+        Number.isInteger(wake?.id) && wake.id > 0 && [wake.seat, wake.by, wake.at, wake.due, wake.note].every(text),
+    );
+    const last = Math.max(
+      Number.isSafeInteger(copy.after) ? (copy.after as number) : 0,
+      ...wakes.map((wake) => wake.id),
+    );
+    if (last === 0) return 0;
+    return this.transaction("write", () => {
+      for (const wake of wakes)
+        this.run(
+          "INSERT OR IGNORE INTO wakeups (id, seat, by, at, due, note) VALUES (?, ?, ?, ?, ?, ?)",
+          wake.id,
+          wake.seat,
+          wake.by,
+          wake.at,
+          wake.due,
+          wake.note,
+        );
+      this.run(
+        "INSERT INTO sqlite_sequence (name, seq) SELECT 'wakeups', ?1 WHERE NOT EXISTS (SELECT 1 FROM sqlite_sequence WHERE name = 'wakeups')",
+        last,
+      );
+      this.run("UPDATE sqlite_sequence SET seq = max(seq, ?1) WHERE name = 'wakeups'", last);
+      this.event("wakeups-restored", null, null, { wakeups: wakes.length });
+      return wakes.length;
     });
   }
 

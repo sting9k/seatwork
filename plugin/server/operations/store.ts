@@ -18,7 +18,7 @@ export class OperationsError extends Error {
 /** Where an incident stands with the operator. */
 export type IncidentState = "open" | "acknowledged" | "snoozed" | "resolved";
 
-/** One kind of trouble the room met: how often, how often in the last hour, where it stands, and when its operator was last told. */
+/** One kind of trouble the room met: how often, how often in the last hour, where it stands, what the decision model read it as, and when its operator was last told. */
 export interface Incident {
   id: number;
   district: string;
@@ -30,7 +30,23 @@ export interface Incident {
   state: IncidentState;
   note: string;
   back: boolean;
+  kind: string | null;
   toldAt: string | null;
+}
+
+/** What one project's seats spent in a UTC day: dollars and turns that ended. */
+export interface Sums {
+  usd: number;
+  turns: number;
+}
+
+/** A project the breaker holds for a UTC day, why, and whether it was told. */
+export interface HoldRow {
+  project: string;
+  day: string;
+  since: string;
+  reason: string;
+  told: boolean;
 }
 
 /** One change to the policy as the store keeps it; `before`, `after` and `baseline` are JSON, before and after null when the key was absent. */
@@ -66,8 +82,9 @@ export type TraceNoteKind = "evidence" | "eliminated" | "hypothesis";
 
 const SLICE = 2000;
 const NOTES_SHOWN = 12;
+const SPEND_ROWS = 2000;
 const INCIDENT = `i.id, i.district, i.first_at AS firstAt, i.last_at AS lastAt, i.count, i.line, i.state, i.note,
-  i.back, i.told_at AS toldAt, (SELECT count(*) FROM log WHERE log.incident = i.id AND log.at >= ?) AS lastHour`;
+  i.back, i.kind, i.told_at AS toldAt, (SELECT count(*) FROM log WHERE log.incident = i.id AND log.at >= ?) AS lastHour`;
 const TUNE = "id, at, seat, path, before, after, reason, evidence, baseline, trace, reverts";
 const TRACE = `t.id, t.incident, t.opened_at AS openedAt, t.seat, t.hypothesis, t.closed_at AS closedAt, t.conclusion,
   (SELECT count(*) FROM tunes u WHERE u.trace = t.id AND EXISTS (SELECT 1 FROM tunes r WHERE r.reverts = u.id)) AS undone`;
@@ -101,13 +118,13 @@ export class OperationsStore extends Sqlite {
     return new Date(this.now().getTime() - 3_600_000).toISOString();
   }
 
-  /** Keeps a log line, and counts it under its incident key when it is one; a resolved incident seen again opens as back. */
-  record(district: string, line: string, key: string | null): void {
+  /** Keeps a log line, and counts it under its incident key when it is one; a resolved incident seen again opens as back. `ask` false keeps a new incident from being put to the decision model. */
+  record(district: string, line: string, key: string | null, ask = true): void {
     const at = this.now().toISOString();
     this.transaction("write", () => {
       const incident = key
         ? this.row<{ id: number }>(
-            `INSERT INTO incidents (key, district, first_at, last_at, count, line) VALUES (?, ?, ?, ?, 1, ?)
+            `INSERT INTO incidents (key, district, first_at, last_at, count, line, asked) VALUES (?, ?, ?, ?, 1, ?, ?)
                ON CONFLICT (key) DO UPDATE SET last_at = excluded.last_at, count = count + 1, line = excluded.line,
                  back = CASE WHEN state = 'resolved' THEN 1 ELSE back END,
                  told_at = CASE WHEN state = 'resolved' THEN NULL ELSE told_at END,
@@ -118,6 +135,7 @@ export class OperationsStore extends Sqlite {
             at,
             at,
             line,
+            ask ? 0 : 1,
           )!.id
         : null;
       this.run("INSERT INTO log (at, district, line, incident) VALUES (?, ?, ?, ?)", at, district, line, incident);
@@ -207,6 +225,21 @@ export class OperationsStore extends Sqlite {
         id,
       ).changes > 0
     );
+  }
+
+  /** The oldest incidents not yet put to the decision model, to ask about in one call. */
+  unasked(limit: number): { id: number; district: string; line: string; count: number }[] {
+    return this.rows<{ id: number; district: string; line: string; count: number }>(
+      "SELECT id, district, line, count FROM incidents WHERE asked = 0 ORDER BY id LIMIT ?",
+      limit,
+    ).map(({ id, district, line, count }) => ({ id, district, line, count }));
+  }
+
+  /** What the decision model read each incident as, null where it was not sure; each is asked no more. */
+  setKinds(kinds: readonly (readonly [number, string | null])[]): void {
+    this.transaction("write", () => {
+      for (const [id, kind] of kinds) this.run("UPDATE incidents SET kind = ?, asked = 1 WHERE id = ?", kind, id);
+    });
   }
 
   /** Keeps a change to the policy; its id is what a revert names. */
@@ -313,6 +346,102 @@ export class OperationsStore extends Sqlite {
       trace,
       NOTES_SHOWN,
     ).map(({ at, kind, text }) => ({ at, kind, text }));
+  }
+
+  /** A seat is new: its next reading counts whole. */
+  baseline(seat: string): void {
+    this.run("INSERT OR IGNORE INTO spend_seats (seat, total, at) VALUES (?, 0, ?)", seat, this.now().toISOString());
+  }
+
+  /** A seat is gone: its last total is not kept. */
+  dropSeat(seat: string): void {
+    this.run("DELETE FROM spend_seats WHERE seat = ?", seat);
+  }
+
+  /** Adds a turn of a seat to a project's day, with the change in the seat's `total` since it was last read (none at its first reading, and a total that fell is a seat resumed); returns the day's sums. */
+  spend(project: string, day: string, seat: string, total: number | null): Sums {
+    return this.transaction("write", () => {
+      let added = 0;
+      if (total !== null) {
+        const last = this.row<{ total: number }>("SELECT total FROM spend_seats WHERE seat = ?", seat)?.total;
+        added = last === undefined ? 0 : total >= last ? total - last : total;
+        this.run(
+          `INSERT INTO spend_seats (seat, total, at) VALUES (?, ?, ?)
+             ON CONFLICT (seat) DO UPDATE SET total = excluded.total, at = excluded.at`,
+          seat,
+          total,
+          this.now().toISOString(),
+        );
+      }
+      return this.row<Sums>(
+        `INSERT INTO spend (project, day, usd, turns) VALUES (?, ?, ?, 1)
+           ON CONFLICT (project, day) DO UPDATE SET usd = usd + excluded.usd, turns = turns + 1
+           RETURNING usd, turns`,
+        project,
+        day,
+        added,
+      )!;
+    });
+  }
+
+  /** What each project spent on a UTC day. */
+  spendOn(day: string): (Sums & { project: string })[] {
+    return this.rows<Sums & { project: string }>("SELECT project, usd, turns FROM spend WHERE day = ?", day).map(
+      ({ project, usd, turns }) => ({ project, usd, turns }),
+    );
+  }
+
+  /** What each project spent on each UTC day from `since` on. */
+  spendFrom(since: string): (Sums & { project: string; day: string })[] {
+    return this.rows<Sums & { project: string; day: string }>(
+      "SELECT project, day, usd, turns FROM spend WHERE day >= ? LIMIT ?",
+      since,
+      SPEND_ROWS,
+    ).map(({ project, day, usd, turns }) => ({ project, day, usd, turns }));
+  }
+
+  /** Whether any day of a project's spend is kept. */
+  knowsProject(project: string): boolean {
+    return this.row("SELECT 1 FROM spend WHERE project = ? LIMIT 1", project) !== undefined;
+  }
+
+  /** The projects held now, one row each. */
+  holdRows(): HoldRow[] {
+    return this.rows<Omit<HoldRow, "told"> & { told: number }>(
+      "SELECT project, day, since, reason, told FROM holds",
+    ).map(({ project, day, since, reason, told }) => ({ project, day, since, reason, told: told === 1 }));
+  }
+
+  /** Holds a project, not yet told. */
+  addHold(hold: Omit<HoldRow, "told">): void {
+    this.run(
+      "INSERT OR REPLACE INTO holds (project, day, since, reason, told) VALUES (?, ?, ?, ?, 0)",
+      hold.project,
+      hold.day,
+      hold.since,
+      hold.reason,
+    );
+  }
+
+  /** The hold of a project was told. */
+  toldHold(project: string): void {
+    this.run("UPDATE holds SET told = 1 WHERE project = ?", project);
+  }
+
+  /** A project is held no more. */
+  dropHold(project: string): void {
+    this.run("DELETE FROM holds WHERE project = ?", project);
+  }
+
+  /** Drops days of spend and holds before the UTC day `before`, and totals of seats not read since `seatsBefore`; how many rows went. */
+  expireSpend(before: string, seatsBefore: string): number {
+    return this.transaction(
+      "write",
+      () =>
+        this.run("DELETE FROM spend WHERE day < ?", before).changes +
+        this.run("DELETE FROM holds WHERE day < ?", before).changes +
+        this.run("DELETE FROM spend_seats WHERE at < ?", seatsBefore).changes,
+    );
   }
 
   /** Drops log lines past their days and the store's size, incidents not seen within the days, and old closed traces; in slices. The record of changes stays. */

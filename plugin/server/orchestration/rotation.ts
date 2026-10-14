@@ -1,10 +1,13 @@
 import { writeFileSync } from "node:fs";
 import { readJson, writeJson } from "../persisted";
 import { join } from "node:path";
+import catalog from "../../shared/forks.json";
+import { traits } from "../../shared/workflow";
 import type { MailEngine, SeatRecord } from "../coordination/engine";
 import type { Host } from "../host";
 import { keptOutOfGit } from "../sqlite";
 import { fromTemplate } from "./brief";
+import { clip, type Forks } from "./forks";
 import type { SeatFit } from "./models";
 
 /** A seat whose context has grown is replaced: its handoff is asked for and read, and its successor starts on it. */
@@ -16,6 +19,7 @@ const VERBATIM = "VERBATIM";
 const HANDOFF_CHARS = 6000;
 const VERBATIM_CHARS = 4000;
 const BRIEF_CHARS = 12_000;
+const RAISE_AFTER_REJECTIONS = 2;
 
 /** The mail that asks a seat for its handoff. */
 export function handoffRequest(why: string): string {
@@ -208,22 +212,24 @@ export class Rotations {
   }
 }
 
-/** What starting a successor needs: the app, the mail engine, the table in force at a folder (`fit`), and the moving of what the room keeps for the old seat (`handOver`). */
+/** What starting a successor needs: the app, the mail engine, the table in force at a folder (`fit`, and `up` for the model of the tier above a model), and the moving of what the room keeps for the old seat (`handOver`). */
 interface RotateDeps {
   host: Host;
   engine: MailEngine;
   version: string;
   fit(cwd: string, role: string, provider: string, model: string | undefined): SeatFit;
+  up(cwd: string, role: string, provider: string, model: string): string | undefined;
   handOver(from: string, to: string): void;
 }
 
-/** Starts a seat's successor on its brief, its handoff and the lines of `kept`, hands it over, archives the seat. */
+/** Starts a seat's successor on its brief, its handoff and the lines of `kept`, hands it over, archives the seat. A task sent back twice (`rejected`) starts its successor a tier up where the table lists one. */
 export async function rotate(
   deps: RotateDeps,
   old: SeatRecord,
   handoff: Handoff,
   kept: readonly string[] = [],
-): Promise<{ id: string; file: string; model: string; left: string[] }> {
+  rejected = 0,
+): Promise<{ id: string; file: string; model: string; raised: boolean; left: string[] }> {
   const { host, engine } = deps;
   const now = await host.seat(old.agentId);
   if (!now) throw new Error("the app no longer has the seat");
@@ -231,7 +237,10 @@ export async function rotate(
   const fit = deps.fit(now.cwd, old.role, old.provider, now.model ?? undefined);
   if (!fit.ok)
     throw new Error(`the table in force lists for ${old.role} only ${fit.listed.join(", ")}, none on ${old.provider}`);
-  const model = fit.model ?? now.model ?? "";
+  const same = fit.model ?? now.model ?? "";
+  const higher =
+    rejected >= RAISE_AFTER_REJECTIONS && same ? deps.up(now.cwd, old.role, old.provider, same) : undefined;
+  const model = higher ?? same;
   const thinking = fit.model ? (fit.thinking === "default" ? undefined : fit.thinking) : now.thinking;
   const received = await host.prompts(old.agentId, 4000);
   const stamp = new Date().toISOString().slice(0, 16).replace(/[T:]/g, "-");
@@ -288,5 +297,18 @@ export async function rotate(
     failed("its claimed work")(error);
   }
   if (left.length === 0) await host.archive(old.agentId).catch(failed("the old seat's archive"));
-  return { id, file, model: model || "its provider's default", left };
+  return { id, file, model: model || "its provider's default", raised: higher !== undefined, left };
+}
+
+/** Whether the decision model reads a seat's last message as a milestone, for a seat whose context is over a share of the rotation line and not yet past it. */
+export async function atMilestone(
+  forks: Pick<Forks, "take">,
+  seat: { role: string; tokens: number | null; message: string },
+  rotateAt: number,
+): Promise<boolean> {
+  const { tokens, message } = seat;
+  const from = rotateAt * catalog.forks.rotate.fromShare;
+  if (!traits(seat.role).rotate || tokens === null || !message.trim() || !(tokens >= from && tokens < rotateAt))
+    return false;
+  return (await forks.take("rotate", { message: clip(message.trim(), 2000), held_tokens: tokens })) === "milestone";
 }

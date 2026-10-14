@@ -1,5 +1,5 @@
 {
-  "$comment": "Hand-in rules on added lines. level: block sends the candidate back, warn rides up with it. in: the part of the line a pattern reads (code, comment, string, or the whole line). files: test, source or any. languages: ids from `languages`, or `*`. path: only the files whose path it matches. skip: paths never read. tests: paths of test files.",
+  "$comment": "Hand-in rules on added lines. level: block sends the candidate back, warn rides up with it. in: the part of the line a pattern reads (code, comment, string, or the whole line). files: test, source or any. languages: ids from `languages`, or `*`. path: only the files whose path it matches. skip: paths never read. tests: paths of test files. The command guard reads the attributes-driver rule too, by its id.",
   "languages": {
     "javascript": [".js", ".jsx", ".mjs", ".cjs", ".ts", ".tsx", ".mts", ".cts", ".vue", ".svelte"],
     "python": [".py"],

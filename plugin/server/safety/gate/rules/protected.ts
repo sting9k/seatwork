@@ -48,7 +48,7 @@ function gitGuard(parts: string[], path: string): Guarded | null {
 }
 
 /** What guards an absolute path, if anything. */
-function guardOfPath(path: string, mode: WriteMode, scene: Pick<Scene, "place">): Guarded | null {
+export function guardOfPath(path: string, mode: WriteMode, scene: Pick<Scene, "place">): Guarded | null {
   const place = scene.place;
   const norm = posix.normalize(path);
   const low = lower(norm);

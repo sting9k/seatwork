@@ -392,5 +392,9 @@
     "keepDays": 60,
     "maxEntries": 300000,
     "gate": true
+  },
+  "budget": {
+    "$comment": "What a project's seats may spend in a UTC day. projects: a cap for a project folder, as the registry lists it: dailyUsd (dollars as the agent CLIs report them) and, besides, dailyTurns. default: the cap of a project with none of its own. A cap is above 0; with none set the room only measures. A project that reaches its cap starts no turn from mail and no new seat until the next UTC day or until its cap is raised; running turns finish. The room's operator seat may lower a cap and never raise one: the owner does, here.",
+    "projects": {}
   }
 }

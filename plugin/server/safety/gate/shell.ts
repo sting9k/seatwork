@@ -39,6 +39,7 @@ export interface Redirect {
 export interface Assignment {
   name: string;
   append: boolean;
+  indexed: boolean;
   value: Word | null;
   items: Word[] | null;
 }
@@ -295,9 +296,15 @@ class Parser {
             items.push(this.word());
           }
           this.pos += 1;
-          simple.assigns.push({ name: assign[1], append, value: null, items });
+          simple.assigns.push({ name: assign[1], append, indexed: !!assign[2], value: null, items });
         } else {
-          simple.assigns.push({ name: assign[1], append, value: valueAfter(word, assign[0].length), items: null });
+          simple.assigns.push({
+            name: assign[1],
+            append,
+            indexed: !!assign[2],
+            value: valueAfter(word, assign[0].length),
+            items: null,
+          });
         }
         continue;
       }
@@ -466,7 +473,7 @@ class Parser {
       return {
         kind: "arith",
         bodies: substitutionsIn(raw, this.depth + 1, this.budget),
-        words: [],
+        words: [{ raw, start, end: this.pos, parts: [{ kind: "arith", raw, scripts: [] }] }],
         redirects: [],
         start,
         end: this.pos,

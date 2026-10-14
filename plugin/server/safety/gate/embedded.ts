@@ -15,7 +15,7 @@ type Token = { kind: "word" | "string" | "punct" | "shell" | "template"; text: s
 
 const INTERPRETERS: [RegExp, Language][] = [
   [/^(python|pypy)(\d+(\.\d+)*)?$/, "python"],
-  [/^(node|nodejs)(\d+)?$|^bun$|^deno$/, "javascript"],
+  [/^(node|nodejs)(\d+)?$|^bun$|^deno$|^(tsx|ts-node|esno)$/, "javascript"],
   [/^(ruby|irb)(\d+(\.\d+)*)?$/, "ruby"],
   [/^perl(\d+(\.\d+)*)?$/, "perl"],
   [/^php(\d+(\.\d+)*)?$/, "php"],

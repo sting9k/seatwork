@@ -3,6 +3,8 @@ import { join } from "node:path";
 import { evaluate, type Evaluation, type GateConfig, type Tools } from "./gate/evaluate";
 import { packsInForce, ruleOf, type Mode } from "./gate/packs";
 import { within } from "./gate/paths";
+import { ATTRIBUTES_FILE, namesDriver } from "./gate/rules/attributes";
+import { guardThroughLinks } from "./gate/rules/files";
 import { guardOf } from "./gate/rules/protected";
 import { SEVERITY_RANK, type Doubt, type Finding, type Place } from "./gate/types";
 import { redact } from "../redact";
@@ -98,10 +100,17 @@ export class Guard {
     );
   }
 
-  /** A file an editing tool is about to write (Write, Edit, apply_patch, a plugin's write). */
-  async checkWrite(seat: SeatRef | null, cli: string, path: string, cwd: string | null): Promise<Ruling> {
+  /** A file an editing tool is about to write (Write, Edit, apply_patch, a plugin's write), with the text it adds when the call shows it. */
+  async checkWrite(
+    seat: SeatRef | null,
+    cli: string,
+    path: string,
+    cwd: string | null,
+    text?: string,
+  ): Promise<Ruling> {
     const call = { seat, cli, command: `write ${path}`, cwd, dry: false, began: process.hrtime.bigint() };
-    return this.judge(call, async (place) => ({ findings: writeFindings(path, place, cwd), doubts: [] }));
+    const real = (target: string) => this.deps.tools(seat).real(target);
+    return this.judge(call, async (place) => ({ findings: writeFindings(path, text, place, cwd, real), doubts: [] }));
   }
 
   /** The gate's settings at a place: the policy's, with the packs the place's project adds. */
@@ -270,31 +279,40 @@ function readRules(file: string): ProjectRules {
   }
 }
 
-/** What the file rules say of writing one path. */
-function writeFindings(path: string, place: Place, cwd: string | null): Finding[] {
+/** What the rules say of writing one path, straight or through a link, and of the text the call adds to an attributes file. */
+function writeFindings(
+  path: string,
+  text: string | undefined,
+  place: Place,
+  cwd: string | null,
+  real: (path: string) => string | null,
+): Finding[] {
   const word = {
     raw: path,
     start: 0,
     end: 0,
     parts: [{ kind: "text" as const, text: path, quote: "single" as const }],
   };
-  const found = guardOf({ text: path, prefix: path, quoted: true, glob: false, temp: false, word }, "write", {
-    place,
-    cwd,
-  });
-  if (!found) return [];
-  const rule = ruleOf(found.pack, found.rule)!;
-  return [
-    {
-      pack: found.pack,
-      rule: found.rule,
+  const found =
+    guardOf({ text: path, prefix: path, quoted: true, glob: false, temp: false, word }, "write", { place, cwd }) ??
+    (path.startsWith("/") ? guardThroughLinks(path, "write", { place }, real) : null);
+  const hits: { pack: string; rule: string; at: string }[] = found
+    ? [{ pack: found.pack, rule: found.rule, at: found.path }]
+    : [];
+  if (text !== undefined && ATTRIBUTES_FILE.test(path) && namesDriver(text))
+    hits.push({ pack: "room.guard", rule: "git-attributes-driver", at: path });
+  return hits.map((hit) => {
+    const rule = ruleOf(hit.pack, hit.rule)!;
+    return {
+      pack: hit.pack,
+      rule: hit.rule,
       severity: rule.severity,
-      reason: `${rule.reason} (${found.path})`,
+      reason: `${rule.reason} (${hit.at})`,
       explanation: rule.explanation,
       safer: rule.safer,
       text: `write ${path}`,
-    },
-  ];
+    };
+  });
 }
 
 const pass = (): Ruling => ({ allow: true, message: null, finding: null, code: null, grantor: null });

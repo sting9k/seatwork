@@ -22,6 +22,7 @@ const tools = {
   external: async () => false,
   rebasing: async () => false,
   stat: () => ({ exists: false, link: false, dir: false }),
+  real: () => null,
   changed: async () => null,
 };
 const store = new SafetyStore(join(ROOM_HOME, "limits"), 1000);

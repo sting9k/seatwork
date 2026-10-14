@@ -572,6 +572,30 @@ export class KnowledgeStore extends Sqlite {
     });
   }
 
+  /** Moves the decisions that are in force, waiting or replaced from one scope to another, with the notes `seat` was shown on them; a topic the other scope has in force stays where it is. Returns how many moved. */
+  moveScope(from: string, to: string, seat: string): number {
+    const free = "topic NOT IN (SELECT topic FROM decisions WHERE scope_key = ?2 AND state = 'active')";
+    const head = `d:${from}|`;
+    return this.transaction("write", () => {
+      // the notes go first: once the decisions move, their topics are in force in the other scope too
+      this.run(
+        `UPDATE OR REPLACE shown SET note = ?2 || substr(note, ?3) WHERE seat = ?4 AND note >= ?5 AND note < ?6
+           AND substr(note, ?3) NOT IN (SELECT topic FROM decisions WHERE scope_key = ?1 AND state = 'active')`,
+        to,
+        `d:${to}|`,
+        head.length + 1,
+        seat,
+        head,
+        `d:${from}}`,
+      );
+      return this.run(
+        `UPDATE decisions SET scope_key = ?2 WHERE state IN ('pending', 'active', 'superseded') AND scope_key = ?1 AND ${free}`,
+        from,
+        to,
+      ).changes;
+    });
+  }
+
   /** Forgets what a seat was shown. */
   forgetShown(seat: string): void {
     this.run("DELETE FROM shown WHERE seat = ?", seat);

@@ -1,0 +1,40 @@
+import { Forks, type Fork, type ForkName, type Router } from "../server/orchestration/forks";
+
+/** One call the stand-in decision model was put: the caller, the state, and the labels of the first question. */
+export interface Asked {
+  caller: string;
+  state: Record<string, unknown>;
+  labels: string[];
+}
+
+/** A decision model that answers every question with `pick` at `probability`, as Jev would: a label outside the question's is no answer. It keeps what it was asked. */
+export function modelSaying(
+  pick: string | null | ((labels: string[], state: Record<string, unknown>) => string | null),
+  probability = 0.95,
+) {
+  const asked: Asked[] = [];
+  const router: Router = {
+    why: () => null,
+    routes: async (caller, state, questions, sharpAt) => {
+      const ids = Object.keys(questions);
+      const first = questions[ids[0]] as unknown as { criteria?: Record<string, unknown> };
+      const labels = Object.keys(first.criteria ?? {});
+      asked.push({ caller, state, labels });
+      const said = typeof pick === "function" ? pick(labels, state) : pick;
+      const label = said !== null && labels.includes(said) ? said : null;
+      return Object.fromEntries(
+        ids.map((id): [string, Fork] => [
+          id,
+          { label, probability, sharp: label !== null && probability >= sharpAt, askId: asked.length, why: null },
+        ]),
+      );
+    },
+  };
+  return { router, asked };
+}
+
+/** The room's forks over a decision model, with the forks that are on and the lines they log. */
+export function forksWith(router: Router | null, on: readonly ForkName[]) {
+  const lines: string[] = [];
+  return { forks: new Forks({ router, on: (name) => on.includes(name), log: (line) => lines.push(line) }), lines };
+}

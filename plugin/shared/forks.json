@@ -1,5 +1,5 @@
 {
-  "$comment": "The room's forks: small choices about mail and work put to the decision model. A label at sharpAt or more is acted on; anything less keeps the room's own rule. deadlineMs: how long a call may take. Each is asked only where its condition in the code holds; policy.jev.forks lists those that are on.",
+  "$comment": "The room's forks: small choices about mail, work, seats and incidents put to the decision model. A label at sharpAt or more is acted on; anything less keeps the room's own rule. deadlineMs: how long a call may take. A fork with no criteria takes its labels from the call. escalate.signals: the subjects it reads. rotate.fromShare: the share of the rotation line from which it is asked. Each is asked only where its condition in the code holds; policy.jev.forks lists those that are on.",
   "forks": {
     "report": {
       "version": 1,
@@ -62,6 +62,86 @@
         "criteria": {
           "true": "they name the same files, module or feature",
           "false": "they touch different parts of the code"
+        }
+      }
+    },
+    "tier": {
+      "version": 1,
+      "sharpAt": 0.85,
+      "deadlineMs": 5000,
+      "question": {
+        "type": "choice",
+        "instructions": "`title`, `spec` and `brief` say what a software agent is about to be started on. The labels are the models it may run on, each with what it is for. Say which model fits the work.",
+        "criteria": {}
+      }
+    },
+    "gaps": {
+      "version": 1,
+      "sharpAt": 0.85,
+      "deadlineMs": 5000,
+      "question": {
+        "type": "choice",
+        "instructions": "`issue` is a piece of work a software agent has just taken: its title, description, acceptance criteria and write scope. Say what it lacks before the agent can build it.",
+        "criteria": {
+          "ready": "nothing: it says what is wanted and what the result must satisfy",
+          "unclear": "what is wanted can be read more than one way, or rests on facts the agent must find out first",
+          "no-acceptance": "what is wanted is clear, but nothing says how to tell it is done",
+          "needs-decision": "someone with authority must choose between ways before any work can start",
+          "too-big": "it holds several independent pieces of work, more than one agent should carry"
+        }
+      }
+    },
+    "escalate": {
+      "version": 1,
+      "sharpAt": 0.9,
+      "deadlineMs": 5000,
+      "signals": ["BLOCKED", "QUESTION", "DECISION_NEEDED"],
+      "question": {
+        "type": "choice",
+        "instructions": "`message` is a mail a software agent sent its Owner, the seat directly above it, because it is blocked, has a question or needs a decision. Say who must answer it.",
+        "criteria": {
+          "owner": "its Owner can answer it",
+          "above": "its Owner cannot settle it alone: it reaches past the Owner's own work, and the seat above the Owner must answer",
+          "room": "the cause is a fault of the room itself, its tools, mail, limits or settings, not of the work",
+          "person": "only a person can decide it: money, scope, direction, access, or a rule the seats may not change"
+        }
+      }
+    },
+    "duplicate": {
+      "version": 1,
+      "sharpAt": 0.85,
+      "deadlineMs": 5000,
+      "question": {
+        "type": "choice",
+        "instructions": "`new` is an issue just made; `open` holds issues still open, by id. The labels name them. Say which open issue asks for the same work as the new one, or none.",
+        "criteria": {}
+      }
+    },
+    "rotate": {
+      "version": 1,
+      "sharpAt": 0.9,
+      "deadlineMs": 5000,
+      "fromShare": 0.6,
+      "question": {
+        "type": "choice",
+        "instructions": "`message` is the last message a software agent wrote when its turn ended, and `held_tokens` is how much context it carries. Say whether the agent is in the middle of its work or at a milestone.",
+        "criteria": {
+          "milestone": "a piece of work is finished and handed in or reported done, and what comes next starts fresh",
+          "mid_work": "the work goes on: something is half done, being tried or fixed, or waits for a result"
+        }
+      }
+    },
+    "incident": {
+      "version": 1,
+      "sharpAt": 0.85,
+      "deadlineMs": 8000,
+      "question": {
+        "type": "choice",
+        "instructions": "`incidents.{{id}}` is a line from the log of a program that runs software agents: `district` is the part of the program that wrote it, `seen` how often. Say what would answer it.",
+        "criteria": {
+          "tunable": "a number or switch in the program's settings: a limit too low, a keep too short, a wait too small, a threshold too tight",
+          "code": "a fault in the program's own code: an error it should not make, a case it does not handle, a state it cannot recover from",
+          "outside": "a service or machine outside the program is down, slow or refusing: the network, a model provider, the agent app, the disk"
         }
       }
     }

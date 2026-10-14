@@ -1,6 +1,7 @@
 import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import callLimits from "../../shared/host.json";
 import type { Host, LiveSeat, NewSeat, SeatState, SeatUsage, TurnEvent } from "../host";
 import { latestTurn } from "./timeline";
 import { PASEO_SCHEDULES } from "../paths";
@@ -31,8 +32,28 @@ interface Agent {
 const LIST_PAGE_SIZE = 200;
 const LIST_PAGES = 20;
 
+/** How long each kind of call to the app may take, in seconds. */
+type HostLimits = Pick<typeof callLimits, "readSeconds" | "historySeconds" | "writeSeconds">;
+
+/** Waits for `call` at most `seconds`; past that the call fails like an app that cannot be reached, and its late answer is dropped. */
+async function within<T>(seconds: number, what: string, call: () => Promise<T>): Promise<T> {
+  let timer: NodeJS.Timeout | undefined;
+  const late = new Promise<never>((_, reject) => {
+    timer = setTimeout(
+      () => reject(new Error(`Paseo did not answer ${what} within ${seconds} seconds`)),
+      seconds * 1000,
+    );
+  });
+  try {
+    return await Promise.race([call(), late]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 /** A Paseo agent as the room reads a seat. */
 function liveSeat(agent: Agent): LiveSeat {
+  const waiting = Array.isArray(agent.pendingPermissions) && agent.pendingPermissions.length > 0;
   return {
     id: agent.id,
     provider: agent.provider ?? "",
@@ -40,7 +61,8 @@ function liveSeat(agent: Agent): LiveSeat {
     cwd: agent.cwd ?? "",
     parentId: agent.parentAgentId ?? null,
     status: agent.status ?? "unknown",
-    waiting: Array.isArray(agent.pendingPermissions) && agent.pendingPermissions.length > 0,
+    state: stateOf({ status: agent.status, archived: false, waiting }),
+    waiting,
     updatedAt: agent.updatedAt ?? "",
     turnStartedAt: agent.activeTurn?.startedAt ?? null,
     error: agent.lastError ?? null,
@@ -89,6 +111,8 @@ export class PaseoHost implements Host {
   private client: PaseoApi | null = null;
   private wakerLock: Promise<unknown> = Promise.resolve();
 
+  constructor(private readonly limits: HostLimits = callLimits) {}
+
   use(paseo: PaseoApi): void {
     this.client = paseo;
   }
@@ -107,7 +131,7 @@ export class PaseoHost implements Host {
     if (!this.client) return this.stateByCli(agentId);
     const handle = this.client.agents.ref(agentId);
     try {
-      await handle.refresh();
+      await within(this.limits.readSeconds, `the state request for ${agentId}`, () => handle.refresh());
     } catch {
       // a lost connection or a timeout proves nothing about the seat
       return "unknown";
@@ -140,10 +164,11 @@ export class PaseoHost implements Host {
 
   async send(agentId: string, text: string, interrupt: boolean): Promise<void> {
     if (this.client) {
+      const handle = this.client.agents.ref(agentId);
       // the SDK interrupts a running agent by default; the room does so for a stop order only
-      await this.client.agents
-        .ref(agentId)
-        .send(text, { activeTurnBehavior: interrupt ? "interrupt" : "steer" } as never);
+      await within(this.limits.writeSeconds, `the message to ${agentId}`, () =>
+        handle.send(text, { activeTurnBehavior: interrupt ? "interrupt" : "steer" } as never),
+      );
       return;
     }
     // the CLI has no steer: without a client only a seat at rest, or a stop order, is written to
@@ -165,6 +190,11 @@ export class PaseoHost implements Host {
 
   async live(): Promise<Map<string, LiveSeat>> {
     const paseo = this.sdk();
+    return within(this.limits.readSeconds, "the list of open seats", () => this.listOpen(paseo));
+  }
+
+  /** Every open agent, page by page. */
+  private async listOpen(paseo: PaseoApi): Promise<Map<string, LiveSeat>> {
     const out = new Map<string, LiveSeat>();
     let cursor: string | undefined;
     for (let page = 0; page < LIST_PAGES; page += 1) {
@@ -186,11 +216,12 @@ export class PaseoHost implements Host {
 
   async seat(agentId: string): Promise<LiveSeat | null> {
     const handle = this.sdk().agents.ref(agentId);
-    await handle.refresh();
+    await within(this.limits.readSeconds, `the seat request for ${agentId}`, () => handle.refresh());
     const agent = handle.current() as Agent | null;
     return agent && !agent.archivedAt ? liveSeat(agent) : null;
   }
 
+  // no limit: a start cut off may still have happened, and the caller would start a second
   async create(seat: NewSeat): Promise<string> {
     const created = await this.sdk().agents.create({
       config: {
@@ -207,15 +238,15 @@ export class PaseoHost implements Host {
   }
 
   async archive(agentId: string): Promise<void> {
-    if (this.client) await this.client.agents.ref(agentId).archive();
-    else await paseoCli(["agent", "archive", agentId]);
+    if (this.client) {
+      const handle = this.client.agents.ref(agentId);
+      await within(this.limits.writeSeconds, `the archive of ${agentId}`, () => handle.archive());
+    } else await paseoCli(["agent", "archive", agentId]);
   }
 
   async turn(agentId: string, limit: number): Promise<TurnEvent[] | null> {
     try {
-      const page = await this.sdk()
-        .agents.ref(agentId)
-        .timeline.refetch({ direction: "tail", projection: "projected", limit });
+      const page = await this.timeline(agentId, limit);
       return latestTurn(page.entries);
     } catch {
       return null;
@@ -224,9 +255,7 @@ export class PaseoHost implements Host {
 
   async prompts(agentId: string, limit: number): Promise<string[] | null> {
     try {
-      const page = await this.sdk()
-        .agents.ref(agentId)
-        .timeline.refetch({ direction: "tail", projection: "projected", limit });
+      const page = await this.timeline(agentId, limit);
       return page.entries.flatMap(({ item }) => {
         const entry = item as { type?: unknown; text?: unknown };
         return entry.type === "user_message" && typeof entry.text === "string" ? [entry.text] : [];
@@ -236,8 +265,17 @@ export class PaseoHost implements Host {
     }
   }
 
+  /** The last `limit` entries of a seat's history. */
+  private timeline(agentId: string, limit: number) {
+    const handle = this.sdk().agents.ref(agentId);
+    return within(this.limits.historySeconds, `the history request for ${agentId}`, () =>
+      handle.timeline.refetch({ direction: "tail", projection: "projected", limit }),
+    );
+  }
+
   async projects(): Promise<{ name: string; path: string }[]> {
-    const { projects } = await this.sdk().projects.list();
+    const paseo = this.sdk();
+    const { projects } = await within(this.limits.readSeconds, "the list of projects", () => paseo.projects.list());
     return projects.map((project) => ({ name: project.projectDisplayName, path: project.projectRootPath }));
   }
 

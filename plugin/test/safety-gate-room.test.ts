@@ -22,6 +22,7 @@ const tools: Tools = {
   external: async () => false,
   rebasing: async () => false,
   stat: () => ({ exists: false, link: false, dir: false }),
+  real: () => null,
   changed: async () => null,
 };
 

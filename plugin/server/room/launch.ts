@@ -1,11 +1,22 @@
 import { join } from "node:path";
 import { inRoom, specFromTitle } from "../../shared/workflow";
-import { fitSeat, loadModels, projectModels, type Models, type SeatFit } from "../orchestration/models";
+import type { Host } from "../host";
+import type { Asker } from "../orchestration/forks";
+import {
+  fitSeat,
+  loadModels,
+  pickModel,
+  projectModels,
+  stepUp,
+  type Models,
+  type SeatFit,
+} from "../orchestration/models";
 import { checkPlacement, findProject, findRoomMarker, loadRegistry, projectBlock } from "../orchestration/registry";
 import { claudeRoleDir, ensureRuntime, roleSkillNames, sharedClaudeFiles } from "../orchestration/runtimes";
 import { enabledSeats, parseSeat, rolePrompt } from "../orchestration/seats";
 import { SAFETY_DIR } from "../paths";
 import type { RuntimePolicy } from "../policy";
+import type { SeatRecord } from "../coordination/engine";
 
 /** A seat about to start, as the app asks for it; `spec` is a specialization the app passed beside the title. */
 export interface SeatLaunch {
@@ -75,8 +86,27 @@ export function fitAt(cwd: string, role: string, provider: string, model: string
   return fitSeat(tableOf(projectAt(cwd, role, provider)).models, role, provider, model);
 }
 
-/** A room seat's start: held to its project and table, given its prompt; throws when refused. */
-export function launch(request: SeatLaunch, policy: RuntimePolicy, log: (message: string) => void): Launched {
+/** The model of the next tier up that the table in force at a folder gives a seat on this provider, if it lists one. */
+export function stepUpAt(cwd: string, role: string, provider: string, model: string): string | undefined {
+  return stepUp(tableOf(projectAt(cwd, role, provider)).models, role, provider, model);
+}
+
+/** The line that names the model a new seat for a task sent back twice starts on, a tier above the seat's; null where the table lists none. */
+export async function tierUpNote(host: Pick<Host, "seat">, seat: SeatRecord): Promise<string | null> {
+  const now = await host.seat(seat.agentId).catch(() => null);
+  const up = now?.model ? stepUpAt(now.cwd, seat.role, seat.provider, now.model) : undefined;
+  return up
+    ? `Sent back twice: a new ${seat.role} for the repair starts a tier up, on ${seat.provider}/${up}. Name that model when you create it.`
+    : null;
+}
+
+/** A room seat's start: held to its project and table, given its prompt; throws when refused. A creator that named no model may have the decision model pick the tier. */
+export async function launch(
+  request: SeatLaunch,
+  policy: RuntimePolicy,
+  log: (message: string) => void,
+  forks?: Asker,
+): Promise<Launched> {
   const seat = parseSeat(request.provider)!;
   if (!enabledSeats().some((s) => s.provider === seat.provider))
     throw new Error(
@@ -85,6 +115,7 @@ export function launch(request: SeatLaunch, policy: RuntimePolicy, log: (message
   checkPlacement(seat.role, seat.provider, request.cwd);
   const project = projectAt(request.cwd, seat.role, seat.provider);
   const { models, own } = tableOf(project);
+  const spec = specFromTitle(request.title) ?? request.spec;
   const fit = fitSeat(models, seat.role, seat.provider, request.model);
   if (!fit.ok) {
     const table = own ? `project ${project!.name} lists` : "the room's table lists";
@@ -92,6 +123,10 @@ export function launch(request: SeatLaunch, policy: RuntimePolicy, log: (message
       `seatwork: ${seat.provider}/${request.model ?? "(default model)"} refused: ${table} for ${seat.role} only ${fit.listed.join(", ")} (${own ?? "the Seatwork screen sets it"}). Create the seat again on one of these.`,
     );
   }
+  // a creator that named a model has chosen it; for the rest the decision model may pick a tier
+  const task = { title: request.title, spec, brief: request.systemPrompt };
+  const picked = request.model || !forks ? undefined : await pickModel(forks, models, seat.role, seat.provider, task);
+  if (picked) fit.model = picked;
   // a model the table does not list is replaced by the table's
   if (fit.model)
     log(
@@ -105,7 +140,6 @@ export function launch(request: SeatLaunch, policy: RuntimePolicy, log: (message
       `seatwork: ${seat.provider} refused: its runtime could not be built (${error instanceof Error ? error.message : String(error)}). Fix that and create the seat again.`,
     );
   }
-  const spec = specFromTitle(request.title) ?? request.spec;
   const systemPrompt = [
     rolePrompt(seat.role, { harness: seat.harness, spec, params: policy.room.params, models }),
     project ? projectBlock(project.name, project.root, project.mission, project.law, roleSkillNames(seat.role)) : null,

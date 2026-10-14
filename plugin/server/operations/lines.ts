@@ -3,6 +3,7 @@
 const DISTRICT = /^([a-z]+)(?::| )/;
 const KNOWN = new Set([
   "mail",
+  "budget",
   "work",
   "knowledge",
   "jev",

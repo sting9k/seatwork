@@ -12,6 +12,7 @@ const base = mkdtempSync(join(tmpdir(), "seatwork-mail-store-"));
 process.on("exit", () => rmSync(base, { recursive: true, force: true }));
 
 const SCRIPTS = join(__dirname, "..", "room", "sql", "mail");
+const NOW = "2026-10-14T01:00:00.000Z";
 let folders = 0;
 /** A store of its own, with a clock that moves a second at every reading. */
 function fresh(): { store: MailStore; dir: string } {
@@ -63,7 +64,7 @@ test("what waits for a seat is handed out oldest first, and a settled delivery w
     store.queued("p1").map((m) => m.id),
     [a.id, b.id],
   );
-  assert.deepEqual([...store.waiting()], [["p1", { count: 2, since: a.at }]]);
+  assert.deepEqual([...store.waiting(NOW)], [["p1", { count: 2, since: a.at }]]);
   store.mark("p1", [a.id], "sending");
   assert.equal(store.queued("p1")[0].state, "sending");
   store.mark("p1", [a.id, b.id], "delivered", "idle");
@@ -230,7 +231,7 @@ test("every query the store runs is served by an index, but the rare whole-store
   ]);
   store.answer(ask.id, answer.id);
   store.queued("lead");
-  store.waiting();
+  store.waiting(NOW);
   store.owedBy("lead");
   store.owedTo("p1");
   store.duplicate("p1", "p1|QUESTION: which unit", "2026");
@@ -428,7 +429,7 @@ test("a subject longer than the store keeps is cut in its search and in the reco
 test("what waits for a seat and what it owes are counted, with the age of the oldest, as the lists they stand for read them", () => {
   const { store } = fresh();
   const to = (seat: string) => [{ seat, kind: "to" as const, priority: "action" as const }];
-  assert.equal(store.waitingFor("lead"), undefined);
+  assert.equal(store.waitingFor("lead", NOW), undefined);
   assert.equal(store.owedCount("lead"), undefined);
 
   const first = store.insert(mail("p1", "QUESTION: which unit", { needs: "reply" }), to("lead"));
@@ -444,17 +445,17 @@ test("what waits for a seat and what it owes are counted, with the age of the ol
   // nothing is delivered yet: all of it waits and none of it is owed
   const waiting = store.queued("lead");
   assert.equal(waiting.length, 6);
-  assert.deepEqual(store.waitingFor("lead"), { count: 6, since: waiting[0].at });
+  assert.deepEqual(store.waitingFor("lead", NOW), { count: 6, since: waiting[0].at });
   assert.equal(store.owedCount("lead"), undefined);
 
   store.mark("lead", [first.id, second.id, closed.id], "delivered", "idle");
   store.mark("lead", [info.id], "sending");
   store.mark("lead", [second.id], "read", "inbox");
-  assert.deepEqual(store.waitingFor("lead"), { count: 3, since: store.queued("lead")[0].at });
+  assert.deepEqual(store.waitingFor("lead", NOW), { count: 3, since: store.queued("lead")[0].at });
   const owed = store.owedBy("lead");
   assert.equal(owed.length, 2);
   assert.deepEqual(store.owedCount("lead"), { count: 2, since: owed[0].at });
-  assert.equal(store.waitingFor("p9")?.count, 1);
+  assert.equal(store.waitingFor("p9", NOW)?.count, 1);
   assert.equal(store.owedCount("p9"), undefined);
 
   store.answer(first.id, closed.id);
@@ -472,7 +473,7 @@ test("a seat's owed asks are counted from the open asks of the project, not from
   store.insert(mail("p1", "QUESTION: which unit", { needs: "reply" }), [
     { seat: "lead", kind: "to", priority: "action" },
   ]);
-  store.waitingFor("lead");
+  store.waitingFor("lead", NOW);
   store.owedCount("lead");
   const planOf = (needle: string) =>
     store
@@ -482,5 +483,8 @@ test("a seat's owed asks are counted from the open asks of the project, not from
       .join(" | ");
   assert.match(planOf("min(m.at) AS since FROM messages m"), /SCAN m USING INDEX messages_owed/);
   assert.doesNotMatch(planOf("min(m.at) AS since FROM messages m"), /deliveries_by_seat/);
-  assert.match(planOf("min(m.at) AS since FROM deliveries d"), /SEARCH d USING COVERING INDEX deliveries_by_state/);
+  assert.match(
+    planOf("min(m.at) AS since FROM deliveries d"),
+    /SEARCH d USING INDEX deliveries_by_state \(state=\? AND seat=\?\)/,
+  );
 });

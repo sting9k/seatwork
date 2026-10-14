@@ -1736,7 +1736,7 @@ test("the room's own seat runs the room through its tool; no seat writes the cod
   const hq = await seat("hq-ops", "claude-hq", null, "HQ Supervisor", join(ROOM_HOME, "hq-seatwork"));
   const lead = await seat("lead-ops", "claude-lead", null, "[Lead] ops", PROJECT);
   const health = JSON.parse(await hq.call("seatwork_room", { do: "health" }));
-  assert.deepEqual(health.readings, ["jev", "knowledge", "mail", "safety", "seats", "host"]);
+  assert.deepEqual(health.readings, ["jev", "knowledge", "mail", "safety", "seats", "host", "budget"]);
   const policy = JSON.parse(await hq.call("seatwork_room", { do: "policy" }));
   assert.equal(policy.tunable["knowledge.keepDays"].value, 60);
   const refused = await hq

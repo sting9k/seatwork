@@ -3,7 +3,7 @@ import { valueWord } from "../normalize";
 import { absolute, isTemp, sensitive, SYSTEM_ROOTS, tempPath, valueOf, within } from "../paths";
 import { literal, type Redirect, type Word } from "../shell";
 import type { Scene, Value } from "../types";
-import { guardOf, type Guarded, type WriteMode } from "./protected";
+import { guardOf, guardOfPath, type Guarded, type WriteMode } from "./protected";
 
 /** DCG's core.filesystem rules besides rm, and every write to a protected file. */
 
@@ -13,9 +13,10 @@ export interface FileHit {
   detail: string;
 }
 
-/** What the file rules ask of the disk: whether a path exists (lstat), is a symlink, is a folder. */
+/** What the file rules ask of the disk: whether a path exists (lstat), is a symlink, is a folder, and where it really leads. */
 export interface FileTools {
   stat(path: string): { exists: boolean; link: boolean; dir: boolean };
+  real(path: string): string | null;
 }
 
 const PSEUDO_DEVICES = new Set(["/dev/null", "/dev/zero", "/dev/full", "/dev/tty"]);
@@ -308,6 +309,8 @@ function writesOf(scene: Scene): { value: Value; mode: WriteMode; how: string }[
           out.push({ value: { ...destValue, text: joined, prefix: joined }, mode: "write", how: name });
         }
       if (name === "mv") for (const source of sources) add(source, "remove", "mv");
+      // a link to a protected place lets a later write through it in
+      if (name === "ln") for (const source of sources) add(source, "write", "ln");
       break;
     }
     case "dd":
@@ -389,11 +392,35 @@ function writesOf(scene: Scene): { value: Value; mode: WriteMode; how: string }[
   return out;
 }
 
-/** The protected files a command writes into. */
-export function guardedWrites(scene: Scene): { found: Guarded; how: string }[] {
+/** The protected place a path really leads to, when a link on the way takes it there from a place that is not protected. */
+export function guardThroughLinks(
+  path: string,
+  mode: WriteMode,
+  scene: Pick<Scene, "place">,
+  real: (path: string) => string | null,
+): Guarded | null {
+  const tail: string[] = [];
+  let from = path;
+  for (let step = 0; step < 64; step += 1) {
+    const target = real(from);
+    if (target !== null) {
+      const resolved = posix.join(target, ...tail.reverse());
+      return resolved === path ? null : guardOfPath(resolved, mode, scene);
+    }
+    const parent = posix.dirname(from);
+    if (parent === from) return null;
+    tail.push(posix.basename(from));
+    from = parent;
+  }
+  return null;
+}
+
+/** The protected files a command writes into, directly or through a link. */
+export function guardedWrites(scene: Scene, real: (path: string) => string | null): { found: Guarded; how: string }[] {
   const out: { found: Guarded; how: string }[] = [];
   for (const write of writesOf(scene)) {
-    const found = guardOf(write.value, write.mode, scene);
+    const path = absolute(write.value, scene.cwd);
+    const found = guardOf(write.value, write.mode, scene) ?? (path && guardThroughLinks(path, write.mode, scene, real));
     if (found && !(found.pack === "core.filesystem" && write.mode === "remove")) out.push({ found, how: write.how });
   }
   if (["chmod", "chown", "chgrp", "chflags", "xattr", "rm", "unlink", "rmdir", "touch"].includes(scene.call.name ?? ""))

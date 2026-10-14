@@ -294,6 +294,13 @@ export class Knowledge {
     }
   }
 
+  /** A seat's first claim gave its task the key `to` in place of `from`: the decisions it recorded under the first follow it. */
+  taskClaimed(agent: string, from: string, to: string): void {
+    const root = this.deps.projectOf(agent);
+    if (!this.on || !root) return;
+    this.decisions.rekey(agent, `task:${root}:${from}`, `task:${root}:${to}`);
+  }
+
   /** A seat's context was compacted, as its timeline or its reported context size shows: what it was told may be gone, so it is told again. */
   compacted(agent: string): void {
     if (!this.on) return;

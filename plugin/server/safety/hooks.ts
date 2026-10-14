@@ -17,6 +17,7 @@ const WRITE_TOOLS = new Set(["Write", "Edit", "MultiEdit", "NotebookEdit", "writ
 interface Call {
   shell: string | null;
   writes: string[];
+  texts: Map<string, string>;
   cwd: string | null;
   tooMuch: string | null;
 }
@@ -31,13 +32,16 @@ function callOf(body: Record<string, unknown>): Call {
   const input = (body.tool_input ?? body.input ?? {}) as Record<string, unknown>;
   const tool = String(body.tool_name ?? body.tool ?? "");
   const cwd = typeof body.cwd === "string" ? body.cwd : null;
-  const call: Call = { shell: null, writes: [], cwd, tooMuch: null };
+  const call: Call = { shell: null, writes: [], texts: new Map(), cwd, tooMuch: null };
   if (SHELL_TOOLS.has(tool) && typeof input.command === "string") call.shell = input.command;
-  else if (tool === "apply_patch" && typeof input.command === "string") call.writes = patchTargets(input.command);
-  else if (tool === "patch" && typeof input.patchText === "string") call.writes = patchTargets(input.patchText);
+  else if (tool === "apply_patch" && typeof input.command === "string") patchOf(input.command, call);
+  else if (tool === "patch" && typeof input.patchText === "string") patchOf(input.patchText, call);
   else if (WRITE_TOOLS.has(tool)) {
     const path = input.file_path ?? input.notebook_path ?? input.path;
-    if (typeof path === "string") call.writes = [path];
+    if (typeof path === "string") {
+      call.writes = [path];
+      call.texts.set(path, addedBy(input));
+    }
   }
   // a patch longer than the guard reads, or one with more files than it checks, is refused rather than read in part
   const patch = tool === "apply_patch" ? input.command : tool === "patch" ? input.patchText : null;
@@ -48,6 +52,32 @@ function callOf(body: Record<string, unknown>): Call {
   )
     call.tooMuch = TOO_MUCH;
   return call;
+}
+
+/** The text an editing call adds: a file's content, the new string of an edit, of each of several, or of a notebook cell. */
+function addedBy(input: Record<string, unknown>): string {
+  const edits = Array.isArray(input.edits) ? (input.edits as Record<string, unknown>[]) : [];
+  return [input, ...edits]
+    .flatMap((part) => [part.content, part.new_string, part.newString, part.newText, part.new_source])
+    .filter((text): text is string => typeof text === "string")
+    .join("\n");
+}
+
+/** The files a patch writes, and the lines it adds to each; a patch the guard refuses is not read for lines. */
+function patchOf(patch: string, call: Call): void {
+  call.writes = patchTargets(patch);
+  if (call.writes.length > MOST_FILES || patch.length > MOST_PATCH_CHARS) return;
+  const added = new Map<string, string[]>();
+  let file: string | null = null;
+  for (const line of patch.split("\n")) {
+    const header = /^\*\*\* (?:Add|Update) File: (.+)$|^\*\*\* Move to: (.+)$/.exec(line);
+    if (header) {
+      file = (header[1] ?? header[2]).trim();
+      if (!added.has(file)) added.set(file, []);
+    } else if (line.startsWith("*** ")) file = null;
+    else if (file && line.startsWith("+")) added.get(file)!.push(line.slice(1));
+  }
+  for (const [path, lines] of added) call.texts.set(path, lines.join("\n"));
 }
 
 /** The files an apply_patch body adds, updates, deletes or moves to; the reading stops one file past what the guard checks. */
@@ -80,7 +110,7 @@ export async function answerHook(
   for (const path of call.writes) {
     if (ruling && !ruling.allow) break;
     const abs = path.startsWith("/") || !call.cwd ? path : `${call.cwd}/${path}`;
-    const found = await guard.checkWrite(seat, cli, abs, call.cwd);
+    const found = await guard.checkWrite(seat, cli, abs, call.cwd, call.texts.get(path));
     // the first denial answers; failing that, the first file the guard let through with a note
     if (!found.allow || !ruling || (!ruling.message && found.message)) ruling = found;
   }

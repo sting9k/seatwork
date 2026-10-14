@@ -40,6 +40,11 @@ export function clip(text: string, most: number): string {
   return text.length > most ? `${text.slice(0, most)}…` : text;
 }
 
+/** The words the catalog gives a fork's labels; empty for a fork whose labels come with the call. */
+export function meanings(name: ForkName): Record<string, string> {
+  return FORKS[name].question.criteria as Record<string, string>;
+}
+
 /** The catalog of forks asked of the decision model; an answer that fails or is split leaves the room's own rule. */
 export class Forks {
   constructor(private readonly deps: ForkDeps) {}
@@ -94,3 +99,6 @@ export class Forks {
     });
   }
 }
+
+/** What a district asks of the forks: whether one is on, and its sharp label. */
+export type Asker = Pick<Forks, "open" | "take">;

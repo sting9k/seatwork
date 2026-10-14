@@ -33,7 +33,7 @@ import {
 } from "../paths";
 import { readJson } from "../persisted";
 import { loadPolicy, POLICY_FILE, type RuntimePolicy } from "../policy";
-import { costLines, roomStats } from "../stats";
+import { roomStats } from "../stats";
 import { Operations, writePolicyKey } from "../operations/index";
 import { Vitals } from "../operations/vitals";
 import { OwedList, roomStatus } from "./status";
@@ -253,6 +253,15 @@ async function refuseSpawn(
   });
 }
 
+/** Refuses the start of a seat in a project the budget holds; the room's own seats are in none. */
+function checkBudget(operations: Operations, request: SeatLaunch): void {
+  const seat = parseSeat(request.provider);
+  if (!seat || inRoom(seat.role)) return;
+  const project = projectRootOf(request.cwd);
+  const held = operations.holdsProject(project);
+  if (held) throw new Error(`seatwork: ${request.provider} refused: ${project} is held by the room's budget: ${held}`);
+}
+
 /** The decision model's pick among the open asks an answer may settle, or null to keep the engine's own rule. */
 function chooseAsk(forks: Forks): NonNullable<MailEngine["chooseAsk"]> {
   return async (answer, asks) => {
@@ -401,6 +410,7 @@ async function seatCreated(room: RoomContext, agent: SeatEvent): Promise<void> {
     version: room.version,
   };
   room.engine.rememberSeat(record);
+  room.operations.opened(agent.id);
   void room.safety
     .started(agent.id, agent.cwd)
     .catch((error) => room.log(`the guard did not note where a seat starts: ${String(error)}`));
@@ -471,16 +481,24 @@ async function permissionAsked(room: RoomContext, agent: SeatEvent, request: unk
   });
 }
 
-/** The room's operations: its log and incidents told to the room's own seats, and the policy those seats tune. */
+/** The newest seat of a project that has no Owner inside it. */
+function topSeatOf(engine: MailEngine, project: string): string | null {
+  const inside = (id: string | null) => id !== null && engine.projectOf(id) === project;
+  return (
+    engine.allSeats().findLast((seat) => inside(seat.agentId) && !inside(engine.parentOf(seat.agentId)))?.agentId ??
+    null
+  );
+}
+
+/** The room's operations: its log and incidents told to the room's own seats, the policy those seats tune, and the budget of each project. */
 function startOperations(policy: RuntimePolicy, operators: ReadonlySet<string>, room: () => RoomContext): Operations {
-  const day = () => Date.now() - 86_400_000;
   return new Operations({
     dir: OPERATIONS_DIR,
     busyTimeoutMs: policy.room.work?.busyTimeoutMs ?? 5000,
     policy: () => policy as unknown as Record<string, unknown>,
     persist: (path, value) => writePolicyKey(POLICY_FILE, path, value),
     operators: () => [...operators],
-    mail: (to, subject, body) =>
+    mail: (to, subject, body, more) =>
       room().engine.post({
         from: fromRoom,
         to,
@@ -489,7 +507,16 @@ function startOperations(policy: RuntimePolicy, operators: ReadonlySet<string>, 
         body,
         needs: "nothing",
         why: "the room's operations",
+        ...more,
       }),
+    // the room's own seats are in no project a cap reaches
+    projectOf: (seat) => (inRoom(room().engine.seat(seat)?.role) ? null : room().engine.projectOf(seat)),
+    topSeat: (project) => topSeatOf(room().engine, project),
+    lifted: () => room().engine.sweep(),
+    labeler: {
+      open: () => room().forks.open("incident"),
+      take: (state, ids) => room().forks.takeMany("incident", state, ids),
+    },
     readings: {
       jev: () => ({ spent: room().jev.spent(), today: room().jev.today(), heldOff: room().jev.why() }),
       knowledge: () => room().knowledge.reading(),
@@ -500,7 +527,7 @@ function startOperations(policy: RuntimePolicy, operators: ReadonlySet<string>, 
           (since) => mailHealth(room(), since),
         ).split("\n"),
       safety: () => room().safety.councilLines(1).split("\n"),
-      seats: () => ({ retrying: room().recovery.due(Number.MAX_SAFE_INTEGER).length, cost: costLines(day()) }),
+      seats: () => ({ retrying: room().recovery.due(Number.MAX_SAFE_INTEGER).length }),
     },
     vitals: new Vitals(),
     echo: (line) => console.log(`seatwork: ${line}`),
@@ -550,6 +577,7 @@ export function startRoom(input: {
   const safety = startSafety(engine, jev, policy, log);
   const operators = new Set<string>();
   operations = startOperations(policy, operators, () => room);
+  engine.holds = (seat) => operations.holds(seat);
   const room: RoomContext = {
     host,
     policy,
@@ -558,7 +586,9 @@ export function startRoom(input: {
     engine,
     works: new WorkStores(policy.room.work, log, (holder) => engine.seat(holder) !== undefined),
     rounds: new Rounds(join(ROOM_HOME, "rounds.json")),
-    taskKeys: new TaskKeys(join(ROOM_HOME, "task-keys.json"), log),
+    taskKeys: new TaskKeys(join(ROOM_HOME, "task-keys.json"), log, (seat, from, to) =>
+      knowledge.taskClaimed(seat, from, to),
+    ),
     gate: new ReviewGate(),
     recovery: new Recovery(join(ROOM_HOME, "recovery.json"), policy.room.recovery),
     rotations: new Rotations(join(ROOM_HOME, "rotations.json")),
@@ -599,7 +629,7 @@ export function startRoom(input: {
     { what: "task keys", expire: () => room.taskKeys.expire((seat) => engine.seat(seat) !== undefined) },
     // a closed issue lives as long as the finished mail about it
     { what: "closed issues", expire: (before) => room.works.expire(before, engine.projects()) },
-    { what: "operations log lines", expire: () => operations.expire() },
+    { what: "operations rows (log, spend, holds)", expire: () => operations.expire() },
   ]);
   const served = serve(room, safety, knowledge);
   const timers = startTimers(room, gc);
@@ -615,7 +645,8 @@ export function startRoom(input: {
         throw new Error(
           `seatwork: the room's server could not listen on 127.0.0.1:${served.port()} (${unbound}); no seat starts until the room is started again`,
         );
-      const launched = launch(request, policy, log);
+      checkBudget(operations, request);
+      const launched = await launch(request, policy, log, room.forks);
       // agent.session_open ties this nonce to the agent id
       const nonce = room.callers.issue();
       // the decisions in force reach every seat at its start, whoever opens it; the nonce names the launch they were shown in

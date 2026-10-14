@@ -4,6 +4,7 @@ import { ROOM_DIR } from "../paths";
 import type { RoomParams } from "../policy";
 import { merge } from "../../shared/model-choices";
 import { rolesWhere, tableNote, traits, VARS } from "../../shared/workflow";
+import { clip, type Asker } from "./forks";
 
 /** room/models.json: every model id the room uses; role prompts carry {{placeholders}} filled from it. */
 
@@ -223,4 +224,54 @@ export function fitSeat(m: Models, role: string, provider: string, model: string
   }
   // a role of several models asked for by seat alone starts on that seat's first model in the table
   return model ? { ok: false, listed } : { ok: true, model: split(mine[0])[1] };
+}
+
+/** A tier's model on one provider, with what the tier is for. */
+interface TierModel {
+  tier: string;
+  model: string;
+  use: string | null;
+}
+
+/** The tiers of a role that list a model on this provider, in the table's order. */
+export function tiersOn(m: Models, role: string, provider: string): TierModel[] {
+  return Object.entries(tiersOf(m, role)?.tiers ?? {}).flatMap(([tier, one]) => {
+    const entry = (one.providers ?? []).find((listed) => providerOf(listed) === provider);
+    return entry ? [{ tier, model: split(entry)[1], use: typeof one.use === "string" ? one.use : null }] : [];
+  });
+}
+
+/** The model of the next tier up on the same provider, as the table orders its tiers; undefined where there is none. */
+export function stepUp(m: Models, role: string, provider: string, model: string): string | undefined {
+  const tiers = tiersOn(m, role, provider);
+  const at = tiers.findIndex((one) => model === one.model || model.startsWith(`${one.model}-`));
+  return at < 0 ? undefined : tiers[at + 1]?.model;
+}
+
+/** What a seat about to start is for, as its creator gave it. */
+export interface SeatTask {
+  title?: string | null;
+  spec?: string;
+  brief?: string;
+}
+
+/** The model of the tier the decision model is sure fits the work, for a seat whose creator named none; undefined keeps the table's first. */
+export async function pickModel(
+  forks: Asker,
+  m: Models,
+  role: string,
+  provider: string,
+  task: SeatTask,
+): Promise<string | undefined> {
+  const tiers = tiersOn(m, role, provider);
+  const [title, brief] = [task.title?.trim(), task.brief?.trim()];
+  if (traits(role).models !== "tiers" || tiers.length < 2 || (!title && !brief) || !forks.open("tier"))
+    return undefined;
+  const state = {
+    ...(title ? { title: clip(title, 300) } : {}),
+    ...(task.spec ? { spec: task.spec } : {}),
+    ...(brief ? { brief: clip(brief, 1500) } : {}),
+  };
+  const label = await forks.take("tier", state, Object.fromEntries(tiers.map(({ tier, use }) => [tier, use])));
+  return tiers.find(({ tier }) => tier === label)?.model;
 }

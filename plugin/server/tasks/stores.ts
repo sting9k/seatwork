@@ -29,7 +29,14 @@ export class WorkStores {
     const rules = projectPolicy(root, this.policy);
     let store = this.open.get(root);
     if (!store) {
-      this.open.set(root, (store = new WorkStore(join(root, WORK_DIR), rules, undefined, undefined, this.leased)));
+      store = new WorkStore(join(root, WORK_DIR), rules, undefined, undefined, this.leased);
+      try {
+        store.leaseHeld();
+      } catch (error) {
+        store.close();
+        throw error;
+      }
+      this.open.set(root, store);
       if (store.startedOver)
         this.log(`work: the store of ${root} was damaged; it was set aside and read back from issues.jsonl`);
     }

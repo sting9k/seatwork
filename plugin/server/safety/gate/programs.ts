@@ -1,6 +1,7 @@
 import { languageOf, scanEmbedded, type Language } from "./embedded";
 import { baseName, programNames, invocationOf } from "./normalize";
 import { absolute, isTemp, lossOf, valueOf } from "./paths";
+import { paseoCommand, startsPaseo } from "./rules/paseo";
 import { guardOf } from "./rules/protected";
 import type { Part, Pipeline, Word } from "./shell";
 import { fork, type Reader, type State } from "./state";
@@ -19,7 +20,7 @@ export async function shellWord(rd: Reader, word: Word, state: State, depth: num
   else rd.out.doubt("a shell runs a line known only at run time", scene.text);
 }
 
-/** A script file run by a shell or interpreter: written earlier in the line, or changed since the last commit. */
+/** A script file run by a shell or interpreter: the Paseo CLI's own, or written earlier in the line, or changed since the last commit; `inShell` when it runs in the line's own shell. */
 export async function scriptFile(
   rd: Reader,
   word: Word,
@@ -27,18 +28,26 @@ export async function scriptFile(
   state: State,
   depth: number,
   scene: Scene,
+  inShell = false,
 ): Promise<void> {
   if (word.parts.some((p) => p.kind === "process")) {
     if (downloads(word.parts)) rd.out.add("room.software", "download-and-run", scene.text);
     else rd.out.doubt("a shell runs the output of a command", scene.text);
     return;
   }
-  const path = absolute(valueOf(word, rd.known(state)), state.cwd);
+  const value = valueOf(word, rd.known(state));
+  const path = absolute(value, state.cwd);
+  if (startsPaseo(value.text, path, (target) => rd.real(target))) {
+    const { command, args } = scene.call;
+    const used = paseoCommand(command === word ? args : args.slice(args.indexOf(word) + 1));
+    if (used !== null) rd.out.add("room.guard", "paseo-cli", scene.text, used);
+    return;
+  }
   if (!path) return;
   const text = state.written.get(path) ?? (await rd.changed(path));
   if (text === null) return;
   const lang = language ?? languageOfScript(path, text);
-  if (lang === "shell") return rd.text(text, fork(state), depth);
+  if (lang === "shell") return rd.text(text, inShell ? state : fork(state), depth);
   if (lang) return program(rd, lang, null, state, depth, scene, text);
 }
 

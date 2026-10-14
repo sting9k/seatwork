@@ -1,4 +1,13 @@
-import { accessSync, constants, existsSync, lstatSync, readFileSync, statSync, type Stats } from "node:fs";
+import {
+  accessSync,
+  constants,
+  existsSync,
+  lstatSync,
+  readFileSync,
+  realpathSync,
+  statSync,
+  type Stats,
+} from "node:fs";
 import { delimiter, dirname, join } from "node:path";
 import { runGit } from "../git";
 import type { Tools } from "./gate/evaluate";
@@ -102,6 +111,13 @@ export function machineTools(since: () => number | null): Tools {
         return { exists: true, link: s.isSymbolicLink(), dir: s.isDirectory() };
       } catch {
         return { exists: false, link: false, dir: false };
+      }
+    },
+    real(path) {
+      try {
+        return realpathSync.native(path);
+      } catch {
+        return null;
       }
     },
     async changed(path) {

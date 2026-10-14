@@ -1,6 +1,6 @@
 import { MAIL_POLICY, ROOM_HOME, shipSql } from "./support/room";
 import assert from "node:assert/strict";
-import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { test } from "node:test";
@@ -258,32 +258,6 @@ test("a lease is kept in the text copy, and a held issue read back from a copy t
   again.close();
 });
 
-test("a store made before leases opens with its held issues as they were, and the holder's next update starts the lease", () => {
-  const dir = join(ROOM_HOME, `lease-${(made += 1)}`);
-  const earlier = join(ROOM_HOME, `lease-layout-${made}`);
-  mkdirSync(earlier, { recursive: true });
-  const shipped = join(ROOM_HOME, "room", "sql", "work");
-  for (const name of readdirSync(shipped).filter((script) => !script.startsWith("V4__")))
-    copyFileSync(join(shipped, name), join(earlier, name));
-  new WorkStore(dir, TIMING, undefined, earlier).close();
-  const raw = new DatabaseSync(join(dir, "work.db"));
-  const stamp = new Date(START).toISOString();
-  raw
-    .prepare(
-      "INSERT INTO issues (id, title, status, priority, issue_type, assignee, created_at, created_by, updated_at) VALUES ('sw-old', 'schema', 'in_progress', 2, 'task', 'peer-a', ?, 'lead-1', ?)",
-    )
-    .run(stamp, stamp);
-  raw.close();
-
-  const back = new WorkStore(dir, TIMING, () => new Date(START), undefined, isSeat);
-  assert.equal(back.get("sw-old").assignee, "peer-a");
-  assert.equal(back.get("sw-old").lease_until, null);
-  assert.equal(back.leaseDue(), false);
-  back.update("sw-old", { append_notes: "still on it" }, "peer-a");
-  assert.equal(back.get("sw-old").lease_until, new Date(START + LEASE * 60_000).toISOString());
-  back.close();
-});
-
 test("the stale-claim alert still fires for a seat that is alive and idle: a renewal is not progress", () => {
   const { store, clock, pass } = leased();
   const id = store.create({ title: "schema" }, "lead-1").id;
@@ -481,7 +455,8 @@ function roomOf(open: () => Map<string, Partial<LiveSeat>>) {
     works,
     log: (line: string) => logs.push(line),
     host: {
-      live: async () => new Map([...open()].map(([id, seat]) => [id, { id, status: "idle", ...seat } as LiveSeat])),
+      live: async () =>
+        new Map([...open()].map(([id, seat]) => [id, { id, status: "idle", state: "idle", ...seat } as LiveSeat])),
     },
   } as unknown as RoomContext;
   const hold = (seatId: string, title: string) => {
@@ -536,7 +511,9 @@ test("the minute's pass gives back the issues of a seat the app no longer lists,
 });
 
 test("a seat whose state the app cannot tell, or a list it cannot give, leaves every lease as it is", async () => {
-  let listed: Map<string, Partial<LiveSeat>> | Error = new Map([["peer-b", { status: "initializing" }]]);
+  let listed: Map<string, Partial<LiveSeat>> | Error = new Map([
+    ["peer-b", { status: "initializing", state: "unknown" }],
+  ]);
   const { room, root, works, sent, logs, hold } = roomOf(() => {
     if (listed instanceof Error) throw listed;
     return listed;

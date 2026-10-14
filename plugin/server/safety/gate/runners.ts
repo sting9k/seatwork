@@ -46,7 +46,7 @@ export async function runners(rd: Reader, scene: Scene, state: State, ctx: Conte
   if (language) return interpreter(rd, language, scene, state, nested);
   switch (name) {
     case "eval": {
-      if (texts.every((t) => t !== null)) return rd.text(texts.join(" "), fork(state), nested);
+      if (texts.every((t) => t !== null)) return rd.text(texts.join(" "), state, nested);
       const sub = args.length === 1 ? args[0].parts.find((p) => p.kind === "command") : undefined;
       const first = sub?.kind === "command" ? programNames(sub.script)[0] : undefined;
       if (first && INIT_IDIOMS.test(first)) return;
@@ -55,7 +55,7 @@ export async function runners(rd: Reader, scene: Scene, state: State, ctx: Conte
     }
     case "source":
     case ".":
-      if (args[0]) return scriptFile(rd, args[0], "shell", state, nested, scene);
+      if (args[0]) return scriptFile(rd, args[0], "shell", state, nested, scene, true);
       return;
     case "trap":
       if (args[0] && !(texts[0] ?? "").startsWith("-")) return shellWord(rd, args[0], state, nested, scene);
@@ -130,9 +130,40 @@ async function interpreter(rd: Reader, language: Language, scene: Scene, state: 
     if (code) return program(rd, language, code, state, depth, scene);
   }
   if (texts.includes("-m")) return;
-  const script = args.find((_, i) => !(texts[i] ?? "-").startsWith("-"));
+  const known = rd.known(state);
+  const operands = language === "javascript" ? args.map((w) => valueOf(w, known).text) : texts;
+  const script = scriptOperand(language, scene.call.name, args, operands);
   if (script && literal(script) !== "-") return scriptFile(rd, script, language, state, depth, scene);
   return stdinProgram(rd, scene, language, state, depth);
+}
+
+const NODE_VALUED = new Set([
+  "-r",
+  "--require",
+  "--import",
+  "--loader",
+  "--experimental-loader",
+  "-C",
+  "--conditions",
+  "--env-file",
+  "--input-type",
+]);
+
+/** The script an interpreter runs: its first operand, past the value of an option that takes one and a runtime's `run`. */
+function scriptOperand(
+  language: Language,
+  name: string | null,
+  args: Word[],
+  texts: (string | null)[],
+): Word | undefined {
+  if (language !== "javascript") return args.find((_, i) => !(texts[i] ?? "-").startsWith("-"));
+  for (let i = 0; i < args.length; i += 1) {
+    const text = texts[i];
+    if (text === null) continue;
+    if (NODE_VALUED.has(text)) i += 1;
+    else if (!text.startsWith("-") && !((name === "bun" || name === "deno") && text === "run")) return args[i];
+  }
+  return undefined;
 }
 
 /** xargs runs its command with the input as a last argument, which is unknown here. */

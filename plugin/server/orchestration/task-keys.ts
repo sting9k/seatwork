@@ -23,13 +23,14 @@ const isHeld = (value: unknown): value is Held => {
   );
 };
 
-/** The task of each seat that has one beyond its own id: what task-scoped decisions and rounds are filed under. */
+/** The task of each seat that has one beyond its own id: what task-scoped decisions and rounds are filed under. `claimed` is told when a seat's first claim replaces its own id or its chain's head as its key. */
 export class TaskKeys {
   private readonly seats = new Map<string, Held>();
 
   constructor(
     private readonly file: string,
     private readonly log: (message: string) => void = () => {},
+    private readonly claimed: (seat: string, from: string, to: string) => void = () => {},
   ) {
     for (const [seat, held] of Object.entries(readJson<Record<string, unknown>>(file, {})))
       if (isHeld(held)) this.seats.set(seat, held);
@@ -41,6 +42,7 @@ export class TaskKeys {
     if (held.length > 0 && !(kept && held.includes(kept.key))) {
       this.seats.set(seat, { key: held[0], issue: true, before: kept?.before ?? [] });
       this.save();
+      if (!kept?.issue) this.tell(seat, kept?.key ?? seat, held[0]);
       return held[0];
     }
     return kept?.key ?? seat;
@@ -73,6 +75,15 @@ export class TaskKeys {
     for (const seat of lost) this.seats.delete(seat);
     if (lost.length > 0) this.save();
     return lost.length;
+  }
+
+  private tell(seat: string, from: string, to: string): void {
+    try {
+      this.claimed(seat, from, to);
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : String(error);
+      this.log(`task keys: what ${seat} recorded under ${from} did not follow it to ${to}: ${reason}`);
+    }
   }
 
   private save(): void {

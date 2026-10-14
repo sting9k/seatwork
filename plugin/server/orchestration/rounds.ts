@@ -97,15 +97,16 @@ interface Standing {
   rejected: number;
   contextTokens: number | null;
   rotateAtTokens: number;
+  early?: boolean;
 }
 
-/** The room's line under a report: the task's round, and a context past the rotation mark. */
+/** The room's line under a report: the task's round, and a context past the rotation mark, or `early` at a milestone before it. */
 export function ownerNote(standing: Standing): string | null {
   const lines: string[] = [];
   if (standing.candidate && standing.rejected === 1) lines.push(note("secondCandidate", {}));
   if (standing.candidate && standing.rejected >= 2)
     lines.push(note("lastCandidate", { candidate: standing.rejected + 1, rejected: standing.rejected }));
-  if (standing.contextTokens !== null && standing.contextTokens >= standing.rotateAtTokens) {
+  if (standing.contextTokens !== null && (standing.early || standing.contextTokens >= standing.rotateAtTokens)) {
     const held = `holds ${Math.round(standing.contextTokens / 1000)}K tokens of context and reads them again at every step`;
     const line = rotateNote(standing.role, held);
     if (line) lines.push(line);

@@ -4,7 +4,7 @@ import type { TurnEvent, TurnOutcome } from "../host";
 import { contextFell } from "../orchestration/compaction";
 import { clip } from "../orchestration/forks";
 import { classify, type FailureKind } from "../orchestration/recovery";
-import { nextTitle, parseHandoff, rotate } from "../orchestration/rotation";
+import { atMilestone, nextTitle, parseHandoff, rotate } from "../orchestration/rotation";
 import { FRESH_EYES, ownerNote } from "../orchestration/rounds";
 import { parseSeat } from "../orchestration/seats";
 import { handInLine, handInReturn, type HandIn } from "../safety/handin";
@@ -13,7 +13,7 @@ import { noteUsage } from "../stats";
 import type { Finding } from "../safety/council/council";
 import { fromRoom, releaseWork, taskOf, type RoomContext } from "./context";
 import { councilLine, councilRead } from "./council";
-import { fitAt } from "./launch";
+import { fitAt, stepUpAt } from "./launch";
 
 /** The end of a seat's turn: its report goes up, a hand-in may be sent back, a review round is held, a rotation is answered. */
 
@@ -170,6 +170,7 @@ async function answerRotation(
           engine: eng,
           version: room.version,
           fit: fitAt,
+          up: stepUpAt,
           handOver: (from, to) => {
             room.knowledge.briefed(to);
             if (given) room.knowledge.inherited(to, given);
@@ -183,6 +184,7 @@ async function answerRotation(
         record,
         handoff,
         given?.lines,
+        room.rounds.rejected(taskOf(room, id)),
       );
     } catch (error) {
       eng.unpause(id);
@@ -206,7 +208,7 @@ async function answerRotation(
           to: told,
           priority: "fyi",
           subject: `ROTATED: ${record.role} ${record.title ?? id} continues in a fresh seat`,
-          body: `The room started ${nextTitle(record.title)} (${next.id}) on ${next.model}, with the brief in force and the handoff at ${next.file}. The seats the old one launched report to it now. ${next.left.length === 0 ? `The old seat ${id} is archived` : `The old seat ${id} is not archived, because these did not move to the successor: ${next.left.join("; ")}. Move them, then archive it`}: write to ${next.id} from here on.`,
+          body: `The room started ${nextTitle(record.title)} (${next.id}) on ${next.model}${next.raised ? " (a tier up: its task was sent back twice)" : ""}, with the brief in force and the handoff at ${next.file}. The seats the old one launched report to it now. ${next.left.length === 0 ? `The old seat ${id} is archived` : `The old seat ${id} is not archived, because these did not move to the successor: ${next.left.join("; ")}. Move them, then archive it`}: write to ${next.id} from here on.`,
           needs: "nothing",
           why: "a seat under you was replaced by a fresh one",
           quiet: true,
@@ -253,7 +255,7 @@ async function findingsOf(room: RoomContext, end: TurnEnd, role: string, task: s
   }
 }
 
-/** Puts under what goes up the room's own lines: the guard's, the council's, the task's round, a context past the rotation line. A line that cannot be made is left out; the report goes up. */
+/** Puts under what goes up the room's own lines: the guard's, the council's, the task's round, a context past the rotation line or at a milestone before it. A line that cannot be made is left out; the report goes up. */
 function addRoomLines(
   room: RoomContext,
   up: NewMail,
@@ -262,11 +264,12 @@ function addRoomLines(
     id: string;
     task: string;
     contextTokens: number | null;
+    early: boolean;
     check: HandIn | null;
     findings: readonly Finding[];
   },
 ): void {
-  const { role, id, task, contextTokens, check, findings } = about;
+  const { role, id, task, contextTokens, early, check, findings } = about;
   try {
     const guarded = [check ? handInLine(check) : null, room.safety.blocksLine(id), councilLine(findings)].filter(
       (line): line is string => !!line,
@@ -279,6 +282,7 @@ function addRoomLines(
       rejected: candidate ? room.rounds.handedIn(task) : 0,
       contextTokens,
       rotateAtTokens: room.rotateAt,
+      early,
     });
     if (line) up.why = [up.why, line.replace(/\s*\n\s*/g, " ")].filter(Boolean).join("; ");
   } catch (error) {
@@ -322,6 +326,7 @@ export async function turnEnded(room: RoomContext, end: TurnEnd): Promise<void> 
   const mailed = room.mailedUp.get(id) ?? new Set<string>();
   room.mailedUp.delete(id);
   const usage = role ? noteUsage(await room.host.seat(id).catch(() => null), role) : null;
+  if (role) room.operations.spent(id, usage?.totalCostUsd);
   if (usage) {
     const before = room.lastUsage.get(id);
     room.lastUsage.set(id, { ...usage });
@@ -374,8 +379,13 @@ export async function turnEnded(room: RoomContext, end: TurnEnd): Promise<void> 
   const findings = role && !canceled ? await findingsOf(room, end, role, task) : [];
   if (sendBack) kept = report = null;
   const up = kept ?? report;
-  if (role && up)
-    addRoomLines(room, up, { role, id, task, contextTokens: usage?.contextWindowUsedTokens ?? null, check, findings });
+  const contextTokens = usage?.contextWindowUsedTokens ?? null;
+  // a seat nearing the rotation line is replaced at a milestone, not in the middle of its work
+  const early =
+    role && up && outcome.kind === "completed" && !room.rotations.get(id)
+      ? await atMilestone(room.forks, { role, tokens: contextTokens, message: end.text }, room.rotateAt)
+      : false;
+  if (role && up) addRoomLines(room, up, { role, id, task, contextTokens, early, check, findings });
   if (up && subjectSignal(up.subject) === "REVIEW") holdForRound(room, up, id);
   const asked = room.rotations.get(id);
   const record = eng.seat(id);

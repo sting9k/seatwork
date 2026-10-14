@@ -122,7 +122,14 @@ const WRAPPERS: Record<string, Spec> = {
   arch: { shortValued: "ed", short: "c", lone: /^-(arm64e?|x86_64h?|i386|ppc|32|64)$/ },
 };
 
-const RUNNERS: Record<string, { sub?: string[]; spec: Spec }> = {
+/** A package runner: its subcommands, the options that take a value before one, and how its own options read. */
+interface Runner {
+  sub?: string[];
+  before?: { short?: string; long?: string[] };
+  spec: Spec;
+}
+
+const RUNNERS: Record<string, Runner> = {
   npx: {
     spec: {
       short: "yq",
@@ -143,6 +150,7 @@ const RUNNERS: Record<string, { sub?: string[]; spec: Spec }> = {
   },
   npm: {
     sub: ["exec", "x"],
+    before: { short: "w", long: ["prefix", "workspace", "userconfig", "registry", "cache", "loglevel"] },
     spec: {
       short: "yq",
       long: ["yes", "no", "workspaces"],
@@ -153,10 +161,15 @@ const RUNNERS: Record<string, { sub?: string[]; spec: Spec }> = {
   },
   pnpm: {
     sub: ["dlx", "exec"],
+    before: { short: "CF", long: ["dir", "filter", "filter-prod", "reporter", "loglevel", "config"] },
     spec: { long: ["recursive", "parallel", "shell-mode"], longValued: ["package", "filter"], inlineShort: "c" },
   },
-  yarn: { sub: ["dlx", "exec"], spec: { short: "q", long: ["quiet"], longValued: ["package"] } },
-  bun: { sub: ["x"], spec: { long: ["bun"] } },
+  yarn: {
+    sub: ["dlx", "exec"],
+    before: { long: ["cwd"] },
+    spec: { short: "q", long: ["quiet"], longValued: ["package"] },
+  },
+  bun: { sub: ["x"], before: { long: ["cwd"] }, spec: { long: ["bun"] } },
   uv: {
     sub: ["run"],
     spec: {
@@ -204,6 +217,24 @@ const own = <T>(table: Record<string, T>, name: string | null): T | undefined =>
 /** The last path component of a command word, lower case. */
 export const baseName = (text: string): string => text.slice(text.lastIndexOf("/") + 1).toLowerCase();
 
+/** Where a runner's subcommand stands in its words, past the options before it; 0 for a runner with none, -1 when it is not there. */
+function subAt(words: Word[], runner: Runner): number {
+  const before = runner.before;
+  const longValued = new Set([...(runner.spec.longValued ?? []), ...(before?.long ?? [])]);
+  const shortValued = `${runner.spec.shortValued ?? ""}${before?.short ?? ""}`;
+  for (let i = 1; i < words.length; i += 1) {
+    const text = literal(words[i]);
+    if (text === null) return -1;
+    if (runner.sub!.includes(text.toLowerCase())) return i;
+    if (!text.startsWith("-")) return -1;
+    const valued = text.startsWith("--")
+      ? longValued.has(text.slice(2))
+      : text.length === 2 && shortValued.includes(text[1]);
+    if (valued) i += 1;
+  }
+  return -1;
+}
+
 /** The program a simple command runs, with wrappers and package runners (`npx tool`, `uv run cmd`) read through. */
 export function invocationOf(simple: Simple): Invocation {
   const out: Invocation = {
@@ -232,12 +263,11 @@ export function invocationOf(simple: Simple): Invocation {
     }
     const runner = own(RUNNERS, name);
     if (runner) {
-      const sub = runner.sub ? (literal(words[1] ?? words[0]) ?? "").toLowerCase() : null;
-      if (!runner.sub || (words.length > 1 && runner.sub.includes(sub!))) {
-        const skip = runner.sub ? 2 : 1;
-        const rest = readOptions(words.slice(skip), runner.spec, out);
+      const at = runner.sub ? subAt(words, runner) : 0;
+      if (at >= 0) {
+        const rest = readOptions(words.slice(at + 1), runner.spec, out);
         if (rest === null) break;
-        out.wrappers.push(runner.sub ? `${name} ${sub}` : name!);
+        out.wrappers.push(runner.sub ? `${name} ${literal(words[at])!.toLowerCase()}` : name!);
         words = rest;
         if (!words.length) return finish(out, words);
         continue;
@@ -292,6 +322,14 @@ function readOptions(words: Word[], spec: Spec, out: Invocation): Word[] | null 
       break;
     }
     if (spec.assigns && /^[A-Za-z_][A-Za-z0-9_]*=/.test(text)) {
+      const name = text.slice(0, text.indexOf("="));
+      out.assigns.push({
+        name,
+        append: false,
+        indexed: false,
+        value: valueWord(words[i], name.length + 1),
+        items: null,
+      });
       i += 1;
       continue;
     }

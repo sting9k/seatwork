@@ -9,6 +9,7 @@ import { retryNote } from "../orchestration/recovery";
 import { handoffRequest } from "../orchestration/rotation";
 import { describeSeats, type SeatRow } from "../orchestration/seats-view";
 import { parseSeat } from "../orchestration/seats";
+import { afterWork } from "../orchestration/work-forks";
 import { refusedCaller, roomTool, TOOL_NAMES } from "./tool-table";
 import { SUBJECT_SIGNALS } from "../signals";
 import { unreadScopes, type Plan, type Work } from "../tasks/graph";
@@ -67,10 +68,6 @@ function answered<T>(run: () => T): T {
     if (error instanceof WorkError) throw new Error(refusal(error));
     throw error;
   }
-}
-
-function asJson(run: () => unknown): string {
-  return JSON.stringify(answered(run));
 }
 
 /** A plan with the overlaps the decision model is sure of, where a scope names no path to compare. */
@@ -244,12 +241,11 @@ export function registerTools(room: RoomContext, mcp: McpHttpServer): void {
       );
     return { me: { id: me, owner: owns(engine.seat(me)?.role) }, ...room.works.of(root) };
   };
-  add("seatwork_work", (args, me) =>
-    asJson(() => {
-      const { me: caller, store, rules } = workOf("seatwork_work", me);
-      return work(store, rules, caller, args);
-    }),
-  );
+  add("seatwork_work", async (args, me) => {
+    const { me: caller, store, rules } = workOf("seatwork_work", me);
+    const done = answered(() => work(store, rules, caller, args));
+    return JSON.stringify(await afterWork(room, store, me, args, done));
+  });
   add("seatwork_graph", async (args, me) => {
     const { store, rules } = workOf("seatwork_graph", me);
     const answer = answered(() => graph(store, rules, args, new Date()));

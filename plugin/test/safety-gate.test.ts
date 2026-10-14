@@ -28,6 +28,7 @@ function tools(over: Partial<Tools> = {}): Tools {
       link: false,
       dir: path === HOME || path === `${HOME}/.ssh`,
     }),
+    real: () => null,
     changed: async () => null,
     ...over,
   };

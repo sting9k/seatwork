@@ -319,10 +319,6 @@ test("at most a set number of wake-ups wait for one seat, and a canceled or fire
   for (let i = 0; i < config.wake.perSeat; i += 1)
     made.push((await r.call(id.peer, { action: "wake", in_minutes: 10 + i, note: `n${i}` })).wake);
   assert.equal((await r.call(id.peer, { action: "wake", in_minutes: 5, note: "one too many" })).code, "WAKE_LIMIT");
-  assert.equal(
-    (await r.call(id.lead, { action: "wake", to: id.peer, in_minutes: 5, note: "and for it" })).code,
-    "WAKE_LIMIT",
-  );
   assert.equal((await r.call(id.lead, { action: "wake", in_minutes: 5, note: "another seat's own" })).wake > 0, true);
   await r.call(id.peer, { action: "unwake", id: made[0] });
   assert.equal((await r.call(id.peer, { action: "wake", in_minutes: 5, note: "fits" })).wake > 0, true);
@@ -332,13 +328,13 @@ test("at most a set number of wake-ups wait for one seat, and a canceled or fire
 
 test("wakes lists a bounded number of wake-ups, soonest first, and says when more wait", async () => {
   const id = names("lead");
-  const peers = Array.from({ length: 8 }, (_, i) => `${id.lead}-p${i}`);
+  const peers = Array.from({ length: 16 }, (_, i) => `${id.lead}-p${i}`);
   const r = rig([
     [id.lead, "lead", null],
     ...peers.map((peer): [string, string, string | null] => [peer, "peer", id.lead]),
   ]);
   for (const [i, peer] of peers.entries())
-    for (let k = 0; k < config.wake.perSeat; k += 1)
+    for (let k = 0; k < config.wake.perSetter; k += 1)
       await r.call(id.lead, { action: "wake", to: peer, in_minutes: 10 + i * 10 + k, note: `n${i}-${k}` });
   const listed = await r.call(id.lead, { action: "wakes" });
   assert.equal(listed.wakes.length, 50);
@@ -386,12 +382,12 @@ test("a pass that stopped after the WAKE mail went out does not send it again, t
 test("a pass fires at most the set number of wake-ups of a store, the oldest first, and the rest go in the next", async () => {
   const id = names("lead");
   const seats: [string, string, string | null][] = [[id.lead, "lead", null]];
-  const peers = Array.from({ length: config.wake.perPass + 10 }, (_, i) => `${id.lead}-p${i}`);
+  const peers = Array.from({ length: config.wake.turnsPerPass + 4 }, (_, i) => `${id.lead}-p${i}`);
   for (const peer of peers) seats.push([peer, "peer", id.lead]);
   const r = rig(seats);
   for (const peer of peers) await r.call(peer, { action: "wake", in_minutes: 5, note: "go" });
   await r.pass(6);
-  assert.equal(peers.filter((peer) => wakes(r, peer).length > 0).length, config.wake.perPass, "a pass is bounded");
+  assert.equal(peers.filter((peer) => wakes(r, peer).length > 0).length, config.wake.turnsPerPass, "a pass is bounded");
   await r.pass(1);
   assert.equal(peers.filter((peer) => wakes(r, peer).length === 1).length, peers.length);
 });
@@ -525,9 +521,14 @@ test("the statements of wake-ups use their indexes, and a pass over a large stor
   store.wakeUp(5);
   store.closeWakeUp(5, "canceled");
   store.readdress("seat-8", "seat-9");
+  store.addWakeUp(
+    { seat: "seat-7", by: "seat-8", at: now, due: new Date(START + 99 * MINUTE).toISOString(), note: "n" },
+    { own: 8, others: 8, setter: 4, sameWithinMs: 2 * MINUTE },
+  );
+  // the copy beside the database reads every pending wake-up, which the shares keep to a few hundred
   const scans = store
     .plans()
-    .filter(({ sql }) => sql.includes("wakeups"))
+    .filter(({ sql }) => sql.includes("wakeups") && !sql.endsWith("FROM wakeups ORDER BY id"))
     .filter(({ plan }) => /\bSCAN (wakeups|w)\b(?! USING)/.test(plan));
   assert.deepEqual(scans, []);
   const fastest = (run: () => unknown, times = 9) => {

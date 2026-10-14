@@ -605,6 +605,13 @@ export class DecisionBook {
     if (book.expireDue().length) this.generation += 1;
   }
 
+  /** A seat's first claim gave its task a new key: what it recorded under the old one is the new one's, and the seat is not told it again as news. */
+  rekey(agent: string, from: string, to: string): void {
+    if (this.deps.book().moveScope(from, to, agent) === 0) return;
+    this.generation += 1;
+    this.checked.delete(agent);
+  }
+
   /** A seat that is gone: what it left pending drops, nothing waits for it, and nothing it was shown is kept. */
   forget(agent: string): void {
     this.nearShown.delete(agent);

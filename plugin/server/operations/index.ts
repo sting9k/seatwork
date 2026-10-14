@@ -3,24 +3,32 @@ import settings from "../../shared/operations.json";
 import { notEnglish } from "../english";
 import { readJson, writeJson } from "../persisted";
 import { hasSecret } from "../redact";
+import { Budget, type MailMore } from "./budget";
 import { districtOf, incidentOf } from "./lines";
 import type { Vitals } from "./vitals";
 import { OperationsStore, type Incident, type IncidentState, type Trace, type TraceNoteKind, type Tune } from "./store";
 
-/** The Operations district: the room's log and incidents, told to its operator seat, the traces of their causes, and the policy that seat tunes from measurement. */
+/** The Operations district: the room's log and incidents, told to its operator seat, the traces of their causes, the policy that seat tunes from measurement, and the spend of each project against its cap. */
 
-/** What the district takes from the room: its folder, the live policy and its file, the operators, mail, each district's reading, and the process's vital signs. */
+/** What the district takes from the room: its folder and policy, the operators, mail, the districts' readings, vital signs, what the budget needs of seats and projects, and the decision model. */
 export interface OperationsDeps {
   dir: string;
   busyTimeoutMs: number;
   policy(): Record<string, unknown>;
   persist(path: string, value: unknown): void;
   operators(): string[];
-  mail(to: string, subject: string, body: string): Promise<unknown>;
+  mail(to: string, subject: string, body: string, more?: MailMore): Promise<unknown>;
   readings: Record<string, () => unknown>;
   vitals?: Vitals;
   echo(line: string): void;
   now?: () => Date;
+  projectOf?(seat: string): string | null;
+  topSeat?(project: string): string | null;
+  lifted?(project: string): Promise<void>;
+  labeler?: {
+    open(): boolean;
+    take(state: Record<string, unknown>, ids: readonly string[]): Promise<(string | null)[]>;
+  };
 }
 
 /** A refusal of an operator's call that it can fix. */
@@ -29,34 +37,61 @@ export class OperationsRefused extends Error {
   readonly retryable = false;
 }
 
-/** A policy key the operator may tune: its district, its type, and its range. */
+/** A policy key the operator may tune: its district, its type, its range, and whether it may only be lowered. A path with `[*]` stands for the keys of every project. */
 interface Tunable {
   district: string;
   type: "integer" | "number" | "boolean" | "forks";
   min?: number;
   max?: number;
+  lowerOnly?: boolean;
 }
 
 const TUNABLES = settings.tunables as Record<string, Tunable>;
 const FORK_NAMES = Object.keys(forkCatalog.forks);
+const KINDS = settings.incidentKinds as Record<string, string>;
+const PATH_PART = /\[[^\]]*\]|[^.[\]]+/g;
+const ONE_PROJECT = /^([^[\]]*)\[([^\]]+)\]([^[\]]*)$/;
+const LABEL_LINE_CHARS = 300;
 const NOTE_KINDS: readonly TraceNoteKind[] = ["evidence", "eliminated", "hypothesis"];
 const HOUR = 3_600_000;
 const DAY = 24 * HOUR;
 const SHOWN = { lines: 50, linesMost: 500, incidents: 20, tunes: 10, untold: 20, reverts: 2 } as const;
 
-/** The value at a dotted path of an object; undefined when a step is missing. */
-function valueAt(root: Record<string, unknown>, path: string): unknown {
-  return path
-    .split(".")
-    .reduce<unknown>(
-      (at, key) => (at && typeof at === "object" ? (at as Record<string, unknown>)[key] : undefined),
-      root,
-    );
+/** The keys of a dotted path; a key in brackets may hold dots, as a project's folder does. */
+function pathKeys(path: string): string[] {
+  return (path.match(PATH_PART) ?? []).map((part) => (part.startsWith("[") ? part.slice(1, -1) : part));
 }
 
-/** Sets the value at a dotted path, making the objects on the way; undefined removes the key. */
+/** The value under keys; a `*` key gathers the value under each key there is. Undefined when a step is missing. */
+function walk(at: unknown, keys: readonly string[]): unknown {
+  if (keys.length === 0) return at;
+  if (!at || typeof at !== "object") return undefined;
+  const [key, ...rest] = keys;
+  if (key === "*")
+    return Object.fromEntries(
+      Object.entries(at).flatMap(([name, one]) => {
+        const found = walk(one, rest);
+        return found === undefined ? [] : [[name, found]];
+      }),
+    );
+  return Object.hasOwn(at, key) ? walk((at as Record<string, unknown>)[key], rest) : undefined;
+}
+
+/** The value at a path of an object; undefined when a step is missing. */
+const valueAt = (root: Record<string, unknown>, path: string): unknown => walk(root, pathKeys(path));
+
+/** The tunable a path names, and the project it names when the tunable is one for every project; undefined for a path that is none. */
+function tunableOf(path: string): { tunable: Tunable; project?: string } | undefined {
+  if (!path.includes("[*]") && Object.hasOwn(TUNABLES, path)) return { tunable: TUNABLES[path] };
+  const match = ONE_PROJECT.exec(path);
+  const pattern = match && match[2] !== "*" ? `${match[1]}[*]${match[3]}` : "";
+  return Object.hasOwn(TUNABLES, pattern) ? { tunable: TUNABLES[pattern], project: match![2] } : undefined;
+}
+
+/** Sets the value at a path, making the objects on the way; undefined removes the key. */
 function setAt(root: Record<string, unknown>, path: string, value: unknown): void {
-  const keys = path.split(".");
+  const keys = pathKeys(path);
+  if (keys.includes("__proto__")) throw new OperationsRefused(`${path} is no key`);
   let at = root;
   for (const key of keys.slice(0, -1)) {
     if (!at[key] || typeof at[key] !== "object") at[key] = {};
@@ -109,6 +144,15 @@ function words(what: string, raw: unknown, most = settings.evidenceChars): strin
 /** A time as a seat reads it, to the minute. */
 const minute = (at: string): string => `${at.slice(0, 16).replace("T", " ")} UTC`;
 
+/** Incidents as lines of a mail or an answer; once the decision model has read any of them, under a heading for each kind it read them as. */
+function grouped(incidents: readonly Incident[]): string[] {
+  if (!incidents.some((one) => one.kind)) return incidents.map(incidentLine);
+  return [...Object.keys(KINDS), null].flatMap((kind) => {
+    const these = incidents.filter((one) => (one.kind ?? null) === kind);
+    return these.length > 0 ? [`${kind ? KINDS[kind] : "Not read"}:`, ...these.map(incidentLine)] : [];
+  });
+}
+
 /** An incident as one line of a mail or an answer. */
 const incidentLine = (one: Incident): string =>
   `#${one.id} [${one.district}] ${one.line} (${one.count}x, ${one.lastHour} in the last hour, last ${minute(one.lastAt)})` +
@@ -122,6 +166,7 @@ const tuneLine = (one: Tune): string =>
 /** The operations of the room: one per room, held by its timers and its operator's tool. */
 export class Operations {
   private readonly store: OperationsStore;
+  private readonly budget: Budget;
   private readonly readThisTurn = new Map<string, Set<string>>();
   private lastIncidentMail = 0;
   private lastDigest: number;
@@ -131,8 +176,23 @@ export class Operations {
 
   constructor(private readonly deps: OperationsDeps) {
     this.store = new OperationsStore(deps.dir, deps.busyTimeoutMs, () => this.now());
+    this.budget = new Budget({
+      store: this.store,
+      policy: deps.policy,
+      now: () => this.now(),
+      projectOf: (seat) => deps.projectOf?.(seat) ?? null,
+      topSeat: (project) => deps.topSeat?.(project) ?? null,
+      notice: (to, subject, body, more) => deps.mail(to, subject, body, more),
+      raise: (line, key) => this.keep(line, key, false),
+      log: (line) => this.log(line),
+      lifted: async (project) => void (await deps.lifted?.(project)),
+    });
     const vitals = deps.vitals;
-    this.readings = vitals ? { ...deps.readings, host: () => vitals.reading() } : deps.readings;
+    this.readings = {
+      ...deps.readings,
+      ...(vitals ? { host: () => vitals.reading() } : {}),
+      budget: () => this.budget.reading(),
+    };
     // a room that starts again sends its first digest a full period later, never at once
     this.lastDigest = this.now().getTime();
   }
@@ -143,10 +203,15 @@ export class Operations {
 
   /** One line of the room's log: echoed to the app's log, kept, and counted when it reports trouble. */
   log(line: string): void {
+    this.keep(line, undefined, true);
+  }
+
+  /** Echoes and keeps a line under an incident `key` given, else under the key its words make; `ask` false keeps the decision model from reading a new incident. */
+  private keep(line: string, key: string | null | undefined, ask: boolean): void {
     this.deps.echo(line);
     const kept = line.slice(0, settings.lineChars);
     try {
-      this.store.record(districtOf(kept), kept, incidentOf(kept));
+      this.store.record(districtOf(kept), kept, key === undefined ? incidentOf(kept) : key, ask);
     } catch (error) {
       // a store that cannot keep the line must not log about itself again
       this.deps.echo(`operations: a log line was not kept: ${(error as Error).message}`);
@@ -158,12 +223,14 @@ export class Operations {
     this.readThisTurn.delete(agent);
   }
 
-  /** The minute's pass: what is watched is logged, incidents go to the operators at most every few minutes, the digest once a period. */
+  /** The minute's pass: what is watched is logged, the budget's holds are kept, new incidents are read, incidents go to the operators at most every few minutes, the digest once a period. */
   async tick(): Promise<void> {
     if (this.sending) return;
     this.sending = true;
     try {
       for (const line of this.deps.vitals?.minute() ?? []) this.log(line);
+      await this.budget.minute().catch((error) => this.log(`budget: the minute's pass failed: ${error.message}`));
+      await this.readNew().catch((error) => this.log(`operations: new incidents were not read: ${error.message}`));
       const operators = this.deps.operators();
       if (operators.length === 0) return;
       const now = this.now().getTime();
@@ -179,13 +246,36 @@ export class Operations {
     }
   }
 
+  /** Puts the oldest new incidents to the decision model in one call; each is kept with the kind it was sure of, or with none, and is asked no more. */
+  private async readNew(): Promise<void> {
+    const labeler = this.deps.labeler;
+    if (!labeler?.open()) return;
+    const due = this.store.unasked(settings.labelMost);
+    if (due.length === 0) return;
+    const ids = due.map((one) => `i${one.id}`);
+    const labels = await labeler.take(
+      {
+        incidents: Object.fromEntries(
+          due.map((one, at) => [
+            ids[at],
+            { district: one.district, line: one.line.slice(0, LABEL_LINE_CHARS), seen: one.count },
+          ]),
+        ),
+      },
+      ids,
+    );
+    this.store.setKinds(
+      due.map((one, at) => [one.id, labels[at] && Object.hasOwn(KINDS, labels[at]) ? labels[at] : null]),
+    );
+  }
+
   private async tellIncidents(operators: readonly string[], now: number): Promise<void> {
     const due = this.store.untold(new Date(now - settings.retellHours * HOUR).toISOString(), SHOWN.untold);
     if (due.length === 0) return;
     this.lastIncidentMail = now;
     const body = [
       "The room met these since you were last told. Read the district and its log before you change anything: seatwork_room.",
-      ...due.map(incidentLine),
+      ...grouped(due),
     ].join("\n");
     await this.send(
       operators,
@@ -216,14 +306,14 @@ export class Operations {
     const standing = this.store.standing(new Date(now - settings.standingDays * DAY).toISOString());
     const traces = this.store.openTraces();
     return [
-      `Incidents: ${incidents.length ? "" : "none"}`,
-      ...incidents.map(incidentLine),
+      `Incidents:${incidents.length ? "" : " none"}`,
+      ...grouped(incidents),
       "Readings:",
       ...Object.keys(this.readings).map((name) => `${name}: ${this.readingOf(name)}`),
       `Changes still standing: ${standing.length ? "" : "none"}`,
       ...standing.map(
         (one) =>
-          `${tuneLine(one)}\n  then: ${one.baseline}\n  now: ${this.readingOf(TUNABLES[one.path]?.district ?? "")}`,
+          `${tuneLine(one)}\n  then: ${one.baseline}\n  now: ${this.readingOf(tunableOf(one.path)?.tunable.district ?? "")}`,
       ),
       `Open traces: ${traces.length ? traces.map((one) => `#${one.id} ${one.hypothesis}`).join("; ") : "none"}`,
       "Weigh each change against its baseline; revert one that did not help. Tune only what a reading and the log show.",
@@ -257,7 +347,7 @@ export class Operations {
       case "incidents": {
         const days = Math.min(Math.max(Number(args.days) || 1, 1), settings.logKeepDays);
         const since = new Date(this.now().getTime() - days * DAY).toISOString();
-        return { days, incidents: this.store.incidents(since, SHOWN.incidents).map(incidentLine) };
+        return { days, incidents: grouped(this.store.incidents(since, SHOWN.incidents)) };
       }
       case "log": {
         const district = typeof args.district === "string" ? args.district : "";
@@ -296,7 +386,7 @@ export class Operations {
     for (const one of incidents) byDistrict[one.district] = (byDistrict[one.district] ?? 0) + one.count;
     return {
       incidentsToday: byDistrict,
-      newest: incidents.slice(0, 5).map(incidentLine),
+      newest: grouped(incidents.slice(0, 5)),
       openTraces: this.store.openTraces().map((one) => `#${one.id} ${one.hypothesis}`),
       readings: Object.keys(this.readings),
     };
@@ -400,11 +490,14 @@ export class Operations {
   /** Changes one tunable key, in memory and in the room's policy file, with what it rests on and the district's reading as its baseline. */
   private tune(agent: string, args: Record<string, unknown>): Record<string, unknown> {
     const path = String(args.path ?? "");
-    const tunable = TUNABLES[path];
-    if (!tunable)
+    const found = tunableOf(path);
+    if (!found)
       throw new OperationsRefused(
         `${path || "that key"} is not one the room tunes on its own; tunable: ${Object.keys(TUNABLES).join(", ")}`,
       );
+    const { tunable, project } = found;
+    if (project !== undefined && !this.budget.knows(project))
+      throw new OperationsRefused(`no project ${project} in the room: seatwork_room do=budget lists them`);
     const value = checked(path, tunable, args.value);
     const { reason, evidence } = this.grounds(agent, tunable.district, args, true);
     const trace = args.trace === undefined ? null : this.openTrace(args.trace);
@@ -425,6 +518,10 @@ export class Operations {
           .join("; ")}. Give evidence that answers these, and revisit true.`,
       );
     const before = valueAt(this.deps.policy(), path);
+    // a project with no cap of its own is held to the default's, so a cap above that would raise it
+    const inForce = project === undefined ? before : this.budget.limitOf(project, pathKeys(path).at(-1) as "dailyUsd");
+    if (tunable.lowerOnly && typeof inForce === "number" && (value as number) >= inForce)
+      throw new OperationsRefused(`${path} is ${inForce}: you may only lower it; the person raises it`);
     if (JSON.stringify(before) === JSON.stringify(value))
       throw new OperationsRefused(`${path} is ${JSON.stringify(value)} already`);
     const baseline = this.readingOf(tunable.district);
@@ -452,8 +549,10 @@ export class Operations {
   private revert(agent: string, args: Record<string, unknown>): Record<string, unknown> {
     const change = this.store.tune(Number(args.id));
     if (!change) throw new OperationsRefused(`no change #${String(args.id)}`);
-    const tunable = TUNABLES[change.path];
+    const tunable = tunableOf(change.path)?.tunable;
     if (!tunable) throw new OperationsRefused(`${change.path} is no longer tunable`);
+    if (tunable.lowerOnly)
+      throw new OperationsRefused(`only the person raises ${change.path}: undoing a change would raise it`);
     const { reason, evidence } = this.grounds(agent, tunable.district, args, false);
     const now = valueAt(this.deps.policy(), change.path);
     if (JSON.stringify(now ?? null) !== (change.after ?? "null"))
@@ -474,19 +573,60 @@ export class Operations {
     return { id: kept.id, line: `Reverted: ${tuneLine(kept)}` };
   }
 
-  /** Drops log lines, incidents and closed traces past their keep; the GC calls it. */
+  /** Drops log lines, incidents, closed traces and days of spend past their keep; the GC calls it. */
   expire(): number {
     const now = this.now().getTime();
-    return this.store.expire(
-      new Date(now - settings.logKeepDays * DAY),
-      settings.logMost,
-      new Date(now - settings.traceKeepDays * DAY),
+    return (
+      this.store.expire(
+        new Date(now - settings.logKeepDays * DAY),
+        settings.logMost,
+        new Date(now - settings.traceKeepDays * DAY),
+      ) + this.budget.expire()
     );
   }
 
-  /** An operator that is gone reads nothing more. */
+  /** A seat is gone: an operator reads nothing more, and the last cost it reported is not kept. */
   forget(agent: string): void {
     this.readThisTurn.delete(agent);
+    this.counting(`the cost of ${agent} was not forgotten`, () => this.budget.forget(agent));
+  }
+
+  /** A seat of the room is new: the first cost it reports counts whole. */
+  opened(seat: string): void {
+    this.counting(`the cost of ${seat} was not marked`, () => this.budget.opened(seat));
+  }
+
+  /** A turn of a seat ended with the total cost it has so far, when known: it counts for the seat's project, and a project past its cap is held. */
+  spent(seat: string, totalUsd: number | undefined): void {
+    this.counting(`the spend of a turn of ${seat} was not kept`, () => this.budget.spent(seat, totalUsd));
+  }
+
+  /** Why a seat takes no mail now (its project is past its cap), or null; what cannot be read holds nothing. */
+  holds(seat: string): string | null {
+    if (!this.budget.anyHeld()) return null;
+    try {
+      return this.budget.holds(this.deps.projectOf?.(seat) ?? null);
+    } catch {
+      return null;
+    }
+  }
+
+  /** Why a project takes no new seat now, or null. */
+  holdsProject(project: string | null): string | null {
+    try {
+      return this.budget.holds(project);
+    } catch {
+      return null;
+    }
+  }
+
+  /** Runs a step of the budget's; a store that fails is said in the log, never thrown at the turn that asked. */
+  private counting(what: string, work: () => void): void {
+    try {
+      work();
+    } catch (error) {
+      this.log(`budget: ${what}: ${(error as Error).message}`);
+    }
   }
 
   close(): void {

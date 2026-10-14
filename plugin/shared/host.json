@@ -1,0 +1,6 @@
+{
+  "$comment": "How long the room waits for the app that runs its seats, in seconds. readSeconds: a seat's state, one seat, the list of open seats, the projects. historySeconds: a seat's timeline. writeSeconds: a message to a seat, an archive. A call past its time fails like one the app could not answer, and nothing waits on it longer.",
+  "readSeconds": 10,
+  "historySeconds": 30,
+  "writeSeconds": 30
+}

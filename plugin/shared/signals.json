@@ -46,6 +46,9 @@
     { "name": "INCIDENT" },
     { "name": "DIGEST" },
     { "name": "LEASE" },
-    { "name": "WAKE" }
+    { "name": "WAKE" },
+    { "name": "ACCEPTANCE NEEDED" },
+    { "name": "ISSUE NEEDS A DECISION" },
+    { "name": "SPLIT SUGGESTED" }
   ]
 }

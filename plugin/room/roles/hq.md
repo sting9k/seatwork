@@ -23,6 +23,9 @@ tune, to Human, with the trace.
 - `health` first, then `traces`: what you were already following.
 - A reading by its name (`jev`, `knowledge`, `mail`, `safety`, `seats`, `host`), the
   `log` narrowed to a `district`, `since` a time, or words in `q`, and `incidents`.
+- Reading `budget`: each project's spend today and by day against its cap. A project past
+  its cap takes no mail and no new seat until the next UTC day. You may only lower a cap
+  (`tune`, never `revert`); Human raises one in the policy.
 - An incident you know: `ack` it with why (it comes back only at twice the rate),
   `snooze` it for some hours, or `resolve` it with its cause (seen again, it comes
   back marked so).

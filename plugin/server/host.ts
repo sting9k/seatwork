@@ -10,7 +10,7 @@ export interface SeatUsage {
   contextWindowUsedTokens?: number;
 }
 
-/** An open seat as the app shows it; `status` is idle, running, initializing, error or closed, `waiting` that a permission request waits on someone. */
+/** An open seat as the app shows it: `status` as the app names it (idle, running, initializing, error, closed), `waiting` for a permission, and `state` what the two come to. */
 export interface LiveSeat {
   id: string;
   provider: string;
@@ -18,6 +18,7 @@ export interface LiveSeat {
   cwd: string;
   parentId: string | null;
   status: string;
+  state: SeatState;
   waiting: boolean;
   updatedAt: string;
   turnStartedAt: string | null;

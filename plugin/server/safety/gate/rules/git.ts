@@ -16,10 +16,10 @@ export interface GitTools {
   rebasing(cwd: string | null): Promise<boolean>;
 }
 
-/** The rules a git command trips; `shell` is the line an alias runs through the shell, which is judged too. */
+/** The rules a git command trips; `shells` are the lines it runs through the shell (an alias, a program a `-c` option names), which are judged too. */
 export interface GitOutcome {
   hits: GitHit[];
-  shell: string | null;
+  shells: string[];
 }
 
 const BUILTIN = new Set(
@@ -76,6 +76,7 @@ const RECOVERY = new Set([
 ]);
 const EXEC_KEYS =
   /^(core\.(fsmonitor|hookspath|sshcommand|pager|editor|askpass|gitproxy|attributesfile)|filter\..+|diff\.(external|.+\.(command|textconv|cachetextconv))|merge\..+\.(driver|recursivedriver)|(difftool|mergetool)\..+\.(cmd|path)|credential\.(.+\.)?helper|gpg\.(.+\.)?program|sequence\.editor|pager\..+|include\.path|includeif\..+\.path)$/;
+const PATH_KEYS = /^(core\.(hookspath|attributesfile)|include\.path|includeif\..+\.path)$/;
 const CONFIG_VALUED = new Set(["-f", "--file", "--blob", "--type", "--default", "--comment"]);
 const CONFIG_READS = new Set(["get", "list", "unset", "edit", "remove-section", "rename-section"]);
 const MAX_ALIAS = 64;
@@ -95,54 +96,62 @@ export async function gitRules(scene: Scene, tools: GitTools, strict: boolean): 
   let words = scene.call.args;
   if (name !== "git") {
     const sub = name.slice(4);
-    if (!name.startsWith("git-") || !BUILTIN.has(sub)) return { hits: [], shell: null };
+    if (!name.startsWith("git-") || !BUILTIN.has(sub)) return NOTHING;
     words = [{ raw: sub, start: 0, end: 0, parts: [{ kind: "text", text: sub, quote: "none" }] }, ...words];
   }
   const aliases = new Map<string, string>();
+  const given: GitOutcome = { hits: [], shells: [] };
   let cwd = scene.cwd;
   const seen = new Set<string>();
   for (let depth = 0; depth <= MAX_ALIAS; depth += 1) {
-    const read = readGlobals(words, aliases, cwd);
-    if (read === "exit") return { hits: [], shell: null };
-    if (read === "dynamic") return unverified("a word only known at run time stands where git reads its subcommand");
+    const read = readGlobals(words, aliases, cwd, given);
+    if (read === "exit") return given;
+    if (read === "dynamic")
+      return unverified(given, "a word only known at run time stands where git reads its subcommand");
     cwd = read.cwd;
     words = read.rest;
     const sub = literal(words[0])!;
     if (BUILTIN.has(sub)) {
       const line: Line = { sub, args: words.slice(1), texts: words.slice(1).map(literal), cwd };
-      return { hits: await rules(line, scene, tools, strict), shell: null };
+      given.hits.push(...(await rules(line, scene, tools, strict)));
+      return given;
     }
     const key = sub.toLowerCase();
     const body = aliases.get(key) ?? (await tools.alias(key, cwd));
     if (body === null) {
-      if (!/^[A-Za-z0-9._+-]+$/.test(sub)) return { hits: [], shell: null };
-      if (await tools.external(sub)) return { hits: [], shell: null };
-      return unverified(`git ${sub} is neither a git command nor an alias the room can read`);
+      if (!/^[A-Za-z0-9._+-]+$/.test(sub)) return given;
+      if (await tools.external(sub)) return given;
+      return unverified(given, `git ${sub} is neither a git command nor an alias the room can read`);
     }
-    if (seen.has(key)) return unverified(`the alias ${sub} calls itself`);
+    if (seen.has(key)) return unverified(given, `the alias ${sub} calls itself`);
     seen.add(key);
     if (body.startsWith("!")) {
       const rest = words
         .slice(1)
         .map((w) => w.raw)
         .join(" ");
-      return { hits: [], shell: rest ? `${body.slice(1)} ${rest}` : body.slice(1) };
+      given.shells.push(rest ? `${body.slice(1)} ${rest}` : body.slice(1));
+      return given;
     }
     words = [...splitAlias(body), ...words.slice(1)];
   }
-  return unverified("the alias goes deeper than the room reads");
+  return unverified(given, "the alias goes deeper than the room reads");
 }
+
+const NOTHING: GitOutcome = { hits: [], shells: [] };
 
 /** The outcome for a subcommand the room cannot read. */
-function unverified(detail: string): GitOutcome {
-  return { hits: [{ pack: "core.git", rule: "git-alias-semantic-unverified", detail }], shell: null };
+function unverified(given: GitOutcome, detail: string): GitOutcome {
+  given.hits.push({ pack: "core.git", rule: "git-alias-semantic-unverified", detail });
+  return given;
 }
 
-/** Steps over git's global options; notes `-c alias.x=...` and `-C dir`. */
+/** Steps over git's global options; notes `-c alias.x=...`, the programs other `-c` options name, and `-C dir`. */
 function readGlobals(
   words: Word[],
   aliases: Map<string, string>,
   cwd: string | null,
+  given: GitOutcome,
 ): { rest: Word[]; cwd: string | null } | "exit" | "dynamic" {
   let i = 0;
   while (i < words.length) {
@@ -161,9 +170,12 @@ function readGlobals(
         text.length > valued.length ? text.slice(valued.length + (text[valued.length] === "=" ? 1 : 0)) : null;
       const value = glued ?? (words[i + 1] ? literal(words[i + 1]) : null);
       if (glued === null && !words[i + 1]) return "exit";
-      if (valued === "-c" && value) {
-        const match = /^alias\.([^=]+)=(.*)$/is.exec(value);
-        if (match) aliases.set(match[1].toLowerCase(), match[2]);
+      if (valued === "-c") {
+        if (value !== null) {
+          const match = /^alias\.([^=]+)=(.*)$/is.exec(value);
+          if (match) aliases.set(match[1].toLowerCase(), match[2]);
+          else programOf(value, given);
+        } else if (glued === null && words[i + 1]) programOf(words[i + 1].raw, given, true);
       }
       if (valued === "-C" && value) cwd = value.startsWith("/") ? value : cwd ? `${cwd}/${value}` : null;
       else if (valued === "-C") cwd = null;
@@ -175,6 +187,34 @@ function readGlobals(
     return { rest: words.slice(i), cwd };
   }
   return "exit";
+}
+
+export const PROGRAM_VARIABLES = [
+  "GIT_SSH_COMMAND",
+  "GIT_SSH",
+  "GIT_EXTERNAL_DIFF",
+  "GIT_PAGER",
+  "GIT_EDITOR",
+  "GIT_SEQUENCE_EDITOR",
+  "GIT_ASKPASS",
+  "SSH_ASKPASS",
+  "GIT_PROXY_COMMAND",
+];
+
+/** Whether a git config key names a program git runs. */
+export function givesProgram(key: string): boolean {
+  const lower = key.toLowerCase();
+  return EXEC_KEYS.test(lower) && !PATH_KEYS.test(lower);
+}
+
+/** Notes the program a `key=value` setting gives git, when its key is one that runs a program; a value known only at run time is a finding. */
+function programOf(setting: string, given: GitOutcome, dynamic = false): void {
+  const at = setting.indexOf("=");
+  if (at < 0) return;
+  const key = setting.slice(0, at);
+  if (!givesProgram(key)) return;
+  if (dynamic) given.hits.push({ pack: "room.guard", rule: "git-config-exec", detail: key.slice(0, 80) });
+  else given.shells.push(setting.slice(at + 1).replace(/^!/, ""));
 }
 
 /** An alias value split into words by git's own quoting. */

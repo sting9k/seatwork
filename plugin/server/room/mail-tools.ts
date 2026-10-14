@@ -8,9 +8,11 @@ import type { Mail, MailEngine, NewMail, Needs, SeatRecord } from "../coordinati
 import { inbox } from "../coordination/reader";
 import { MailStoreError } from "../coordination/store";
 import type { LiveSeat } from "../host";
+import { routeUp } from "../orchestration/escalation";
 import { clip } from "../orchestration/forks";
 import { CLOSES_WORK, isReceiptWord, priorityOf, SUBJECT_SIGNALS, subjectOpening, subjectSignal } from "../signals";
 import { fromRoom, taskOf, type RoomContext } from "./context";
+import { tierUpNote } from "./launch";
 
 /** The room's two mail tools: what a seat sends is checked, routed and posted; its inbox is read. */
 
@@ -201,19 +203,27 @@ async function wakeUps(room: RoomContext, me: string, action: string, args: Reco
     if ((await eng.recipientStatus(seat)) === "gone")
       throw new MailError("RECIPIENT_GONE", `${seat} is archived or gone; no wake-up was set`, await seats.whom());
   }
-  const wake = eng.setWakeUp(me, seat, { at: args.at, inMinutes: args.in_minutes, note: args.note });
-  if (!wake)
+  const added = eng.setWakeUp(me, seat, { at: args.at, inMinutes: args.in_minutes, note: args.note });
+  if ("full" in added) {
+    const { perSeat, perSetter } = mailConfig.wake;
+    const fix = "`wakes` lists them, `unwake` cancels one";
     throw new MailError(
       "WAKE_LIMIT",
-      seat === me
-        ? `you already have ${mailConfig.wake.perSeat} wake-ups waiting: \`wakes\` lists them, \`unwake\` cancels one`
-        : `${seat} already has ${mailConfig.wake.perSeat} wake-ups waiting; wait for one to fire, or ask it to cancel one`,
+      added.full === "own"
+        ? `you already have ${perSeat} wake-ups waiting for yourself: ${fix}`
+        : added.full === "setter"
+          ? `you already have ${perSetter} wake-ups waiting for ${seat}: ${fix}`
+          : `other seats already have ${perSeat} wake-ups waiting for ${seat}; wait for one to fire, or ask a seat to cancel one`,
     );
+  }
   return JSON.stringify({
-    wake: wake.id,
+    wake: added.wake.id,
     seat: seenAs(eng, me, seat),
-    at: wake.due,
-    note: "the seat is mailed a WAKE at that time, which starts its turn; the pass runs each minute, so it can be up to a minute late",
+    at: added.wake.due,
+    ...(added.repeat ? { replayed: true } : {}),
+    note: added.repeat
+      ? "this wake-up was already waiting, so none was added"
+      : "the seat is mailed a WAKE at that time, which starts its turn; the pass runs each minute, so it can be up to a minute late",
   });
 }
 
@@ -307,6 +317,12 @@ export async function sendMail(room: RoomContext, from: string, args: Record<str
       });
     }
   }
+  // a question for the Owner may be one a seat above, or a person, must answer
+  const routed = await routeUp(room, from, draft, signal);
+  const outgoing = routed?.draft ?? draft;
+  const repeated = routed ? eng.repeatOf(outgoing) : null;
+  if (repeated)
+    return JSON.stringify({ sent: repeated.id, thread: repeated.thread, replayed: true, state: repeated.state });
   // an ACK, or a receipt for work under review, asks nothing of anyone: neither starts a turn
   const waits =
     team ||
@@ -314,14 +330,16 @@ export async function sendMail(room: RoomContext, from: string, args: Record<str
     (to.length === 1 && isReceipt(subject, args.needs, toWorker, room.lastSignal.get(to[0]))) ||
     (await informsOnly(room, draft, found.get(to[0]), stops, cc.length));
   const mail = await eng.post({
-    ...draft,
+    ...outgoing,
     priority: stops ? "blocking" : waits ? "fyi" : draft.priority,
     ...(team ? { kind: "team" as const } : {}),
     ...(stops ? { why: "the seat above you stopped this work; the turn you were in was ended to bring you this" } : {}),
     quiet: waits && !stops,
     urgent: stops,
   });
-  const sentTo = to.map((seat) => (eng.isAncestor(seat, from) ? "owner" : `${eng.seat(seat)?.role ?? "seat"} ${seat}`));
+  const sentTo = [outgoing.to]
+    .flat()
+    .map((seat) => (eng.isAncestor(seat, from) && !routed ? "owner" : `${eng.seat(seat)?.role ?? "seat"} ${seat}`));
   if (stops) return stopBelow(room, mail, to[0], subject, found.get(to[0]), sentTo, await seats.live());
   const held = mail.state === "queued" || mail.state === "sending";
   // the rounds of repair a task allows: the one past them is said where its Owner sends it
@@ -331,13 +349,14 @@ export async function sendMail(room: RoomContext, from: string, args: Record<str
     const before = room.rounds.rejected(task);
     const count = room.rounds.answered(task, opening, to[0]);
     if (count > before && count >= 3) round = note("pastLastRound", { rejected: count });
+    else if (count > before && count === 2) round = (await tierUpNote(room.host, eng.seat(to[0])!)) ?? undefined;
   }
   return JSON.stringify({
     sent: mail.id,
     to: sentTo,
     thread: mail.thread,
     state: waits ? "read with the recipient's next mail" : held ? "held until the recipient can take it" : "delivered",
-    ...(round ? { note: round } : {}),
+    ...(round || routed ? { note: [round, routed?.note].filter(Boolean).join("; ") } : {}),
   });
 }
 

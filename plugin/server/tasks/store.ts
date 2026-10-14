@@ -392,6 +392,23 @@ export class WorkStore extends Sqlite {
     return this.now().toISOString();
   }
 
+  /** Gives a lease to the open issues held by seats of the room that carry none, as a store made before leases has: the lease starts now, and a person's claim is left alone. */
+  leaseHeld(): void {
+    const holders = this.rows<{ assignee: string }>(
+      "SELECT DISTINCT assignee FROM issues INDEXED BY issues_by_assignee WHERE assignee IS NOT NULL AND status <> 'closed' AND lease_until IS NULL",
+    )
+      .map((row) => row.assignee)
+      .filter((holder) => this.leased(holder));
+    if (holders.length === 0) return;
+    this.transaction("write", () =>
+      this.run(
+        "UPDATE issues INDEXED BY issues_by_assignee SET lease_until = ?1 WHERE assignee IN (SELECT value FROM json_each(?2)) AND status <> 'closed' AND lease_until IS NULL",
+        this.leaseFrom(1),
+        JSON.stringify(holders),
+      ),
+    );
+  }
+
   /** The end of a lease that starts now, for a holder that is a seat of the room; null for any other. */
   private lease(holder: string | null): string | null {
     return holder && this.leased(holder) ? this.leaseFrom(1) : null;
@@ -999,7 +1016,7 @@ export class WorkStore extends Sqlite {
         this.comment(
           issue.id,
           "room",
-          `${issue.holder} is gone, so this issue is back on the board with no holder. Claim it, or brief a new seat for it.`,
+          `${issue.holder} is gone or has stopped, so this issue is back on the board with no holder. Claim it, or brief a new seat for it.`,
         );
         return { id: issue.id, title: issue.title, holder: issue.holder };
       }),

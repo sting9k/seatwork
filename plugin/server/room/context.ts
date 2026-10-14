@@ -5,9 +5,9 @@ import type { ReviewGate } from "../orchestration/review-gate";
 import type { Rotations } from "../orchestration/rotation";
 import type { Rounds } from "../orchestration/rounds";
 import type { RuntimePolicy } from "../policy";
+import type { Safety } from "../safety/index";
 import type { OwedList } from "./status";
 import type { WorkStores } from "../tasks/stores";
-import type { Watcher } from "../watch/watcher";
 import type { Callers } from "./callers";
 
 /** What the parts of a running room share: the districts, the app, what a turn leaves. */
@@ -24,7 +24,7 @@ export interface RoomContext {
   rotations: Rotations;
   owed: OwedList;
   callers: Callers;
-  watcher: Watcher;
+  safety: Safety;
   /** seat → the signals it mailed its parent in the turn it is in; read when that turn ends */
   mailedUp: Map<string, Set<string>>;
   /** seat → the signal its last turn ended with */

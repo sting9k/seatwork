@@ -61,9 +61,6 @@ export function priorityOf(subject: string, needs: string, toWorker: boolean): "
 const RECEIPT = new RegExp(`^\\W*(?:${named((row) => row.receipt).join("|")})\\b`);
 /** Whether a subject opens with a receipt: a word from above that asks nothing of work handed in. */
 export const isReceiptWord = (subject: string): boolean => RECEIPT.test(subject);
-/** A pattern for the subjects that give this verdict on the work they answer. */
-export const verdictPattern = (verdict: "accepted" | "returned") =>
-  new RegExp(`^\\W*(?:${named((row) => row.verdict === verdict).join("|")})\\b`, "i");
 
 /** The one of them a subject opens with, if any. */
 export function subjectOpening(subject: string): string | undefined {

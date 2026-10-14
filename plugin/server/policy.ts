@@ -1,6 +1,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { RecoveryPolicy } from "./orchestration/recovery";
+import type { SafetyPolicy } from "./safety/guard";
 import type { WorkPolicy } from "./tasks/store";
 import { ROOM_HOME } from "./paths";
 import type { Harness } from "./orchestration/seats";
@@ -91,47 +92,17 @@ export interface RuntimeLeftovers {
   sessions: string[];
 }
 
-/** The watcher (watch/watcher.ts): `off` does nothing, `shadow` scans and logs, `on` also mails the seat above. */
-export interface WatcherPolicy {
-  mode: "off" | "shadow" | "on";
-  watch: string[];
-  pollSeconds: number;
-  historyEntries: number;
-  rules: Record<string, "raise" | "log" | "off">;
-  thresholds: {
-    sleepSeconds: number;
-    repeatRun: number;
-    cycleRepeats: number;
-    sameFailure: number;
-    inFlightFactor: number;
-  };
-  scores: Record<string, number>;
-  maxMailsPerSeat: number;
-  engine: {
-    url: string;
-    model: string;
-    keyFile: string;
-    keyEnv: string;
-    deadlineMs: number;
-    restAfterFailures: number;
-    restMinutes: number;
-  };
-  budget: { usdPerMillionTokens: number; monthlyPlanUsd: number; monthlyCapUsd: number };
-  state: { messageChars: number; briefLineChars: number };
-  calibration: { labelWindowMinutes: number; minLabels: number; minAuroc: number; maxFalseRaiseRate: number };
-}
-
 export interface RuntimePolicy {
   room: RoomPolicy;
   mail: MailPolicy;
   gc: GcPolicy;
   owner: OwnerPolicy;
-  watcher: WatcherPolicy;
   launch: Record<Harness, LaunchPolicy>;
   claude: ClaudeRuntimePolicy;
   codex: CodexRuntimePolicy;
   pi: PiRuntimePolicy;
   opencode: OpenCodeRuntimePolicy;
+  safety?: SafetyPolicy;
 }
 
 export const POLICY_FILE = join(ROOM_HOME, "policy.json");
@@ -172,7 +143,6 @@ export function loadPolicy(): RuntimePolicy {
     mail: need(parsed.mail, "mail"),
     gc: need(parsed.gc, "gc"),
     owner: need(parsed.owner, "owner"),
-    watcher: need(parsed.watcher, "watcher"),
     launch: {
       claude: need(claude.launch, "claude.launch"),
       codex: need(parsed.codex?.launch, "codex.launch"),
@@ -183,5 +153,6 @@ export function loadPolicy(): RuntimePolicy {
     codex: need(parsed.codex?.runtime, "codex.runtime"),
     pi: need(parsed.pi?.runtime, "pi.runtime"),
     opencode: need(parsed.opencode?.runtime, "opencode.runtime"),
+    safety: parsed.safety,
   };
 }

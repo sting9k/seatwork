@@ -1,4 +1,3 @@
-# prompts and data are read as written: only code is formatted
-room/
+# prompts are read as written; npm writes its own lock file
 *.md
-*.json
+package-lock.json

@@ -1,7 +1,7 @@
 {
   "id": "seatwork",
   "name": "Seatwork",
-  "description": "A Supervisor, Lead and Peer room of coding agents: role prompts, isolated seats, mail between them, a watcher",
+  "description": "A Supervisor, Lead and Peer room of coding agents: role prompts, isolated seats, mail between them",
   "requirements": {
     "paseo": ">=0.11.2"
   }

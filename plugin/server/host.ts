@@ -42,12 +42,6 @@ export interface NewSeat {
   prompt: string;
 }
 
-/** A seat's recent history, entries as the app records them. */
-export interface TimelineView {
-  entries: { item: unknown; timestamp?: string; turnId?: string }[];
-  pendingPermission: boolean;
-}
-
 /** How a turn ended. */
 export type TurnOutcome = { kind: "completed" } | { kind: "canceled" } | { kind: "failed"; error: string };
 
@@ -63,7 +57,8 @@ export interface Host {
   seat(agentId: string): Promise<LiveSeat | null>;
   create(seat: NewSeat): Promise<string>;
   archive(agentId: string): Promise<void>;
-  timeline(agentId: string, limit: number): Promise<TimelineView | null>;
+  /** The prompts a seat was given among its last `limit` history entries, oldest first; null when unread. */
+  prompts(agentId: string, limit: number): Promise<string[] | null>;
   /** The projects the app knows, by folder. */
   projects(): Promise<{ name: string; path: string }[]>;
   /** Deletes the app's timers that wake a seat for which `orphan` holds; returns what went. */

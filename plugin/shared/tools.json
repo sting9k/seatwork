@@ -9,12 +9,12 @@
         "properties": {
           "to": {
             "type": ["string", "array"],
-            "items": {"type": "string"},
+            "items": { "type": "string" },
             "description": "`owner`, a seat you launched (its id, the start of its id, or its title), several of them, or `team`: every open seat under you, which reads it with its next mail. Omit with reply_to."
           },
           "cc": {
             "type": "array",
-            "items": {"type": "string"},
+            "items": { "type": "string" },
             "description": "Seats that get a copy to read; it starts no turn of theirs."
           },
           "reply_to": {
@@ -40,7 +40,7 @@
           },
           "files": {
             "type": "array",
-            "items": {"type": "string"},
+            "items": { "type": "string" },
             "description": "Paths the mail points at; each must exist."
           },
           "key": {
@@ -57,16 +57,19 @@
       "inputSchema": {
         "type": "object",
         "properties": {
-          "view": {"type": "string", "enum": ["new", "all", "sent", "owed", "thread", "search"]},
-          "id": {"type": ["string", "integer"], "description": "One mail, with its whole body."},
-          "thread": {"type": "string", "description": "An issue id, or the thread a mail names."},
-          "q": {"type": "string", "description": "search: the words to look for."},
-          "signal": {"type": "string", "description": "all, search: only mail whose subject opens with this signal."},
-          "since": {"type": "string", "description": "all, sent, search: only mail after this ISO time."},
-          "limit": {"type": "integer", "description": "20 by default, 200 at most."},
-          "bodies": {"type": "boolean", "description": "thread: the mails whole, not a line each."},
-          "peek": {"type": "boolean", "description": "new: leave the mail unread."},
-          "project": {"type": "string", "description": "search, thread: another project's mail, by its folder or name, or all; for a seat that reads every project."}
+          "view": { "type": "string", "enum": ["new", "all", "sent", "owed", "thread", "search"] },
+          "id": { "type": ["string", "integer"], "description": "One mail, with its whole body." },
+          "thread": { "type": "string", "description": "An issue id, or the thread a mail names." },
+          "q": { "type": "string", "description": "search: the words to look for." },
+          "signal": { "type": "string", "description": "all, search: only mail whose subject opens with this signal." },
+          "since": { "type": "string", "description": "all, sent, search: only mail after this ISO time." },
+          "limit": { "type": "integer", "description": "20 by default, 200 at most." },
+          "bodies": { "type": "boolean", "description": "thread: the mails whole, not a line each." },
+          "peek": { "type": "boolean", "description": "new: leave the mail unread." },
+          "project": {
+            "type": "string",
+            "description": "search, thread: another project's mail, by its folder or name, or all; for a seat that reads every project."
+          }
         },
         "required": []
       }
@@ -103,9 +106,7 @@
             "description": "Only the differences from ROOM_DIR/models.json, same shape; objects merge, lists and values replace, null removes a key. Omit to use the room's table."
           }
         },
-        "required": [
-          "path"
-        ]
+        "required": ["path"]
       }
     },
     "seatwork_unregister_project": {
@@ -119,9 +120,7 @@
             "description": "The project's registry name, or its root."
           }
         },
-        "required": [
-          "project"
-        ]
+        "required": ["project"]
       }
     },
     "seatwork_room_stats": {
@@ -138,15 +137,6 @@
         "required": []
       }
     },
-    "seatwork_watch_stats": {
-      "callers": "room",
-      "description": "What the watcher found and cost: this month's spending on its decision model, and per rule how often it spoke and how its findings compare with what the seat above did next. Refused for seats that do not keep the registry.",
-      "inputSchema": {
-        "type": "object",
-        "properties": {},
-        "required": []
-      }
-    },
     "seatwork_work": {
       "callers": "any",
       "description": "The project's work store: issues, what each waits for, who holds it. `do` names the one thing a call does. create: one issue, or a whole plan in `issues`, written all or none; each may carry a `key` and name its `parent` and `deps` by another's key. ready: open issues nothing holds back (no open blocker, blocked parent or open child), highest priority first. claim: take an issue; refused when another seat holds it or an open blocker of its own waits. blocked_by: a bare id blocks; `:parent-blocked` and `:child-open` only hold back from ready. note: a dated line of progress. depend: `id` waits for `on`. close: with `reason`, once its blockers and children are closed; the seat that holds an issue does not close it, its Owner does. Also show, list, update, comment, undepend, reopen. Answers are JSON; a refusal is {\"error\": {code, message, retryable}}.",
@@ -155,39 +145,78 @@
         "properties": {
           "do": {
             "type": "string",
-            "enum": ["create", "show", "list", "ready", "claim", "update", "note", "comment", "depend", "undepend", "close", "reopen"]
+            "enum": [
+              "create",
+              "show",
+              "list",
+              "ready",
+              "claim",
+              "update",
+              "note",
+              "comment",
+              "depend",
+              "undepend",
+              "close",
+              "reopen"
+            ]
           },
-          "id": {"type": "string", "description": "An issue id, or enough of it after the prefix to name one issue."},
+          "id": { "type": "string", "description": "An issue id, or enough of it after the prefix to name one issue." },
           "issues": {
             "type": "array",
             "description": "create: several issues in one write. Each has title and may have key, description, design, acceptance_criteria, write_scope, priority, issue_type, labels, parent, deps.",
-            "items": {"type": "object"}
+            "items": { "type": "object" }
           },
-          "title": {"type": "string"},
-          "description": {"type": "string", "description": "What is to be done and why, enough for a seat that sees nothing else."},
-          "design": {"type": "string"},
-          "acceptance_criteria": {"type": "string", "description": "The checks that show it is done, a line each."},
-          "write_scope": {"type": "string", "description": "The files or folders this issue may change; the plan view names ready issues whose scopes collide."},
-          "priority": {"type": "integer", "description": "0 critical, 1 high, 2 normal (default), 3 low, 4 backlog."},
-          "issue_type": {"type": "string", "enum": ["task", "bug", "feature", "epic", "chore", "docs", "question"]},
-          "labels": {"type": "array", "items": {"type": "string"}},
-          "parent": {"type": "string", "description": "create: the issue this one is a child of. ready: only what is under this issue."},
+          "title": { "type": "string" },
+          "description": {
+            "type": "string",
+            "description": "What is to be done and why, enough for a seat that sees nothing else."
+          },
+          "design": { "type": "string" },
+          "acceptance_criteria": { "type": "string", "description": "The checks that show it is done, a line each." },
+          "write_scope": {
+            "type": "string",
+            "description": "The files or folders this issue may change; the plan view names ready issues whose scopes collide."
+          },
+          "priority": { "type": "integer", "description": "0 critical, 1 high, 2 normal (default), 3 low, 4 backlog." },
+          "issue_type": { "type": "string", "enum": ["task", "bug", "feature", "epic", "chore", "docs", "question"] },
+          "labels": { "type": "array", "items": { "type": "string" } },
+          "parent": {
+            "type": "string",
+            "description": "create: the issue this one is a child of. ready: only what is under this issue."
+          },
           "deps": {
             "type": "array",
             "description": "create: what this issue waits for: ids or keys, or {id, type}.",
             "items": {}
           },
-          "on": {"type": "string", "description": "depend, undepend: the issue `id` waits for."},
-          "type": {"type": "string", "enum": ["blocks", "parent-child", "discovered-from", "related"], "description": "depend: blocks by default; discovered-from is for work found on the way."},
-          "status": {"type": "string", "enum": ["open", "in_progress", "deferred", "closed"], "description": "list: filter. update: open, in_progress or deferred; closing is `close`."},
-          "assignee": {"type": ["string", "null"], "description": "list: a seat id, or `me`. update: a seat id, `me`, or null to free the issue."},
-          "defer_until": {"type": ["string", "null"], "description": "update: an ISO time before which the issue is not ready."},
-          "text": {"type": "string", "description": "note, comment: the line to add."},
-          "reason": {"type": "string", "description": "close: what was done, and the commit or the evidence."},
-          "if_revision": {"type": "integer", "description": "update: the revision you read; the write is refused when the issue has moved on."},
-          "unassigned": {"type": "boolean", "description": "ready: only issues no seat holds."},
-          "force": {"type": "boolean", "description": "close: close over open blockers or children."},
-          "limit": {"type": "integer"}
+          "on": { "type": "string", "description": "depend, undepend: the issue `id` waits for." },
+          "type": {
+            "type": "string",
+            "enum": ["blocks", "parent-child", "discovered-from", "related"],
+            "description": "depend: blocks by default; discovered-from is for work found on the way."
+          },
+          "status": {
+            "type": "string",
+            "enum": ["open", "in_progress", "deferred", "closed"],
+            "description": "list: filter. update: open, in_progress or deferred; closing is `close`."
+          },
+          "assignee": {
+            "type": ["string", "null"],
+            "description": "list: a seat id, or `me`. update: a seat id, `me`, or null to free the issue."
+          },
+          "defer_until": {
+            "type": ["string", "null"],
+            "description": "update: an ISO time before which the issue is not ready."
+          },
+          "text": { "type": "string", "description": "note, comment: the line to add." },
+          "reason": { "type": "string", "description": "close: what was done, and the commit or the evidence." },
+          "if_revision": {
+            "type": "integer",
+            "description": "update: the revision you read; the write is refused when the issue has moved on."
+          },
+          "unassigned": { "type": "boolean", "description": "ready: only issues no seat holds." },
+          "force": { "type": "boolean", "description": "close: close over open blockers or children." },
+          "limit": { "type": "integer" }
         },
         "required": ["do"]
       }
@@ -198,11 +227,26 @@
       "inputSchema": {
         "type": "object",
         "properties": {
-          "view": {"type": "string", "enum": ["triage", "next", "plan", "blockers", "alerts"]},
-          "id": {"type": "string", "description": "blockers: the issue to start from."},
-          "limit": {"type": "integer", "description": "triage: how many recommendations (10 by default)."}
+          "view": { "type": "string", "enum": ["triage", "next", "plan", "blockers", "alerts"] },
+          "id": { "type": "string", "description": "blockers: the issue to start from." },
+          "limit": { "type": "integer", "description": "triage: how many recommendations (10 by default)." }
         },
         "required": ["view"]
+      }
+    },
+    "seatwork_safety": {
+      "callers": "any",
+      "description": "The room's guard. Every shell command and file write of yours is checked before it runs; a blocked one comes with a six-digit code. check: what the guard would make of `command`, without running it. grant: let a blocked command of a seat under you run once, by its `code` (codes marked for the person only the person grants). waiting: the codes of the seats under you that wait for a grant. ack: when the room sends your candidate back after its hand-in check, keep one finding on purpose: its `id` and the `reason`; your Owner reads both.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "action": { "type": "string", "enum": ["check", "grant", "waiting", "ack"] },
+          "command": { "type": "string", "description": "check: the shell command." },
+          "code": { "type": "string", "description": "grant: the six-digit code." },
+          "id": { "type": "string", "description": "ack: the finding's id from the returned candidate." },
+          "reason": { "type": "string", "description": "ack: why the finding stays." }
+        },
+        "required": ["action"]
       }
     },
     "seatwork_seats": {
@@ -229,9 +273,7 @@
             "description": "Optional: one clause the seat is told, such as its context size or the task ahead."
           }
         },
-        "required": [
-          "agent_id"
-        ]
+        "required": ["agent_id"]
       }
     },
     "seatwork_adopt": {
@@ -245,9 +287,7 @@
             "description": "Id of the seat to adopt (from the handoff)."
           }
         },
-        "required": [
-          "agent_id"
-        ]
+        "required": ["agent_id"]
       }
     }
   }

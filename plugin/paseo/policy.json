@@ -89,11 +89,7 @@
         "list_pending_permissions",
         "respond_to_permission"
       ],
-      "peer": [
-        "get_agent_status",
-        "get_agent_activity",
-        "list_agents"
-      ],
+      "peer": ["get_agent_status", "get_agent_activity", "list_agents"],
       "lens": []
     }
   },
@@ -103,10 +99,42 @@
       "sets": {
         "subAgents": ["Agent", "Task"],
         "nestedHarness": ["Bash(claude:*)", "Bash(codex:*)", "Bash(pi:*)", "Bash(opencode:*)"],
-        "paseoShellActs": ["Bash(paseo run:*)", "Bash(paseo send:*)", "Bash(paseo import:*)", "Bash(paseo agent:*)", "Bash(paseo schedule:*)"],
+        "paseoShellActs": [
+          "Bash(paseo run:*)",
+          "Bash(paseo send:*)",
+          "Bash(paseo import:*)",
+          "Bash(paseo agent:*)",
+          "Bash(paseo schedule:*)"
+        ],
         "paseoShell": ["Bash(paseo:*)"],
-        "ownOrchestration": ["ScheduleWakeup", "CronCreate", "CronDelete", "CronList", "Workflow", "SendMessage", "ListAgents", "TeamCreate", "TeamDelete", "TaskCreate", "TaskGet", "TaskList", "TaskUpdate", "TaskStop", "TaskOutput", "RemoteTrigger", "Monitor"],
-        "ownDialogs": ["AskUserQuestion", "EnterPlanMode", "ExitPlanMode", "EnterWorktree", "ExitWorktree", "PushNotification", "DesignSync"],
+        "ownOrchestration": [
+          "ScheduleWakeup",
+          "CronCreate",
+          "CronDelete",
+          "CronList",
+          "Workflow",
+          "SendMessage",
+          "ListAgents",
+          "TeamCreate",
+          "TeamDelete",
+          "TaskCreate",
+          "TaskGet",
+          "TaskList",
+          "TaskUpdate",
+          "TaskStop",
+          "TaskOutput",
+          "RemoteTrigger",
+          "Monitor"
+        ],
+        "ownDialogs": [
+          "AskUserQuestion",
+          "EnterPlanMode",
+          "ExitPlanMode",
+          "EnterWorktree",
+          "ExitWorktree",
+          "PushNotification",
+          "DesignSync"
+        ],
         "edits": ["Edit", "Write", "MultiEdit", "NotebookEdit"]
       },
       "roles": {
@@ -133,9 +161,7 @@
       }
     },
     "$comment_launch": "How a seat starts. Claude seats run on the user's ~/.claude: extraArgs keep the sign-in only (no user settings, no personal MCP server) and env turns off what Claude Code adds itself; strict-mcp-config alone still loads claude.ai connectors. Paseo's own settings flag (fastMode) replaces any other, so the Co-Authored-By reminder is called off in room/harness/claude-system.md instead. Other harnesses get a home of their own: {runtime} is ~/.config/seatwork/runtimes/<harness>/<role>. Setup writes each launch block into the harness's providers (env; extraArgs under options), so a seat starts this way with the plugin off too.",
-    "shareFiles": [
-      "CLAUDE.md"
-    ],
+    "shareFiles": ["CLAUDE.md"],
     "$comment_shareFiles": "Files of ~/.claude appended to a Claude seat's prompt; its personal settings are off.",
     "deniedSkills": [
       "loop",
@@ -162,23 +188,12 @@
       }
     },
     "runtime": {
-      "shareFiles": [
-        "auth.json",
-        "AGENTS.md",
-        "rules",
-        "version.json"
-      ],
+      "shareFiles": ["auth.json", "AGENTS.md", "rules", "version.json"],
       "shareSkills": [],
       "sharePlugins": false,
       "shareHooks": false,
-      "stripTables": [
-        "mcp_servers",
-        "plugins",
-        "hooks"
-      ],
-      "stripKeys": [
-        "notify"
-      ],
+      "stripTables": ["mcp_servers", "plugins", "hooks"],
+      "stripKeys": ["notify"],
       "featuresOff": [
         "multi_agent",
         "agent_message_board",
@@ -204,12 +219,7 @@
     },
     "runtime": {
       "$comment": "A Pi seat gets the room's and Paseo's tools through Pi's built-in MCP (Pi 0.99+), where Paseo registers its servers. settings overlays the user's settings.json: no user package or extension reaches the seat or stands in for that MCP.",
-      "shareFiles": [
-        "auth.json",
-        "models.json",
-        "models-store.json",
-        "AGENTS.md"
-      ],
+      "shareFiles": ["auth.json", "models.json", "models-store.json", "AGENTS.md"],
       "shareDirs": [],
       "settings": {
         "extensions": [],
@@ -287,57 +297,25 @@
     "tellParent": true,
     "$comment_runtimes": "What an agent CLI leaves in a seat's home (runtimes/<harness>/<role>) and GC clears, only while none of its seats is open: a running CLI loses nothing and an open seat can still be resumed. rebuilt: entries the CLI makes again (temporary folders, log database), deleted whole. sessions: folders of session records; a file goes once unwritten for keepLogDays (shared/settings.json), with the transcript of its archived seat. Untouched: a Claude seat has no home of its own, and OpenCode keeps sessions in the user's own storage.",
     "runtimes": {
-      "codex": { "rebuilt": [".tmp", "tmp", "shell_snapshots", "logs_2.sqlite", "logs_2.sqlite-shm", "logs_2.sqlite-wal"], "sessions": ["sessions", "archived_sessions"] },
+      "codex": {
+        "rebuilt": [".tmp", "tmp", "shell_snapshots", "logs_2.sqlite", "logs_2.sqlite-shm", "logs_2.sqlite-wal"],
+        "sessions": ["sessions", "archived_sessions"]
+      },
       "pi": { "rebuilt": [], "sessions": ["sessions"] },
       "opencode": { "rebuilt": [], "sessions": [] }
     }
   },
-  "watcher": {
-    "$comment": "Reads the turns of the roles in `watch` and tells the seat above when one goes off (Peer to Lead, Lead to Supervisor); it never stops, cancels or edits a seat. Code computes a turn's facts from its tool calls, and most turns end there at no cost; a rule stands on facts alone or asks a decision model one question about what the seat's message claims. mode: off does nothing; shadow scans into watch/scans.jsonl and mails nobody; on also mails. Shipped off; each machine chooses: install.sh asks once and writes the installed copy (`./install.sh --watcher off|shadow|on` changes it).",
-    "mode": "off",
-    "watch": ["lead", "peer"],
-    "pollSeconds": 20,
-    "historyEntries": 200,
-    "$comment_rules": "raise: mail the seat above when mode is on; log: scan log only; off. The first thirteen stand on facts (tool calls, git, the brief); the last three ask the model. software-install: a tool or a browser put on the machine without the brief granting it; a project's own dependencies do not count. skill-skipped: a code-writing Peer reports CANDIDATE without candidate-handoff loaded, or edits under a law naming a skill it has not loaded; said once per skill and seat. It logs until a real room's count says the seat above should hear it. unverified-completion is not asked when checks ran but their result could not be read. external-action and reopen-condition log until this room's labels show they separate (seatwork_watch_stats).",
-    "rules": {
-      "irreversible": "raise",
-      "outside-project": "raise",
-      "outside-scope": "raise",
-      "software-install": "raise",
-      "edit-after-reopen": "raise",
-      "unreported-test-change": "raise",
-      "review-without-check": "raise",
-      "same-failure": "raise",
-      "repeating": "raise",
-      "shell-wait": "raise",
-      "silent": "raise",
-      "incomplete-brief": "raise",
-      "skill-skipped": "log",
-      "unverified-completion": "raise",
-      "external-action": "log",
-      "reopen-condition": "log"
-    },
-    "$comment_thresholds": "sleepSeconds: clock seconds a turn may wait in the shell (sleep, a sleeping loop) before it is told. repeatRun: the same action and result, back to back. cycleRepeats: rounds of a pattern of two to four actions. sameFailure: one check failing the same way. inFlightFactor: a running command may take this many times the role's stall minutes (room.params) before its silence is told.",
-    "thresholds": { "sleepSeconds": 60, "repeatRun": 4, "cycleRepeats": 3, "sameFailure": 4, "inFlightFactor": 3 },
-    "$comment_scores": "The score (0 to 1) from which a model-asking rule's finding counts; fitted to one model version and one revision of the questions (watch/questions.ts).",
-    "scores": { "unverified-completion": 0.85, "external-action": 0.85, "reopen-condition": 0.85 },
-    "maxMailsPerSeat": 5,
-    "$comment_engine": "The decision model. url: the full endpoint (TypeSafe's /v1/systemone and OpenRouter's /api/alpha/decisions take the same body). The key comes from the env var keyEnv, else the file keyFile under the room home; with none, the asking rules are logged as facts only. The endpoint gets the seat's last message and a few lines of its brief, never tool output.",
-    "engine": {
-      "url": "https://openrouter.ai/api/alpha/decisions",
-      "model": "typesafe/jev-1.13",
-      "keyFile": "watch/key",
-      "keyEnv": "SEATWORK_WATCH_KEY",
-      "deadlineMs": 6000,
-      "restAfterFailures": 3,
-      "restMinutes": 10
-    },
-    "$comment_budget": "The model's cost, counted from the tokens each reply reports. Once a day has spent its share of the plan only end-of-turn questions are asked; at the cap, none until next month.",
-    "budget": { "usdPerMillionTokens": 0.042, "monthlyPlanUsd": 6, "monthlyCapUsd": 10 },
-    "$comment_state": "messageChars: a seat's final message goes to the model whole up to this; a longer one is cut to the lines a question reads, and a question whose lines do not fit is skipped that turn and named in the scan log. briefLineChars cuts each line of the brief.",
-    "state": { "messageChars": 12000, "briefLineChars": 400 },
-    "$comment_calibration": "How an asking rule earns `raise`. A turn is labelled by what the seat above did within labelWindowMinutes: ACCEPT, or REJECT / REVISED BRIEF (a HOLD is no verdict). Work returns for many reasons, so for unverified-completion a returned turn counts only if the seat above ran its own test before the verdict and saw it fail; else it is left out. A rule is fit with minLabels labelled turns separated at minAuroc or better, at a threshold flagging at most maxFalseRaiseRate of the accepted ones.",
-    "calibration": { "labelWindowMinutes": 60, "minLabels": 100, "minAuroc": 0.75, "maxFalseRaiseRate": 0.05 }
+  "safety": {
+    "$comment": "The room's guard. rules: \"pack:rule\" or \"pack:*\" to deny, ask, warn or log; a pack-wide one never lowers a critical rule. allow and exempt are the person's to write. handin.mode: block, warn or off.",
+    "mode": "on",
+    "packs": { "add": [], "remove": [] },
+    "rules": {},
+    "allow": [],
+    "exempt": {},
+    "budgetMs": 1000,
+    "codeHours": 24,
+    "repeat": { "count": 3, "minutes": 30 },
+    "handin": { "mode": "block" }
   },
   "room": {
     "$comment_params": "Quoted by role prompts as {{placeholders}}; change them here, never in a prompt. heartbeatCron: the Supervisor's beat; Lead reports that ask or close already wake it, so it only catches what slipped between. mailChars: how much of a mail's body a seat is shown; the rest is in the mail's file, whose path the mail gives. peerStallMinutes: a Peer silent this long with nothing pending gets a status check; its turns take minutes. reviewStallMinutes: longer, for review, research and lens seats, which read long before writing. leadStallMinutes: a Lead silent this long with no running Peer or pending permission. readBudgetTokens: reading per Peer task before the Lead must split it; ~80k tokens (~320 KB of source) is what a default-tier model reasons over well. cheapReadBudgetTokens: the same for the cheap tier, which loses the thread sooner. rotateAtTokens: a Lead or Peer past this is named with its size to the seat above under its next report; each step rereads the whole context, so its next task goes to a fresh seat.",

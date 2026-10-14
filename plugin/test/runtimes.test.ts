@@ -23,7 +23,8 @@ function policyWith(over: Partial<CodexRuntimePolicy> = {}): RuntimePolicy {
     agentsOff: false,
     ...over,
   };
-  return { codex } as RuntimePolicy;
+  // the guard's hook is laid in by its own test below; these read the stripping alone
+  return { codex, safety: { mode: "off" } } as RuntimePolicy;
 }
 
 /** The config.toml a new Codex seat gets when the user's own config is `user`. */
@@ -149,4 +150,40 @@ test("a Claude seat's skill folder holds the role's skills as they are named now
   ensureRuntime({ harness: "claude", role: "peer" });
   assert.deepEqual(readdirSync(skills).sort(), roleSkillNames("peer"));
   assert.ok(existsSync(join(skills, "hard-cut", "SKILL.md")));
+});
+
+test("a seat's home holds the guard's hook when the guard is on: Codex's hooks.json with its trust, Pi's extension, OpenCode's plugin", () => {
+  const homes = (mode: "on" | "off") => {
+    const policy = {
+      ...policyWith(),
+      pi: { shareFiles: [], shareDirs: [], settings: { extensions: [], packages: [] } },
+      opencode: { shareEntries: [], config: {} },
+      safety: { mode },
+    } as RuntimePolicy;
+    for (const harness of ["codex", "pi", "opencode"] as const) {
+      rmSync(runtimeDir({ harness, role: "lead" }), { recursive: true, force: true });
+      ensureRuntime({ harness, role: "lead" }, policy);
+    }
+    return {
+      codexHooks: join(runtimeDir({ harness: "codex", role: "lead" }), "hooks.json"),
+      codexConfig: readFileSync(join(runtimeDir({ harness: "codex", role: "lead" }), "config.toml"), "utf8"),
+      pi: join(runtimeDir({ harness: "pi", role: "lead" }), "extensions", "room-guard.ts"),
+      opencode: join(runtimeDir({ harness: "opencode", role: "lead" }), "plugins", "room-guard.ts"),
+    };
+  };
+  writeFileSync(userConfig, "");
+  const on = homes("on");
+  const [hook] = JSON.parse(readFileSync(on.codexHooks, "utf8")).hooks.PreToolUse;
+  assert.equal(hook.matcher, "^(Bash|apply_patch)$");
+  assert.match(hook.hooks[0].command, /^\/bin\/sh -c '[\s\S]+' room-guard codex$/);
+  assert.match(
+    on.codexConfig,
+    new RegExp(
+      `\\[hooks\\.state\\."${on.codexHooks.replace(/[.*+?^${}()|[\]\\/]/g, "\\$&")}:pre_tool_use:0:0"\\]\\ntrusted_hash = "sha256:[0-9a-f]{64}"`,
+    ),
+  );
+  assert.ok(existsSync(on.pi) && existsSync(on.opencode));
+  const off = homes("off");
+  assert.ok(!existsSync(off.codexHooks) && !existsSync(off.pi) && !existsSync(off.opencode));
+  assert.doesNotMatch(off.codexConfig, /hooks\.state/);
 });

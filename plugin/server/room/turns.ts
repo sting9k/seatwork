@@ -4,9 +4,9 @@ import type { TurnOutcome } from "../host";
 import { nextTitle, parseHandoff, rotate } from "../orchestration/rotation";
 import { FRESH_EYES, ownerNote } from "../orchestration/rounds";
 import { parseSeat } from "../orchestration/seats";
+import { handInLine, handInReturn, type HandIn } from "../safety/handin";
 import { asksOwner, DECIDES, signalOf, subjectSignal } from "../signals";
 import { noteUsage } from "../stats";
-import type { SeatView } from "../watch/watcher";
 import { fromRoom, releaseWork, taskOf, type RoomContext } from "./context";
 import { fitAt } from "./launch";
 
@@ -27,28 +27,12 @@ export interface TurnEnd {
   text: string;
 }
 
-
 /** True when a turn was started by mail and none of it asked the seat for anything. */
 function askedNothing(wake: readonly Mail[]): boolean {
   return (
     wake.length > 0 &&
     wake.every((mail) => mail.needs === "nothing" && (mail.priority === "fyi" || mail.senderRole === "system"))
   );
-}
-
-/** A seat as the watcher sees it; null for an agent that is not a room seat. */
-export function viewOf(room: RoomContext, seat: SeatEvent): SeatView | null {
-  const role = parseSeat(seat.provider)?.role;
-  if (!role) return null;
-  const parent = room.engine.parentOf(seat.id) ?? seat.parentId;
-  return {
-    agentId: seat.id,
-    role,
-    title: seat.title,
-    cwd: seat.cwd,
-    parent,
-    parentRole: (parent && room.engine.seat(parent)?.role) || null,
-  };
 }
 
 /** The seat above that reads this seat's turns by mail; null where the route up is off. */
@@ -150,6 +134,7 @@ async function answerRotation(
           handOver: (from, to) => {
             room.rounds.move(from, to);
             releaseWork(room, from, to);
+            room.safety.inherit(from, to);
           },
         },
         record,
@@ -159,7 +144,6 @@ async function answerRotation(
       // mail that came in while the successor started is the successor's
       await eng.move(id, next.id);
       eng.unpause(id);
-      room.watcher.forget(id);
       if (kept && reportsTo) await eng.post({ ...kept, to: reportsTo });
       for (const told of new Set([asked.by, ...(reportsTo ? [reportsTo] : [])]))
         await eng.post({
@@ -236,9 +220,33 @@ export async function turnEnded(room: RoomContext, end: TurnEnd): Promise<void> 
     subjectSignal(handIn.subject) === "CANDIDATE" &&
     room.rounds.owesFreshEyes(taskOf(room, id));
   if (rereads) kept = report = null;
+  // the room reads a writing seat's candidate first; a blocking finding sends it back
+  let check: HandIn | null = null;
+  if (
+    !rereads &&
+    traits(role).writes === true &&
+    outcome.kind === "completed" &&
+    handIn &&
+    subjectSignal(handIn.subject) === "CANDIDATE"
+  )
+    check = await room.safety.handIn(id).catch((error) => {
+      room.log(`the hand-in check of ${id} failed: ${error instanceof Error ? error.message : String(error)}`);
+      return {
+        state: "partial",
+        files: 0,
+        open: [],
+        acknowledged: [],
+        warnings: [],
+        why: "the check failed",
+      } as HandIn;
+    });
+  const sendBack = check?.state === "blocked" && room.safety.handInBlocks;
+  if (sendBack) kept = report = null;
   // under what goes up, the room's own line: the task's round, and a context past the rotation line
   const up = kept ?? report;
   if (role && up) {
+    const guarded = [check ? handInLine(check) : null, room.safety.blocksLine(id)].filter((l): l is string => !!l);
+    if (guarded.length) up.why = [up.why, ...guarded].filter(Boolean).join("; ");
     const candidate = subjectSignal(up.subject) === "CANDIDATE";
     const line = ownerNote({
       role,
@@ -265,12 +273,6 @@ export async function turnEnded(room: RoomContext, end: TurnEnd): Promise<void> 
     // the handoff is the old seat's last word: nothing more goes up from it
     if (await answerRotation(room, end, record, kept, reportsTo)) return;
   }
-  // the watcher reads the turn before anything goes up: its notice rides with the report, or goes alone
-  const view = canceled ? null : viewOf(room, seat);
-  // what the watcher saw in a hand-in that went back rides with the hand-in that follows
-  const carried = rereads || [kept, report].some((mail) => mail && !mail.quiet);
-  if (view) await room.watcher.turnEnded(view, end.turnId, carried);
-  else room.watcher.forget(id);
   if (rereads)
     await eng.post({
       from: fromRoom,
@@ -281,7 +283,17 @@ export async function turnEnded(room: RoomContext, end: TurnEnd): Promise<void> 
       needs: "reply",
       why: "the room returns a first hand-in once before the Owner reads it",
     });
-  // the watcher has read the turn: held mail may now start the next one
+  if (sendBack && check)
+    await eng.post({
+      from: fromRoom,
+      to: id,
+      priority: "action",
+      subject: `HAND-IN RETURNED: ${check.open.length} finding(s) from the room's check`,
+      body: handInReturn(check),
+      needs: "reply",
+      why: "the room reads a candidate before its Owner does",
+    });
+  // held mail may now start the next turn
   await eng.deliver(id);
   if (!reportsTo) return;
   // a newer report takes the place of this seat's progress report that still waits unread

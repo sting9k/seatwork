@@ -563,7 +563,6 @@ export class WorkStore extends Sqlite {
     return out;
   }
 
-
   /** Open, not put off, and with nothing in its way: highest priority first, then oldest. */
   ready(options: { limit?: number; parent?: string; unassigned?: boolean } = {}): Issue[] {
     const parent = options.parent ? this.get(options.parent).id : null;

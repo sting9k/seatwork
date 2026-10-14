@@ -1,0 +1,461 @@
+{
+  "$comment": "Always on. Code picks the rule; this file gives its level and the words the seat reads.",
+  "packs": [
+    {
+      "id": "core.git",
+      "tier": 1,
+      "always": true,
+      "rules": {
+        "git-alias-semantic-unverified": {
+          "severity": "high",
+          "reason": "git runs a subcommand the room cannot read: an alias it cannot see, or a word known only at run time",
+          "explanation": "An alias can stand for any git command, including the destructive ones, and a shell alias (!) runs any shell line. The room reads aliases from git config and from -c on the line; this one it could not settle.",
+          "safer": [
+            "Spell the git command out instead of the alias",
+            "git config --get alias.<name> to see what it runs"
+          ]
+        },
+        "branch-dynamic-token": {
+          "severity": "high",
+          "reason": "git branch has a word that may expand into a delete or force flag",
+          "explanation": "An unquoted variable or command substitution splits into words when the shell runs it, so it can become -D, -f, -M or -C.",
+          "safer": [
+            "Quote the name: git branch \"backup-$(date +%s)\"",
+            "End the options first: git branch -- \"$name\""
+          ]
+        },
+        "checkout-discard": {
+          "severity": "high",
+          "reason": "git checkout -- <path> throws away uncommitted changes to the path",
+          "explanation": "The working copy of the file is replaced by the index; edits that were never committed or stashed are gone for good.",
+          "safer": ["git stash push -- <path>", "git diff -- <path> to see what would be lost"]
+        },
+        "checkout-ref-discard": {
+          "severity": "high",
+          "reason": "git checkout <ref> -- <path> overwrites the path with another revision",
+          "explanation": "Uncommitted changes to the path are replaced by the version from <ref> and cannot be recovered.",
+          "safer": [
+            "git stash push -- <path>",
+            "git show <ref>:<path> to read that version",
+            "git diff HEAD <ref> -- <path>"
+          ]
+        },
+        "checkout-discard-cwd": {
+          "severity": "high",
+          "reason": "git checkout . throws away every uncommitted change below the folder",
+          "explanation": "Every modified tracked file under the path goes back to the index version; the edits are lost.",
+          "safer": ["git stash", "git diff to see what would be lost"]
+        },
+        "filter-branch": {
+          "severity": "high",
+          "reason": "git filter-branch rewrites history",
+          "explanation": "Every rewritten commit gets a new id; refs move, other clones diverge, and a mistake can drop commits.",
+          "safer": ["git branch backup-before-rewrite first", "git filter-repo, and push only with --force-with-lease"]
+        },
+        "reflog-expire-now": {
+          "severity": "high",
+          "reason": "git reflog expire now drops the record that lets lost commits be found",
+          "explanation": "The reflog is how a reset or a bad rebase is undone; expiring it at once removes that way back.",
+          "safer": ["Let the reflog expire on its own schedule"]
+        },
+        "checkout-force": {
+          "severity": "high",
+          "reason": "git checkout -f throws away local changes to tracked files",
+          "explanation": "Forcing a checkout overwrites modified tracked files, like git reset --hard does for them.",
+          "safer": ["git stash, then check out", "git status to see what would be lost"]
+        },
+        "switch-discard": {
+          "severity": "high",
+          "reason": "git switch --discard-changes (or -f) throws away local changes",
+          "explanation": "Modified tracked files are reset to the branch you switch to.",
+          "safer": ["git stash, then switch", "git switch -c <new-branch> keeps the changes"]
+        },
+        "rm-force": {
+          "severity": "high",
+          "reason": "git rm -f deletes files together with their uncommitted changes",
+          "explanation": "Forcing git rm removes files whose changes were never committed, so those changes are lost.",
+          "safer": ["git rm --cached to stop tracking and keep the file", "git rm -n to see what would go"]
+        },
+        "update-ref-delete": {
+          "severity": "high",
+          "reason": "git update-ref -d deletes a ref, like git branch -D",
+          "explanation": "The ref is removed without a merge check; commits only it reached can be lost.",
+          "safer": ["git branch -d <branch> checks that it is merged", "git update-ref refs/backup/<name> <ref> first"]
+        },
+        "read-tree-reset": {
+          "severity": "critical",
+          "reason": "git read-tree --reset -u overwrites the working tree, like git reset --hard",
+          "explanation": "The index and the files are replaced by the given tree; uncommitted work is gone.",
+          "safer": ["git stash", "git read-tree -m -u merges instead of overwriting"]
+        },
+        "show-redirect-overwrite-source": {
+          "severity": "high",
+          "reason": "git show <ref>:<path> > <path> overwrites the file with another revision",
+          "explanation": "Redirecting into the same path replaces the working copy, uncommitted edits included.",
+          "safer": ["git show <ref>:<path> > <path>.from-ref and compare", "git stash first"]
+        },
+        "restore-worktree": {
+          "severity": "high",
+          "reason": "git restore without --staged throws away working-tree changes",
+          "explanation": "git restore puts files back to the index version; edits that were never committed or stashed are lost.",
+          "safer": ["git restore --staged <path> only unstages", "git stash push -- <path>", "git diff -- <path>"]
+        },
+        "restore-worktree-explicit": {
+          "severity": "high",
+          "reason": "git restore --worktree throws away working-tree changes",
+          "explanation": "With --worktree the files themselves are reset, even when --staged is also given.",
+          "safer": ["git restore --staged <path> only unstages", "git stash push -- <path>"]
+        },
+        "reset-hard": {
+          "severity": "critical",
+          "reason": "git reset --hard throws away every uncommitted change",
+          "explanation": "The index and the working tree are reset; changes that were never committed or stashed are gone for good.",
+          "safer": [
+            "git stash, then reset",
+            "git reset --soft HEAD~1 keeps the changes staged",
+            "git reset --keep refuses when it would lose work"
+          ]
+        },
+        "reset-merge": {
+          "severity": "high",
+          "reason": "git reset --merge can throw away local changes",
+          "explanation": "It resets the index and the files that differ between the commits; local edits to them can be lost.",
+          "safer": ["git merge --abort to leave a merge", "git stash first", "git status && git diff"]
+        },
+        "clean-force": {
+          "severity": "critical",
+          "reason": "git clean -f deletes untracked files for good",
+          "explanation": "Untracked files were never in git, so nothing can bring them back once removed.",
+          "safer": ["git clean -n to see what would go", "git clean -i to choose", "git stash --include-untracked"]
+        },
+        "push-force-long": {
+          "severity": "critical",
+          "reason": "git push --force can overwrite commits on the remote",
+          "explanation": "A forced push replaces the remote branch; commits others pushed in the meantime are lost there.",
+          "safer": ["git push --force-with-lease", "git push --force-with-lease --force-if-includes"]
+        },
+        "push-force-short": {
+          "severity": "critical",
+          "reason": "git push -f can overwrite commits on the remote",
+          "explanation": "A forced push replaces the remote branch; commits others pushed in the meantime are lost there.",
+          "safer": ["git push --force-with-lease"]
+        },
+        "push-force-refspec": {
+          "severity": "critical",
+          "reason": "a + refspec forces that ref on the remote",
+          "explanation": "A refspec that starts with + is a forced update of that one ref, with the same loss as --force.",
+          "safer": ["Drop the +", "git push --force-with-lease <remote> <ref>"]
+        },
+        "branch-delete": {
+          "severity": "high",
+          "reason": "git branch -d deletes a branch",
+          "explanation": "git refuses an unmerged branch, but the branch name and its reflog still go.",
+          "safer": ["git branch --merged to check first", "Ask your Owner when the branch is no longer needed"]
+        },
+        "branch-force-delete": {
+          "severity": "high",
+          "reason": "git branch -D (or -f, -M, -C) deletes or moves a branch without a merge check",
+          "explanation": "Commits only that branch reached can be lost, and a forced move overwrites an existing branch.",
+          "safer": ["git branch -d checks that it is merged", "git branch backup-<name> <name> first"]
+        },
+        "stash-drop": {
+          "severity": "medium",
+          "reason": "git stash drop deletes a stash",
+          "explanation": "A dropped stash can only be found again with git fsck, and only until git gc runs.",
+          "safer": ["git stash pop or git stash apply", "git stash show -p to read it first"]
+        },
+        "stash-clear": {
+          "severity": "critical",
+          "reason": "git stash clear deletes every stash",
+          "explanation": "All stashed work goes at once; recovery needs git fsck and luck.",
+          "safer": ["git stash list", "git stash drop stash@{n} for one"]
+        },
+        "lfs-migrate-rewrite": {
+          "severity": "high",
+          "reason": "git lfs migrate import or export rewrites history",
+          "explanation": "Every rewritten commit gets a new id, as with filter-branch.",
+          "safer": ["git lfs migrate info to see what would change", "Back up the branch first"]
+        },
+        "lfs-prune": {
+          "severity": "medium",
+          "reason": "git lfs prune deletes local LFS objects",
+          "explanation": "Objects not on the remote are lost; with --force even those the remote never got.",
+          "safer": ["git lfs prune --dry-run"]
+        },
+        "lfs-uninstall": {
+          "severity": "medium",
+          "reason": "git lfs uninstall removes the LFS filters and hooks",
+          "explanation": "Files tracked by LFS may turn into pointer text; --system or --global reaches every repository.",
+          "safer": ["Leave LFS installed", "git lfs env to inspect it"]
+        }
+      }
+    },
+    {
+      "id": "core.filesystem",
+      "tier": 1,
+      "always": true,
+      "rules": {
+        "rm-rf-root-home": {
+          "severity": "critical",
+          "reason": "rm -rf on the system, a home folder, or a home's settings",
+          "explanation": "A recursive forced remove of these paths can wreck the machine or a user's files, and nothing comes back.",
+          "safer": ["ls or find the path first", "Remove only the subfolder you mean", "mv it to ~/.Trash"]
+        },
+        "rm-r-f-separate-root-home": {
+          "severity": "critical",
+          "reason": "rm -r -f on the system, a home folder, or a home's settings",
+          "explanation": "A recursive forced remove of these paths can wreck the machine or a user's files, and nothing comes back.",
+          "safer": ["ls or find the path first", "Remove only the subfolder you mean", "mv it to ~/.Trash"]
+        },
+        "rm-recursive-force-root-home": {
+          "severity": "critical",
+          "reason": "rm --recursive --force on the system, a home folder, or a home's settings",
+          "explanation": "A recursive forced remove of these paths can wreck the machine or a user's files, and nothing comes back.",
+          "safer": ["ls or find the path first", "Remove only the subfolder you mean", "mv it to ~/.Trash"]
+        },
+        "rm-recursive-root-home": {
+          "severity": "critical",
+          "reason": "rm -r on the system, a home folder, or a home's settings",
+          "explanation": "Leaving out -f does not make this safe: -f only decides whether errors are reported.",
+          "safer": ["ls or find the path first", "Remove only the subfolder you mean"]
+        },
+        "rm-rf-general": {
+          "severity": "high",
+          "reason": "rm -rf removes a folder and everything in it for good",
+          "explanation": "Nothing removed this way can be brought back, and uncommitted work in the folder goes with it.",
+          "safer": [
+            "ls the folder first",
+            "rm -ri to confirm each file",
+            "mv it to /tmp/delete-me-<date>",
+            "Targets under /tmp/<name> are allowed"
+          ]
+        },
+        "rm-r-f-separate": {
+          "severity": "high",
+          "reason": "rm -r -f removes a folder and everything in it for good",
+          "explanation": "Nothing removed this way can be brought back, and uncommitted work in the folder goes with it.",
+          "safer": ["ls the folder first", "rm -ri to confirm each file", "mv it to /tmp/delete-me-<date>"]
+        },
+        "rm-recursive-force-long": {
+          "severity": "high",
+          "reason": "rm --recursive --force removes a folder and everything in it for good",
+          "explanation": "Nothing removed this way can be brought back, and uncommitted work in the folder goes with it.",
+          "safer": ["ls the folder first", "rm -ri to confirm each file", "mv it to /tmp/delete-me-<date>"]
+        },
+        "rm-recursive-general": {
+          "severity": "high",
+          "reason": "rm -r removes a folder and everything in it",
+          "explanation": "Without a prompt nothing is confirmed, and nothing removed can be brought back.",
+          "safer": ["ls the folder first", "rm -ri to confirm each file"]
+        },
+        "rm-generated": {
+          "severity": "medium",
+          "reason": "rm -r removes a folder git ignores in this project",
+          "explanation": "The room lets this run: git ignores the folder, so a build makes it again.",
+          "safer": []
+        },
+        "rm-bare-glob": {
+          "severity": "high",
+          "reason": "rm * removes whatever the shell matches here",
+          "explanation": "The shell decides the list of files, so nothing can be checked before they go.",
+          "safer": ["ls * first", "Name the files, or use a narrower pattern such as *.log"]
+        },
+        "rm-bare-glob-root": {
+          "severity": "critical",
+          "reason": "rm /* removes the entries at the root of the system",
+          "explanation": "On many systems /bin, /lib and /sbin are links; removing them breaks the machine even without -r.",
+          "safer": ["Name the one file you mean"]
+        },
+        "rm-protected-file": {
+          "severity": "critical",
+          "reason": "rm on a key, a credential, a shell startup file, or the repository's own state",
+          "explanation": "These files decide who can log in, which tokens act for the user, and what runs in every shell; .git holds the repository.",
+          "safer": ["ls -la it first", "mv it to /tmp/delete-me-<date> instead", "Ask your Owner"]
+        },
+        "rm-glob-home": {
+          "severity": "high",
+          "reason": "rm with an unquoted pattern under a home folder",
+          "explanation": "The shell expands the pattern into a list nobody has checked; under a home that can reach anything.",
+          "safer": ["ls the pattern first", "Name the files"]
+        },
+        "rm-recursive-unverified": {
+          "severity": "high",
+          "reason": "a command known only at run time gets the arguments of a destructive rm",
+          "explanation": "The command word comes from a variable, a substitution or a pattern, and its arguments would be blocked for rm.",
+          "safer": ["Write the command name out"]
+        },
+        "cp-sensitive-then-delete": {
+          "severity": "critical",
+          "reason": "cp -a from a system or home path into a temp folder, then rm -rf of it",
+          "explanation": "The copy can keep links into the original tree, so removing the copy can reach the source.",
+          "safer": [
+            "Copy next to the original and compare with diff -r",
+            "Do not join the copy and the delete in one line"
+          ]
+        },
+        "ln-symlink-sensitive-then-delete": {
+          "severity": "critical",
+          "reason": "a link to a system or home path, then rm -rf through it",
+          "explanation": "Removing through a symbolic link walks into the tree it points at.",
+          "safer": ["readlink the link", "unlink only the link itself"]
+        },
+        "rsync-sensitive-then-delete": {
+          "severity": "critical",
+          "reason": "rsync -a from a system or home path into a temp folder, then rm -rf of it",
+          "explanation": "The copy can keep links into the original tree, so removing the copy can reach the source.",
+          "safer": ["Run the copy and the delete apart", "rsync --dry-run first"]
+        },
+        "rsync-delete-sensitive-dest": {
+          "severity": "critical",
+          "reason": "rsync --delete into the system or a whole home folder",
+          "explanation": "rsync removes from the destination whatever the source lacks; an empty or wrong source wipes it.",
+          "safer": ["rsync --dry-run --delete first", "Sync into a subfolder"]
+        },
+        "find-delete-root-home": {
+          "severity": "critical",
+          "reason": "find -delete or -exec rm reaching the system or a home folder",
+          "explanation": "find removes every match it walks into; a wrong test or a missing -maxdepth reaches far.",
+          "safer": ["Run the find without -delete to see the list", "find ... -print -delete"]
+        },
+        "find-delete-general": {
+          "severity": "high",
+          "reason": "find -delete or -exec rm removes every file it matches",
+          "explanation": "Nothing is confirmed, and the matched files cannot be brought back.",
+          "safer": ["Run the find without -delete to see the list", "find /tmp/<name> -delete is allowed"]
+        },
+        "unlink-root-home": {
+          "severity": "critical",
+          "reason": "unlink on a system or home path",
+          "explanation": "The file is removed with no way back.",
+          "safer": ["ls -la it first", "cp it to a .bak first"]
+        },
+        "unlink-general": {
+          "severity": "high",
+          "reason": "unlink removes a file for good",
+          "explanation": "The file is removed with no way back.",
+          "safer": ["ls -la it first", "mv it to <name>.deleted-<date>"]
+        },
+        "truncate-zero-root-home": {
+          "severity": "critical",
+          "reason": "truncate sets the size of a system or home file",
+          "explanation": "Any absolute size can cut the file; the cut-off content is gone.",
+          "safer": ["wc -c to see the size", "cp it to a .bak first", "truncate -s +N only grows"]
+        },
+        "truncate-zero-general": {
+          "severity": "high",
+          "reason": "truncate cuts a file's content",
+          "explanation": "Any absolute size can cut the file; the cut-off content is gone.",
+          "safer": ["cp it to a .bak first", "truncate -s +N only grows"]
+        },
+        "shred-root-home": {
+          "severity": "critical",
+          "reason": "shred overwrites a system or home file",
+          "explanation": "The content is destroyed even if the file name stays.",
+          "safer": ["Back the file up first"]
+        },
+        "shred-general": {
+          "severity": "high",
+          "reason": "shred destroys a file's content",
+          "explanation": "The content is overwritten and cannot be brought back.",
+          "safer": ["Back the file up first", "shred /tmp/<name>/... is allowed"]
+        },
+        "tar-remove-files-root-home": {
+          "severity": "critical",
+          "reason": "tar --remove-files on system or home paths",
+          "explanation": "The sources are removed as they are archived; a failed or partial archive loses them.",
+          "safer": ["tar without --remove-files, check the archive, then remove"]
+        },
+        "tar-remove-files-general": {
+          "severity": "high",
+          "reason": "tar --remove-files removes the files it archives",
+          "explanation": "The sources are removed as they are archived; a failed or partial archive loses them.",
+          "safer": ["tar without --remove-files, check the archive, then rm -ri"]
+        },
+        "dd-overwrite-root-home": {
+          "severity": "critical",
+          "reason": "dd writes over a system or home file",
+          "explanation": "dd replaces the target's bytes without a question.",
+          "safer": ["Back the target up first", "dd if=<file> of=/dev/null only reads"]
+        },
+        "dd-overwrite-general": {
+          "severity": "high",
+          "reason": "dd writes over a file",
+          "explanation": "dd replaces the target's bytes without a question.",
+          "safer": ["Back the target up first"]
+        },
+        "mv-sensitive-source-root-home": {
+          "severity": "critical",
+          "reason": "mv touching the system or a home folder's top",
+          "explanation": "Moving these paths can break the machine, and a move into a temp folder is often the first half of a delete.",
+          "safer": ["mv <file> ~/.Trash/", "Move only deep inside a home: mv ~/a/b ~/c"]
+        },
+        "mv-dynamic-path": {
+          "severity": "high",
+          "reason": "mv with a path known only at run time",
+          "explanation": "The room cannot see where the files go or what they replace.",
+          "safer": ["Expand the path first and write it out"]
+        },
+        "credential-file-write": {
+          "severity": "critical",
+          "reason": "a write into a key, a credential, or a shell startup file",
+          "explanation": "These files decide who can log in, which tokens act for the user, and what runs in every new shell; writing them plants a foothold.",
+          "safer": ["Read the file instead", "Draft the content under /tmp/<name>/ and ask your Owner to apply it"]
+        },
+        "git-internals-write": {
+          "severity": "critical",
+          "reason": "a write into the repository's .git folder",
+          "explanation": ".git/config names remotes and credential helpers, .git/hooks run on the next git command, and refs are the history.",
+          "safer": ["git config, git update-ref and git hook do this through git"]
+        },
+        "redirect-truncate-root-home": {
+          "severity": "critical",
+          "reason": "> replaces a system or home file",
+          "explanation": "A truncating redirect empties the file before writing; what was there is gone.",
+          "safer": [">> appends instead", "Write to a new file and move it into place after a check"]
+        },
+        "redirect-truncate-git-internals-relative": {
+          "severity": "critical",
+          "reason": "> replaces a file inside .git",
+          "explanation": "The repository's config, hooks and refs live there.",
+          "safer": ["git config, git update-ref"]
+        },
+        "redirect-append-git-internals-relative": {
+          "severity": "critical",
+          "reason": ">> adds to a file inside .git",
+          "explanation": "A line added to .git/config or a hook runs code at the next git command.",
+          "safer": ["git config"]
+        },
+        "redirect-truncate-dynamic-path": {
+          "severity": "high",
+          "reason": "> into a path known only at run time",
+          "explanation": "The room cannot see which file the redirect empties.",
+          "safer": ["Expand the path first and write it out", "Redirect into /tmp/<name>/..."]
+        },
+        "fork-bomb": {
+          "severity": "critical",
+          "reason": "a fork bomb",
+          "explanation": "The function starts copies of itself until the machine stops answering.",
+          "safer": []
+        },
+        "sed-exec-unverified": {
+          "severity": "high",
+          "reason": "sed runs a shell command the room cannot read",
+          "explanation": "GNU sed's e command and the e flag of s/// run their text as a shell command.",
+          "safer": ["Run the command yourself, outside sed"]
+        },
+        "interpreter-runs-dynamic-shell": {
+          "severity": "medium",
+          "reason": "a script runs a shell line it builds at run time",
+          "explanation": "The room lets it run but cannot see the line; it is noted for the Owner.",
+          "safer": ["Pass a literal command"]
+        },
+        "tar-exec-unverified": {
+          "severity": "high",
+          "reason": "tar runs a helper command the room cannot read",
+          "explanation": "--to-command, --use-compress-program and --checkpoint-action=exec run a program of the caller's choice.",
+          "safer": ["Write the helper command out"]
+        }
+      }
+    }
+  ]
+}

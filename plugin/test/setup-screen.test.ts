@@ -8,7 +8,6 @@ import {
   readFileSync,
   realpathSync,
   rmSync,
-  statSync,
   symlinkSync,
   writeFileSync,
 } from "node:fs";
@@ -82,14 +81,13 @@ const paseo = {
 };
 const context = { paseo };
 const init = (choices: object = {}) =>
-  call("rpc setup.init", { models: {}, watcher: "off", chime: true, ...choices }, context) as Promise<{
+  call("rpc setup.init", { models: {}, chime: true, ...choices }, context) as Promise<{
     seats: string[];
     removed: string[];
   }>;
 const state = () =>
   call("rpc setup.state", {}, context) as Promise<{
-    applied: { models: unknown; watcher: string; version: string; seats: string[] } | null;
-    watcherKey: boolean;
+    applied: { models: unknown; version: string; seats: string[] } | null;
     harnesses: { id: string; available: boolean; why: string }[];
     checks: { id: string; ok: boolean | null; detail: string }[];
     table: unknown;
@@ -135,7 +133,6 @@ test("a daemon that only downloaded the plugin: nothing is created, a room seat 
 
   const screen = await state();
   assert.equal(screen.applied, null);
-  assert.equal((screen as unknown as { spend: unknown }).spend, null);
   assert.deepEqual(
     screen.harnesses.map((h) => [h.id, h.available]),
     [
@@ -149,7 +146,7 @@ test("a daemon that only downloaded the plugin: nothing is created, a room seat 
 });
 
 test("Init sets the room up and starts it without a reload; Apply restarts it on the new choices with its hooks registered once", async () => {
-  const first = await init({ watcher: "shadow", chime: false });
+  const first = await init({ chime: false });
 
   assert.ok(
     first.seats.includes("claude-hq") && "claude-hq" in daemon.config.providers && "my-own" in daemon.config.providers,
@@ -157,29 +154,23 @@ test("Init sets the room up and starts it without a reload; Apply restarts it on
   assert.deepEqual(daemon.config.agentProfiles.map((p) => p.id).slice(0, 2), ["mine", "agent_profile_seatwork_hq"]);
   assert.deepEqual(daemon.workspaces, [realpathSync(join(ROOM_HOME, "hq-seatwork"))]);
   const policy = () => JSON.parse(readFileSync(join(ROOM_HOME, "policy.json"), "utf8"));
-  assert.deepEqual([policy().watcher.mode, policy().owner.chime, policy().mail.port], ["shadow", false, 0]);
+  assert.deepEqual([policy().owner.chime, policy().mail.port], [false, 0]);
   // the room runs: a seat created now gets its role and the room's mail server
   const seat = await createPeer();
   assert.match(seat.config.systemPrompt, /^# The room\n[\s\S]*\n# Seat: peer\n/);
   assert.ok("seatwork" in seat.config.mcpServers);
 
   // the Lead moved to a harness of its own: its seat is set up, and nothing is registered twice
-  await init({ models: { seats: { lead: { provider: "pi-lead/m", thinking: "high" } } }, watcher: "on" });
+  await init({ models: { seats: { lead: { provider: "pi-lead/m", thinking: "high" } } }, chime: true });
   assert.ok("pi-lead" in daemon.config.providers);
-  assert.equal(policy().watcher.mode, "on");
+  assert.equal(policy().owner.chime, true);
   const hooks = paseoSide.names();
   assert.deepEqual(hooks.filter((name) => name === "on agent.turn_ended").length, 1);
   assert.deepEqual(daemon.workspaces.length, 1, "the HQ project was opened a second time");
 
   const screen = await state();
-  // the watcher is on: the screen is told what its model cost this month, against plan and cap
-  assert.deepEqual((screen as unknown as { spend: object }).spend, {
-    usd: 0,
-    planUsd: policy().watcher.budget.monthlyPlanUsd,
-    capUsd: policy().watcher.budget.monthlyCapUsd,
-  });
   assert.deepEqual(screen.applied?.models, { seats: { lead: { provider: "pi-lead/m", thinking: "high" } } });
-  assert.deepEqual([screen.applied?.watcher, screen.applied?.seats.includes("pi-lead")], ["on", true]);
+  assert.ok(screen.applied?.seats.includes("pi-lead"));
   assert.ok(
     !screen.checks.some((check) => check.id === "version"),
     "a room this version set up is told to apply again",
@@ -307,21 +298,6 @@ test("a seat opened by an earlier version of the plugin is named on the screen u
   daemon.open = [daemon.open[2]];
   assert.ok(!(await state()).checks.some((check) => check.id === "older-seats"));
   daemon.open = [];
-});
-
-test("the watcher's key is kept for its owner only and never handed back to the app", async () => {
-  assert.equal((await state()).watcherKey, false);
-
-  await call("rpc setup.watcher-key", { key: "  sk-test-not-a-key\n" }, context);
-
-  const file = join(ROOM_HOME, "watch", "key");
-  assert.equal(readFileSync(file, "utf8"), "sk-test-not-a-key\n");
-  assert.equal(statSync(file).mode & 0o077, 0);
-  const screen = await state();
-  assert.equal(screen.watcherKey, true);
-  assert.ok(!JSON.stringify(screen).includes("sk-test-not-a-key"));
-  await call("rpc setup.watcher-key", { key: "" }, context);
-  assert.deepEqual([(await state()).watcherKey, existsSync(file)], [false, false]);
 });
 
 test("removing the room waits for its seats, then takes it out of Paseo and out of the projects it worked in, keeps all of it beside its home, and leaves the plugin asleep", async () => {

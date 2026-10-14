@@ -172,7 +172,7 @@ test("mail that waits for a replaced seat waits for its successor; what it alrea
   assert.equal(store.deliveries(read.id)[0].seat, "old");
 });
 
-test("pruning drops finished mail older than the line and keeps what still waits, is owed, or is a verdict's record", () => {
+test("pruning drops finished mail and the posted lines older than the line, and keeps what still waits or is owed", () => {
   const { store } = fresh();
   const done = store.insert(mail("lead", "ACCEPT: store"), [{ seat: "p1", kind: "to", priority: "action" }]);
   store.revise(done.id, { file: "/tmp/a.md" });
@@ -182,15 +182,11 @@ test("pruning drops finished mail older than the line and keeps what still waits
     { seat: "lead", kind: "to", priority: "action" },
   ]);
   store.mark("lead", [owed.id], "delivered", "idle");
-  const pruned = store.prune("2027-01-01T00:00:00Z", (subject) => subject.startsWith("ACCEPT"));
+  const pruned = store.prune("2027-01-01T00:00:00Z");
   assert.deepEqual(pruned, { messages: 1, files: ["/tmp/a.md"], threads: [`m${done.id}`], ids: new Set([done.id]) });
   assert.equal(store.get(done.id), null);
   assert.ok(store.get(waiting.id) && store.get(owed.id));
-  assert.deepEqual(
-    store.posted("2026-01-01").map((line) => line.subject),
-    ["ACCEPT: store"],
-    "the verdict's line outlives its message",
-  );
+  assert.deepEqual(store.posted("2026-01-01"), []);
   assert.deepEqual(
     store
       .search("offset", null, { limit: 10 })
@@ -245,11 +241,11 @@ test("every query the store runs is served by an index, but the rare whole-store
     "SELECT m.thread, max(m.id)",
     "SELECT count(*) AS n FROM messages",
     "SELECT m.id, m.file, m.thread FROM messages m WHERE m.at < ?",
-    "SELECT seq, kind, detail FROM events WHERE at < ?",
+    "DELETE FROM events WHERE at < ?",
   ];
   store.replies("2026");
   store.threadsOf("lead", 5);
-  store.prune("2026", () => false);
+  store.prune("2026");
   const scans = store
     .plans()
     .filter(({ plan }) => /\bSCAN (messages|deliveries|events|m|d)\b(?! USING)/.test(plan))

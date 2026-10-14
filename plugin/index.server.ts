@@ -1,7 +1,6 @@
-import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { PluginServerContext } from "@getpaseo/plugin/server";
-import { z } from "zod";
 import { collectFiles } from "./server/gc";
 import { projectTables, writeProjectModels } from "./server/orchestration/onboard";
 import { enabledSeats, HARNESSES, parseSeat } from "./server/orchestration/seats";
@@ -17,15 +16,14 @@ import { applyWithSdk, removeWithSdk, turnBundledSkillsOff } from "./server/pase
 import { roomModels, type Setup } from "./server/paseo/setup/plan";
 import { keptAt, roomFolders, takeRoomFiles, type ProjectFiles } from "./server/paseo/setup/project-files";
 import { isSetUp, moveRoomHomeAside, readSetup } from "./server/paseo/setup/room-home";
-import { usageReport } from "./server/paseo/usage";
-import { PASEO_HOME, ROOM_HOME, WATCH_DIR } from "./server/paths";
-import { startRoom, watchKey, type Room } from "./server/room/room";
+import { PASEO_HOME, ROOM_HOME } from "./server/paths";
+import { startRoom, type Room } from "./server/room/room";
 import { merge } from "./shared/model-choices";
 import { roomStatus, roomWaiting } from "./shared/room";
-import { roomSettings, setupInit, setupProject, setupRemove, setupState, setupWatcherKey } from "./shared/setup";
+import { roomSettings, setupInit, setupProject, setupRemove, setupState } from "./shared/setup";
 import { ROOM_PROJECT, ROOM_ROLE } from "./shared/workflow";
 
-const VERSION = "0.26.0";
+const VERSION = "0.27.0";
 const PLUGIN_ID = "seatwork";
 
 /** Seatwork on Paseo: the setup screen first; the room once it is set up. */
@@ -147,20 +145,6 @@ export default function contribute(server: PluginServerContext) {
     return seatRequest(room, request);
   });
 
-  // what the decision model cost this month, for Paseo's Usage screen
-  const watching = room?.policy.watcher;
-  if (watching && watching.mode !== "off") {
-    server.registerUsageSource({
-      id: "seatwork-watcher",
-      label: "Room watcher",
-      input: z.object({}),
-      discover: async (scope) =>
-        scope.kind === "global" && room ? [{ key: "decision-model", label: watching.engine.model, input: {} }] : [],
-      fetch: async () =>
-        room ? usageReport(room.spend()) : { status: "error", error: "no room is set up on this daemon" },
-    });
-  }
-
   server.handle(roomWaiting, async (_input, { paseo }) => {
     await bringUp(paseo, false);
     return room ? room.waiting() : { chime: false, waiting: [] };
@@ -201,17 +185,13 @@ export default function contribute(server: PluginServerContext) {
       home: ROOM_HOME,
       applied: setup && {
         models: appliedModels(setup),
-        watcher: setup.watcher ?? "off",
         chime: setup.chime ?? room?.policy.owner.chime ?? true,
         version: setup.version ?? "",
         seats,
       },
       table: roomModels(pluginDir) as never,
       harnesses,
-      watcherKey: room !== null && watchKey(room.policy.watcher.engine) !== undefined,
       projects: (setup ? projectTables() : []) as never,
-      // a watcher that is off asks nothing and spends nothing
-      spend: room && room.policy.watcher.mode !== "off" ? spendOf(room) : null,
       checks,
     };
   });
@@ -225,7 +205,6 @@ export default function contribute(server: PluginServerContext) {
         ...(before.seats?.length ? { seats: before.seats } : {}),
         ...(before.mailPort !== undefined ? { mailPort: before.mailPort } : {}),
         models: choices.models,
-        watcher: choices.watcher,
         chime: choices.chime,
       };
       const { plan, removed, pluginDir } = await settle(paseo, setup, true);
@@ -242,9 +221,6 @@ export default function contribute(server: PluginServerContext) {
             ),
         );
       }
-      const firstWatch = !watching || watching.mode === "off";
-      if (firstWatch && choices.watcher !== "off")
-        notes.push("The watcher's spending shows in Paseo's Usage once the plugin is reloaded.");
       await restart(paseo);
       return { seats: Object.keys(plan.providers), removed, notes };
     }),
@@ -294,33 +270,12 @@ export default function contribute(server: PluginServerContext) {
     });
   });
 
-  server.handle(setupWatcherKey, ({ key }) =>
-    oneAtATime(async () => {
-      if (!room) throw new Error("set the room up first: the key is kept in its home");
-      const file = join(ROOM_HOME, room.policy.watcher.engine.keyFile);
-      if (key.trim()) {
-        mkdirSync(WATCH_DIR, { recursive: true, mode: 0o700 });
-        writeFileSync(file, `${key.trim()}\n`, { mode: 0o600 });
-        chmodSync(file, 0o600);
-      } else rmSync(file, { force: true });
-      // the watcher reads its key when it starts
-      await restart();
-      return { set: key.trim().length > 0 };
-    }),
-  );
-
   return async () => {
     clearInterval(fileSweep);
     offCreate();
     await busy;
     await stop();
   };
-}
-
-/** What the watcher's decision model cost this month, against its plan and its cap. */
-function spendOf(room: Room): { usd: number; planUsd: number; capUsd: number } {
-  const { total, planUsd, capUsd } = room.spend();
-  return { usd: total.usd, planUsd, capUsd };
 }
 
 /** The plugin's own folder, where the room files ship: Paseo lists it under the plugin's id. */

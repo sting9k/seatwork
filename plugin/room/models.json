@@ -20,25 +20,19 @@
     "reviewThinking": "high",
     "tiers": {
       "cheap": {
-        "providers": [
-          "claude-peer/claude-haiku-5-5"
-        ],
+        "providers": ["claude-peer/claude-haiku-5-5"],
         "thinking": "high",
         "use": "mechanical, fully specified: extraction, renames, formatting, log triage, doc edits, test scaffolds",
         "never": "anything needing judgement about behavior"
       },
       "default": {
-        "providers": [
-          "claude-peer/claude-sonnet-5-5"
-        ],
+        "providers": ["claude-peer/claude-sonnet-5-5"],
         "thinking": "high",
         "use": "implementation, debugging, multi-file changes with invariants, research with judgement",
         "never": "the review of a candidate a Claude Peer wrote"
       },
       "cross-family": {
-        "providers": [
-          "codex-peer/gpt-6.1-sol"
-        ],
+        "providers": ["codex-peer/gpt-6.1-sol"],
         "thinking": "high",
         "use": "the reviewer of a Claude-written candidate, a tie-break, a retry after a Claude Peer failed",
         "never": "a rung on the ladder"
@@ -49,25 +43,19 @@
     "$comment": "Lenses are not Peers: strong models that think independently for the Lead, from a neutral brief, without the Lead's judgement or context. One role with several models, listed like the Peer's: the Lead reads the table and picks by the question. Two lenses are always two different models.",
     "tiers": {
       "default": {
-        "providers": [
-          "codex-lens/gpt-6.1-sol"
-        ],
+        "providers": ["codex-lens/gpt-6.1-sol"],
         "thinking": "high",
         "use": "one lens: a second brain on a plan, a bug, what to do next",
         "never": "—"
       },
       "high": {
-        "providers": [
-          "codex-lens/gpt-6-astra"
-        ],
+        "providers": ["codex-lens/gpt-6-astra"],
         "thinking": "high",
         "use": "the one lens when the question is hard; one of two lenses",
         "never": "—"
       },
       "extra": {
-        "providers": [
-          "claude-lens/claude-opus-5-5"
-        ],
+        "providers": ["claude-lens/claude-opus-5-5"],
         "thinking": "high",
         "use": "the other of two lenses, on another model family; a third lens",
         "never": "—"

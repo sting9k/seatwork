@@ -1,33 +1,39 @@
-import { appendFileSync, chmodSync, existsSync, mkdirSync, readFileSync } from "node:fs";
+import { appendFileSync, chmodSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { maySpawn, reviews, routeOpen, SPAWN } from "../../shared/workflow";
 import { MailEngine } from "../coordination/engine";
 import { Collector } from "../gc";
 import type { Host } from "../host";
 import { McpHttpServer } from "../mcp-http";
-import { findProject, findRoomMarker, lawSkills, loadRegistry, roomProjectDir } from "../orchestration/registry";
+import { findProject, findRoomMarker, loadRegistry, roomProjectDir } from "../orchestration/registry";
 import { Recovery, resumeDue } from "../orchestration/recovery";
 import { ReviewGate } from "../orchestration/review-gate";
 import { Rotations } from "../orchestration/rotation";
 import { Rounds } from "../orchestration/rounds";
-import { describeIsolation, ensureRuntime, envFor, roleSkillNames } from "../orchestration/runtimes";
+import { describeIsolation, ensureRuntime, envFor } from "../orchestration/runtimes";
 import { enabledSeats, parseSeat } from "../orchestration/seats";
-import { REGISTRY_LOG, ROOM_HOME, SEAT_TMP_DIR, WATCH_DIR } from "../paths";
+import {
+  CLAUDE_HOME,
+  CODEX_HOME,
+  OPENCODE_CONFIG_HOME,
+  PASEO_HOME,
+  PI_HOME,
+  REGISTRY_LOG,
+  ROOM_HOME,
+  SAFETY_DIR,
+  SEAT_TMP_DIR,
+  USER_HOME,
+} from "../paths";
 import { loadPolicy, type RuntimePolicy } from "../policy";
 import { OwedList, roomStatus } from "./status";
+import { Safety } from "../safety/index";
+import { render, type Cli } from "../safety/hooks";
 import { WorkStores } from "../tasks/stores";
-import { Budget } from "../watch/budget";
-import { calibrate, renderCalibration } from "../watch/calibrate";
-import { snapshot } from "../watch/git";
-import { JevEngine } from "../watch/jev";
-import { REVISION } from "../watch/questions";
-import { ScanLog } from "../watch/scanlog";
-import { Watcher } from "../watch/watcher";
 import { Callers, serverToken } from "./callers";
 import { fromRoom, releaseWork, type RoomContext } from "./context";
 import { launch, type Launched, type SeatLaunch } from "./launch";
 import { registerTools } from "./tools";
-import { rotationFailed, turnEnded, viewOf, type SeatEvent, type TurnEnd } from "./turns";
+import { rotationFailed, turnEnded, type SeatEvent, type TurnEnd } from "./turns";
 
 export type { SeatEvent, TurnEnd } from "./turns";
 
@@ -50,7 +56,7 @@ export interface Room {
   /** A seat's session opens: the env its runtime needs, or null for an agent that is no room seat. */
   opened(agentId: string, provider: string, nonce: string | undefined, created: boolean): Record<string, string> | null;
   created(seat: SeatEvent): Promise<void>;
-  turnStarted(seat: SeatEvent, turnId: string | null): void;
+  turnStarted(seat: SeatEvent): void;
   turnEnded(end: TurnEnd): Promise<void>;
   archived(seat: SeatEvent): Promise<void>;
   /** A runtime closed and took its turn with it: no end will come for it. */
@@ -62,17 +68,7 @@ export interface Room {
   /** The turns that left something for the Owner; the app asks while it is open. */
   waiting(): Promise<{ chime: boolean; waiting: Awaited<ReturnType<OwedList["current"]>> }>;
   status(): ReturnType<typeof roomStatus>;
-  /** What the watcher's decision model cost this month. */
-  spend(): ReturnType<Budget["summary"]>;
   stop(): Promise<void>;
-}
-
-/** The watcher's model key: from the environment, else its file in the room home. */
-export function watchKey(engine: { keyEnv: string; keyFile: string }): string | undefined {
-  const fromEnv = process.env[engine.keyEnv]?.trim();
-  if (fromEnv) return fromEnv;
-  const file = join(ROOM_HOME, engine.keyFile);
-  return existsSync(file) ? readFileSync(file, "utf8").trim() || undefined : undefined;
 }
 
 /** The project a directory lies in, by the registry or by the room's marker above it. */
@@ -113,8 +109,41 @@ export function startRoom(input: {
     quietChars: policy.mail.quietChars,
     dedupeSeconds: policy.mail.dedupeSeconds,
   });
-  const budget = new Budget(join(WATCH_DIR, "usage-{month}.json"), policy.watcher.budget);
-  const scans = new ScanLog(join(WATCH_DIR, "scans.jsonl"));
+  const safety = new Safety({
+    dir: SAFETY_DIR,
+    userHome: USER_HOME,
+    policy: () => policy.safety,
+    seat: (id) => {
+      const record = engine.seat(id);
+      return record ? { role: record.role, cwd: record.cwd ?? null } : null;
+    },
+    projectOf: (id) => engine.projectOf(id),
+    isAncestor: (ancestor, id) => engine.isAncestor(ancestor, id),
+    tmpOf: (id) => join(SEAT_TMP_DIR, id.slice(0, 8)),
+    // what decides how every seat runs: the room, the agents' homes, the app's config
+    guard: {
+      paths: [ROOM_HOME, CLAUDE_HOME, CODEX_HOME, PI_HOME, OPENCODE_CONFIG_HOME, PASEO_HOME],
+      except: [SEAT_TMP_DIR, roomProjectDir()],
+    },
+    roomFolder: ".seatwork",
+    repeated: (seat, rule, count, command) => {
+      const owner = engine.parentOf(seat);
+      if (!owner) return;
+      void engine
+        .post({
+          from: fromRoom,
+          to: owner,
+          priority: "action",
+          subject: `GUARD: ${engine.seat(seat)?.title ?? seat} hit ${rule} ${count} times`,
+          body: `The room's guard blocked the same rule ${count} times in a row for this seat. Last command: ${command}\nIt may be trying other ways round the block. Read its work, and grant a code with seatwork_safety only if the command is right.`,
+          needs: "nothing",
+          why: "a seat under you keeps running into the room's guard",
+        })
+        .catch((error) => console.error("seatwork: the guard's notice was not sent", error));
+    },
+    log,
+  });
+  if (safety.on) safety.install();
   const room: RoomContext = {
     host,
     policy,
@@ -128,36 +157,7 @@ export function startRoom(input: {
     rotations: new Rotations(join(ROOM_HOME, "rotations.json")),
     owed: new OwedList(join(ROOM_HOME, "owed.json")),
     callers: new Callers(join(ROOM_MAIL, "nonces.json")),
-    watcher: new Watcher({
-      policy: policy.watcher,
-      params: policy.room.params,
-      engine: new JevEngine({ ...policy.watcher.engine, apiKey: watchKey(policy.watcher.engine) }),
-      budget,
-      scans,
-      timeline: (agentId) => host.timeline(agentId, policy.watcher.historyEntries),
-      snapshot,
-      lawSkills: (seat) => {
-        const registry = loadRegistry();
-        const project = registry ? findProject(registry, seat.cwd) : findRoomMarker(seat.cwd);
-        return lawSkills(project?.law ?? null, roleSkillNames(seat.role));
-      },
-      notify: async (notice) => {
-        const mail = await engine.post({
-          from: fromRoom,
-          to: notice.to,
-          priority: "action",
-          subject: notice.subject,
-          body: notice.body,
-          needs: "nothing",
-          why: "the room noticed something in a seat you launched; its own report does not say it",
-          // a notice about a finished turn rides with that turn's report
-          ...(notice.withReport ? { quiet: true as const } : {}),
-        });
-        return String(mail.id);
-      },
-      now: Date.now,
-      log,
-    }),
+    safety,
     mailedUp: new Map(),
     lastSignal: new Map(),
     lastUsage: new Map(),
@@ -169,21 +169,37 @@ export function startRoom(input: {
     room.rounds.forget(agentId);
     room.lastUsage.delete(agentId);
     room.callers.forget(agentId);
+    safety.forget(agentId);
   };
-  const gc = new Collector(host, engine, policy.gc, log, forget, policy.mail.keepDays, policy.mail.expireUnreadDays);
+  const gc = new Collector(
+    host,
+    engine,
+    policy.gc,
+    log,
+    forget,
+    policy.mail.keepDays,
+    policy.mail.expireUnreadDays,
+    (before) => safety.expire(before),
+  );
 
   const mcp = new McpHttpServer(serverToken(join(ROOM_MAIL, "token")), "seatwork", version);
-  registerTools(room, mcp, {
-    watchStats: () => {
-      const spend = budget.summary();
-      return [
-        `watcher mode ${policy.watcher.mode}; ${spend.month}: ${spend.total.calls} calls, ${spend.total.tokens} tokens, $${spend.total.usd.toFixed(4)} of a $${spend.planUsd} plan (cap $${spend.capUsd}); today $${spend.today.usd.toFixed(4)}; asking is ${spend.pace}`,
-        renderCalibration(
-          calibrate(scans.read(), engine.posted(""), policy.watcher.calibration, Date.now(), REVISION),
-          policy.watcher.calibration,
-        ),
-      ].join("\n");
-    },
+  registerTools(room, mcp);
+  // the guard's hooks ask here before a command or a file write
+  mcp.route("gate", async (body, request) => {
+    const cli = (request.query.get("cli") ?? "claude") as Cli;
+    try {
+      return await safety.answer(cli, JSON.parse(body) as Record<string, unknown>, request.header("x-seat") || null);
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : String(error);
+      log(`the guard failed on a ${cli} call: ${reason}`);
+      return render(cli, {
+        allow: false,
+        message: `The room's guard failed while checking this call (${reason}), so it does not run.`,
+        finding: null,
+        code: null,
+        grantor: null,
+      });
+    }
   });
   let port = policy.mail.port;
   const starting = mcp
@@ -193,7 +209,10 @@ export function startRoom(input: {
       log(`the room's MCP server on 127.0.0.1:${port}`);
     })
     .catch((error) => {
-      console.error(`seatwork: the room's MCP server failed to listen on ${port}; the room's tools are unavailable`, error);
+      console.error(
+        `seatwork: the room's MCP server failed to listen on ${port}; the room's tools are unavailable`,
+        error,
+      );
     });
 
   // a rotation left half-done by a stop of the plugin is said once, not repeated
@@ -217,8 +236,8 @@ export function startRoom(input: {
     for (const [seat, asked] of room.rotations.expired(Date.now(), policy.room.rotation?.answerMinutes ?? 120)) {
       const record = engine.seat(seat);
       if (record)
-        void rotationFailed(room, asked.by, record, "it did not answer the handoff request in time").catch(
-          (error) => console.error("seatwork: the notice of a failed rotation was not sent", error),
+        void rotationFailed(room, asked.by, record, "it did not answer the handoff request in time").catch((error) =>
+          console.error("seatwork: the notice of a failed rotation was not sent", error),
         );
     }
   }, 60_000);
@@ -235,13 +254,6 @@ export function startRoom(input: {
       if (touched) void gc.run();
     },
     Math.max(1, policy.gc.everyMinutes) * 60_000,
-  );
-  // the watcher's look at turns that are still running
-  const watch = setInterval(
-    () => {
-      void room.watcher.tick();
-    },
-    Math.max(5, policy.watcher.pollSeconds) * 1000,
   );
 
   return {
@@ -264,7 +276,7 @@ export function startRoom(input: {
       // a temporary directory per seat: one seat's cleanup cannot take another seat's files
       const tmp = join(SEAT_TMP_DIR, agentId.slice(0, 8));
       mkdirSync(tmp, { recursive: true, mode: 0o700 });
-      return { ...envFor(seat, policy), TMPDIR: tmp };
+      return { ...envFor(seat, policy), TMPDIR: tmp, ...safety.env(agentId, mcp.routeUrl(port, "gate")) };
     },
     async created(agent) {
       touch();
@@ -307,6 +319,9 @@ export function startRoom(input: {
         version,
       };
       engine.rememberSeat(record);
+      void safety
+        .started(agent.id, agent.cwd)
+        .catch((error) => console.error("seatwork: the guard did not note where a seat starts", error));
       if (parent && policy.mail.gatherReviews && reviews(seat.role, agent.title))
         room.gate.launched(parent.agentId, agent.id);
       try {
@@ -315,12 +330,10 @@ export function startRoom(input: {
         console.error("seatwork: cannot append registry log", error);
       }
     },
-    turnStarted(seat, turnId) {
+    turnStarted(seat) {
       touch();
       room.owed.clear(seat.id);
       room.gate.turnStarted(seat.id);
-      const view = viewOf(room, seat);
-      if (view) room.watcher.turnStarted(view, turnId);
     },
     turnEnded: (end) => turnEnded(room, end),
     async archived(seat) {
@@ -349,7 +362,6 @@ export function startRoom(input: {
             why: "the rotation you asked for did not happen",
           })
           .catch((error) => console.error("seatwork: the notice of a failed rotation was not sent", error));
-      room.watcher.forget(id);
       // a reviewer archived before its report holds its round back no longer
       const round = room.gate.gone(id);
       const owner = round ? engine.parentOf(id) : null;
@@ -357,7 +369,6 @@ export function startRoom(input: {
       await gc.onArchived(id);
     },
     closed(agentId) {
-      room.watcher.cut(agentId);
       room.mailedUp.delete(agentId);
       engine.takeWake(agentId);
     },
@@ -390,13 +401,12 @@ export function startRoom(input: {
       return { chime: policy.owner.chime, waiting: await room.owed.current(() => host.live()) };
     },
     status: async () => roomStatus(await host.live(), engine, room.owed),
-    spend: () => budget.summary(),
     async stop() {
       clearInterval(sweep);
       clearInterval(collect);
-      clearInterval(watch);
       room.works.close();
       engine.close();
+      safety.close();
       // a mail server still binding would stay open behind a close that came first
       await starting;
       await mcp.close();

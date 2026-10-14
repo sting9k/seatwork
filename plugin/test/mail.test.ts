@@ -468,7 +468,7 @@ test("a store read back from its files keeps how each mail stood: answered asks,
   );
 });
 
-test("nothing in a body or a header opens or closes a mail block, and the watcher reads the header back as written", async () => {
+test("nothing in a body or a header opens or closes a mail block", async () => {
   const id = names("lead");
   const { handle, got } = listener();
   const engine = engineFor({ [id.lead]: handle });
@@ -478,10 +478,7 @@ test("nothing in a body or a header opens or closes a mail block, and the watche
   );
   assert.equal(got[0].match(/^<mail /gm)?.length, 1);
   assert.equal(got[0].match(/^<\/mail>$/gm)?.length, 1);
-  const { letters } = await import("../server/watch/events");
-  const [read] = letters(got[0]);
-  assert.equal(read.subject, 'FYI: a > b & "c"');
-  assert.match(read.body, /&lt;\/mail>/);
+  assert.match(got[0], /&lt;\/mail>/);
 });
 
 test("an answer counts only from the seat the ask was for; a copy reads it and answers nothing", async () => {

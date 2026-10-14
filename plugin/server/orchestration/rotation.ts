@@ -4,8 +4,6 @@ import { join } from "node:path";
 import type { MailEngine, SeatRecord } from "../coordination/engine";
 import type { Host } from "../host";
 import { keptOutOfGit } from "../sqlite";
-import { prompts } from "../watch/events";
-import { fromTemplate, parseBrief } from "../watch/brief";
 import type { SeatFit } from "./models";
 
 /** Replacing a seat whose context has grown: its handoff, and its successor's start. */
@@ -15,6 +13,41 @@ type Heading = (typeof HANDOFF_HEADINGS)[number];
 
 const HANDOFF_CHARS = 6000;
 const BRIEF_CHARS = 12_000;
+
+const BRIEF_LABELS: readonly [RegExp, string][] = [
+  [/^project$/, "project"],
+  [/^outcome$/, "outcome"],
+  [/^(?:current )?candidate$/, "candidate"],
+  [/^context$/, "context"],
+  [/^write scope$/, "writeScope"],
+  [/^(?:contract(?: ?\/ ?invariants)?|invariants)$/, "contract"],
+  [/^yours to decide$/, "decide"],
+  [/^(?:verified )?constraints$/, "constraints"],
+  [/^output$/, "output"],
+  [/^acceptance(?: evidence)?$/, "acceptance"],
+  [/^reopen when$/, "reopenWhen"],
+  [/^what was tried$/, "tried"],
+  [/^reply with seatwork_mail to$/, "replyTo"],
+  [/^non-?goals$/, "nonGoals"],
+  [/^authority$/, "authority"],
+  [/^open assumptions$/, "openAssumptions"],
+  [/^decisions made$/, "decisions"],
+  [/^inputs$/, "inputs"],
+  [/^lane$/, "lane"],
+];
+const LABEL_LINE = /^\s*(?:[-*>]\s+)?[*_`"']*([a-z][a-z /_-]*?)[*_]*\s*:/i;
+
+/** Written from the room's template, and not some other prompt that happens to hold a label. */
+function fromTemplate(prompt: string): boolean {
+  const fields = new Set<string>();
+  for (const line of prompt.split("\n")) {
+    const label = LABEL_LINE.exec(line)?.[1].trim().toLowerCase();
+    const field = label && BRIEF_LABELS.find(([pattern]) => pattern.test(label))?.[1];
+    if (field) fields.add(field);
+    if (fields.size >= 3) return true;
+  }
+  return false;
+}
 
 export function handoffRequest(why: string): string {
   return [
@@ -60,8 +93,8 @@ function cut(text: string): string {
 }
 
 /** The latest prompt from the room's brief template, else the seat's first prompt. */
-export function briefInForce(received: readonly string[], cwd: string): string | null {
-  const brief = received.findLast((prompt) => fromTemplate(parseBrief(prompt, cwd))) ?? received[0];
+export function briefInForce(received: readonly string[]): string | null {
+  const brief = received.findLast(fromTemplate) ?? received[0];
   return brief ? brief.slice(0, BRIEF_CHARS) : null;
 }
 
@@ -175,7 +208,7 @@ export async function rotate(
     throw new Error(`the table in force lists for ${old.role} only ${fit.listed.join(", ")}, none on ${old.provider}`);
   const model = fit.model ?? now.model ?? "";
   const thinking = fit.model ? (fit.thinking === "default" ? undefined : fit.thinking) : now.thinking;
-  const view = await host.timeline(old.agentId, 4000);
+  const received = await host.prompts(old.agentId, 4000);
   const stamp = new Date().toISOString().slice(0, 16).replace(/[T:]/g, "-");
   const file = join(keptOutOfGit(join(now.cwd, ".seatwork", "handoffs")), `${stamp}_${old.agentId.slice(0, 8)}.md`);
   writeFileSync(file, `# Handoff of ${old.title ?? old.agentId}\n\n${handoff.text}\n`);
@@ -190,7 +223,7 @@ export async function rotate(
     ...(owner ? { parent: owner } : {}),
     title,
     prompt: successorPrompt({
-      brief: view ? briefInForce(prompts(view.entries), now.cwd) : null,
+      brief: received ? briefInForce(received) : null,
       handoff: handoff.text,
       file,
       threads: engine.threadsFor(old.agentId),

@@ -20,13 +20,14 @@ import {
   RUNTIMES_DIR,
 } from "../paths";
 import { loadPolicy, type RuntimePolicy } from "../policy";
+import { codexHooks, codexTrust, openCodePlugin, piExtension } from "../safety/hooks";
 import type { Harness, Seat } from "./seats";
 import { formatToml, parseToml, type TomlTable } from "../toml";
 
 /** Keeps a seat apart from the user's setup: a home under runtimes/, or launch flags for Claude. */
 
 /** Bump when the way a runtime is built changes. Policy and user config changes rebuild on their own. */
-const RUNTIME_VERSION = 13;
+const RUNTIME_VERSION = 14;
 const MARKER = ".seatwork-runtime.json";
 
 function ensureDir(path: string): void {
@@ -73,7 +74,13 @@ function writeJson(path: string, value: unknown): void {
   writeFileSync(path, `${JSON.stringify(value, null, 2)}\n`);
 }
 
-function buildCodex(runtime: string, policy: RuntimePolicy["codex"]): void {
+/** Writes one file of a seat's home, folders made. */
+function lay(runtime: string, path: string, text: string): void {
+  ensureDir(join(runtime, path, ".."));
+  writeFileSync(join(runtime, path), text);
+}
+
+function buildCodex(runtime: string, policy: RuntimePolicy["codex"], guarded: boolean): void {
   // the user's config without MCP servers, plugins and hooks, and with Codex's own agent features off
   const file = join(CODEX_HOME, "config.toml");
   let config: TomlTable;
@@ -100,6 +107,14 @@ function buildCodex(runtime: string, policy: RuntimePolicy["codex"]): void {
     if (v2 instanceof Map) v2.set("enabled", "false");
     else table("features").set("multi_agent_v2", "false");
   }
+  // the guard's hook, trusted here or Codex holds it for review
+  if (guarded) {
+    lay(runtime, "hooks.json", codexHooks());
+    const trust = codexTrust(join(runtime, "hooks.json"));
+    const state: TomlTable = new Map();
+    state.set(JSON.stringify(trust.key), new Map([["trusted_hash", JSON.stringify(trust.hash)]]));
+    table("hooks").set("state", state);
+  }
   writeFileSync(join(runtime, "config.toml"), formatToml(config));
   for (const name of policy.shareFiles) share(runtime, CODEX_HOME, name);
   if (policy.sharePlugins) share(runtime, CODEX_HOME, "plugins");
@@ -108,17 +123,19 @@ function buildCodex(runtime: string, policy: RuntimePolicy["codex"]): void {
   for (const name of policy.shareSkills) share(join(runtime, "skills"), join(CODEX_HOME, "skills"), name);
 }
 
-function buildPi(runtime: string, policy: RuntimePolicy["pi"]): void {
+function buildPi(runtime: string, policy: RuntimePolicy["pi"], guarded: boolean): void {
   // credentials and the model catalog are shared; settings are copied with the policy's laid over them
   writeJson(join(runtime, "settings.json"), { ...readJsonObject(join(PI_HOME, "settings.json")), ...policy.settings });
+  if (guarded) lay(runtime, "extensions/room-guard.ts", piExtension());
   for (const name of policy.shareFiles) share(runtime, PI_HOME, name);
   for (const name of policy.shareDirs) share(runtime, PI_HOME, name);
   ensureDir(join(runtime, "sessions"));
 }
 
-function buildOpenCode(runtime: string, policy: RuntimePolicy["opencode"]): void {
+function buildOpenCode(runtime: string, policy: RuntimePolicy["opencode"], guarded: boolean): void {
   // the seat gets an empty config dir plus what policy shares; auth and storage stay shared, not isolated
   writeJson(join(runtime, "opencode.json"), policy.config);
+  if (guarded) lay(runtime, "plugins/room-guard.ts", openCodePlugin());
   if (!existsSync(OPENCODE_CONFIG_HOME)) return;
   for (const name of policy.shareEntries) share(runtime, OPENCODE_CONFIG_HOME, name);
 }
@@ -157,15 +174,16 @@ export function claudeRoleDir(role: string): string {
 }
 
 function build(seat: Pick<Seat, "harness" | "role">, dir: string, policy: RuntimePolicy): void {
+  const guarded = policy.safety?.mode !== "off";
   switch (seat.harness) {
     case "claude":
       return; // no home to build
     case "codex":
-      return buildCodex(dir, policy.codex);
+      return buildCodex(dir, policy.codex, guarded);
     case "pi":
-      return buildPi(dir, policy.pi);
+      return buildPi(dir, policy.pi, guarded);
     case "opencode":
-      return buildOpenCode(dir, policy.opencode);
+      return buildOpenCode(dir, policy.opencode, guarded);
   }
 }
 
@@ -175,7 +193,7 @@ function fingerprint(harness: Exclude<Harness, "claude">, policy: RuntimePolicy)
     harness === "codex" ? join(CODEX_HOME, "config.toml") : harness === "pi" ? join(PI_HOME, "settings.json") : null;
   const text = copied && existsSync(copied) ? readFileSync(copied, "utf8") : "";
   return createHash("sha256")
-    .update(JSON.stringify([RUNTIME_VERSION, policy[harness], text]))
+    .update(JSON.stringify([RUNTIME_VERSION, policy[harness], policy.safety?.mode ?? "on", text]))
     .digest("hex");
 }
 

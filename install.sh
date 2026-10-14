@@ -3,7 +3,6 @@
 # Flags: --no-plugin  --no-reload
 #   --hq default|ask|<harness>/<model> [--hq-thinking <id>]   what HQ runs on
 #   --seat <harness>-<role>        one more seat (repeatable)
-#   --watcher off|shadow|on|ask    the watcher on this machine
 #   --mail-port <port>             the port of the room's mail server on this machine
 set -euo pipefail
 
@@ -15,7 +14,7 @@ while [ $# -gt 0 ]; do
   case "$1" in
     --no-plugin) DO_PLUGIN=0 ;;
     --no-reload) DO_RELOAD=0 ;;
-    --hq|--hq-thinking|--seat|--watcher|--mail-port)
+    --hq|--hq-thinking|--seat|--mail-port)
       [ $# -ge 2 ] || { echo "$1 needs a value" >&2; exit 2; }
       SETUP+=("$1" "$2"); shift ;;
     *) echo "unknown option: $1" >&2; exit 2 ;;

@@ -1,13 +1,13 @@
 import { deferred, installRoom, PROJECT, ROOM_HOME } from "./support/room";
-import { bash, BRIEF, edit, prompt, say } from "./support/watch";
+import { BRIEF, prompt } from "./support/timeline";
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
 import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { loadPolicy } from "../server/policy";
 import { projectBlock } from "../server/orchestration/registry";
 import { roleSkillNames } from "../server/orchestration/runtimes";
 import { rolePrompt } from "../server/orchestration/seats";
-import { HANDOFF_SKILL } from "../server/watch/rules";
 import { after, before, test } from "node:test";
 import contribute from "../index.server";
 import { fakeServer } from "./support/server";
@@ -20,20 +20,16 @@ const output = { log: console.log, error: console.error };
 let dispose: () => Promise<void>;
 
 before(() => {
-  // the watcher mails in these tests; a room as installed only logs what it finds
-  installRoom(
-    [
-      "claude-hq",
-      "claude-supervisor",
-      "claude-lead",
-      "claude-peer",
-      "pi-peer",
-      "codex-peer",
-      "codex-lens",
-      "claude-lens",
-    ],
-    (policy) => void (policy.watcher.mode = "on"),
-  );
+  installRoom([
+    "claude-hq",
+    "claude-supervisor",
+    "claude-lead",
+    "claude-peer",
+    "pi-peer",
+    "codex-peer",
+    "codex-lens",
+    "claude-lens",
+  ]);
   chmodSync(ROOM_HOME, 0o755); // as a room home made under the usual umask
   // this room's owner gave the Peer one more model, on Pi
   const table = join(ROOM_HOME, "room", "models.json");
@@ -77,19 +73,6 @@ async function opened(
   return ((await call("before agent.session_open", { request })) as { env: Record<string, string> }).env;
 }
 
-test("Paseo's Usage screen is offered one account, the watcher's month against the policy's cap, and none for a single session", async () => {
-  const { monthlyCapUsd } = JSON.parse(readFileSync(join(ROOM_HOME, "policy.json"), "utf8")).watcher.budget;
-
-  assert.deepEqual(
-    (await paseoSide.usage()!.discover({ kind: "global" })).map((account) => account.key),
-    ["decision-model"],
-  );
-  assert.deepEqual(await paseoSide.usage()!.discover({ kind: "session", provider: "claude", env: {} }), []);
-  const report = await paseoSide.usage()!.fetch({});
-  assert.equal(report.status, "available");
-  assert.equal(report.balances?.[0].limit, monthlyCapUsd);
-});
-
 test("a seat whose runtime cannot be built is refused, and created on its own home once it can", async () => {
   await assert.rejects(
     async () => call("before agent.create", createRequest("pi-peer")),
@@ -118,6 +101,7 @@ test("a Claude seat is created with the policy's launch flags and its role's ski
     debug: null,
     "setting-sources": "project,local",
     "strict-mcp-config": null,
+    "plugin-dir": join(ROOM_HOME, "safety", "claude"),
   });
   assert.deepEqual(created.config.providerOptions.additionalDirectories, [
     "/elsewhere",
@@ -178,13 +162,24 @@ const CLAUDE_SWITCHES = {
 test("a seat's session opens with the seat's own environment every time, not only when the seat is created", async () => {
   // each seat also gets a temporary directory of its own, named after its agent
   const tmp = (provider: string) => ({ TMPDIR: join(ROOM_HOME, "tmp", `opened-${provider}`.slice(0, 8)) });
+  // and the address of the room's guard, with its own agent id for the guard's hooks to name it
+  const guard = (provider: string) => ({ SEATWORK_GATE_SEAT: `opened-${provider}` });
+  const withoutUrl = (env: Record<string, string>) => {
+    assert.match(env.SEATWORK_GATE_URL, /^http:\/\/127\.0\.0\.1:\d+\/gate\/[\w-]+$/);
+    const { SEATWORK_GATE_URL: _url, ...rest } = env;
+    return rest;
+  };
   for (const reason of ["resume", "refresh", "import"]) {
     assert.deepEqual(
-      await opened("pi-peer", reason),
-      { PI_CODING_AGENT_DIR: join(runtimes, "pi", "peer"), ...tmp("pi-peer") },
+      withoutUrl(await opened("pi-peer", reason)),
+      { PI_CODING_AGENT_DIR: join(runtimes, "pi", "peer"), ...tmp("pi-peer"), ...guard("pi-peer") },
       reason,
     );
-    assert.deepEqual(await opened("claude-peer", reason), { ...CLAUDE_SWITCHES, ...tmp("claude-peer") }, reason);
+    assert.deepEqual(
+      withoutUrl(await opened("claude-peer", reason)),
+      { ...CLAUDE_SWITCHES, ...tmp("claude-peer"), ...guard("claude-peer") },
+      reason,
+    );
   }
   assert.ok(existsSync(tmp("claude-peer").TMPDIR));
   // an agent that is no seat of the room keeps what it came with
@@ -248,6 +243,8 @@ for (const archive of ["works", "fails"] as const) {
 interface TestSeat {
   agent: { id: string; parentAgentId: string | null; provider: string; cwd: string; title: string; workspaceId: null };
   inbox: string[];
+  /** its MCP server address: the guard listens beside it */
+  url: string;
   prompt: string;
   call(name: string, args: Record<string, unknown>): Promise<string>;
   listed(): Promise<string[]>;
@@ -299,6 +296,7 @@ async function seat(
   return {
     agent,
     inbox,
+    url: made.config.mcpServers.seatwork.url,
     prompt: made.config.systemPrompt,
     call: tool,
     listed,
@@ -409,61 +407,12 @@ test("what the room kept for a turn does not outlive the runtime that closed in 
   assert.equal(supervisor.inbox.length, 2, "a DONE in a turn no mail started was held back as an echo");
 });
 
-/** What the daemon would hand the watcher for this seat's turn. */
+/** The history the daemon holds for this seat. */
 function hasTimeline(who: TestSeat, entries: object[]) {
   Object.assign(agents[who.agent.id], {
     timeline: { refetch: async () => ({ entries, agent: { pendingPermissions: [] } }) },
   });
 }
-
-test("what the watcher saw in a Peer's turn reaches its Lead in the same prompt as the Peer's report", async () => {
-  const lead = await seat("lead-watch", "claude-lead", null, "[Lead] stream");
-  const peer = await seat("peer-watch", "claude-peer", lead.agent.id, "[Peer] hours");
-  hasTimeline(peer, [
-    prompt(BRIEF),
-    edit(join(PROJECT, "src/billing.js")),
-    bash("npm test"),
-    say("CANDIDATE: hours added"),
-  ]);
-
-  await call("on agent.turn_started", { agent: peer.agent, turnId: "turn-1" }, context);
-  await handsIn(peer, "CANDIDATE: hours added");
-
-  assert.equal(lead.inbox.length, 1, "the notice and the report each started a turn of the Lead");
-  assert.match(
-    lead.inbox[0],
-    /from="room" subject="OBSERVATION: peer \[Peer\] hours changed src\/billing\.js; its write scope is src\/duration\.js, test\/\*\*/,
-  );
-  assert.match(lead.inbox[0], /subject="CANDIDATE from peer/);
-});
-
-test("a notice about a turn that sends no report of its own still reaches the Lead", async () => {
-  const lead = await seat("lead-alone", "claude-lead", null, "[Lead] stream");
-  const peer = await seat("peer-alone", "claude-peer", lead.agent.id, "[Peer] hours");
-  hasTimeline(peer, [prompt(BRIEF), edit(join(PROJECT, "src/billing.js")), say("ACK")]);
-
-  await turnEnds(peer, "ACK");
-
-  assert.equal(lead.inbox.length, 1);
-  assert.match(lead.inbox[0], /OBSERVATION: peer \[Peer\] hours changed src\/billing\.js/);
-});
-
-test("a Lead is told at once when the Peer it created starts on a brief that lacks its last line", async () => {
-  const lead = await seat("lead-brief", "claude-lead", null, "[Lead] stream");
-  const peer = await seat("peer-brief", "claude-peer", lead.agent.id, "[Peer] hours");
-  hasTimeline(peer, [prompt(BRIEF.replace(/\nReply with seatwork_mail to: owner/, ""))]);
-
-  await call("on agent.turn_started", { agent: peer.agent, turnId: "turn-1" }, context);
-  for (let waited = 0; lead.inbox.length === 0 && waited < 100; waited += 1)
-    await new Promise((resolve) => setTimeout(resolve, 10));
-
-  assert.equal(lead.inbox.length, 1);
-  assert.match(
-    lead.inbox[0],
-    /from="room" subject="OBSERVATION: peer \[Peer\] hours was briefed without these template lines: Reply with seatwork_mail to: owner/,
-  );
-  assert.match(lead.inbox[0], /REVISED BRIEF/);
-});
 
 test("a DONE repeated after a mail that asked nothing does not start the Owner's turn again, and is not lost", async () => {
   const supervisor = await seat("supervisor-echo", "claude-supervisor", null, "[Supervisor] project");
@@ -1147,6 +1096,76 @@ test("a writing Peer's candidate goes back to it once for a pass with fresh eyes
   assert.equal(lead.inbox.length, 3);
 });
 
+test("a seat's hook reaches the room's guard; a code its Lead grants lets the command run once; a focused test sends the candidate back until acknowledged", async () => {
+  const repo = join(PROJECT, "..", "guarded");
+  rmSync(repo, { recursive: true, force: true });
+  mkdirSync(join(repo, "test"), { recursive: true });
+  writeFileSync(join(repo, "test", "a.test.ts"), 'test("a", () => expect(1).toBe(1));\n');
+  const git = (...args: string[]) =>
+    execFileSync("git", args, {
+      cwd: repo,
+      env: {
+        ...process.env,
+        GIT_CONFIG_GLOBAL: "/dev/null",
+        GIT_AUTHOR_NAME: "t",
+        GIT_AUTHOR_EMAIL: "t@t",
+        GIT_COMMITTER_NAME: "t",
+        GIT_COMMITTER_EMAIL: "t@t",
+      },
+    });
+  git("init", "-q");
+  git("add", "-A");
+  git("commit", "-qm", "start");
+  const lead = await seat("lead-guard", "claude-lead", null, "[Lead] stream", repo);
+  const peer = await seat("peer-guard", "claude-peer", lead.agent.id, "[Peer] guarded", repo);
+  // the guard notes the seat's starting commit beside its creation
+  await new Promise((resolve) => setTimeout(resolve, 300));
+
+  // the hook calls the guard beside the seat's MCP server: same port and token
+  const gate = peer.url.replace(/\/mcp\/([^/]+)\/[^/]+$/, "/gate/$1");
+  const hook = async (command: string) => {
+    const response = await fetch(`${gate}?cli=claude`, {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-seat": peer.agent.id },
+      body: JSON.stringify({ tool_name: "Bash", tool_input: { command }, cwd: repo }),
+    });
+    return response.text();
+  };
+  const denied = JSON.parse(await hook("git reset --hard"));
+  assert.match(denied.hookSpecificOutput.permissionDecisionReason, /reset-hard[\s\S]*code (\d{6})/);
+  const code = /code (\d{6})/.exec(denied.hookSpecificOutput.permissionDecisionReason)![1];
+  assert.match(await lead.call("seatwork_safety", { action: "waiting" }), new RegExp(`${code} core.git:reset-hard`));
+  assert.match(await lead.call("seatwork_safety", { action: "grant", code }), /Granted/);
+  assert.equal(await hook("git reset --hard"), "");
+  assert.notEqual(await hook("git reset --hard"), "", "a grant runs the command once");
+  assert.equal(await hook("git status"), "");
+
+  writeFileSync(join(repo, "test", "a.test.ts"), 'test.only("a", () => expect(1).toBe(1));\n');
+  await turnEnds(peer, "CANDIDATE g1\nthe store holds");
+  assert.match(peer.inbox.at(-1)!, /HAND-IN RETURNED: one pass with fresh eyes/);
+  await turnEnds(peer, "CANDIDATE g2\nFresh eyes: checked again");
+  assert.equal(lead.inbox.filter((m) => /CANDIDATE/.test(m)).length, 0);
+  const returned = peer.inbox.at(-1)!;
+  assert.match(
+    returned,
+    /HAND-IN RETURNED: 1 finding\(s\) from the room's check[\s\S]*test-focused at test\/a\.test\.ts:1/,
+  );
+  const id = /- ([0-9a-f]{12}) test-focused/.exec(returned)![1];
+  assert.match(
+    await peer.call("seatwork_safety", {
+      action: "ack",
+      id,
+      reason: "the other suites wait on an upstream fix, issue sw-12",
+    }),
+    /Acknowledged/,
+  );
+  await turnEnds(peer, "CANDIDATE g3\nkept the focus on purpose");
+  assert.match(
+    lead.inbox.at(-1)!,
+    /CANDIDATE from peer[\s\S]*acknowledged by the seat: test-focused test\/a\.test\.ts:1 \(the other suites wait/,
+  );
+});
+
 test("the work store through the room's tools: a Lead writes a plan, a Peer takes what is ready, only the Owner closes, and a seat that is gone holds nothing", async () => {
   // a project of the room, by its marker; a seat in a worktree under it shares the one store
   const project = join(PROJECT, "..", "work-project");
@@ -1217,10 +1236,6 @@ test("the work store through the room's tools: a Lead writes a plan, a Peer take
   assert.deepEqual([freed.assignee, freed.status], [null, "open"]);
   assert.ok(existsSync(join(project, ".seatwork", ".work", "work.db")));
   assert.equal(existsSync(join(project, ".worktrees", "store", ".seatwork")), false);
-});
-
-test("the skill the watcher holds a CANDIDATE to is one of the Peer role's skills", () => {
-  assert.ok(roleSkillNames("peer").includes(HANDOFF_SKILL));
 });
 
 test("a seat is listed every tool shared/tools.json defines, and is refused the ones its role may not call", async () => {

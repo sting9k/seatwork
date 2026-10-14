@@ -14,6 +14,12 @@ export interface McpCallContext {
 
 export type McpToolHandler = (args: Record<string, unknown>, context: McpCallContext) => Promise<string>;
 
+/** A plain POST endpoint beside MCP, at `/<name>/<token>`: the guard's hooks call one. */
+export type Route = (
+  body: string,
+  request: { query: URLSearchParams; header(name: string): string | undefined },
+) => Promise<{ type: string; text: string }>;
+
 interface JsonRpcRequest {
   jsonrpc?: string;
   id?: string | number | null;
@@ -22,10 +28,12 @@ interface JsonRpcRequest {
 }
 
 const PROTOCOL_VERSION = "2025-06-18";
+const MAX_ROUTE_BODY = 32 * 1024 * 1024;
 
 export class McpHttpServer {
   private server: Server | null = null;
   private readonly tools = new Map<string, { tool: McpTool; handler: McpToolHandler }>();
+  private readonly routes = new Map<string, Route>();
 
   constructor(
     private readonly token: string,
@@ -35,6 +43,14 @@ export class McpHttpServer {
 
   register(tool: McpTool, handler: McpToolHandler): void {
     this.tools.set(tool.name, { tool, handler });
+  }
+
+  route(name: string, handler: Route): void {
+    this.routes.set(name, handler);
+  }
+
+  routeUrl(port: number, name: string): string {
+    return `http://127.0.0.1:${port}/${name}/${this.token}`;
   }
 
   /** Listens on 127.0.0.1:port (0 = random) and resolves the bound port. */
@@ -64,6 +80,36 @@ export class McpHttpServer {
   }
 
   private async handle(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    const url = new URL(req.url ?? "/", "http://127.0.0.1");
+    const plain = /^\/([a-z]+)\/([A-Za-z0-9_-]+)\/?$/.exec(url.pathname);
+    const route = plain && plain[1] !== "mcp" ? this.routes.get(plain[1]) : undefined;
+    if (plain && route) {
+      if (plain[2] !== this.token || req.method !== "POST") {
+        res.writeHead(404).end();
+        return;
+      }
+      let body = "";
+      for await (const chunk of req) {
+        body += chunk;
+        // a payload past the cap is refused, never read whole into memory
+        if (body.length > MAX_ROUTE_BODY) {
+          res.writeHead(413).end();
+          req.destroy();
+          return;
+        }
+      }
+      try {
+        const answer = await route(body, {
+          query: url.searchParams,
+          header: (name) => [req.headers[name.toLowerCase()]].flat()[0],
+        });
+        res.writeHead(200, { "Content-Type": answer.type }).end(answer.text);
+      } catch (error) {
+        console.error(`seatwork: /${plain[1]} failed`, error);
+        res.writeHead(500).end();
+      }
+      return;
+    }
     const match = /^\/mcp\/([A-Za-z0-9_-]+)\/([A-Za-z0-9_-]+)\/?$/.exec(req.url ?? "");
     if (!match || match[1] !== this.token) {
       res.writeHead(404).end();

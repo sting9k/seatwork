@@ -20,7 +20,10 @@ import { readInbox, refused, sendMail } from "./mail-tools";
 
 /** `role:id` and a bare id name the same seat. */
 const ROLE_PREFIX = new RegExp(`^(?:${ROLES.join("|")}):`, "i");
-const seatArg = (value: unknown) => String(value ?? "").trim().replace(ROLE_PREFIX, "");
+const seatArg = (value: unknown) =>
+  String(value ?? "")
+    .trim()
+    .replace(ROLE_PREFIX, "");
 
 /** How the room's mail stands: unwell stores, answers to asks, refusals by code. */
 function mailHealth(room: RoomContext, since: string): string[] {
@@ -55,11 +58,7 @@ function asJson(run: () => unknown): string {
   }
 }
 
-export function registerTools(
-  room: RoomContext,
-  mcp: McpHttpServer,
-  extra: { watchStats(): string },
-): void {
+export function registerTools(room: RoomContext, mcp: McpHttpServer): void {
   const { engine } = room;
   const vars = {
     signals: SUBJECT_SIGNALS.join(", "),
@@ -69,7 +68,8 @@ export function registerTools(
   };
   const callerOf = (tool: string, nonce: string): string => {
     const me = room.callers.seatOf(nonce);
-    if (!me || !engine.seat(me)) throw new Error(`${tool}: this session is not a registered room seat (unknown caller)`);
+    if (!me || !engine.seat(me))
+      throw new Error(`${tool}: this session is not a registered room seat (unknown caller)`);
     const why = refusedCaller(tool, engine.seat(me)?.role);
     if (why) throw new Error(`${tool} refused: ${why}`);
     return me;
@@ -96,7 +96,9 @@ export function registerTools(
   const workOf = (tool: string, me: string) => {
     const root = engine.projectOf(me);
     if (!root)
-      throw new Error(`${tool}: ${engine.seat(me)?.cwd} lies in no project of the room; a work store belongs to a project`);
+      throw new Error(
+        `${tool}: ${engine.seat(me)?.cwd} lies in no project of the room; a work store belongs to a project`,
+      );
     return { me: { id: me, owner: owns(engine.seat(me)?.role) }, ...room.works.of(root) };
   };
   add("seatwork_work", (args, me) =>
@@ -111,6 +113,44 @@ export function registerTools(
       return graph(store, rules, args, new Date());
     }),
   );
+
+  add("seatwork_safety", async (args, me) => {
+    const action = String(args.action ?? "");
+    const cwd = engine.seat(me)?.cwd ?? null;
+    if (action === "check") {
+      const command = String(args.command ?? "").trim();
+      if (!command) throw new Error("seatwork_safety check: give the `command`");
+      return room.safety.explain(me, command, cwd);
+    }
+    if (action === "grant") {
+      const code = String(args.code ?? "").trim();
+      if (!/^\d{6}$/.test(code)) throw new Error("seatwork_safety grant: give the six-digit `code`");
+      return room.safety.grant(code, me);
+    }
+    if (action === "waiting") {
+      const rows = room.safety.waitingUnder(
+        me,
+        engine.allSeats().map((s) => s.agentId),
+      );
+      if (!rows.length) return "No code waits for your grant.";
+      return rows
+        .map(
+          (r) =>
+            `${r.code} ${r.pack}:${r.rule} seat ${r.seat} in ${r.cwd ?? "?"}: ${r.shown}${r.grantor === "human" ? " (the person's to grant)" : ""}`,
+        )
+        .join("\n");
+    }
+    if (action === "ack") {
+      const id = String(args.id ?? "").trim();
+      const reason = String(args.reason ?? "").trim();
+      if (!id || reason.length < 10)
+        throw new Error("seatwork_safety ack: give the finding's `id` and a `reason` of a sentence");
+      return room.safety.acknowledge(me, id, reason)
+        ? `Acknowledged ${id}: it rides up with your next candidate, with your reason.`
+        : `No finding ${id} of yours: copy the id from the returned candidate.`;
+    }
+    throw new Error("seatwork_safety: `action` is check, grant, waiting or ack");
+  });
 
   add("seatwork_seats", async (_args, me) => {
     const live = await room.host.live();
@@ -155,7 +195,8 @@ export function registerTools(
   add("seatwork_rotate", async (args, me) => {
     const target = seatArg(args.agent_id);
     const seat = engine.seat(target);
-    if (!seat) throw new Error("seatwork_rotate: give agent_id, the id of a seat under you (seatwork_seats lists them)");
+    if (!seat)
+      throw new Error("seatwork_rotate: give agent_id, the id of a seat under you (seatwork_seats lists them)");
     if (!engine.isAncestor(me, target)) throw new Error("seatwork_rotate refused: you replace only a seat under you");
     const status = await engine.recipientStatus(target);
     if (status === "gone") throw new Error(`seatwork_rotate refused: ${target} is archived or gone`);
@@ -221,7 +262,6 @@ export function registerTools(
       (since) => mailHealth(room, since),
     ),
   );
-  add("seatwork_watch_stats", () => extra.watchStats());
 
   // a seat is shown the tools in the table's order
   for (const name of TOOL_NAMES) {

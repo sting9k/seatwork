@@ -15,7 +15,6 @@ import type { Host, LiveSeat } from "./host";
 import type { MailEngine } from "./coordination/engine";
 import { ROOM_HOME, RUNTIMES_DIR, SEAT_TMP_DIR } from "./paths";
 import type { GcPolicy, RuntimeLeftovers } from "./policy";
-import { isVerdict } from "./watch/calibrate";
 import { routeOpen } from "../shared/workflow";
 
 /** Garbage collection: idle seats, what gone seats left behind, and old files. */
@@ -43,6 +42,7 @@ export class Collector {
     private readonly forgetAgent: (agentId: string) => void,
     private readonly keepMailDays: number = KEEP_LOG_DAYS,
     private readonly expireUnreadDays?: number,
+    private readonly expireGuard?: (before: Date) => number,
   ) {}
 
   /** One full pass: idle seats, orphan heartbeats, seat leftovers, finished mail. */
@@ -57,13 +57,15 @@ export class Collector {
       const open = new Set([...live.values()].flatMap((seat) => seat.provider || []));
       for (const line of sweepRuntimes(RUNTIMES_DIR, open, this.policy.runtimes ?? {})) this.log(`gc: ${line}`);
       const cutoff = new Date(Date.now() - this.keepMailDays * 86_400_000).toISOString();
-      const mails = this.engine.prune(cutoff, isVerdict);
+      const mails = this.engine.prune(cutoff);
       if (mails > 0)
         this.log(`gc: ${mails} mails finished more than ${this.keepMailDays} days ago left the mail stores`);
       if (this.expireUnreadDays !== undefined) {
         const unread = this.engine.expire(new Date(Date.now() - this.expireUnreadDays * 86_400_000).toISOString());
         if (unread > 0) this.log(`gc: ${unread} mails sent only to be read went unread ${this.expireUnreadDays} days`);
       }
+      const guard = this.expireGuard?.(new Date(cutoff)) ?? 0;
+      if (guard > 0) this.log(`gc: ${guard} guard records older than ${this.keepMailDays} days left the safety store`);
       // a successor holds its handoff in its prompt: the file is a copy for people
       const before = Date.now() - KEEP_LOG_DAYS * 86_400_000;
       for (const root of this.engine.projects())

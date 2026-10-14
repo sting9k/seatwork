@@ -130,7 +130,7 @@ export function connect(server: Pick<PluginServerContext, "on" | "before">, room
       await enter(paseo).created(seatOf(event.agent));
     }),
     server.on("agent.turn_started", (event, { paseo }) => {
-      enter(paseo).turnStarted(seatOf(event.agent), event.turnId);
+      enter(paseo).turnStarted(seatOf(event.agent));
     }),
     server.on("agent.turn_ended", async (event, { paseo }) => {
       const outcome: TurnOutcome =

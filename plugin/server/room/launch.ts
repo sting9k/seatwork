@@ -1,8 +1,10 @@
+import { join } from "node:path";
 import { inRoom, specFromTitle } from "../../shared/workflow";
 import { fitSeat, loadModels, projectModels, type Models, type SeatFit } from "../orchestration/models";
 import { checkPlacement, findProject, findRoomMarker, loadRegistry, projectBlock } from "../orchestration/registry";
 import { claudeRoleDir, ensureRuntime, roleSkillNames, sharedClaudeFiles } from "../orchestration/runtimes";
 import { enabledSeats, parseSeat, rolePrompt } from "../orchestration/seats";
+import { SAFETY_DIR } from "../paths";
 import type { RuntimePolicy } from "../policy";
 
 /** A seat about to start, as the app asks for it. */
@@ -93,7 +95,9 @@ export function launch(request: SeatLaunch, policy: RuntimePolicy, log: (message
   }
   // a seat asked for on a model the table has since replaced starts on the table's
   if (fit.model)
-    log(`${seat.provider}: asked for ${request.model ?? "its default model"}, starts on ${fit.model} as the model table says`);
+    log(
+      `${seat.provider}: asked for ${request.model ?? "its default model"}, starts on ${fit.model} as the model table says`,
+    );
   // without its own home a seat would start on the user's, with the user's MCP servers and plugins
   try {
     ensureRuntime(seat);
@@ -105,9 +109,7 @@ export function launch(request: SeatLaunch, policy: RuntimePolicy, log: (message
   const spec = specFromTitle(request.title) ?? request.spec;
   const systemPrompt = [
     rolePrompt(seat.role, { harness: seat.harness, spec, params: policy.room.params, models }),
-    project
-      ? projectBlock(project.name, project.root, project.mission, project.law, roleSkillNames(seat.role))
-      : null,
+    project ? projectBlock(project.name, project.root, project.mission, project.law, roleSkillNames(seat.role)) : null,
     seat.harness === "claude" ? sharedClaudeFiles(policy) : null,
     request.systemPrompt,
   ]
@@ -115,12 +117,26 @@ export function launch(request: SeatLaunch, policy: RuntimePolicy, log: (message
     .join("\n\n");
   return {
     ...(fit.model
-      ? { model: { id: fit.model, ...(fit.thinking ? { thinking: fit.thinking === "default" ? null : fit.thinking } : {}) } }
+      ? {
+          model: {
+            id: fit.model,
+            ...(fit.thinking ? { thinking: fit.thinking === "default" ? null : fit.thinking } : {}),
+          },
+        }
       : {}),
     systemPrompt,
     // a Claude seat runs on ~/.claude: customizations off by flags, its role's skills as an added directory
     ...(seat.harness === "claude"
-      ? { claude: { dirs: [claudeRoleDir(seat.role)], args: policy.launch.claude.extraArgs ?? {} } }
+      ? {
+          claude: {
+            dirs: [claudeRoleDir(seat.role)],
+            args: {
+              ...(policy.launch.claude.extraArgs ?? {}),
+              // the guard: a plugin whose hook checks each command and file write
+              ...(policy.safety?.mode !== "off" ? { "plugin-dir": join(SAFETY_DIR, "claude") } : {}),
+            },
+          },
+        }
       : {}),
   };
 }

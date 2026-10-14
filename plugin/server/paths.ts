@@ -45,5 +45,5 @@ export const CODEX_HOME = process.env.CODEX_HOME?.trim() || join(USER_HOME, ".co
 export const PI_HOME = process.env.PI_CODING_AGENT_DIR?.trim() || join(USER_HOME, ".pi", "agent");
 export const OPENCODE_CONFIG_HOME = process.env.OPENCODE_CONFIG_DIR?.trim() || join(USER_HOME, ".config", "opencode");
 
-/** The watcher's own files: its key, its spending ledger and its scan log. */
-export const WATCH_DIR = join(ROOM_HOME, "watch");
+/** The command guard's store and the hook files every seat runs. */
+export const SAFETY_DIR = join(ROOM_HOME, "safety");

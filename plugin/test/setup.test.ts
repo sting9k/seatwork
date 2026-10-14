@@ -47,7 +47,6 @@ const chosen = (flags: Partial<ChoiceFlags>, text: string, before: Setup = {}) =
   choose(before, { seats: [], ...flags }, typed(text), {
     catalog,
     hq: { provider: "claude-hq/claude-opus-5-5", thinking: "high" },
-    watchKeyFile: "/key",
   });
 
 beforeEach(() => rmSync(ROOM_HOME, { recursive: true, force: true }));
@@ -67,19 +66,6 @@ test("the installer's question: the room's HQ seat, or the user's own agent CLI 
   for (const [text, hq] of cases) assert.deepEqual((await chosen({ hq: "ask" }, text)).hq, hq, JSON.stringify(text));
 });
 
-test("the watcher is installed only on a yes: asked, it starts in shadow; unasked, it is not there", async () => {
-  const cases: [flags: Partial<ChoiceFlags>, typed: string, watcher: unknown][] = [
-    [{ watcher: "ask" }, "\n", "off"],
-    [{ watcher: "ask" }, "", "off"], // no terminal to answer
-    [{ watcher: "ask" }, "2\n", "shadow"],
-    [{ watcher: "ask" }, "shadow\n", "shadow"],
-    [{ watcher: "on" }, "", "on"],
-    [{}, "", undefined], // nothing asked without a terminal: the room is then set up with the watcher off
-  ];
-  for (const [flags, text, watcher] of cases)
-    assert.equal((await chosen(flags, text)).watcher, watcher, JSON.stringify([flags, text]));
-});
-
 test("a choice the installer cannot honour is refused by name", async () => {
   const cases: [flags: Partial<ChoiceFlags>, error: RegExp][] = [
     [{ seats: ["claude-boss"] }, /--seat claude-boss: a seat is <harness>-<role>/],
@@ -87,7 +73,6 @@ test("a choice the installer cannot honour is refused by name", async () => {
     [{ hq: "codex/m-one", hqThinking: "max" }, /no thinking option max; it has: low, medium, high/],
     [{ hq: "emacs/m-one" }, /--hq takes default, ask or <harness>\/<model>/],
     [{ hqThinking: "high" }, /--hq-thinking goes with --hq/],
-    [{ watcher: "loud" }, /--watcher takes off, shadow, on or ask/],
   ];
   for (const [flags, error] of cases) await assert.rejects(chosen(flags, ""), error, JSON.stringify(flags));
 });
@@ -243,16 +228,16 @@ test("choices the room cannot run on are refused before anything is written", as
 });
 
 test("setting the room up again replaces the room's files and keeps what the room wrote since", async () => {
-  await setUpRoom(source, { seats: ["pi-peer", "opencode-peer"], watcher: "shadow", chime: false }, paseoAccepts);
+  await setUpRoom(source, { seats: ["pi-peer", "opencode-peer"], chime: false }, paseoAccepts);
   for (const kept of ["mail", "runtimes/pi/peer", "runtimes/opencode/peer", "runtimes/claude/peer"])
     mkdirSync(join(ROOM_HOME, kept), { recursive: true });
   writeFileSync(join(ROOM_HOME, "mail", "log.jsonl"), "{}\n");
   writeFileSync(join(ROOM_HOME, "room", "roles", "dropped-from-the-plugin.md"), "stale");
 
-  await setUpRoom(source, { seats: ["pi-peer"], watcher: "on" }, paseoAccepts);
+  await setUpRoom(source, { seats: ["pi-peer"] }, paseoAccepts);
 
   const policy = JSON.parse(readFileSync(join(ROOM_HOME, "policy.json"), "utf8"));
-  assert.deepEqual([policy.watcher.mode, policy.owner.chime], ["on", true]);
+  assert.equal(policy.owner.chime, true);
   assert.ok(existsSync(join(ROOM_HOME, "mail", "log.jsonl")));
   assert.ok(!existsSync(join(ROOM_HOME, "room", "roles", "dropped-from-the-plugin.md")));
   // a seat no longer enabled loses its runtime; a Claude seat runs on the user's own home and has none
@@ -264,7 +249,7 @@ test("setting the room up again replaces the room's files and keeps what the roo
 });
 
 test("a seat added to a running room is kept by every later setup, and adding it moves nothing else", async () => {
-  await setUpRoom(source, { watcher: "shadow" }, paseoAccepts);
+  await setUpRoom(source, {}, paseoAccepts);
   writeFileSync(join(ROOM_HOME, "room", "roles", "edited-by-hand.md"), "kept");
 
   // the plugin was updated since: adding a seat does not make the room's files this version's
@@ -346,8 +331,6 @@ test("the installer's command sets the room up from a terminal: the room home, a
       join(PLUGIN_DIR, "tools", "room-init.ts"),
       "--hq",
       "default",
-      "--watcher",
-      "shadow",
       "--seat",
       "pi-peer",
       "--mail-port",
@@ -360,10 +343,7 @@ test("the installer's command sets the room up from a terminal: the room home, a
   const config = JSON.parse(readFileSync(join(paseoHome, "config.json"), "utf8"));
   assert.ok(["my-own", "claude-hq", "pi-peer"].every((id) => id in config.agents.providers));
   assert.equal(config.daemon.agentProfiles[0].id, "agent_profile_seatwork_hq");
-  assert.deepEqual(
-    [isSetUp(ROOM_HOME), readSetup(ROOM_HOME).watcher, readSetup(ROOM_HOME).seats],
-    [true, "shadow", ["pi-peer"]],
-  );
+  assert.deepEqual([isSetUp(ROOM_HOME), readSetup(ROOM_HOME).seats], [true, ["pi-peer"]]);
   assert.equal(JSON.parse(readFileSync(join(ROOM_HOME, "policy.json"), "utf8")).mail.port, 0);
   assert.equal(
     spawnSync(

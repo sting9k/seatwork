@@ -10,14 +10,11 @@ import { inRoom, ROLES, traits } from "../../../shared/workflow";
 export interface Setup {
   hq?: "default" | { provider: string; thinking?: string };
   seats?: string[];
-  watcher?: "off" | "shadow" | "on";
   models?: Record<string, unknown>;
   chime?: boolean;
   mailPort?: number;
   version?: string;
 }
-
-export const WATCHER_MODES = ["off", "shadow", "on"] as const;
 
 /** One model of a harness, as Paseo's catalog lists it. */
 export interface CatalogModel {
@@ -87,7 +84,7 @@ function readJson(file: string): any {
 export function checkSetup(setup: unknown, where: string): Setup {
   if (typeof setup !== "object" || setup === null || Array.isArray(setup))
     throw new Error(`${where} must hold an object`);
-  const { hq = "default", seats = [], watcher = "off", models, chime, mailPort } = setup as Record<string, unknown>;
+  const { hq = "default", seats = [], models, chime, mailPort } = setup as Record<string, unknown>;
   if (hq !== "default") {
     const provider = typeof hq === "object" && hq !== null ? String((hq as { provider?: unknown }).provider ?? "") : "";
     const slash = provider.indexOf("/");
@@ -102,8 +99,6 @@ export function checkSetup(setup: unknown, where: string): Setup {
       `${where}: "seats" must list <harness>-<role> ids; harnesses are ${HARNESSES.join(", ")}, roles are ${ROLES.join(", ")}`,
     );
   }
-  if (!(WATCHER_MODES as readonly unknown[]).includes(watcher))
-    throw new Error(`${where}: "watcher" must be one of ${WATCHER_MODES.join(", ")}`);
   if (models !== undefined && (typeof models !== "object" || models === null || Array.isArray(models)))
     throw new Error(`${where}: "models" must be an object shaped like room/models.json`);
   if (chime !== undefined && typeof chime !== "boolean") throw new Error(`${where}: "chime" must be true or false`);
@@ -299,7 +294,6 @@ export async function planRoom(input: {
     });
   }
 
-  policy.watcher.mode = setup.watcher ?? "off";
   if (setup.chime !== undefined) policy.owner.chime = setup.chime;
   if (setup.mailPort !== undefined) policy.mail.port = setup.mailPort;
   return { seats, providers, profiles, models, policy, warnings };

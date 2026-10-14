@@ -1,5 +1,5 @@
-import { PROJECT, ROOM_HOME } from "./support/room";
-import { BRIEF } from "./support/watch";
+import { ROOM_HOME } from "./support/room";
+import { BRIEF } from "./support/timeline";
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { join } from "node:path";
@@ -25,19 +25,16 @@ test("a handoff is read by its headings, whatever marks the seat put on them; wi
 test("the brief in force is the latest prompt written from the template; a seat that got none keeps its first prompt", () => {
   const revised = `<mail id="2" from="owner" subject="REVISED BRIEF" needs="nothing" thread="m1">\n${BRIEF.replace("Outcome:", "Outcome: (revised)")}\n</mail>`;
   assert.equal(
-    briefInForce(
-      [
-        BRIEF,
-        '<mail id="1" from="owner" subject="NOTED" needs="nothing" thread="m1">\nfine\n</mail>',
-        revised,
-        "a later note",
-      ],
-      PROJECT,
-    ),
+    briefInForce([
+      BRIEF,
+      '<mail id="1" from="owner" subject="NOTED" needs="nothing" thread="m1">\nfine\n</mail>',
+      revised,
+      "a later note",
+    ]),
     revised,
   );
-  assert.equal(briefInForce(["Take over this workstream.", "more"], PROJECT), "Take over this workstream.");
-  assert.equal(briefInForce([], PROJECT), null);
+  assert.equal(briefInForce(["Take over this workstream.", "more"]), "Take over this workstream.");
+  assert.equal(briefInForce([]), null);
 });
 
 test("a successor is told its brief, its handoff and to trust the tree; its title counts up", () => {

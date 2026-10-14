@@ -57,7 +57,7 @@ export type NewMessage = Pick<Message, "sender" | "senderRole" | "signal" | "sub
 export type NewDelivery = Pick<Delivery, "seat" | "kind" | "priority"> &
   Partial<Pick<Delivery, "state" | "quiet" | "progress" | "urgent" | "round" | "heldUntil">>;
 
-/** One line of what was posted, as room stats and the watcher's calibration read it. */
+/** One line of what was posted, as room stats read it. */
 export interface PostedLine {
   at: string;
   id: string;
@@ -655,10 +655,7 @@ export class MailStore extends Sqlite {
   }
 
   /** Drops what is finished and older than `before`; returns the files of those messages. */
-  prune(
-    before: string,
-    stays: (subject: string) => boolean,
-  ): { messages: number; files: string[]; threads: string[]; ids: Set<number> } {
+  prune(before: string): { messages: number; files: string[]; threads: string[]; ids: Set<number> } {
     return this.transaction("write", () => {
       const gone = this.rows<{ id: number; file: string | null; thread: string }>(
         `SELECT m.id, m.file, m.thread FROM messages m WHERE m.at < ?
@@ -670,15 +667,7 @@ export class MailStore extends Sqlite {
         this.run("DELETE FROM search WHERE rowid = ?", id);
         this.run("DELETE FROM messages WHERE id = ?", id);
       }
-      // a verdict's line stays: the watcher's statistics are fitted to them
-      for (const row of this.rows<{ seq: number; kind: string; detail: string | null }>(
-        "SELECT seq, kind, detail FROM events WHERE at < ?",
-        before,
-      )) {
-        const subject =
-          row.kind === "posted" && row.detail ? String((JSON.parse(row.detail) as Row).subject ?? "") : "";
-        if (!subject || !stays(subject)) this.run("DELETE FROM events WHERE seq = ?", row.seq);
-      }
+      this.run("DELETE FROM events WHERE at < ?", before);
       const threads = [...new Set(gone.map((row) => row.thread))].filter(
         (thread) => this.row("SELECT 1 AS found FROM messages WHERE thread = ? LIMIT 1", thread) === undefined,
       );

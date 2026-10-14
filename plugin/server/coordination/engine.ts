@@ -793,11 +793,11 @@ export class MailEngine implements Directory {
   }
 
   /** Drops finished mail older than `before` from every store, with its files; returns how many. */
-  prune(before: string, stays: (subject: string) => boolean): number {
+  prune(before: string): number {
     let gone = 0;
     for (const store of this.known()) {
       try {
-        const pruned = store.prune(before, stays);
+        const pruned = store.prune(before);
         dropFiles(store.folder, pruned.files, pruned.threads);
         forgetSettled(store.folder, pruned.ids);
         gone += pruned.messages;

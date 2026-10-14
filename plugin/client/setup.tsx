@@ -1,7 +1,7 @@
 import type { RpcOutput } from "@getpaseo/plugin";
 import type { PluginScreenProps, PluginSidebarItemProps } from "@getpaseo/plugin/client";
 import { useRpc, useSettings } from "@getpaseo/plugin/client";
-import { Icon, ScrollView, TextInput } from "@getpaseo/plugin/client/react-native";
+import { Icon, ScrollView } from "@getpaseo/plugin/client/react-native";
 import { SidebarRow } from "@getpaseo/plugin/client/ui";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
@@ -18,15 +18,7 @@ import {
   type Table,
 } from "../shared/model-choices";
 import { ROOM_PROJECT, ROOM_ROLE, traits } from "../shared/workflow";
-import {
-  roomSettings,
-  setupInit,
-  setupProject,
-  setupRemove,
-  setupState,
-  setupWatcherKey,
-  type RoomChoices,
-} from "../shared/setup";
+import { roomSettings, setupInit, setupProject, setupRemove, setupState, type RoomChoices } from "../shared/setup";
 import {
   Badge,
   Btn,
@@ -38,7 +30,6 @@ import {
   IconTile,
   KeyValue,
   Link,
-  Seg,
   Tabs,
   tint,
   Toggle,
@@ -55,11 +46,6 @@ const STATE_KEY = ["seatwork", "setup.state"];
 const ROOM_ROLES = [...SEAT_ROLES, ...TIER_ROLES];
 /** The room's own seat by name, for the lines that tell where to ask it. */
 const OWN = ROOM_ROLE ? traits(ROOM_ROLE).label : "the room's own seat";
-const WATCHER_DOES = {
-  off: "Nothing is read.",
-  shadow: "Reads the turns of the seats it watches and logs what it finds. Nobody is mailed.",
-  on: "Reads the turns of the seats it watches. What it finds is mailed to the seat above.",
-} as const;
 const MONO = { dataSet: { pmono: "true" }, style: { fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace" } };
 
 /** What went wrong, in the room's words: Paseo wraps a refused request in its own prefix. */
@@ -297,12 +283,9 @@ function RoomSetup({
   const settings = useSettings(roomSettings);
   const runInit = useRpc(setupInit);
   const runRemove = useRpc(setupRemove);
-  const saveKey = useRpc(setupWatcherKey);
   const queries = useQueryClient();
   const refetch = () => void queries.invalidateQueries({ queryKey: STATE_KEY });
   const [confirming, setConfirming] = useState(false);
-  const [keying, setKeying] = useState(false);
-  const [key, setKey] = useState("");
 
   const values: RoomChoices | null = settings.status === "ready" ? settings.values : null;
   const init = useMutation({ mutationFn: () => runInit(values!), onSuccess: refetch });
@@ -314,14 +297,6 @@ function RoomSetup({
       refetch();
     },
   });
-  const storeKey = useMutation({
-    mutationFn: (value: string) => saveKey({ key: value }),
-    onSuccess: () => {
-      setKey("");
-      setKeying(false);
-      refetch();
-    },
-  });
   const done = init.data as RpcOutput<typeof setupInit> | undefined;
   const moved = remove.data as RpcOutput<typeof setupRemove> | undefined;
 
@@ -330,7 +305,7 @@ function RoomSetup({
   const unsaved = settings.status === "ready" && settings.revision === "missing";
   useEffect(() => {
     if (unsaved && applied && settings.status === "ready")
-      void settings.save({ models: applied.models, watcher: applied.watcher, chime: applied.chime }, settings.revision);
+      void settings.save({ models: applied.models, chime: applied.chime }, settings.revision);
   }, [unsaved, applied !== null]);
 
   if (!values) {
@@ -355,7 +330,6 @@ function RoomSetup({
           ...ROOM_ROLES.filter((role) => !sameChoices(rolePart(table, role), rolePart(running, role))).map(
             (role) => `${traits(role).label} ${TIER_ROLES.includes(role) ? "models" : "model"}`,
           ),
-          ...(values.watcher !== applied.watcher ? ["Watcher mode"] : []),
           ...(values.chime !== applied.chime ? ["Chime"] : []),
         ];
   const stale = applied !== null && applied.version !== data.version;
@@ -395,7 +369,7 @@ function RoomSetup({
             <Btn
               label="Discard"
               disabled={busy}
-              onPress={() => save({ models: applied.models, watcher: applied.watcher, chime: applied.chime })}
+              onPress={() => save({ models: applied.models, chime: applied.chime })}
               colors={c}
             />
           </View>
@@ -545,116 +519,6 @@ function RoomSetup({
 
   const rail = (
     <>
-      <Card colors={c} style={RAIL}>
-        <RailHead icon="Eye" title="Watcher" colors={c} />
-        <Seg
-          options={[
-            { label: "Off", value: "off" },
-            { label: "Shadow", value: "shadow" },
-            { label: "On", value: "on" },
-          ]}
-          value={values.watcher}
-          onChange={(watcher: RoomChoices["watcher"]) => save({ ...values, watcher })}
-          colors={c}
-        />
-        <Text style={small(c)}>{WATCHER_DOES[values.watcher]}</Text>
-        {applied ? (
-          <>
-            <View style={{ height: 1, backgroundColor: c.border }} />
-            <KeyValue
-              name="Model key"
-              icon="KeyRound"
-              right={
-                <View style={{ flexDirection: "row", alignItems: "center", gap: 10 }}>
-                  {data.watcherKey ? (
-                    <View style={{ flexDirection: "row", alignItems: "center", gap: 5 }}>
-                      <Icon name="Check" size={13} color={c.statusSuccess} />
-                      <Text style={{ color: c.statusSuccess, fontSize: 12, fontWeight: "500" }}>Stored</Text>
-                    </View>
-                  ) : (
-                    <Text style={small(c)}>Not set</Text>
-                  )}
-                  <Link
-                    label={keying ? "Close" : data.watcherKey ? "Replace" : "Add"}
-                    onPress={() => setKeying(!keying)}
-                    colors={c}
-                  />
-                </View>
-              }
-              colors={c}
-            />
-            {keying ? (
-              <View style={{ gap: 8 }}>
-                <TextInput
-                  accessibilityLabel="Watcher key"
-                  placeholder="Paste a key"
-                  placeholderTextColor={c.foregroundMuted}
-                  secureTextEntry
-                  autoCapitalize="none"
-                  autoCorrect={false}
-                  value={key}
-                  onChangeText={setKey}
-                  style={{
-                    color: c.foreground,
-                    fontSize: 13,
-                    height: 34,
-                    paddingHorizontal: 10,
-                    borderRadius: 9,
-                    borderWidth: 1,
-                    borderColor: tint(c.foreground, 0.16),
-                    backgroundColor: c.surface0,
-                  }}
-                />
-                <View style={{ flexDirection: "row", gap: 8 }}>
-                  <Btn
-                    label={storeKey.isPending ? "Saving…" : "Store key"}
-                    kind="primary"
-                    grow
-                    disabled={!key.trim() || storeKey.isPending}
-                    onPress={() => storeKey.mutate(key)}
-                    colors={c}
-                  />
-                  {data.watcherKey ? (
-                    <Btn
-                      label="Remove"
-                      kind="danger"
-                      disabled={storeKey.isPending}
-                      onPress={() => storeKey.mutate("")}
-                      colors={c}
-                    />
-                  ) : null}
-                </View>
-                <Text style={small(c)}>
-                  Four rules ask a model with it. Without a key they only log, and nothing leaves this machine.
-                </Text>
-                {storeKey.error ? (
-                  <Text style={{ ...small(c), color: c.statusDanger }}>{failed(storeKey.error)}</Text>
-                ) : null}
-              </View>
-            ) : null}
-            {data.spend ? (
-              <View style={{ gap: 7 }}>
-                <KeyValue
-                  name="This month"
-                  value={`$${data.spend.usd.toFixed(2)} of $${data.spend.planUsd.toFixed(2)}`}
-                  colors={c}
-                />
-                <View style={{ height: 4, borderRadius: 2, backgroundColor: tint(c.foreground, 0.1) }}>
-                  <View
-                    style={{
-                      height: 4,
-                      borderRadius: 2,
-                      backgroundColor: data.spend.usd > data.spend.planUsd ? c.statusWarning : c.statusSuccess,
-                      width: `${Math.min(100, data.spend.planUsd > 0 ? (data.spend.usd / data.spend.planUsd) * 100 : 0)}%`,
-                    }}
-                  />
-                </View>
-              </View>
-            ) : null}
-          </>
-        ) : null}
-      </Card>
-
       <Card colors={c} style={{ ...RAIL, flexDirection: "row", alignItems: "center" }}>
         <Icon name="Bell" size={15} color={c.foreground} />
         <View style={{ flex: 1, gap: 1 }}>

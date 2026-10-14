@@ -109,7 +109,7 @@ export function findRoomMarker(
 }
 
 /** The skills of a role that a law names in backticks. */
-export function lawSkills(law: string | null, roleSkills: readonly string[]): string[] {
+function lawSkills(law: string | null, roleSkills: readonly string[]): string[] {
   return roleSkills.filter((skill) => (law ?? "").includes(`\`${skill}\``));
 }
 

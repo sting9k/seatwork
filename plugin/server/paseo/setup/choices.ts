@@ -1,13 +1,12 @@
 import { HARNESSES, parseSeat, type Harness } from "../../orchestration/seats";
 import { ROLES, ROOM_ROLE, traits } from "../../../shared/workflow";
-import { WATCHER_MODES, type Catalog, type Setup } from "./plan";
+import type { Catalog, Setup } from "./plan";
 
-/** The installer's flags that are this machine's choices: --hq default|ask|<harness>/<model>, --watcher off|shadow|on|ask. */
+/** The installer's flags that are this machine's choices: --hq default|ask|<harness>/<model>, --seat. */
 export interface ChoiceFlags {
   hq?: string;
   hqThinking?: string;
   seats: string[];
-  watcher?: string;
 }
 
 /** The terminal the installer runs on: a line typed at it (null at the end of input), a line printed on it. */
@@ -79,21 +78,12 @@ async function askHq(
   return { provider: `${harness}-${ROOM_ROLE}/${model}`, ...(thinking ? { thinking } : {}) };
 }
 
-/** Asks on the terminal whether the watcher is installed; installed, it starts in shadow mode. */
-async function askWatcher(io: Terminal, keyFile: string): Promise<Setup["watcher"]> {
-  io.say("The watcher reads the turns of the seats it watches and logs the signs of a turn going wrong.");
-  io.say(`With a key in ${keyFile} it also sends a seat's final message to a decision model. Install it?`);
-  io.say("  1) no");
-  io.say("  2) shadow: it reads and logs, and mails nobody (`--watcher on` makes it mail the seat above)");
-  return (await pick(io, "Choice", ["no", "shadow"], "no")) === "shadow" ? "shadow" : "off";
-}
-
-/** This machine's choices: the installer's flags, and on a first install from a terminal its two questions. */
+/** This machine's choices: the installer's flags, and on a first install from a terminal its question. */
 export async function choose(
   before: Setup,
   flags: ChoiceFlags,
   io: Terminal,
-  room: { catalog: Catalog; hq?: { provider: string; thinking: string }; watchKeyFile: string },
+  room: { catalog: Catalog; hq?: { provider: string; thinking: string } },
 ): Promise<Setup> {
   const setup: Setup = { ...before, ...(before.seats ? { seats: [...before.seats] } : {}) };
   for (const seat of flags.seats) {
@@ -119,14 +109,6 @@ export async function choose(
       room.catalog,
       io,
     );
-  }
-  let watcher = flags.watcher;
-  if (watcher === undefined && setup.watcher === undefined && io.isTTY) watcher = "ask";
-  if (watcher === "ask") setup.watcher = await askWatcher(io, room.watchKeyFile);
-  else if (watcher !== undefined) {
-    if (!(WATCHER_MODES as readonly string[]).includes(watcher))
-      throw new Error(`--watcher takes ${WATCHER_MODES.join(", ")} or ask`);
-    setup.watcher = watcher as Setup["watcher"];
   }
   return setup;
 }

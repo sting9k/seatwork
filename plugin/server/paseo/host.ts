@@ -1,7 +1,7 @@
 import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { Host, LiveSeat, NewSeat, SeatState, SeatUsage, TimelineView } from "../host";
+import type { Host, LiveSeat, NewSeat, SeatState, SeatUsage } from "../host";
 import { PASEO_SCHEDULES } from "../paths";
 import type { PaseoApi } from "./api";
 import { paseoCli } from "./cli";
@@ -198,15 +198,15 @@ export class PaseoHost implements Host {
     else await paseoCli(["agent", "archive", agentId]);
   }
 
-  async timeline(agentId: string, limit: number): Promise<TimelineView | null> {
+  async prompts(agentId: string, limit: number): Promise<string[] | null> {
     try {
       const page = await this.sdk()
         .agents.ref(agentId)
         .timeline.refetch({ direction: "tail", projection: "projected", limit });
-      return {
-        entries: page.entries.map((entry) => ({ item: entry.item, timestamp: entry.timestamp, turnId: entry.turnId })),
-        pendingPermission: (page.agent?.pendingPermissions?.length ?? 0) > 0,
-      };
+      return page.entries.flatMap(({ item }) => {
+        const entry = item as { type?: unknown; text?: unknown };
+        return entry.type === "user_message" && typeof entry.text === "string" ? [entry.text] : [];
+      });
     } catch {
       return null;
     }

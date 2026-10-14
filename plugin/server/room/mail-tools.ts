@@ -28,11 +28,7 @@ export function refused(room: RoomContext, seat: string | null, error: unknown):
 /** A receipt from above that needs nothing, to a working seat whose last turn handed its work over. */
 function isReceipt(subject: string, needs: unknown, toWorker: boolean, endedWith: string | undefined): boolean {
   return (
-    toWorker &&
-    needs === "nothing" &&
-    isReceiptWord(subject) &&
-    endedWith !== undefined &&
-    CLOSES_WORK.has(endedWith)
+    toWorker && needs === "nothing" && isReceiptWord(subject) && endedWith !== undefined && CLOSES_WORK.has(endedWith)
   );
 }
 
@@ -67,7 +63,10 @@ export async function sendMail(room: RoomContext, from: string, args: Record<str
     const ref = eng.lookupMail(replyTo, from);
     if (!ref) throw new MailError("UNKNOWN_MAIL", `no mail #${replyTo} is known; copy the id from the mail you answer`);
     if (!ref.to.includes(from))
-      throw new MailError("NOT_YOUR_MAIL", `mail #${replyTo} was not addressed to you; you can only answer your own mail`);
+      throw new MailError(
+        "NOT_YOUR_MAIL",
+        `mail #${replyTo} was not addressed to you; you can only answer your own mail`,
+      );
     if (ref.from === "room")
       throw new MailError("NOT_YOUR_MAIL", `#${replyTo} is a notice from the room; nobody waits for an answer`);
     to = [ref.from];
@@ -118,7 +117,10 @@ export async function sendMail(room: RoomContext, from: string, args: Record<str
     );
   const needs = (["reply", "decision", "nothing"].includes(String(args.needs)) ? args.needs : "nothing") as Needs;
   if (team && needs !== "nothing")
-    throw new MailError("TEAM_ASKS_NOTHING", "a mail to your team informs; ask a seat by name when you need its answer");
+    throw new MailError(
+      "TEAM_ASKS_NOTHING",
+      "a mail to your team informs; ask a seat by name when you need its answer",
+    );
   // a file the mail points at is named where every seat finds it
   const files = words(args.files).map((file) => (isAbsolute(file) || !sender.cwd ? file : join(sender.cwd, file)));
   if (files.some((file) => !isAbsolute(file)))

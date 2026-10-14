@@ -1,25 +1,18 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { hqDir } from "./hq";
 import { missingSeats, projectModels } from "./models";
-import type { PaseoApi } from "../paseo";
 import { REGISTRY_FILE } from "../paths";
-import { isInside, loadRegistry, readLaw, realOrSelf } from "./registry";
+import { isInside, loadRegistry, readLaw, realOrSelf, roomProjectDir } from "./registry";
+import { rolesWhere } from "../../shared/workflow";
 import { enabledSeats } from "./seats";
 
-interface PaseoProject {
-  projectId: string;
-  name: string;
-  path: string;
-}
+/** The projects the app knows, by name and folder. */
+export type ProjectList = () => Promise<{ name: string; path: string }[]>;
 
-/** Paseo's projects by display name, without the room's own hq-seatwork. */
-async function paseoProjects(paseo: PaseoApi): Promise<PaseoProject[]> {
-  const hq = hqDir();
-  const { projects } = await paseo.projects.list();
-  return projects
-    .map((p) => ({ projectId: p.projectId, name: p.projectDisplayName, path: realOrSelf(p.projectRootPath) }))
-    .filter((p) => p.path !== hq);
+/** The app's projects, without the room's own. */
+async function appProjects(list: ProjectList): Promise<{ name: string; path: string }[]> {
+  const own = roomProjectDir();
+  return (await list()).map((p) => ({ name: p.name, path: realOrSelf(p.path) })).filter((p) => p.path !== own);
 }
 
 /** A registry name: lower-case letters, digits and dashes, as it appears in `.seatwork/<name>-law.md`. */
@@ -40,7 +33,7 @@ function writeMarker(root: string, content: Record<string, unknown>): void {
   writeFileSync(join(root, ".seatwork", "room.json"), `${JSON.stringify(content, null, 2)}\n`);
 }
 
-/** Writes a project's own model table into its marker, or takes it out; returns the seats set up for it. */
+/** Writes a project's own model table, or takes it out; returns the seats set up for it. */
 async function writeModels(
   root: string,
   models: unknown,
@@ -128,7 +121,7 @@ export async function writeProjectModels(
   return { own: readMarker(entry.cwd).models !== undefined, seats };
 }
 
-/** "default" or "custom", and the Supervisor seat this project's table names. */
+/** "default" or "custom", and the seats of one model this project's table names. */
 function modelsLine(root: string): string {
   try {
     const marker = readMarker(root);
@@ -137,16 +130,20 @@ function modelsLine(root: string): string {
       enabledSeats().map((s) => s.provider),
       ".seatwork/room.json",
     );
-    return `models: ${marker.models === undefined ? "default" : "custom"} | supervisor: ${models.seats.supervisor.provider} thinking ${models.seats.supervisor.thinking}`;
+    const seats = rolesWhere((role) => role.models === "one" && role.home !== "room").flatMap((role) => {
+      const seat = models.seats[role];
+      return seat ? [`${role}: ${seat.provider} thinking ${seat.thinking}`] : [];
+    });
+    return [`models: ${marker.models === undefined ? "default" : "custom"}`, ...seats].join(" | ");
   } catch (error) {
     return `models: INVALID (${error instanceof Error ? error.message : String(error)})`;
   }
 }
 
-/** Every Paseo project with what the room knows about it, one line each. */
-export async function describeProjects(paseo: PaseoApi): Promise<string> {
+/** Every project of the app with what the room knows about it, one line each. */
+export async function describeProjects(list: ProjectList): Promise<string> {
   const registry = loadRegistry();
-  const projects = await paseoProjects(paseo);
+  const projects = await appProjects(list);
   if (projects.length === 0)
     return "Paseo has no project besides the room's own. Ask for the project to be added to Paseo first.";
   return projects
@@ -159,14 +156,14 @@ export async function describeProjects(paseo: PaseoApi): Promise<string> {
     .join("\n");
 }
 
-/** Registers a project Paseo already knows: its marker, mission, own table and registry line. Safe to repeat. */
+/** Registers a project the app knows: marker, mission, own table, registry line. Repeatable. */
 export async function registerProject(
-  paseo: PaseoApi,
+  list: ProjectList,
   args: { path: string; name?: string; mission?: string; models?: unknown },
   setUpSeats: (providers: string[]) => Promise<void>,
 ): Promise<string> {
   const wanted = realOrSelf(args.path.trim());
-  const project = (await paseoProjects(paseo)).find((p) => p.path === wanted || p.name === args.path.trim());
+  const project = (await appProjects(list)).find((p) => p.path === wanted || p.name === args.path.trim());
   if (!project)
     throw new Error(`${args.path} is not a project in Paseo (or is the room's own); it has to be added to Paseo first`);
   const name = slug(args.name?.trim() || project.name);
@@ -194,7 +191,7 @@ export async function registerProject(
     existsSync(join(seatwork, "mission.md")) ? null : "mission (.seatwork/mission.md)",
     readLaw(project.path, name)
       ? null
-      : `law (.seatwork/${name}-law.md, written by the project's Supervisor on its first task)`,
+      : `law (.seatwork/${name}-law.md, written by the project's top seat on its first task)`,
   ].filter(Boolean);
   const seats = added.length ? ` Seats set up for this table: ${added.join(", ")}.` : "";
   return `${known ? "already registered" : "registered"}: ${name} at ${project.path}. ${modelsLine(project.path)}.${seats} ${missing.length ? `Still missing: ${missing.join("; ")}.` : "Mission and law are in place."}`;

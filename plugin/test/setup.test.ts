@@ -7,12 +7,12 @@ import { beforeEach, test } from "node:test";
 import { loadPolicy } from "../server/policy";
 import { envFor } from "../server/orchestration/runtimes";
 import { parseSeat } from "../server/orchestration/seats";
-import { choose, type ChoiceFlags, type Terminal } from "../server/orchestration/setup/choices";
-import { addSeats, setUpRoom } from "../server/orchestration/setup/init";
-import { applyToConfigFile, applyWithSdk } from "../server/orchestration/setup/paseo-config";
-import { planRoom, roomModels, type Catalog, type Setup } from "../server/orchestration/setup/plan";
+import { choose, type ChoiceFlags, type Terminal } from "../server/paseo/setup/choices";
+import { addSeats, setUpRoom } from "../server/paseo/setup/init";
+import { applyToConfigFile, applyWithSdk } from "../server/paseo/setup/paseo-config";
+import { planRoom, roomModels, type Catalog, type Setup } from "../server/paseo/setup/plan";
 import { sweepRemoved } from "../server/gc";
-import { isSetUp, readSetup } from "../server/orchestration/setup/room-home";
+import { isSetUp, readSetup } from "../server/paseo/setup/room-home";
 import {
   changedRoles,
   chooseSeat,
@@ -51,6 +51,10 @@ const chosen = (flags: Partial<ChoiceFlags>, text: string, before: Setup = {}) =
   });
 
 beforeEach(() => rmSync(ROOM_HOME, { recursive: true, force: true }));
+
+/** What the table says a role's tier is for. */
+const tierUse = (table: Table, role: string, tier: string) =>
+  (table[role] as { tiers: Record<string, { use?: string }> }).tiers[tier].use;
 
 test("the installer's question: the room's HQ seat, or the user's own agent CLI and model for it", async () => {
   const cases: [typed: string, hq: unknown][] = [
@@ -169,14 +173,14 @@ test("the screen's choices become the table the room runs on: one model for a se
   assert.deepEqual(
     tierChoices(table, "peer").map((tier) => [tier.label, tier.harness, tier.model, tier.use]),
     [
-      ["cheap", "pi", "m-one", room.peer.tiers.cheap.use],
-      ["default", "claude", "claude-sonnet-5-5", room.peer.tiers.default.use],
+      ["cheap", "pi", "m-one", tierUse(room, "peer", "cheap")],
+      ["default", "claude", "claude-sonnet-5-5", tierUse(room, "peer", "default")],
       ["extra", "opencode", "vendor/m-two", "the long jobs"],
     ],
   );
   assert.deepEqual(
     tierChoices(table, "lens").find((tier) => tier.label === "high"),
-    { label: "high", use: room.lens.tiers.high.use, more: 0, harness: "pi", model: "m-one", thinking: "high" },
+    { label: "high", use: tierUse(room, "lens", "high"), more: 0, harness: "pi", model: "m-one", thinking: "high" },
   );
   // choosing a model for a role is what sets its seat up
   for (const seat of ["pi-lead", "pi-peer", "opencode-peer", "pi-lens"]) assert.ok(seat in providers, seat);
@@ -231,10 +235,6 @@ test("what applying would change is named model by model: changed, added, taken 
 test("choices the room cannot run on are refused before anything is written", async () => {
   const cases: [setup: Setup, error: RegExp][] = [
     [{ models: { seats: { supervisor: { provider: "pi-peer/m-one" } } } }, /not a supervisor seat/],
-    [
-      { models: { lens: { pair: ["codex-lens/a", "codex-lens/b"] } } },
-      /lens\.pair is not a place in the table: lenses are listed under lens\.tiers/,
-    ], // a table from before the lenses were listed like Peers
     [{ models: { seats: { lead: { provider: "emacs-lead/m-one" } } } }, /"emacs-lead", which is not a seat/],
   ];
   for (const [setup, error] of cases)
@@ -376,12 +376,11 @@ test("the installer's command sets the room up from a terminal: the room home, a
   );
 });
 
-test("a folder set aside by Remove or by Init is deleted once its keep is over, by the time in its name, and nothing else beside the room home is", () => {
+test("a folder set aside by Remove is deleted once its keep is over, by the time in its name, and nothing else beside the room home is", () => {
   const parent = join(ROOM_HOME, "..", "kept");
   const home = join(parent, "seatwork");
   const names = [
     "seatwork.removed-20260901-120000",
-    "slp-room.removed-20260910-235959",
     "seatwork.removed-20261001-080000",
     "other.removed-20260901-120000",
     "seatwork.removed-by-hand",
@@ -391,10 +390,7 @@ test("a folder set aside by Remove or by Init is deleted once its keep is over, 
 
   const gone = sweepRemoved(home, 30, new Date(2026, 9, 12, 9, 0, 0));
 
-  assert.deepEqual(gone.map((folder) => folder.slice(parent.length + 1)).sort(), [
-    "seatwork.removed-20260901-120000",
-    "slp-room.removed-20260910-235959",
-  ]);
+  assert.deepEqual(gone.map((folder) => folder.slice(parent.length + 1)).sort(), ["seatwork.removed-20260901-120000"]);
   assert.deepEqual(readdirSync(parent).sort(), [
     "other.removed-20260901-120000",
     "seatwork",

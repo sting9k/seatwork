@@ -1,5 +1,5 @@
 import type { UsageReport } from "@getpaseo/plugin/server/usage";
-import type { Budget } from "./budget";
+import type { Budget } from "../watch/budget";
 
 const PACE_TONE = { saving: "warning", closed: "danger" } as const;
 

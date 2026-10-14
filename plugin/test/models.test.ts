@@ -59,7 +59,8 @@ test("the Lead is shown the lenses as one role's models with what each is for, a
   assert.ok(modelAllowed(table, "lens", "codex-lens", "astra").ok, "a lens model the table lists is refused");
 
   // a table with one lens model cannot seat two different ones
-  const single = promptVars({ ...table, lens: { tiers: { default: table.lens.tiers.default } } }, params).lens_table;
+  const lens = table.lens as { tiers: Record<string, unknown> };
+  const single = promptVars({ ...table, lens: { tiers: { default: lens.tiers.default } } }, params).lens_table;
   assert.match(single, /one lens model: open one lens/);
   assert.doesNotMatch(single, /two different models/);
 });

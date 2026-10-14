@@ -76,7 +76,7 @@ test("a blocker chain goes down level by level to what nothing blocks; alerts na
   );
   assert.deepEqual(blockerChain(s.work(), s.schema), []);
   s.store.claim(s.schema, "peer-a");
-  const extra = s.store.create({ title: "export", deps: [{ id: s.schema }] }, "lead").id;
+  s.store.create({ title: "export", deps: [{ id: s.schema }] }, "lead");
   const found = alerts(s.work(), new Date("2026-10-14T12:00:00Z"), 120);
   assert.deepEqual(
     found.map((one) => [one.type, one.id]),
@@ -90,7 +90,6 @@ test("a blocker chain goes down level by level to what nothing blocks; alerts na
     alerts(s.work(), new Date("2026-10-14T09:30:00Z"), 120).some((one) => one.type === "stale_claim"),
     false,
   );
-  assert.ok(extra);
 });
 
 test("a plan of eight hundred issues is still read in well under a second", () => {
@@ -113,4 +112,32 @@ test("a plan of eight hundred issues is still read in well under a second", () =
   assert.equal(read.counts.open, 800);
   assert.ok(store.ready().length > 0);
   assert.ok(took < 1000, `triage and plan took ${took} ms`);
+});
+
+test("the graph takes readiness from the store: a deferred issue is no pick, and the counts agree with the ready list", () => {
+  const s = sample();
+  s.store.update(s.docs, { defer_until: "2099-01-01T00:00:00.000Z" }, "lead");
+  const work = s.work();
+  const seen = triage(work, NOW);
+  assert.equal(seen.counts.ready, s.store.ready().length);
+  assert.ok(!seen.recommendations.some((one) => one.id === s.docs));
+  assert.notEqual(next(work, NOW)?.id, s.docs);
+});
+
+test("write scopes collide however a path is written: ./, a line number, a glob over the folder; words of prose are no paths", () => {
+  let tick = Date.parse("2026-10-14T09:00:00Z");
+  const store = new WorkStore(join(ROOM_HOME, `graph-test-${(stores += 1)}`), TIMING, () => new Date((tick += 1000)));
+  const scoped = (write_scope: string) => store.create({ title: write_scope, write_scope }, "lead").id;
+  const dotted = scoped("./src/a.ts");
+  const lined = scoped("src/a.ts:12");
+  const globbed = scoped("src/*.ts");
+  const prose = scoped("e.g. the v22.1 notes");
+  const pairs = plan(store.openWork(), NOW).overlaps.map((pair) => [pair.a, pair.b].sort().join(" "));
+  for (const [a, b] of [
+    [dotted, lined],
+    [dotted, globbed],
+    [lined, globbed],
+  ])
+    assert.ok(pairs.includes([a, b].sort().join(" ")), `${a} and ${b}`);
+  assert.ok(!pairs.some((pair) => pair.includes(prose)));
 });

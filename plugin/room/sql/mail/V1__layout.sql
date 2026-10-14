@@ -22,7 +22,6 @@ CREATE TABLE messages (
 ) STRICT;
 CREATE INDEX messages_by_thread ON messages (thread, id);
 CREATE INDEX messages_by_sender ON messages (sender, id);
-CREATE INDEX messages_by_signal ON messages (signal, id);
 CREATE INDEX messages_by_print ON messages (sender, fingerprint, at);
 CREATE INDEX messages_by_key ON messages (sender, key, at) WHERE key IS NOT NULL;
 CREATE INDEX messages_owed ON messages (sender, id) WHERE needs <> 'nothing' AND answered_at IS NULL;
@@ -54,6 +53,5 @@ CREATE TABLE events (
   detail TEXT
 ) STRICT;
 CREATE INDEX events_by_kind ON events (kind, at);
-CREATE INDEX events_of ON events (message_id, seq);
 
 CREATE VIRTUAL TABLE search USING fts5 (subject, body, tokenize = 'porter unicode61');

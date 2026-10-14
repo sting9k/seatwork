@@ -11,7 +11,7 @@ import {
 } from "node:fs";
 import { join } from "node:path";
 import { ROOM_HOME } from "../../paths";
-import { isInside, realOrSelf } from "../registry";
+import { isInside, realOrSelf } from "../../orchestration/registry";
 
 /** The names the room keeps in a project's `.seatwork/`; a name not listed here is not the room's. */
 const ROOM_FILES = new Set([
@@ -22,7 +22,9 @@ const ROOM_FILES = new Set([
   "notebook.md",
   "plans",
   "reviews",
+  "handoffs",
   ".mail",
+  ".work",
 ]);
 const isRoomFile = (name: string) => ROOM_FILES.has(name) || name.endsWith("-law.md");
 

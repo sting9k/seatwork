@@ -1,4 +1,4 @@
-import { installRoom, PROJECT, ROOM_HOME } from "./support/room";
+import { deferred, installRoom, PROJECT, ROOM_HOME } from "./support/room";
 import { bash, BRIEF, edit, prompt, say } from "./support/watch";
 import assert from "node:assert/strict";
 import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
@@ -656,7 +656,7 @@ test("a seat that is gone is not handed over, and no seat is handed to a role th
   const sibling = await seat("peer-sibling", "claude-peer", old.agent.id, "[Peer] other task");
   agents[old.agent.id] = archived;
 
-  await assert.rejects(sibling.adopt(peer.agent.id), /a peer may own only nothing, not this peer/);
+  await assert.rejects(sibling.adopt(peer.agent.id), /seatwork_adopt refused: a peer seat creates no seats/);
 
   agents[peer.agent.id] = deleted;
   await assert.rejects(successor.adopt(peer.agent.id), /peer-adopt-gone is archived or gone/);
@@ -784,11 +784,7 @@ test("a project seat is told which of its own skills the project law names", () 
   assert.match(block("peer"), /Skills of your seat this law names: `hard-cut`\. Load each before your first edit\.$/);
   // the law names a Peer's skill: a Lead has none of that name
   assert.doesNotMatch(block("lead"), /Skills of your seat/);
-  // a law written before the skills lost their prefix still names it; a plain word names nothing
-  const old = projectBlock("demo", PROJECT, null, "- Compatibility: hard cut (`seatwork-hard-cut` applies)", [
-    "hard-cut",
-  ]);
-  assert.match(old, /Skills of your seat this law names: `hard-cut`\./);
+  // a plain word names nothing
   assert.doesNotMatch(projectBlock("demo", PROJECT, null, "- Review lane: one lens", ["lens"]), /Skills of your seat/);
 });
 
@@ -846,7 +842,10 @@ test("a task's rounds are counted by what happened: a revised brief that answers
   // a second revised brief with no candidate in between changes the task and sends nothing back
   await sendsBack("REVISED BRIEF: one line decided by the Owner");
   await handsIn(peer, "CANDIDATE abc2\nsecond try");
-  assert.match(lead.inbox.at(-1)!, /\n\n\[room\] Second candidate of this task: one rejection .* goes to a new Peer /);
+  assert.match(
+    lead.inbox.at(-1)!,
+    /note="[^"]*\[room\] Second candidate of this task: one rejection [^"]* goes to a new Peer /,
+  );
   assert.doesNotMatch(await sendsBack("REJECT abc2: the cost of small ingests"), /rejection/);
   await handsIn(peer, "CANDIDATE abc3\nthird try");
   assert.match(lead.inbox.at(-1)!, /\[room\] Candidate 3 of this task: 2 rejections .* your Owner's call/);
@@ -874,7 +873,10 @@ test("a seat whose context has grown past the rotation line is named to the seat
   assert.doesNotMatch(lead.inbox.at(-1)!, /\[room\]/);
   holds(peer, 268_400);
   await turnEnds(peer, "QUESTION\nwhich of the two?");
-  assert.match(lead.inbox.at(-1)!, /\[room\] This Peer holds 268K tokens of context .* goes to a new Peer\.\n/);
+  assert.match(
+    lead.inbox.at(-1)!,
+    /note="[^"]*\[room\] This Peer holds 268K tokens of context [^"]* goes to a new Peer\.">\n/,
+  );
   holds(lead, 346_000);
   await turnEnds(lead, "DECISION_NEEDED\nthe limit or the proof");
   assert.match(supervisor.inbox.at(-1)!, /\[room\] This Lead holds 346K tokens of context .*lead-handoff/);
@@ -945,7 +947,7 @@ test("seatwork_seats shows an orchestrating seat every open seat under it: its s
   );
   assert.equal(lines[1], "- peer [Peer] scout-01 · peer-view-b · waiting for a permission");
   assert.equal(lines.length, 2);
-  assert.equal(await writer.call("seatwork_seats", {}), "No seat you launched is open.");
+  await assert.rejects(writer.call("seatwork_seats", {}), /seatwork_seats refused: a peer seat creates no seats/);
 });
 
 test("the reviewers a Lead launched in one turn report together: the Lead is woken once, by the last of them", async () => {
@@ -1004,7 +1006,7 @@ test("a turn that fails on the model service is not reported: the room resumes t
   assert.equal(lead.inbox.length, 1);
   assert.match(
     lead.inbox[0],
-    /from="peer peer-rec[^"]*" subject="FAILED: socket hang up"[^>]*note="the seat's turn failed, and again after the room's 3 tries; its work is stopped">\n/,
+    /from="peer peer-rec[^"]*" subject="FAILED: socket hang up"[^>]*note="the seat's turn failed, and again after the room's 3 tries; its work is stopped: a mail to it starts it again, or archive it and brief a new seat">\n/,
   );
 
   // a quota is waited out; an account the service refuses is the Owner's at once
@@ -1018,7 +1020,7 @@ test("a turn that fails on the model service is not reported: the room resumes t
   assert.equal(lead.inbox.length, 2);
   assert.match(
     lead.inbox[1],
-    /subject="FAILED: Invalid API key"[^>]*note="the seat's turn failed; its work is stopped">\n/,
+    /subject="FAILED: Invalid API key"[^>]*note="the seat's turn failed; its work is stopped: a mail to it starts it again, or archive it and brief a new seat">\n/,
   );
 });
 
@@ -1048,7 +1050,10 @@ test("seatwork_rotate replaces a seat with a fresh one: its handoff and brief st
   });
   hasTimeline(lead, [prompt(BRIEF)]);
 
-  await assert.rejects(peer.call("seatwork_rotate", { agent_id: lead.agent.id }), /you replace only a seat under you/);
+  await assert.rejects(
+    peer.call("seatwork_rotate", { agent_id: lead.agent.id }),
+    /seatwork_rotate refused: a peer seat creates no seats/,
+  );
   assert.match(
     await supervisor.call("seatwork_rotate", { agent_id: lead.agent.id, why: "346K tokens of context" }),
     /^asked lead lead-rot for its handoff\. When it answers, the room starts its successor/,
@@ -1073,7 +1078,15 @@ test("seatwork_rotate replaces a seat with a fresh one: its handoff and brief st
     created[0].prompt!,
     /## The brief in force\n[\s\S]*Outcome: [\s\S]*## The handoff \(kept at [^\n]*\.seatwork\/handoffs\/[^\n]*\)\n\*\*CURRENT TASK:\*\* the store's fourth round\n[\s\S]*trust the tree/,
   );
-  assert.equal(readdirSync(join(PROJECT, ".seatwork", "handoffs")).length, 1);
+  // the threads the old seat was in, and where each is kept whole
+  assert.match(
+    created[0].prompt!,
+    /## The mail threads it was in[^\n]*\n- m\d+: 1 mail, the last #\d+ "HANDOFF: write your handoff[^"]*" from room\. The thread: [^\n]*threads\/m\d+\.md\n/,
+  );
+  assert.deepEqual(
+    readdirSync(join(PROJECT, ".seatwork", "handoffs")).filter((name) => name.endsWith(".md")).length,
+    1,
+  );
   assert.equal(archived, true);
   // the old seat's reply is in the handoff file, not in its Owner's mail; the notice waits for the next mail
   assert.equal(supervisor.inbox.length, 0);
@@ -1210,19 +1223,27 @@ test("the skill the watcher holds a CANDIDATE to is one of the Peer role's skill
   assert.ok(roleSkillNames("peer").includes(HANDOFF_SKILL));
 });
 
-test("the tools a seat is listed are the ones shared/tools.json defines, and a tool that names its callers refuses the rest", async () => {
+test("a seat is listed every tool shared/tools.json defines, and is refused the ones its role may not call", async () => {
   const defined = JSON.parse(readFileSync(join(__dirname, "..", "shared", "tools.json"), "utf8")).tools as Record<
     string,
-    { callers: "any" | "spawners" | string[] }
+    { callers: "any" | "spawners" | "room" }
   >;
   const lead = await seat("lead-tools", "claude-lead", null, "[Lead] stream");
   const peer = await seat("peer-tools", "claude-peer", lead.agent.id, "[Peer] task");
   assert.deepEqual(await peer.listed(), Object.keys(defined));
   for (const [name, { callers }] of Object.entries(defined)) {
-    const refusal = await peer.call(name, {}).catch((error: Error) => error.message);
-    const refused = /your seat does not keep the project registry/.test(refusal);
-    assert.equal(refused, Array.isArray(callers) && !callers.includes("peer"), name);
+    const answer = await peer.call(name, {}).catch((error: Error) => error.message);
+    const why =
+      callers === "room"
+        ? "it belongs to the seats at home in the room, and a peer seat is not one"
+        : callers === "spawners"
+          ? "a peer seat creates no seats, so none is under it"
+          : null;
+    if (why) assert.match(answer, new RegExp(`^${name} refused: ${why}$`), name);
+    else assert.doesNotMatch(answer, /refused: (it belongs to|a peer seat creates)/, name);
   }
+  // a Lead creates seats: the tools for seats under it answer it
+  assert.doesNotMatch(await lead.call("seatwork_seats", {}).catch((error: Error) => error.message), /refused/);
 });
 
 test("the mail tool finds its recipient by itself, by the start of an id, by a title, or as the team; a wrong name is answered with the right ones", async () => {
@@ -1288,4 +1309,85 @@ test("the mail tool finds its recipient by itself, by the start of an id, by a t
   );
   assert.match(await peer.call("seatwork_inbox", { q: "seconds", signal: "ANSWER" }), new RegExp(`^#${sent.sent} `));
   await assert.rejects(peer.call("seatwork_inbox", { view: "everything" }), /"code":"INVALID_ARGUMENT"/);
+});
+
+test("a repair that goes to a new Peer keeps its task's count, and a seat in a worktree outside the project shares the project's mail and work", async () => {
+  const project = join(PROJECT, "..", "rounds-project");
+  mkdirSync(join(project, ".seatwork"), { recursive: true });
+  writeFileSync(join(project, ".seatwork", "room.json"), "{}");
+  const outside = (name: string) => {
+    const dir = join(PROJECT, "..", "paseo-worktrees", name);
+    mkdirSync(dir, { recursive: true });
+    return dir;
+  };
+  const lead = await seat("lead-task", "claude-lead", null, "[Lead] stream", project);
+  const first = await seat("peer-task-a", "claude-peer", lead.agent.id, "[Peer] store", outside("a"));
+  const task = JSON.parse(await lead.call("seatwork_work", { do: "create", title: "store" })) as { id: string };
+  await first.call("seatwork_work", { do: "claim", id: task.id });
+  const sendsBack = (to: TestSeat, subject: string) =>
+    lead.mail({ to: to.agent.id, subject, body: "Repair it.", needs: "nothing" });
+  await handsIn(first, "CANDIDATE abc1\nfirst try");
+  await sendsBack(first, "REJECT abc1: two repairs");
+  await handsIn(first, "CANDIDATE abc2\nsecond try");
+  await sendsBack(first, "REJECT abc2: still one");
+  // the repair goes to a fresh Peer, which takes the task over
+  const second = await seat("peer-task-b", "claude-peer", lead.agent.id, "[Peer] store, fresh", outside("b"));
+  await lead.call("seatwork_work", { do: "update", id: task.id, assignee: second.agent.id });
+  await handsIn(second, "CANDIDATE abc3\nthird try");
+  assert.match(lead.inbox.at(-1)!, /\[room\] Candidate 3 of this task: 2 rejections .* your Owner's call/);
+  assert.ok(existsSync(join(project, ".seatwork", ".mail", "mail.db")), "the worktree seats' mail is the project's");
+});
+
+test("a seat being replaced takes no mail: what comes in while its successor starts is the successor's", async () => {
+  const supervisor = await seat("sup-window", "claude-supervisor", null, "[Supervisor] law");
+  const lead = await seat("lead-window", "claude-lead", supervisor.agent.id, "[Lead] stream");
+  const peer = await seat("peer-window", "claude-peer", lead.agent.id, "[Peer] store");
+  const starting = deferred();
+  let successor: TestSeat | undefined;
+  Object.assign(context.paseo.agents, {
+    create: async (options: { parent?: string; title?: string }) => {
+      await starting.promise;
+      successor = await seat("lead-window-2", "claude-lead", options.parent ?? null, options.title ?? "");
+      return { id: successor.agent.id };
+    },
+  });
+  Object.assign(agents[lead.agent.id], {
+    current: () => ({ status: "idle", provider: "claude-lead", model: "claude-opus-5-5", cwd: PROJECT }),
+    archive: async () => {},
+  });
+  hasTimeline(lead, [prompt(BRIEF)]);
+  await supervisor.call("seatwork_rotate", { agent_id: lead.agent.id });
+  const ended = turnEnds(lead, "HANDOFF\nCURRENT TASK: the store\nPROGRESS: done 2ea3368\nBLOCKERS: none");
+  await new Promise((done) => setTimeout(done, 20));
+  const before = lead.inbox.length;
+  await peer.mail({ to: "owner", subject: "QUESTION: which unit", body: "seconds or minutes?", needs: "decision" });
+  assert.equal(lead.inbox.length, before, "the old seat is woken by nothing while it is replaced");
+  starting.resolve();
+  await ended;
+  assert.match(successor!.inbox.join("\n"), /subject="QUESTION: which unit"/);
+});
+
+test("a STOP goes to one seat and is sent every time; the team is no target for it", async () => {
+  const lead = await seat("lead-stop-team", "claude-lead", null, "[Lead] stream");
+  const peer = await seat("peer-stop-team", "claude-peer", lead.agent.id, "[Peer] store");
+  await assert.rejects(
+    lead.mail({ to: "team", subject: "STOP: everything", body: "Stop.", needs: "nothing" }),
+    /"code":"STOP_GOES_DOWN"/,
+  );
+  const stop = { to: peer.agent.id, subject: "STOP: the plan is wrong", body: "Stop where you are.", needs: "nothing" };
+  const first = JSON.parse(await lead.mail(stop)) as { sent: number; replayed?: boolean };
+  const again = JSON.parse(await lead.mail(stop)) as { sent: number; replayed?: boolean };
+  assert.notEqual(again.sent, first.sent);
+  assert.equal(again.replayed, undefined);
+});
+
+test("the seat asked for its handoff is archived first: whoever asked is told, and nothing is started", async () => {
+  const supervisor = await seat("sup-gone", "claude-supervisor", null, "[Supervisor] law");
+  const lead = await seat("lead-gone", "claude-lead", supervisor.agent.id, "[Lead] stream");
+  await supervisor.call("seatwork_rotate", { agent_id: lead.agent.id });
+  await call("on agent.archived", { agent: lead.agent, archivedAt: new Date().toISOString() }, context);
+  assert.match(
+    supervisor.inbox.at(-1) ?? (await supervisor.held()),
+    /subject="ROTATION FAILED: \[Lead\] stream was archived before its handoff"/,
+  );
 });

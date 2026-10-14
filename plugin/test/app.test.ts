@@ -1,4 +1,4 @@
-import { installRoom, MAIL_POLICY, shipSql } from "./support/room";
+import { installRoom, hostOf, MAIL_POLICY, shipSql } from "./support/room";
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { chime } from "../client/chime";
@@ -14,7 +14,7 @@ test("mail that was held when the daemon stopped moves once the app is open, bef
   console.log = console.error = () => {};
   // before the restart the Lead was in a turn, so its mail waited on disk
   const busy = { agents: { ref: () => ({ refresh: async () => {}, current: () => ({ status: "running" }) }) } };
-  const held = await new MailEngine(busy as never, MAIL_POLICY, { routes: {}, spawn: {} } as never, () => {}).post({
+  const held = await new MailEngine(hostOf(busy), MAIL_POLICY, () => {}).post({
     from: { agentId: "room", role: "system" },
     to: "lead-restart",
     priority: "action",

@@ -1,6 +1,5 @@
 import config from "../../shared/mail.json";
-import type { Role } from "../orchestration/seats";
-import type { RoomPolicy } from "../policy";
+import { note, ROLES, routeOpen } from "../../shared/workflow";
 import { seatLabel } from "./envelope";
 
 /** Whom a seat may write to, and which seat a word in `to` names. */
@@ -8,7 +7,7 @@ import { seatLabel } from "./envelope";
 export interface SeatRecord {
   agentId: string;
   parentAgentId: string | null;
-  role: Role;
+  role: string;
   provider: string;
   title: string | null;
   cwd?: string;
@@ -55,19 +54,9 @@ export class MailError extends Error {
   }
 }
 
-export const refusal = (error: MailError) =>
-  JSON.stringify({
-    error: {
-      code: error.code,
-      message: error.message,
-      retryable: error.retryable,
-      ...(error.fix === undefined ? {} : { fix: error.fix }),
-    },
-  });
-
 const OWNER = new Set<string>(config.owner);
 const TEAM = new Set<string>(config.team);
-const ROLE_TAG = /^(hq|supervisor|lead|peer|lens):/i;
+const ROLE_TAG = new RegExp(`^(?:${ROLES.join("|")}):`, "i");
 const bare = (title: string | null) =>
   (title ?? "")
     .replace(/^\[[^\]]*\]\s*/, "")
@@ -117,10 +106,9 @@ export function resolve(directory: Directory, from: string, word: string, open: 
   throw new MailError("UNKNOWN_RECIPIENT", `\`${word}\` names no seat you can write to`, fix);
 }
 
-/** Two gates: the role route table (`room.routes`), and the tree read over effective parents. */
+/** Two gates: the workflow's route table, and the tree read over effective parents. */
 export function mayWrite(
   directory: Directory,
-  routes: RoomPolicy["routes"],
   from: string,
   to: string,
   viaReply = false,
@@ -130,15 +118,9 @@ export function mayWrite(
   if (!sender) return { ok: false, reason: `sender ${from} is not a room seat` };
   if (!recipient) return { ok: false, reason: `recipient ${to} is not a room seat (not in the registry log)` };
   if (from === to) return { ok: false, reason: "a seat does not mail itself" };
-  const route = `${sender.role}>${recipient.role}`;
-  if (routes[route] !== true) {
-    if (route === "supervisor>hq")
-      return {
-        ok: false,
-        reason:
-          "nothing travels up from a Supervisor: the Owner reads your final message and .seatwork/status.md (WAITING ON YOU rows); write there",
-      };
-    return { ok: false, reason: `route ${route} is off in the room policy (room.routes)` };
+  if (!routeOpen(sender.role, recipient.role)) {
+    if (directory.parentOf(from) === to) return { ok: false, reason: note("upClosed", { role: sender.role }) };
+    return { ok: false, reason: `route ${sender.role}>${recipient.role} is off in the room's workflow` };
   }
   if (directory.parentOf(from) === to || directory.parentOf(to) === from) return { ok: true };
   if (directory.isAncestor(from, to)) return { ok: true };

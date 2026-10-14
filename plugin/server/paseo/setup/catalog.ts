@@ -1,6 +1,6 @@
-import { paseoCli } from "../../cli";
-import type { PaseoApi } from "../../paseo";
-import type { Harness } from "../seats";
+import { paseoCli } from "../cli";
+import type { PaseoApi } from "../api";
+import type { Harness } from "../../orchestration/seats";
 import type { Catalog, CatalogModel } from "./plan";
 
 /** The catalogs as the `paseo` CLI lists them; null when the daemon does not answer. */

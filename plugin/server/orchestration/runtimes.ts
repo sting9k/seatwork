@@ -20,7 +20,7 @@ import {
   RUNTIMES_DIR,
 } from "../paths";
 import { loadPolicy, type RuntimePolicy } from "../policy";
-import type { Harness, Role, Seat } from "./seats";
+import type { Harness, Seat } from "./seats";
 import { formatToml, parseToml, type TomlTable } from "../toml";
 
 /** Keeps a seat apart from the user's setup: a home under runtimes/, or launch flags for Claude. */
@@ -73,8 +73,6 @@ function writeJson(path: string, value: unknown): void {
   writeFileSync(path, `${JSON.stringify(value, null, 2)}\n`);
 }
 
-/* ---------- Codex: CODEX_HOME ---------- */
-
 function buildCodex(runtime: string, policy: RuntimePolicy["codex"]): void {
   // the user's config without MCP servers, plugins and hooks, and with Codex's own agent features off
   const file = join(CODEX_HOME, "config.toml");
@@ -110,8 +108,6 @@ function buildCodex(runtime: string, policy: RuntimePolicy["codex"]): void {
   for (const name of policy.shareSkills) share(join(runtime, "skills"), join(CODEX_HOME, "skills"), name);
 }
 
-/* ---------- Pi: PI_CODING_AGENT_DIR ---------- */
-
 function buildPi(runtime: string, policy: RuntimePolicy["pi"]): void {
   // credentials and the model catalog are shared; settings are copied with the policy's laid over them
   writeJson(join(runtime, "settings.json"), { ...readJsonObject(join(PI_HOME, "settings.json")), ...policy.settings });
@@ -120,8 +116,6 @@ function buildPi(runtime: string, policy: RuntimePolicy["pi"]): void {
   ensureDir(join(runtime, "sessions"));
 }
 
-/* ---------- OpenCode v2: OPENCODE_CONFIG_DIR + OPENCODE_CONFIG ---------- */
-
 function buildOpenCode(runtime: string, policy: RuntimePolicy["opencode"]): void {
   // the seat gets an empty config dir plus what policy shares; auth and storage stay shared, not isolated
   writeJson(join(runtime, "opencode.json"), policy.config);
@@ -129,7 +123,7 @@ function buildOpenCode(runtime: string, policy: RuntimePolicy["opencode"]): void
   for (const name of policy.shareEntries) share(runtime, OPENCODE_CONFIG_HOME, name);
 }
 
-/** Links a role's skills where its harness reads them: the seat's runtime, or claudeRoleDir(role) for Claude. */
+/** Links a role's skills where its harness reads them. */
 function installRoleSkills(runtime: string, seat: Pick<Seat, "harness" | "role">): void {
   const role = seat.role;
   const source = join(ROOM_DIR, "skills", role);
@@ -157,8 +151,8 @@ export function runtimeDir(seat: Pick<Seat, "harness" | "role">): string {
   return join(RUNTIMES_DIR, seat.harness, seat.role);
 }
 
-/** The directory a Claude seat of this role gets as an additional directory: it holds only `.claude/skills`. */
-export function claudeRoleDir(role: Role): string {
+/** The extra directory a Claude seat of this role gets: only `.claude/skills`. */
+export function claudeRoleDir(role: string): string {
   return join(ROLE_SKILLS_DIR, "claude", role);
 }
 
@@ -185,7 +179,7 @@ function fingerprint(harness: Exclude<Harness, "claude">, policy: RuntimePolicy)
     .digest("hex");
 }
 
-/** Links the seat's role skills and returns its home, rebuilt whenever its fingerprint changes; null for Claude. */
+/** A seat's home with its role's skills, rebuilt when its fingerprint changes; null for Claude. */
 export function ensureRuntime(
   seat: Pick<Seat, "harness" | "role">,
   policy: RuntimePolicy = loadPolicy(),

@@ -1,10 +1,16 @@
-import { existsSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { readJson, writeJson } from "../persisted";
 import { basename } from "node:path";
-import type { PaseoApi } from "./paseo";
-import { liveAgents, type LiveAgent } from "./gc";
-import { hqDir } from "./orchestration/hq";
-import { waitsOnSomeone, type MailEngine, type SeatRecord } from "./coordination/engine";
-import { findRoomMarker, isInside, loadRegistry, realOrSelf, type Registry } from "./orchestration/registry";
+import type { LiveSeat } from "../host";
+import type { MailEngine, SeatRecord } from "../coordination/engine";
+import {
+  findRoomMarker,
+  isInside,
+  loadRegistry,
+  realOrSelf,
+  roomProjectDir,
+  type Registry,
+} from "../orchestration/registry";
+import { rolesWhere, traits } from "../../shared/workflow";
 
 /** What a turn left for the Owner to answer, kept by the plugin until that seat works again. */
 export interface Owed {
@@ -20,12 +26,7 @@ export class OwedList {
   private readonly items = new Map<string, Owed>();
 
   constructor(private readonly file: string) {
-    if (!existsSync(file)) return;
-    try {
-      for (const item of JSON.parse(readFileSync(file, "utf8")) as Owed[]) this.items.set(item.agentId, item);
-    } catch {
-      // an unreadable list starts empty: the next turn that asks fills it again
-    }
+    for (const item of readJson<Owed[]>(file, [])) this.items.set(item.agentId, item);
   }
 
   set(item: Owed): void {
@@ -39,48 +40,57 @@ export class OwedList {
   }
 
   /** What still waits: an entry whose seat the daemon no longer has is dropped. */
-  among(live: ReadonlyMap<string, LiveAgent>): Owed[] {
+  among(live: ReadonlyMap<string, LiveSeat>): Owed[] {
     const gone = [...this.items.keys()].filter((agentId) => !live.has(agentId));
     for (const agentId of gone) this.items.delete(agentId);
     if (gone.length > 0) this.save();
     return [...this.items.values()];
   }
 
-  /** What still waits; the daemon is asked only when something does. */
-  async current(paseo: PaseoApi): Promise<Owed[]> {
-    return this.items.size === 0 ? [] : this.among(await liveAgents(paseo));
+  /** What still waits; the app is asked only when something does. */
+  async current(live: () => Promise<ReadonlyMap<string, LiveSeat>>): Promise<Owed[]> {
+    return this.items.size === 0 ? [] : this.among(await live());
   }
 
   private save(): void {
-    writeFileSync(`${this.file}.tmp`, `${JSON.stringify([...this.items.values()], null, 1)}\n`);
-    renameSync(`${this.file}.tmp`, this.file);
+    writeJson(this.file, [...this.items.values()]);
   }
 }
 
-/** The group a seat's directory puts it in: HQ's project, a registered project, or what its directory names. */
-function placeOf(cwd: string, registry: Registry | null, hq: string): { key: string; name: string } {
+/** The room's own group: named after the roles at home in it. */
+const ROOM_GROUP = {
+  key: "",
+  name:
+    rolesWhere((role) => role.home === "room")
+      .map((role) => traits(role).label)
+      .join(", ") || "Room",
+};
+
+/** The group a seat's folder puts it in: the room's project, a registered one, or its folder. */
+function placeOf(cwd: string, registry: Registry | null, own: string): { key: string; name: string } {
   const real = realOrSelf(cwd);
-  if (isInside(real, hq)) return { key: "hq", name: "HQ" };
+  if (isInside(real, own)) return ROOM_GROUP;
   const entry = registry?.projects.find((project) => isInside(real, project.cwd));
   if (entry) return { key: entry.name, name: entry.name };
   const root = findRoomMarker(real)?.root ?? real;
   return { key: root, name: basename(root) };
 }
 
-/** The room as the app shows it: what waits on the Owner, and the seats grouped by project, HQ first. */
-export async function roomStatus(paseo: PaseoApi, engine: MailEngine, owed: OwedList) {
-  const live = await liveAgents(paseo);
+/** The room as the app shows it: what waits on the Owner, and the seats by project. */
+export async function roomStatus(live: ReadonlyMap<string, LiveSeat>, engine: MailEngine, owed: OwedList) {
   const registry = loadRegistry();
-  const hq = hqDir();
+  const own = roomProjectDir();
   const records = engine.allSeats().filter((seat) => live.has(seat.agentId));
   const place = new Map<string, { key: string; name: string }>();
   const placed = new Map<string, { key: string; name: string }>();
   for (const seat of records) {
     const cwd = seat.cwd ?? live.get(seat.agentId)!.cwd;
-    if (cwd && !placed.has(cwd)) placed.set(cwd, placeOf(cwd, registry, hq));
-    place.set(seat.agentId, cwd ? placed.get(cwd)! : { key: "", name: "unplaced" });
+    if (cwd && !placed.has(cwd)) placed.set(cwd, placeOf(cwd, registry, own));
+    place.set(seat.agentId, cwd ? placed.get(cwd)! : { key: "(unplaced)", name: "unplaced" });
   }
-  const groups = new Map<string, { name: string; members: SeatRecord[] }>([["hq", { name: "HQ", members: [] }]]);
+  const groups = new Map<string, { name: string; members: SeatRecord[] }>([
+    [ROOM_GROUP.key, { name: ROOM_GROUP.name, members: [] }],
+  ]);
   for (const project of registry?.projects ?? []) groups.set(project.name, { name: project.name, members: [] });
   for (const seat of records) {
     const { key, name } = place.get(seat.agentId)!;
@@ -94,7 +104,7 @@ export async function roomStatus(paseo: PaseoApi, engine: MailEngine, owed: Owed
     )
     .map(([, group]) => {
       const inGroup = new Set(group.members.map((seat) => seat.agentId));
-      // a project's own tree: its Supervisor is at the top, whoever opened it
+      // a project's own tree: its top seat first, whoever opened it
       const above = (id: string) => {
         const parent = engine.parentOf(id);
         return parent && inGroup.has(parent) ? parent : null;
@@ -115,7 +125,7 @@ export async function roomStatus(paseo: PaseoApi, engine: MailEngine, owed: Owed
             agentId: seat.agentId,
             role: seat.role,
             title: seat.title,
-            status: waitsOnSomeone(agent) ? "waiting" : agent.status,
+            status: agent.waiting ? "waiting" : agent.status,
             held: engine.held(seat.agentId).length,
             depth,
           });

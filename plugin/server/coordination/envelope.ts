@@ -10,8 +10,16 @@ export interface Shown {
   chars?: number;
 }
 
-const attribute = (value: string) => value.replace(/\s+/g, " ").replace(/"/g, "'").trim();
-const clock = (at: string) => at.slice(0, 16).replace("T", " ");
+/** A header value as one line, with what would end the header written as entities. */
+const attribute = (value: string) =>
+  value
+    .replace(/\s+/g, " ")
+    .trim()
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+export const clock = (at: string) => at.slice(0, 16).replace("T", " ");
 
 /** A seat as a mail names it: role, the start of its id, its title without the role tag. */
 export function seatLabel(seat: { role: string; agentId: string; title: string | null }): string {
@@ -21,8 +29,8 @@ export function seatLabel(seat: { role: string; agentId: string; title: string |
 
 /** The body as a reader gets it: whole, or cut where the file takes over. */
 function shownBody(message: Message, chars: number | undefined): string {
-  // a line that would close the block is the sender's text: it is set in by a space
-  const body = message.body.trim().replace(/^<\/mail>$/gm, " </mail>");
+  // what would open or close a block is the sender's text: its bracket is written as an entity
+  const body = message.body.trim().replace(/<(\/?mail)\b/gi, "&lt;$1");
   if (chars === undefined || body.length <= chars || !message.file) return body;
   return `${body.slice(0, chars).trimEnd()}\n[cut at ${chars} of ${body.length} characters; the whole mail is in ${message.file}]`;
 }

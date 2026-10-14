@@ -28,8 +28,8 @@ const HISTORY = `CREATE TABLE IF NOT EXISTS schema_history (
   applied_at TEXT NOT NULL
 ) STRICT`;
 
-/** A store's folder, made, with the note that keeps all of it out of the project's commits. */
-export function storeFolder(dir: string): string {
+/** A room folder, made, with the note that keeps it out of the project's commits. */
+export function keptOutOfGit(dir: string): string {
   if (!existsSync(join(dir, ".gitignore"))) {
     mkdirSync(dir, { recursive: true });
     writeFileSync(join(dir, ".gitignore"), "*\n");
@@ -60,6 +60,11 @@ export interface SqliteOptions {
   now?: () => Date;
 }
 
+/** The file is damaged or no database: SQLITE_CORRUPT, SQLITE_NOTADB, a failed check. */
+const isDamaged = (error: unknown) =>
+  [11, 26].includes(((error as { errcode?: number })?.errcode ?? 0) & 0xff) ||
+  /malformed|not a database|quick_check/i.test((error as Error)?.message ?? "");
+
 const isBusy = (error: unknown) =>
   (error as { errcode?: number })?.errcode === 5 || /database is locked/i.test((error as Error)?.message ?? "");
 
@@ -77,7 +82,12 @@ export class Sqlite {
     const opened = this.open();
     this.db = opened.db;
     this.startedOver = opened.startedOver;
-    this.migrate();
+    try {
+      this.migrate();
+    } catch (error) {
+      this.db.close();
+      throw error;
+    }
   }
 
   private locked(): Error {
@@ -103,6 +113,8 @@ export class Sqlite {
       return { db: attempt(), startedOver: false };
     } catch (error) {
       if (isBusy(error)) throw this.locked();
+      // a file the process cannot open is no damaged one: it stays where it is
+      if (!isDamaged(error)) throw error;
       const stamp = (this.options.now?.() ?? new Date()).toISOString().replace(/[:.]/g, "-");
       for (const suffix of ["", "-wal", "-shm"])
         if (existsSync(this.file + suffix)) renameSync(this.file + suffix, `${this.file}.damaged-${stamp}${suffix}`);
@@ -136,11 +148,7 @@ export class Sqlite {
         ).map((row) => [row.version, row.checksum]),
       );
 
-    this.transaction("write", () => {
-      this.db.exec(HISTORY);
-      // a file from before the history was kept: what its version counter says is taken as applied
-      if (applied().size === 0) for (const script of scripts) if (script.version <= version()) record(script);
-    });
+    this.transaction("write", () => this.db.exec(HISTORY));
     const latest = Math.max(version(), ...applied().keys());
     const newest = scripts[scripts.length - 1].version;
     if (latest > newest)
@@ -163,6 +171,16 @@ export class Sqlite {
         this.db.exec(`PRAGMA user_version = ${script.version}`);
       });
     }
+  }
+
+  /** How SQLite runs each statement prepared so far: what the tests hold to the indexes. */
+  plans(): { sql: string; plan: string }[] {
+    return [...this.statements.keys()].map((sql) => ({
+      sql,
+      plan: (this.db.prepare(`EXPLAIN QUERY PLAN ${sql}`).all() as { detail: string }[])
+        .map((row) => row.detail)
+        .join(" | "),
+    }));
   }
 
   close(): void {

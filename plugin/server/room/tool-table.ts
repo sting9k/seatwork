@@ -1,15 +1,18 @@
-import table from "../shared/tools.json";
-import type { McpTool } from "./mcp-http";
+import table from "../../shared/tools.json";
+import type { McpTool } from "../mcp-http";
+import { inRoom, owns } from "../../shared/workflow";
 
 /** The room's own MCP tools, written once in shared/tools.json for plugin and evals. */
 
 interface ToolRow {
-  callers: "any" | "spawners" | string[];
+  callers: "any" | "spawners" | "room";
   description: string;
   inputSchema: Record<string, unknown>;
 }
 
 const TOOLS = table.tools as Record<string, ToolRow | undefined>;
+/** The tools in the order shared/tools.json lists them: the order a seat is shown them. */
+export const TOOL_NAMES: readonly string[] = Object.keys(table.tools);
 
 function fill(value: unknown, vars: Record<string, string>): unknown {
   if (typeof value === "string") return value.replace(/\{\{(\w+)\}\}/g, (whole, name: string) => vars[name] ?? whole);
@@ -27,8 +30,11 @@ export function roomTool(name: string, vars: Record<string, string>): McpTool {
   return { name, ...shown };
 }
 
-/** Whether a tool that lists its callers lists this role. */
-export function namesCaller(name: string, role: string | undefined): boolean {
+/** Why a seat of this role may not call a tool; null when it may. */
+export function refusedCaller(name: string, role: string | undefined): string | null {
   const callers = TOOLS[name]?.callers;
-  return Array.isArray(callers) && role !== undefined && callers.includes(role);
+  if (callers === "any" || (callers === "spawners" && owns(role)) || (callers === "room" && inRoom(role))) return null;
+  return callers === "room"
+    ? `it belongs to the seats at home in the room, and a ${role} seat is not one`
+    : `a ${role} seat creates no seats, so none is under it`;
 }

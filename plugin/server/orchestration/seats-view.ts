@@ -1,10 +1,8 @@
-import type { Role } from "./seats";
-
 /** The seats under an orchestrating seat, as one text it reads in a single call. */
 
 export interface SeatRow {
   agentId: string;
-  role: Role;
+  role: string;
   title: string | null;
   depth: number;
   status: string;
@@ -12,6 +10,7 @@ export interface SeatRow {
   updatedAt: string | null;
   turnStartedAt: string | null;
   heldMail: number;
+  heldSince?: string;
   owes?: { asks: number; oldestAt: string };
   retry: string | null;
   error: string | null;
@@ -51,7 +50,12 @@ export function describeSeats(rows: readonly SeatRow[], rotateAtTokens: number, 
     if (row.costUsd !== null) parts.push(`$${row.costUsd.toFixed(2)}`);
     if (row.lastSignal) parts.push(`last turn ended with ${row.lastSignal}`);
     if (row.rejected > 0) parts.push(`${row.rejected} rejection${row.rejected === 1 ? "" : "s"} since its last ACCEPT`);
-    if (row.heldMail > 0) parts.push(`${row.heldMail} mail${row.heldMail === 1 ? "" : "s"} held for it`);
+    if (row.heldMail > 0) {
+      const waited = minutesSince(row.heldSince ?? null, now);
+      parts.push(
+        `${row.heldMail} mail${row.heldMail === 1 ? "" : "s"} held for it${waited === null ? "" : `, the oldest for ${waited} min`}`,
+      );
+    }
     if (row.owes)
       parts.push(
         `owes ${row.owes.asks === 1 ? "an answer" : `${row.owes.asks} answers`}, the oldest for ${minutesSince(row.owes.oldestAt, now)} min`,

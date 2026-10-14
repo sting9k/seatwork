@@ -6,7 +6,6 @@ import type { ScanRecord } from "./scanlog";
 
 export interface MailLine {
   at: string;
-  kind: string;
   from: string;
   to: string;
   subject: string;
@@ -28,7 +27,6 @@ type Sent = Map<string, Map<string, { at: number; subject: string }[]>>;
 function sentMail(mail: readonly MailLine[]): Sent {
   const sent: Sent = new Map();
   for (const line of mail) {
-    if (line.kind !== "queued") continue;
     const to = sent.get(line.from) ?? new Map<string, { at: number; subject: string }[]>();
     sent.set(line.from, to);
     const mails = to.get(line.to) ?? [];

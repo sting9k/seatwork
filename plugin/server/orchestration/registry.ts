@@ -1,6 +1,7 @@
 import { existsSync, readFileSync, realpathSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
-import { REGISTRY_FILE } from "../paths";
+import { REGISTRY_FILE, ROOM_PROJECT_DIR } from "../paths";
+import { inRoom, ROOM_PROJECT } from "../../shared/workflow";
 
 export interface ProjectEntry {
   name: string;
@@ -8,7 +9,7 @@ export interface ProjectEntry {
 }
 
 export interface Registry {
-  hq?: string;
+  roomProject?: string;
   projects: ProjectEntry[];
 }
 
@@ -42,7 +43,7 @@ export function loadRegistry(): Registry | null {
   const parsed = JSON.parse(readFileSync(REGISTRY_FILE, "utf8")) as Partial<Registry>;
   const projects = Array.isArray(parsed.projects) ? parsed.projects : [];
   return {
-    ...(typeof parsed.hq === "string" ? { hq: realOrSelf(parsed.hq) } : {}),
+    ...(typeof parsed.roomProject === "string" ? { roomProject: realOrSelf(parsed.roomProject) } : {}),
     projects: projects
       .filter((p): p is ProjectEntry => typeof p?.cwd === "string" && typeof p?.name === "string")
       .map((p) => ({ name: p.name, cwd: realOrSelf(p.cwd) })),
@@ -51,6 +52,23 @@ export function loadRegistry(): Registry | null {
 
 export function isInside(child: string, parent: string): boolean {
   return child === parent || child.startsWith(parent.endsWith("/") ? parent : `${parent}/`);
+}
+
+/** Where the room's own seats sit: `roomProject` in projects.json, else the default. */
+export function roomProjectDir(): string {
+  return loadRegistry()?.roomProject ?? realOrSelf(ROOM_PROJECT_DIR);
+}
+
+/** A seat at home in the room is created in the room's project, and nothing else is created there. */
+export function checkPlacement(role: string, provider: string, cwd: string): void {
+  const dir = roomProjectDir();
+  const inside = isInside(realOrSelf(cwd), dir);
+  if (inRoom(role) && !inside)
+    throw new Error(`seatwork: ${provider} may only be created in the ${ROOM_PROJECT} project (${dir}), not in ${cwd}`);
+  if (!inRoom(role) && inside)
+    throw new Error(
+      `seatwork: ${provider} refused: ${dir} is the ${ROOM_PROJECT} project, it holds only the room's own seats`,
+    );
 }
 
 /** Finds the registered project that contains cwd, and reads its .seatwork files. */
@@ -90,9 +108,9 @@ export function findRoomMarker(
   return null;
 }
 
-/** The skills of a role that a law names in backticks, the old `seatwork-` prefix included. */
+/** The skills of a role that a law names in backticks. */
 export function lawSkills(law: string | null, roleSkills: readonly string[]): string[] {
-  return roleSkills.filter((skill) => new RegExp(`\`(?:seatwork-)?${skill}\``).test(law ?? ""));
+  return roleSkills.filter((skill) => (law ?? "").includes(`\`${skill}\``));
 }
 
 /** A project seat's block: project, mission, law, and its own skills the law names. */

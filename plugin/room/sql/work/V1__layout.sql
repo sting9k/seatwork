@@ -26,7 +26,6 @@ CREATE TABLE issues (
 ) STRICT;
 CREATE INDEX issues_by_status ON issues (status, priority, created_at, id);
 CREATE INDEX issues_by_assignee ON issues (assignee, status) WHERE assignee IS NOT NULL;
-CREATE INDEX issues_by_update ON issues (status, updated_at);
 
 CREATE TABLE dependencies (
   issue_id TEXT NOT NULL REFERENCES issues (id) ON DELETE CASCADE,

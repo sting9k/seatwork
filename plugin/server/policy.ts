@@ -3,7 +3,7 @@ import { join } from "node:path";
 import type { RecoveryPolicy } from "./orchestration/recovery";
 import type { WorkPolicy } from "./tasks/store";
 import { ROOM_HOME } from "./paths";
-import type { Harness, Role } from "./orchestration/seats";
+import type { Harness } from "./orchestration/seats";
 
 /** Types and loader for policy.json: no defaults here, a broken file stops the plugin. */
 
@@ -57,28 +57,21 @@ export interface MailPolicy {
   quietChars?: number;
   dedupeSeconds?: number;
   keepDays?: number;
+  expireUnreadDays?: number;
 }
-
-export type RoleName = Role;
 
 /** Knobs that role prompts quote; rendered into {{...}} placeholders at seat creation. */
 export interface RoomParams {
-  heartbeatCron: string;
-  peerStallMinutes: number;
-  reviewStallMinutes: number;
-  leadStallMinutes: number;
-  readBudgetTokens: number;
-  cheapReadBudgetTokens: number;
+  [name: string]: string | number | undefined;
   mailChars: number;
   rotateAtTokens?: number;
 }
 
-/** Who may write to whom and create whom: `routes` keys are "<sender>><recipient>", `spawn` entries `role` or `role:spec`. */
+/** How the room works beside its workflow (shared/workflow.json): its numbers, recovery, hand-ins, work store. */
 export interface RoomPolicy {
-  routes: Record<string, boolean>;
-  spawn: Record<RoleName, string[]>;
   params: RoomParams;
   recovery?: RecoveryPolicy;
+  rotation?: { answerMinutes: number };
   handin?: { freshEyes: boolean };
   work?: WorkPolicy;
 }
@@ -86,7 +79,7 @@ export interface RoomPolicy {
 /** Garbage collection, see gc.ts. Hours of 0 mean "never archive that role". */
 export interface GcPolicy {
   everyMinutes: number;
-  idleHoursBeforeArchive: Record<RoleName, number>;
+  idleHoursBeforeArchive: Record<string, number>;
   deleteOrphanHeartbeats: boolean;
   tellParent: boolean;
   runtimes?: Partial<Record<Harness, RuntimeLeftovers>>;
@@ -101,7 +94,7 @@ export interface RuntimeLeftovers {
 /** The watcher (watch/watcher.ts): `off` does nothing, `shadow` scans and logs, `on` also mails the seat above. */
 export interface WatcherPolicy {
   mode: "off" | "shadow" | "on";
-  watch: RoleName[];
+  watch: string[];
   pollSeconds: number;
   historyEntries: number;
   rules: Record<string, "raise" | "log" | "off">;
@@ -169,11 +162,10 @@ export function loadPolicy(): RuntimePolicy {
   const room = need(parsed.room, "room");
   return {
     room: {
-      routes: need(room.routes, "room.routes"),
-      spawn: need(room.spawn, "room.spawn"),
       params: need(room.params, "room.params"),
       // absent in a home an earlier version wrote, until the update has brought it up
       recovery: room.recovery,
+      rotation: room.rotation,
       handin: room.handin,
       work: room.work,
     },

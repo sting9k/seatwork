@@ -1,11 +1,12 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { merge } from "../../../shared/model-choices";
-import { allowed, layModels, type Models } from "../models";
+import { allowed, layModels, tiersOf, type Models } from "../../orchestration/models";
 import { claudeDisallowed } from "../../policy";
-import { HARNESSES, parseSeat, ROLES, type Harness, type Role } from "../seats";
+import { HARNESSES, parseSeat, type Harness } from "../../orchestration/seats";
+import { inRoom, ROLES, traits } from "../../../shared/workflow";
 
-/** This machine's own choices, kept in ROOM_HOME/setup.json and never in the repo. */
+/** This machine's own choices, kept in ROOM_HOME/setup.json and never in the repo; `hq` is the seat at home in the room. */
 export interface Setup {
   hq?: "default" | { provider: string; thinking?: string };
   seats?: string[];
@@ -54,7 +55,7 @@ export interface Profile {
 interface ProfileSpec {
   id: string;
   name: string;
-  role: Role;
+  role: string;
   [key: string]: unknown;
 }
 
@@ -69,13 +70,6 @@ export interface RoomPlan {
 }
 
 const LABEL: Record<Harness, string> = { claude: "Claude", codex: "Codex", pi: "Pi", opencode: "OpenCode" };
-const ROLE_LABEL: Record<Role, string> = {
-  hq: "HQ Supervisor",
-  supervisor: "Supervisor",
-  lead: "Lead",
-  peer: "Peer",
-  lens: "Lens",
-};
 /** How each harness is kept apart from the user's own setup (shown in the provider description). */
 const ISOLATION: Record<Harness, string> = {
   claude: "on the user's Claude sign-in with personal settings switched off",
@@ -97,8 +91,10 @@ export function checkSetup(setup: unknown, where: string): Setup {
   if (hq !== "default") {
     const provider = typeof hq === "object" && hq !== null ? String((hq as { provider?: unknown }).provider ?? "") : "";
     const slash = provider.indexOf("/");
-    if (slash <= 0 || parseSeat(provider.slice(0, slash))?.role !== "hq" || !provider.slice(slash + 1)) {
-      throw new Error(`${where}: "hq" must be "default" or {"provider": "<harness>-hq/<model>", "thinking": "<id>"}`);
+    if (slash <= 0 || !inRoom(parseSeat(provider.slice(0, slash))?.role) || !provider.slice(slash + 1)) {
+      throw new Error(
+        `${where}: "hq" must be "default" or {"provider": "<harness>-<role>/<model>", "thinking": "<id>"} for a role at home in the room`,
+      );
     }
   }
   if (!Array.isArray(seats) || !seats.every((seat) => parseSeat(String(seat)))) {
@@ -124,12 +120,13 @@ export function roomModels(pluginDir: string): Models {
   return readJson(join(pluginDir, "room", "models.json")) as Models;
 }
 
-/** The table this machine runs on: the room's, HQ on its chosen seat, then the machine's own differences. */
+/** The table this machine runs on: the room's, its own seat on the one chosen, then the machine's own differences. */
 function machineModels(base: Models, setup: Setup): Models {
   let models = base;
   if (typeof setup.hq === "object") {
+    const role = parseSeat(setup.hq.provider.split("/")[0])!.role;
     // a model without thinking options carries none: "default" tells the prompts to leave it out
-    models = merge(models, { seats: { hq: { thinking: "default", ...setup.hq } } }) as Models;
+    models = merge(models, { seats: { [role]: { thinking: "default", ...setup.hq } } }) as Models;
   }
   return setup.models === undefined
     ? layModels(models, {}, "the model table")
@@ -153,14 +150,12 @@ function modelsByProvider(models: Models): Map<string, Set<string>> {
 }
 
 /** The seat a profile opens, taken from the table so a machine's own choice shows in the profile it uses. */
-function profileSeat(models: Models, role: Role): { entry: string; thinking: string } | null {
-  if (role === "hq" || role === "supervisor" || role === "lead")
-    return { entry: models.seats[role].provider, thinking: models.seats[role].thinking };
-  if (role === "peer") {
-    const tier = models.peer.tiers.default ?? Object.values(models.peer.tiers)[0];
-    return tier ? { entry: tier.providers[0], thinking: tier.thinking } : null;
-  }
-  return null;
+function profileSeat(models: Models, role: string): { entry: string; thinking: string } | null {
+  const seat = models.seats[role];
+  if (traits(role).models === "one") return seat ? { entry: seat.provider, thinking: seat.thinking } : null;
+  const tiers = tiersOf(models, role)?.tiers ?? {};
+  const tier = tiers.default ?? Object.values(tiers)[0];
+  return tier ? { entry: tier.providers[0], thinking: tier.thinking } : null;
 }
 
 /** Works out the seats, providers, profiles, model table and policy for this machine; writes nothing. */
@@ -183,8 +178,7 @@ export async function planRoom(input: {
   const seats: Record<string, string[]> = {};
   const enabled: string[] = [];
   const enable = (harness: string, role: string, where: string) => {
-    if (!(ROLES as readonly string[]).includes(role))
-      throw new Error(`${where}: unknown role ${role}; roles are ${ROLES.join(", ")}`);
+    if (!ROLES.includes(role)) throw new Error(`${where}: unknown role ${role}; roles are ${ROLES.join(", ")}`);
     if (!(HARNESSES as readonly string[]).includes(harness))
       throw new Error(`${where}: unknown harness ${harness}; harnesses are ${HARNESSES.join(", ")}`);
     if (enabled.includes(`${harness}-${role}`)) return;
@@ -227,8 +221,8 @@ export async function planRoom(input: {
     const runtime = join(roomHome, "runtimes", harness, role);
     const entry: ProviderEntry = {
       extends: harness,
-      label: `${LABEL[harness]} ${ROLE_LABEL[role]}`,
-      description: `${ROLE_LABEL[role]} seat ${ISOLATION[harness]}; Paseo tools: ${allow.join(", ") || "none"}`,
+      label: `${LABEL[harness]} ${traits(role).profile}`,
+      description: `${traits(role).profile} seat ${ISOLATION[harness]}; Paseo tools: ${allow.join(", ") || "none"}`,
       paseoTools: { enabled: true, disabledTools: tools.all.filter((tool) => !allow.includes(tool)) },
       // the seat's isolation is part of its provider: it holds for a session the plugin did not open
       env: Object.fromEntries(

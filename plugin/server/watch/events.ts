@@ -93,6 +93,13 @@ export interface Letter {
 
 const ENVELOPE = /^<mail id="([^"]+)" from="([^"]*)" subject="([^"]*)"[^>]*>$/;
 
+const decoded = (value: string) =>
+  value
+    .replace(/&quot;/g, '"')
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&amp;/g, "&");
+
 /** The mails in a prompt the room delivered, one block or several; none for any other prompt. */
 export function letters(prompt: string): Letter[] {
   const found: Letter[] = [];
@@ -107,7 +114,7 @@ export function letters(prompt: string): Letter[] {
       continue;
     }
     const header = ENVELOPE.exec(line);
-    if (header) open = { id: header[1], from: header[2], subject: header[3], body: "", lines: [] };
+    if (header) open = { id: header[1], from: decoded(header[2]), subject: decoded(header[3]), body: "", lines: [] };
   }
   // a prompt that ends inside a block: the rest of it is that mail
   if (open) found.push({ id: open.id, from: open.from, subject: open.subject, body: open.lines.join("\n") });

@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { join } from "node:path";
 import { test } from "node:test";
 import { classify, Recovery, resumeDue, type Resumes } from "../server/orchestration/recovery";
+import { Rounds } from "../server/orchestration/rounds";
 
 const POLICY = { delaysSeconds: [30, 60, 120], limitedMinutes: 10, limitedMaxHours: 6 };
 const T0 = Date.parse("2026-10-14T09:00:00");
@@ -19,6 +20,9 @@ test("a failure is read by what the service said: a quota with the time it lifts
     liftsAt: T0 + 300_000,
   });
   assert.deepEqual(classify("HTTP status 429, retry-after: 20", T0), { kind: "limited", liftsAt: T0 + 20_000 });
+  // a retry-after that holds a time, not seconds: the time when it is near, else nothing the room can read
+  assert.equal(classify(`HTTP status 429, retry-after: ${(T0 + 600_000) / 1000}`, T0).liftsAt, T0 + 600_000);
+  assert.equal(classify("HTTP status 429, retry-after: 99999999999", T0).liftsAt, undefined);
   assert.deepEqual(classify("You've hit your usage limit. Your limit will reset at 2:30pm", T0), {
     kind: "limited",
     liftsAt: Date.parse("2026-10-14T14:30:00"),
@@ -99,4 +103,29 @@ test("a room home an earlier version wrote names no recovery: every failure goes
     gaveUpAfter: 0,
     kind: "service",
   });
+});
+
+test("a retry whose post fails is tried again later; the ones after it are not lost", async () => {
+  const file = join(ROOM_HOME, "recovery-batch.json");
+  const recovery = new Recovery(file, POLICY);
+  for (const seat of ["p1", "p2"]) recovery.failed(seat, "socket hang up", 0);
+  const sent: string[] = [];
+  const mail: Resumes = {
+    recipientStatus: async () => "idle",
+    post: async (input) => {
+      if (input.to === "p1") throw new Error("store busy");
+      sent.push(input.to);
+    },
+  };
+  await resumeDue(recovery, mail, 60_000);
+  assert.deepEqual(sent, ["p2"]);
+  assert.ok(recovery.pending("p1"), "p1 waits for its next try");
+});
+
+test("the rounds ledger is kept on disk: a plugin that starts again knows the count", () => {
+  const file = join(ROOM_HOME, "rounds-ledger.json");
+  const rounds = new Rounds(file);
+  rounds.handedIn("sw-k3f");
+  rounds.answered("sw-k3f", "REJECT");
+  assert.equal(new Rounds(file).rejected("sw-k3f"), 1);
 });

@@ -3,7 +3,7 @@ import { existsSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import config from "../../shared/work.json";
 import { SQL_DIR } from "../paths";
-import { Sqlite, storeFolder, type Param, type Row } from "../sqlite";
+import { Sqlite, keptOutOfGit, type Param, type Row } from "../sqlite";
 
 /** A project's work store in SQLite: issues, dependencies, comments, an audit trail. */
 
@@ -103,8 +103,6 @@ export class WorkError extends Error {
   }
 }
 
-const quoted = (words: readonly string[]) => words.map((word) => `'${word.replace(/[^a-z_-]/g, "")}'`).join(", ");
-
 const EDITABLE = [
   "title",
   "description",
@@ -145,9 +143,8 @@ const toIssue = (row: Row): Issue => ({
   labels: JSON.parse(String(row.labels)) as string[],
 });
 
-/** The folder made, and the database file in it. */
 function databaseIn(dir: string): string {
-  return join(storeFolder(dir), "work.db");
+  return join(keptOutOfGit(dir), "work.db");
 }
 
 export class WorkStore extends Sqlite {
@@ -169,7 +166,12 @@ export class WorkStore extends Sqlite {
     });
     this.jsonl = join(dir, "issues.jsonl");
     // a new database gets its issues back from the text copy
-    if (this.count() === 0 && existsSync(this.jsonl)) this.restore();
+    try {
+      if (this.count() === 0 && existsSync(this.jsonl)) this.restore();
+    } catch (error) {
+      super.close();
+      throw error;
+    }
   }
 
   override close(): void {
@@ -180,7 +182,14 @@ export class WorkStore extends Sqlite {
   private write<T>(work: () => T): T {
     const done = this.transaction("write", work);
     // the text copy follows a moment later, once for a burst of writes
-    this.pending ??= setTimeout(() => this.flush(), this.policy.flushAfterMs).unref();
+    this.pending ??= setTimeout(() => {
+      try {
+        this.flush();
+      } catch (error) {
+        this.pending = undefined;
+        console.error(`seatwork: the text copy of the work store was not written: ${(error as Error).message}`);
+      }
+    }, this.policy.flushAfterMs).unref();
     return done;
   }
 
@@ -222,7 +231,10 @@ export class WorkStore extends Sqlite {
       });
     this.transaction("write", () => {
       if (this.count() > 0) return;
+      const kept = new Set<string>();
       for (const one of read) {
+        if (!one || typeof one.id !== "string" || typeof one.title !== "string" || !STATUSES.includes(one.status))
+          continue;
         this.run(
           INSERT_ISSUE,
           one.id,
@@ -247,9 +259,12 @@ export class WorkStore extends Sqlite {
           one.defer_until ?? null,
         );
         this.event(one.id, "restored", "room", null, null);
+        kept.add(one.id);
       }
-      for (const one of read) {
-        for (const dep of one.dependencies ?? [])
+      if (kept.size < read.length)
+        console.error(`seatwork: ${read.length - kept.size} lines of ${this.jsonl} could not be read back`);
+      for (const one of read.filter((line) => kept.has(line?.id))) {
+        for (const dep of (one.dependencies ?? []).filter((dep) => kept.has(dep.depends_on_id)))
           this.run(
             "INSERT OR IGNORE INTO dependencies (issue_id, depends_on_id, type, created_at, created_by) VALUES (?, ?, ?, ?, 'room')",
             one.id,
@@ -292,7 +307,15 @@ export class WorkStore extends Sqlite {
 
   /** The next child id under a parent, else the shortest free hash of the title. */
   private newId(title: string, parent: string | null): string {
-    if (parent) for (let next = 1; ; next += 1) if (!this.find(`${parent}.${next}`)) return `${parent}.${next}`;
+    if (parent) {
+      const top = this.row<{ n: number | null }>(
+        "SELECT max(CAST(substr(id, ?2) AS INTEGER)) AS n FROM issues WHERE id > ?1 AND id < ?3 AND instr(substr(id, ?2), '.') = 0",
+        `${parent}.`,
+        parent.length + 2,
+        `${parent}/`,
+      );
+      return `${parent}.${(top?.n ?? 0) + 1}`;
+    }
     const digest = BigInt(
       `0x${createHash("sha256").update(title).update(randomBytes(8)).digest("hex").slice(0, 16)}`,
     ).toString(36);
@@ -306,9 +329,11 @@ export class WorkStore extends Sqlite {
   /** The issue an id names; a unique start of it after the prefix is enough. */
   get(id: string): Issue {
     const asked = id.trim();
-    const exact = this.find(asked);
-    if (exact) return exact;
+    if (asked.replace(new RegExp(`^${config.idPrefix}-?`), "") === "")
+      throw new WorkError("VALIDATION_FAILED", "give an issue id");
     const start = asked.startsWith(`${config.idPrefix}-`) ? asked : `${config.idPrefix}-${asked}`;
+    const exact = this.find(asked) ?? this.find(start);
+    if (exact) return exact;
     // a range on the key, which its index serves
     const found = this.rows("SELECT * FROM issues WHERE id >= ? AND id < ? LIMIT 4", start, `${start}\u{10ffff}`);
     if (found.length === 1) return toIssue(found[0]);
@@ -332,8 +357,9 @@ export class WorkStore extends Sqlite {
   }
 
   /** The issues not closed and the edges among them: all the graph reads. */
-  openWork(): { issues: Issue[]; dependencies: Dependency[] } {
+  openWork(): { issues: Issue[]; dependencies: Dependency[]; ready: Set<string> } {
     return this.transaction("read", () => ({
+      ready: new Set(this.ready().map((issue) => issue.id)),
       issues: this.rows(
         `SELECT * FROM issues WHERE status IN ('open', 'in_progress', 'deferred') ORDER BY ${ORDERED}`,
       ).map(toIssue),
@@ -376,38 +402,36 @@ export class WorkStore extends Sqlite {
     const type = input.issue_type ?? "task";
     if (!ISSUE_TYPES.includes(type))
       throw new WorkError("VALIDATION_FAILED", `issue_type is one of ${ISSUE_TYPES.join(", ")}`);
-    {
-      const parent = input.parent ? this.get(input.parent).id : null;
-      const id = this.newId(title, parent);
-      const at = this.stamp();
-      this.run(
-        INSERT_ISSUE,
-        id,
-        title,
-        input.description ?? "",
-        input.design ?? "",
-        input.acceptance_criteria ?? "",
-        "",
-        input.write_scope ?? "",
-        "open",
-        priority,
-        type,
-        null,
-        JSON.stringify(input.labels ?? []),
-        1,
-        at,
-        actor,
-        at,
-        null,
-        null,
-        null,
-        null,
-      );
-      this.event(id, "created", actor, null, title);
-      if (parent) this.link(id, parent, "parent-child", actor);
-      for (const dep of input.deps ?? []) this.link(id, this.get(dep.id).id, dep.type ?? "blocks", actor);
-      return this.find(id)!;
-    }
+    const parent = input.parent ? this.get(input.parent).id : null;
+    const id = this.newId(title, parent);
+    const at = this.stamp();
+    this.run(
+      INSERT_ISSUE,
+      id,
+      title,
+      input.description ?? "",
+      input.design ?? "",
+      input.acceptance_criteria ?? "",
+      "",
+      input.write_scope ?? "",
+      "open",
+      priority,
+      type,
+      null,
+      JSON.stringify(input.labels ?? []),
+      1,
+      at,
+      actor,
+      at,
+      null,
+      null,
+      null,
+      null,
+    );
+    this.event(id, "created", actor, null, title);
+    if (parent) this.link(id, parent, "parent-child", actor);
+    for (const dep of input.deps ?? []) this.link(id, this.get(dep.id).id, dep.type ?? "blocks", actor);
+    return this.find(id)!;
   }
 
   /** `issue` depends on `on`; the cycle check and the insert are one write. */
@@ -416,15 +440,10 @@ export class WorkStore extends Sqlite {
       throw new WorkError("VALIDATION_FAILED", `a dependency is one of ${DEPENDENCY_TYPES.join(", ")}`);
     if (issue === on) throw new WorkError("CYCLE_DETECTED", `${issue} cannot depend on itself`);
     if (ORDERING.includes(type)) {
-      const back = this.row(
-        `WITH RECURSIVE waits (id) AS (
-           SELECT ? UNION
-           SELECT d.depends_on_id FROM waits CROSS JOIN dependencies d
-             ON d.issue_id = waits.id AND d.type IN (${quoted(ORDERING)})
-         ) SELECT 1 AS found FROM waits WHERE id = ? LIMIT 1`,
-        on,
-        issue,
-      );
+      const back =
+        type === "blocks"
+          ? this.reaches(on, false, issue, true)
+          : this.reaches(issue, false, on, false) || this.reaches(on, true, issue, true);
       if (back)
         throw new WorkError("CYCLE_DETECTED", `${issue} → ${on} would close a cycle: ${on} already waits for ${issue}`);
     }
@@ -436,18 +455,56 @@ export class WorkStore extends Sqlite {
       this.stamp(),
       actor,
     );
+    this.run("UPDATE issues SET updated_at = ? WHERE id = ?", this.stamp(), issue);
     this.event(issue, "dependency_added", actor, null, `${type}:${on}`);
+  }
+
+  /** Whether `from` already waits for `target`, or for what is under it when `under`. */
+  private reaches(from: string, above: boolean, target: string, under: boolean): boolean {
+    return (
+      this.row(
+        `WITH RECURSIVE
+           walk (id, up) AS (
+             SELECT ?1, ?2
+             UNION
+             SELECT d.depends_on_id, 0 FROM walk CROSS JOIN dependencies d ON d.issue_id = walk.id AND d.type = 'blocks'
+             UNION
+             SELECT d.issue_id, 0 FROM walk CROSS JOIN dependencies d INDEXED BY dependencies_by_target
+               ON d.depends_on_id = walk.id AND d.type = 'parent-child' WHERE walk.up = 0
+             UNION
+             SELECT d.depends_on_id, 1 FROM walk CROSS JOIN dependencies d ON d.issue_id = walk.id AND d.type = 'parent-child'
+           ),
+           goal (id) AS (
+             SELECT ?3
+             UNION
+             SELECT d.issue_id FROM goal CROSS JOIN dependencies d INDEXED BY dependencies_by_target
+               ON d.depends_on_id = goal.id AND d.type = 'parent-child' WHERE ?4 = 1
+           )
+         SELECT 1 AS found FROM walk WHERE up = 0 AND id IN (SELECT id FROM goal) LIMIT 1`,
+        from,
+        above ? 1 : 0,
+        target,
+        under ? 1 : 0,
+      ) !== undefined
+    );
   }
 
   addDependency(issue: string, on: string, type: DependencyType, actor: string): void {
     this.write(() => this.link(this.get(issue).id, this.get(on).id, type, actor));
   }
 
-  removeDependency(issue: string, on: string, actor: string): void {
+  /** Removes the edge of `type`, or every edge but parent-child when none is named. */
+  removeDependency(issue: string, on: string, actor: string, type?: DependencyType): void {
     this.write(() => {
       const [a, b] = [this.get(issue).id, this.get(on).id];
-      this.run("DELETE FROM dependencies WHERE issue_id = ? AND depends_on_id = ?", a, b);
-      this.event(a, "dependency_removed", actor, b, null);
+      this.run(
+        "DELETE FROM dependencies WHERE issue_id = ? AND depends_on_id = ? AND (type = ?3 OR (?3 IS NULL AND type != 'parent-child'))",
+        a,
+        b,
+        type ?? null,
+      );
+      this.run("UPDATE issues SET updated_at = ? WHERE id = ?", this.stamp(), a);
+      this.event(a, "dependency_removed", actor, b, type ?? null);
     });
   }
 
@@ -471,38 +528,43 @@ export class WorkStore extends Sqlite {
 
   /** Open, not put off, and with nothing in its way: highest priority first, then oldest. */
   ready(options: { limit?: number; parent?: string; unassigned?: boolean } = {}): Issue[] {
-    const under = options.parent ? `${this.get(options.parent).id}.` : null;
+    const parent = options.parent ? this.get(options.parent).id : null;
     return this.rows(
-      `${HELD}
+      `${HELD},
+       below (id) AS (
+         SELECT d.issue_id FROM dependencies d INDEXED BY dependencies_by_target WHERE d.depends_on_id = ?4 AND d.type = 'parent-child'
+         UNION
+         SELECT d.issue_id FROM below CROSS JOIN dependencies d INDEXED BY dependencies_by_target
+           ON d.depends_on_id = below.id AND d.type = 'parent-child'
+       )
        SELECT i.* FROM issues i
-       WHERE i.status = 'open' AND (i.defer_until IS NULL OR i.defer_until <= ?)
+       WHERE i.status = 'open' AND (i.defer_until IS NULL OR i.defer_until <= ?1)
          AND i.id NOT IN (SELECT id FROM held) AND i.id NOT IN (SELECT id FROM parents)
-         AND (? = 0 OR i.assignee IS NULL) AND (? IS NULL OR (i.id >= ? AND i.id < ?))
-       ORDER BY i.priority, i.created_at, i.id LIMIT ?`,
+         AND (?2 = 0 OR i.assignee IS NULL) AND (?4 IS NULL OR i.id IN (SELECT id FROM below))
+       ORDER BY i.priority, i.created_at, i.id LIMIT ?3`,
       this.stamp(),
       options.unassigned ? 1 : 0,
-      under,
-      under,
-      under === null ? null : `${under}\u{10ffff}`,
       options.limit ?? -1,
+      parent,
     ).map(toIssue);
   }
 
-  list(filter: { status?: Status; assignee?: string; type?: IssueType; limit?: number; offset?: number } = {}): {
+  list(filter: { status?: Status; assignee?: string; type?: IssueType; limit?: number } = {}): {
     issues: Issue[];
     total: number;
   } {
-    const where = "(? IS NULL OR status = ?) AND (? IS NULL OR assignee = ?) AND (? IS NULL OR issue_type = ?)";
-    const [status, assignee, type] = [filter.status ?? null, filter.assignee ?? null, filter.type ?? null];
-    const params = [status, status, assignee, assignee, type, type];
+    // only the filters given go into the query, so each one can use its index
+    const given = (["status", "assignee", "issue_type"] as const).flatMap((column) => {
+      const value = { status: filter.status, assignee: filter.assignee, issue_type: filter.type }[column];
+      return value === undefined ? [] : [{ column, value }];
+    });
+    const where = given.length ? `WHERE ${given.map(({ column }) => `${column} = ?`).join(" AND ")}` : "";
+    const params = given.map(({ value }) => value);
     return this.transaction("read", () => ({
-      issues: this.rows(
-        `SELECT * FROM issues WHERE ${where} ORDER BY ${ORDERED} LIMIT ? OFFSET ?`,
-        ...params,
-        filter.limit ?? -1,
-        filter.offset ?? 0,
-      ).map(toIssue),
-      total: this.row<{ n: number }>(`SELECT COUNT(*) AS n FROM issues WHERE ${where}`, ...params)!.n,
+      issues: this.rows(`SELECT * FROM issues ${where} ORDER BY ${ORDERED} LIMIT ?`, ...params, filter.limit ?? -1).map(
+        toIssue,
+      ),
+      total: this.row<{ n: number }>(`SELECT COUNT(*) AS n FROM issues ${where}`, ...params)!.n,
     }));
   }
 
@@ -530,6 +592,8 @@ export class WorkStore extends Sqlite {
         throw new WorkError("VALIDATION_FAILED", `${issue.id} is ${issue.status}: it cannot be claimed`);
       if (issue.assignee && issue.assignee !== actor)
         throw new WorkError("ALREADY_ASSIGNED", `${issue.id} is already assigned to ${issue.assignee}`);
+      if (issue.defer_until && issue.defer_until > this.stamp())
+        throw new WorkError("BLOCKED", `${issue.id} is put off until ${issue.defer_until}`);
       const blockers = this.blockers(issue.id);
       if (blockers.length > 0) throw new WorkError("BLOCKED", `${issue.id} waits for ${blockers.join(", ")}`);
       this.touch(issue, { assignee: actor, status: "in_progress" });
@@ -547,9 +611,25 @@ export class WorkStore extends Sqlite {
       if_revision?: number;
     },
     actor: string,
+    owner = false,
   ): Issue {
     return this.write(() => {
       const issue = this.get(id);
+      if (issue.status === "closed" && patch.status !== undefined)
+        throw new WorkError("VALIDATION_FAILED", `${issue.id} is closed: reopen it first`);
+      if (patch.assignee !== undefined && patch.assignee !== issue.assignee && !owner) {
+        if (patch.assignee !== null)
+          throw new WorkError("VALIDATION_FAILED", "take an issue with claim; only an Owner gives one to another seat");
+        if (issue.assignee && issue.assignee !== actor)
+          throw new WorkError(
+            "ALREADY_ASSIGNED",
+            `${issue.id} is held by ${issue.assignee}: only it or an Owner lets it go`,
+          );
+      }
+      if (patch.status === "in_progress" && issue.status !== "in_progress") {
+        const blockers = this.blockers(issue.id);
+        if (blockers.length > 0) throw new WorkError("BLOCKED", `${issue.id} waits for ${blockers.join(", ")}`);
+      }
       if ((patch as { status?: string }).status === "closed")
         throw new WorkError("VALIDATION_FAILED", "an issue is closed with close, which asks for its reason");
       if (patch.status !== undefined && !STATUSES.includes(patch.status))
@@ -590,6 +670,7 @@ export class WorkStore extends Sqlite {
         text.trim(),
         this.stamp(),
       );
+      this.run("UPDATE issues SET updated_at = ? WHERE id = ?", this.stamp(), issue.id);
       this.event(issue.id, "commented", author, null, null);
     });
   }
@@ -652,7 +733,10 @@ export class WorkStore extends Sqlite {
     return this.write(() => {
       const held = this.rows("SELECT * FROM issues WHERE assignee = ? AND status != 'closed'", actor).map(toIssue);
       for (const issue of held) {
-        this.touch(issue, { assignee: successor, status: successor ? issue.status : "open" });
+        this.touch(issue, {
+          assignee: successor,
+          status: successor || issue.status !== "in_progress" ? issue.status : "open",
+        });
         this.event(issue.id, "assignee_changed", by, actor, successor);
       }
       return held.map((issue) => issue.id);
@@ -675,26 +759,5 @@ export class WorkStore extends Sqlite {
       this.get(id).id,
       limit,
     ) as never;
-  }
-
-  /** How SQLite will run one of this store's lookups, for the test that each has its index. */
-  explain(
-    lookup: "ready" | "cycle" | "byAssignee" | "byStatus" | "blockers" | "prefix" | "comments" | "events",
-  ): string[] {
-    const sql = {
-      ready: `${HELD} SELECT i.* FROM issues i WHERE i.status = 'open' AND i.id NOT IN (SELECT id FROM held) AND i.id NOT IN (SELECT id FROM parents) ORDER BY i.priority, i.created_at, i.id`,
-      cycle: `WITH RECURSIVE waits (id) AS (SELECT 'x' UNION SELECT d.depends_on_id FROM waits CROSS JOIN dependencies d ON d.issue_id = waits.id AND d.type IN (${quoted(ORDERING)})) SELECT 1 FROM waits WHERE id = 'y'`,
-      byAssignee: "SELECT * FROM issues WHERE assignee = 'x' AND status != 'closed'",
-      byStatus: `SELECT * FROM issues WHERE status = 'in_progress' ORDER BY ${ORDERED}`,
-      blockers:
-        "SELECT d.issue_id FROM dependencies d JOIN issues c ON c.id = d.issue_id WHERE d.depends_on_id = 'x' AND d.type = 'parent-child' AND c.status != 'closed'",
-      prefix: "SELECT * FROM issues WHERE id >= 'sw-a' AND id < 'sw-b'",
-      comments: "SELECT author FROM comments WHERE issue_id = 'x' ORDER BY id",
-      events: "SELECT actor FROM events WHERE issue_id = 'x' ORDER BY id DESC LIMIT 20",
-    }[lookup];
-    return this.db
-      .prepare(`EXPLAIN QUERY PLAN ${sql}`)
-      .all()
-      .map((step) => String((step as { detail: string }).detail));
   }
 }

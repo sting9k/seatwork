@@ -1,31 +1,15 @@
-import { chmodSync, cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { cpSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { PaseoHost } from "../../server/paseo/host";
 
-/** A throwaway room home and harness homes; import this first: server/paths.ts reads the environment as it loads. */
-const base = mkdtempSync(join(tmpdir(), "seatwork-test-"));
-process.on("exit", () => rmSync(base, { recursive: true, force: true }));
+/** The throwaway homes test/isolate.cjs made for this process; a test run without it would reach the real ones. */
+const base = process.env.SEATWORK_TEST_BASE;
+if (!base) throw new Error("run the tests with npm test: test/isolate.cjs gives them homes of their own");
 
 export const ROOM_HOME = join(base, "room-home");
 export const USER_CODEX = join(base, "codex");
 export const USER_PI = join(base, "pi");
 export const PROJECT = join(base, "project");
-
-for (const dir of [ROOM_HOME, USER_CODEX, USER_PI, PROJECT]) mkdirSync(dir);
-// a paseo CLI that always fails: the plugin shells out for projects, labels and schedules
-const cli = join(base, "paseo");
-writeFileSync(cli, "#!/bin/sh\nexit 1\n");
-chmodSync(cli, 0o755);
-
-Object.assign(process.env, {
-  SEATWORK_ROOM_HOME: ROOM_HOME,
-  SEATWORK_PASEO_BIN: cli,
-  PASEO_HOME: join(base, "paseo-home"),
-  CODEX_HOME: USER_CODEX,
-  CLAUDE_CONFIG_DIR: join(base, "claude"),
-  PI_CODING_AGENT_DIR: USER_PI,
-  OPENCODE_CONFIG_DIR: join(base, "opencode"),
-});
 
 /** The plugin folder: the room files and the policy ship inside it. */
 export const PLUGIN_DIR = join(__dirname, "..", "..");
@@ -51,6 +35,13 @@ export function installRoom(
     join(ROOM_HOME, "setup.json"),
     JSON.stringify({ version: JSON.parse(readFileSync(join(PLUGIN_DIR, "package.json"), "utf8")).version }),
   );
+}
+
+/** The room's Host over a stand-in Paseo client. */
+export function hostOf(paseo: unknown): PaseoHost {
+  const host = new PaseoHost();
+  host.use(paseo as never);
+  return host;
 }
 
 export const MAIL_POLICY = {

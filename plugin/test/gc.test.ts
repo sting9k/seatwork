@@ -1,4 +1,4 @@
-import { MAIL_POLICY, ROOM_HOME, shipSql } from "./support/room";
+import { hostOf, MAIL_POLICY, ROOM_HOME, shipSql } from "./support/room";
 import assert from "node:assert/strict";
 import {
   existsSync,
@@ -41,7 +41,7 @@ test("GC archives a seat that is at rest, never one that waits on someone or wen
       }),
     },
   };
-  const engine = new MailEngine(paseo as never, MAIL_POLICY, { routes: {}, spawn: {} } as never, () => {});
+  const engine = new MailEngine(hostOf(paseo), MAIL_POLICY, () => {});
   for (const agentId of Object.keys(seats))
     engine.rememberSeat({ agentId, parentAgentId: null, role: "peer", provider: "claude-peer", title: null });
   const policy = {
@@ -52,7 +52,7 @@ test("GC archives a seat that is at rest, never one that waits on someone or wen
   };
 
   await new Collector(
-    paseo as never,
+    hostOf(paseo),
     engine,
     policy as never,
     () => {},
@@ -72,7 +72,7 @@ const lines = (file: string) =>
         .map((line) => JSON.parse(line) as { subject?: string; kind: string })
     : [];
 
-test("GC's file sweep clears what the room left longer ago than it keeps logs, and keeps what the watcher and a restore still need", () => {
+test("GC's file sweep clears what the room left longer ago than it keeps logs, and the mail files no version writes any more", () => {
   const mailLog = join(ROOM_HOME, "mail", "log.jsonl");
   const gcLog = join(ROOM_HOME, "gc.log");
   const paseoHome = join(ROOM_HOME, "..", "paseo-of-tidy");
@@ -110,13 +110,12 @@ test("GC's file sweep clears what the room left longer ago than it keeps logs, a
   ])
     writeFileSync(join(paseoHome, name), "{}");
 
-  const done = collectFiles(ROOM_HOME, paseoHome, NOW);
+  for (const folder of ["queue", "reports"]) mkdirSync(join(ROOM_HOME, "mail", folder), { recursive: true });
+  writeFileSync(join(ROOM_HOME, "mail", "adoptions.json"), "{}");
 
-  // a verdict stays: the watcher's statistics need it
-  assert.deepEqual(
-    lines(mailLog).map((line) => `${line.kind} ${line.subject}`),
-    ["queued REJECT abc: one repair", "queued ANSWER: seconds"],
-  );
+  const done = collectFiles(ROOM_HOME, [{ dir: paseoHome, prefixes: ["config.json.bak-"], spare: 1 }], NOW);
+
+  assert.deepEqual(readdirSync(join(ROOM_HOME, "mail")), ["adoptions.json"], "only what the room still reads is left");
   assert.deepEqual(
     lines(gcLog).map((line) => line.kind),
     ["deleted-heartbeat"],
@@ -126,12 +125,20 @@ test("GC's file sweep clears what the room left longer ago than it keeps logs, a
     "config.json.bak-20261019-120000",
     "config.json.bak-mine",
   ]);
-  assert.equal(done.length, 4);
-  assert.deepEqual(collectFiles(ROOM_HOME, paseoHome, NOW), [], "a second sweep found something to clear");
+  assert.equal(done.length, 6);
+  assert.deepEqual(
+    collectFiles(ROOM_HOME, [{ dir: paseoHome, prefixes: ["config.json.bak-"], spare: 1 }], NOW),
+    [],
+    "a second sweep found something to clear",
+  );
 
   // the newest backup stays, however old
   assert.deepEqual(
-    collectFiles(ROOM_HOME, paseoHome, new Date(2027, 0, 1)).filter((line) => line.includes("backup")),
+    collectFiles(
+      ROOM_HOME,
+      [{ dir: paseoHome, prefixes: ["config.json.bak-"], spare: 1 }],
+      new Date(2027, 0, 1),
+    ).filter((line) => line.includes("backup")),
     [],
   );
 });
@@ -139,7 +146,6 @@ test("GC's file sweep clears what the room left longer ago than it keeps logs, a
 test("room stats look no further back than the mail log is kept", () => {
   const posted = (days: number, subject: string) => ({
     at: new Date(Date.now() - days * 86_400_000).toISOString(),
-    kind: "queued",
     from: "lead",
     to: "peer",
     subject,
@@ -156,7 +162,6 @@ test("room stats look no further back than the mail log is kept", () => {
 test("room stats count the seats whose work came back three times or more", () => {
   const posted = (to: string, subject: string) => ({
     at: new Date().toISOString(),
-    kind: "queued",
     from: "lead",
     to,
     subject,
@@ -257,14 +262,50 @@ test("GC clears what agent CLIs left in a seat's home once no seat of it is open
   for (const home of ["codex/lens", "codex/peer"]) mkdirSync(scratch(home), { recursive: true });
   const seat = { id: "a1", status: "running", updatedAt: new Date().toISOString(), provider: "codex-peer" };
   const paseo = { agents: { list: async () => ({ entries: [{ agent: seat }] }) } };
-  const engine = new MailEngine(paseo as never, MAIL_POLICY, { routes: {}, spawn: {} } as never, () => {});
+  const engine = new MailEngine(hostOf(paseo), MAIL_POLICY, () => {});
   const policy = { idleHoursBeforeArchive: {}, deleteOrphanHeartbeats: false, tellParent: false, runtimes: table };
   await new Collector(
-    paseo as never,
+    hostOf(paseo),
     engine,
     policy as never,
     () => {},
     () => {},
   ).run();
   assert.deepEqual([existsSync(scratch("codex/lens")), existsSync(scratch("codex/peer"))], [false, true]);
+});
+
+test("GC deletes a project's handoffs once older than the logs are kept, and leaves newer ones and what keeps them out of git", async () => {
+  const project = join(ROOM_HOME, "handoff-project");
+  const handoffs = join(project, ".seatwork", "handoffs");
+  mkdirSync(handoffs, { recursive: true });
+  const old = new Date(Date.now() - (KEEP_LOG_DAYS + 1) * 86_400_000);
+  for (const [name, aged] of [
+    ["2026-10-01-10-00_aaaaaaaa.md", true],
+    ["2026-10-14-10-00_bbbbbbbb.md", false],
+    [".gitignore", true],
+  ] as const) {
+    writeFileSync(join(handoffs, name), name);
+    if (aged) utimesSync(join(handoffs, name), old, old);
+  }
+  const paseo = { agents: { list: async () => ({ entries: [] }) } };
+  const engine = new MailEngine(hostOf(paseo), MAIL_POLICY, () => {}, {
+    rootOf: (cwd) => (cwd.startsWith(project) ? project : null),
+  });
+  engine.rememberSeat({
+    agentId: "lead-h",
+    parentAgentId: null,
+    role: "lead",
+    provider: "claude-lead",
+    title: null,
+    cwd: project,
+  });
+  const policy = { idleHoursBeforeArchive: {}, deleteOrphanHeartbeats: false, tellParent: false };
+  await new Collector(
+    hostOf(paseo),
+    engine,
+    policy as never,
+    () => {},
+    () => {},
+  ).run();
+  assert.deepEqual(readdirSync(handoffs).sort(), [".gitignore", "2026-10-14-10-00_bbbbbbbb.md"]);
 });

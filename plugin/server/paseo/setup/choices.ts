@@ -1,4 +1,5 @@
-import { HARNESSES, parseSeat, ROLES, type Harness } from "../seats";
+import { HARNESSES, parseSeat, type Harness } from "../../orchestration/seats";
+import { ROLES, ROOM_ROLE, traits } from "../../../shared/workflow";
 import { WATCHER_MODES, type Catalog, type Setup } from "./plan";
 
 /** The installer's flags that are this machine's choices: --hq default|ask|<harness>/<model>, --watcher off|shadow|on|ask. */
@@ -29,7 +30,7 @@ async function pick(io: Terminal, prompt: string, options: string[], fallback?: 
   }
 }
 
-/** The setup.json entry for HQ on this harness and model, checked against the harness's catalog. */
+/** The setup.json entry for the room's own seat on this harness and model, checked against the harness's catalog. */
 async function hqSeat(
   harness: string,
   model: string,
@@ -47,16 +48,16 @@ async function hqSeat(
     throw new Error(
       `${harness}/${model} has no thinking option ${thinking}; it has: ${cat[model].thinking.join(", ") || "none"}`,
     );
-  return { provider: `${harness}-hq/${model}`, ...(thinking ? { thinking } : {}) };
+  return { provider: `${harness}-${ROOM_ROLE}/${model}`, ...(thinking ? { thinking } : {}) };
 }
 
-/** Asks on the terminal: the room's HQ seat, or the user's own harness and model for it. */
+/** Asks on the terminal: the room's own seat as the table has it, or the user's own harness and model for it. */
 async function askHq(
   io: Terminal,
   catalog: Catalog,
   roomHq: { provider: string; thinking: string },
 ): Promise<Setup["hq"]> {
-  io.say("HQ is the seat you talk to about every project. What should it run on?");
+  io.say(`${traits(ROOM_ROLE).label} is the seat you talk to about every project. What should it run on?`);
   io.say(`  1) default: ${roomHq.provider}, thinking ${roomHq.thinking}`);
   io.say("  2) custom: you choose the agent CLI and the model");
   if ((await pick(io, "Choice", ["default", "custom"], "default")) === "default") return "default";
@@ -75,12 +76,12 @@ async function askHq(
   const thinking = ids.length
     ? await pick(io, `Thinking (${ids.join(", ")})`, ids, cat[model].defaultThinking || ids[0])
     : undefined;
-  return { provider: `${harness}-hq/${model}`, ...(thinking ? { thinking } : {}) };
+  return { provider: `${harness}-${ROOM_ROLE}/${model}`, ...(thinking ? { thinking } : {}) };
 }
 
 /** Asks on the terminal whether the watcher is installed; installed, it starts in shadow mode. */
 async function askWatcher(io: Terminal, keyFile: string): Promise<Setup["watcher"]> {
-  io.say("The watcher reads every Lead and Peer turn and logs the signs of a turn going wrong.");
+  io.say("The watcher reads the turns of the seats it watches and logs the signs of a turn going wrong.");
   io.say(`With a key in ${keyFile} it also sends a seat's final message to a decision model. Install it?`);
   io.say("  1) no");
   io.say("  2) shadow: it reads and logs, and mails nobody (`--watcher on` makes it mail the seat above)");
@@ -92,7 +93,7 @@ export async function choose(
   before: Setup,
   flags: ChoiceFlags,
   io: Terminal,
-  room: { catalog: Catalog; hq: { provider: string; thinking: string }; watchKeyFile: string },
+  room: { catalog: Catalog; hq?: { provider: string; thinking: string }; watchKeyFile: string },
 ): Promise<Setup> {
   const setup: Setup = { ...before, ...(before.seats ? { seats: [...before.seats] } : {}) };
   for (const seat of flags.seats) {
@@ -104,8 +105,10 @@ export async function choose(
   }
   let hq = flags.hq;
   if (hq === undefined && flags.hqThinking) throw new Error("--hq-thinking goes with --hq <harness>/<model>");
-  if (hq === undefined && setup.hq === undefined && io.isTTY) hq = "ask"; // a first install: the one question the installer has
-  if (hq === "ask") setup.hq = await askHq(io, room.catalog, room.hq);
+  if (hq !== undefined && !ROOM_ROLE) throw new Error("--hq: the room's workflow has no role at home in the room");
+  // a first install: the one question the installer has
+  if (hq === undefined && setup.hq === undefined && io.isTTY && room.hq) hq = "ask";
+  if (hq === "ask") setup.hq = room.hq ? await askHq(io, room.catalog, room.hq) : "default";
   else if (hq === "default") setup.hq = "default";
   else if (hq !== undefined) {
     const slash = hq.indexOf("/");

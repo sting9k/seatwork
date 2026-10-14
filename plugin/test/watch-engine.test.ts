@@ -13,7 +13,7 @@ import { inquiryFor, REVISION } from "../server/watch/questions";
 import { redact } from "../server/watch/redact";
 import type { ScanRecord } from "../server/watch/scanlog";
 import { buildRequest, excerpt, fitting } from "../server/watch/state";
-import { usageReport } from "../server/watch/usage";
+import { usageReport } from "../server/paseo/usage";
 
 const REQUEST: DecisionRequest = {
   state: { final_message: "CANDIDATE" },
@@ -344,7 +344,6 @@ test("a turn is labelled by what the seat above did with it; a claim of passing 
   });
   const mailed = (to: string, minute: number, subject: string, from = "lead"): MailLine => ({
     at: at(minute),
-    kind: "queued",
     from,
     to,
     subject,

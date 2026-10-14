@@ -7,14 +7,14 @@ import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { createInterface } from "node:readline";
 import { PASEO_HOME, ROOM_HOME, WATCH_DIR } from "../server/paths";
-import { cliCatalog } from "../server/orchestration/setup/catalog";
-import { piProblem } from "../server/orchestration/setup/checks";
-import { choose, type ChoiceFlags, type Terminal } from "../server/orchestration/setup/choices";
-import { setUpRoom } from "../server/orchestration/setup/init";
-import { clearOldRoom } from "../server/orchestration/setup/old-room";
-import { applyToConfigFile } from "../server/orchestration/setup/paseo-config";
-import { checkSetup, roomModels } from "../server/orchestration/setup/plan";
-import { KEEP_REMOVED_DAYS, readSetup } from "../server/orchestration/setup/room-home";
+import { cliCatalog } from "../server/paseo/setup/catalog";
+import { piProblem } from "../server/paseo/setup/checks";
+import { choose, type ChoiceFlags, type Terminal } from "../server/paseo/setup/choices";
+import { setUpRoom } from "../server/paseo/setup/init";
+import { applyToConfigFile } from "../server/paseo/setup/paseo-config";
+import { checkSetup, roomModels } from "../server/paseo/setup/plan";
+import { readSetup } from "../server/paseo/setup/room-home";
+import { ROOM_ROLE, traits } from "../shared/workflow";
 
 const PLUGIN_DIR = join(__dirname, "..");
 const VERSION = (JSON.parse(readFileSync(join(PLUGIN_DIR, "package.json"), "utf8")) as { version: string }).version;
@@ -69,7 +69,7 @@ async function main(): Promise<void> {
   try {
     setup = await choose(readSetup(ROOM_HOME), flags, io, {
       catalog: cliCatalog,
-      hq: base.seats.hq,
+      ...(ROOM_ROLE && base.seats[ROOM_ROLE] ? { hq: base.seats[ROOM_ROLE] } : {}),
       watchKeyFile: join(WATCH_DIR, "key"),
     });
   } finally {
@@ -82,15 +82,10 @@ async function main(): Promise<void> {
     (planned) => applyToConfigFile(PASEO_HOME, planned),
   );
   for (const warning of plan.warnings) console.error(`warning: ${warning}`);
-  const old = await clearOldRoom();
-  if (old)
-    console.log(
-      `A room from before 0.19.0 was on this machine: its folder is kept at ${old} for ${KEEP_REMOVED_DAYS} days.`,
-    );
 
-  const hq = plan.models.seats.hq;
+  const own = ROOM_ROLE ? plan.models.seats[ROOM_ROLE] : undefined;
   console.log(
-    `HQ seat: ${hq.provider}, thinking ${hq.thinking}; seats added on this machine: ${(setup.seats ?? []).join(", ") || "none"}; watcher: ${setup.watcher ?? "off"} (${join(ROOM_HOME, "setup.json")})`,
+    `${own ? `${traits(ROOM_ROLE).label} seat: ${own.provider}, thinking ${own.thinking}; ` : ""}seats added on this machine: ${(setup.seats ?? []).join(", ") || "none"}; watcher: ${setup.watcher ?? "off"} (${join(ROOM_HOME, "setup.json")})`,
   );
   console.log(
     `Room files: ${join(ROOM_HOME, "room")}  policy: ${join(ROOM_HOME, "policy.json")}  seats: ${Object.keys(plan.providers).join(", ")}`,
@@ -100,7 +95,7 @@ async function main(): Promise<void> {
   if (!existsSync(join(ROOM_HOME, "projects.json"))) {
     console.log(`No ${join(ROOM_HOME, "projects.json")}: the room runs in OPEN mode (no project guard).`);
     console.log(
-      "  Ask HQ to onboard a project (or copy projects.json.example to projects.json) to switch on the registry.",
+      `  Ask ${ROOM_ROLE ? traits(ROOM_ROLE).label : "the room's own seat"} to onboard a project (or copy projects.json.example to projects.json) to switch on the registry.`,
     );
   }
   if ((setup.watcher ?? "off") !== "off" && !process.env.SEATWORK_WATCH_KEY && !existsSync(join(WATCH_DIR, "key"))) {

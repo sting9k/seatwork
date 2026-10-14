@@ -36,12 +36,14 @@ const cases = require("./cases.cjs").filter((c) => !args.only || new RegExp(args
 
 // A run shows a seat the room tools its role is not refused; a real seat is listed all.
 const ROOM_TOOLS = require("../plugin/shared/tools.json").tools;
+const WORKFLOW = require("../plugin/shared/workflow.json");
 const seatworkTools = (role) =>
   Object.entries(ROOM_TOOLS)
     .filter(
       ([, tool]) =>
         tool.callers === "any" ||
-        (tool.callers === "spawners" ? plugin.rawPolicy.room.spawn[role]?.length > 0 : tool.callers.includes(role)),
+        (tool.callers === "spawners" && WORKFLOW.spawn[role]?.length > 0) ||
+        (tool.callers === "room" && WORKFLOW.roles[role]?.home === "room"),
     )
     .map(([name]) => name);
 // what a Claude seat may run without asking; cases add Edit/Write when the brief is writable
@@ -107,7 +109,8 @@ function setup() {
   );
   process.env.SEATWORK_ROOM_HOME = HOME;
   require("../plugin/test/register.cjs");
-  const { rolePrompt, specFromTitle } = require("../plugin/server/orchestration/seats");
+  const { rolePrompt } = require("../plugin/server/orchestration/seats");
+  const { specFromTitle } = require("../plugin/shared/workflow");
   const { projectBlock } = require("../plugin/server/orchestration/registry");
   const { loadPolicy, claudeDisallowed } = require("../plugin/server/policy");
   const { loadModels } = require("../plugin/server/orchestration/models");

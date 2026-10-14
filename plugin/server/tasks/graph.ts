@@ -3,9 +3,11 @@ import type { Dependency, Issue } from "./store";
 
 /** A project's open issues as a graph: what to do next, what runs side by side, what blocks. */
 
+/** `ready`: the issues the store lets a seat claim now; without it the graph judges itself. */
 export interface Work {
   issues: readonly Issue[];
   dependencies: readonly Dependency[];
+  ready: ReadonlySet<string>;
 }
 
 const { weights, urgentLabels, impactShare, unblockBoost, readyBoost, exactBetweennessUpTo, sampledSources } =
@@ -70,11 +72,6 @@ function inTheWay(graph: Graph, i: number): string[] {
     for (const blocker of graph.blockers[up]) found.add(blocker);
   return [...found].map((index) => graph.issues[index].id);
 }
-
-const isReady = (graph: Graph, i: number, now: string) => {
-  const issue = graph.issues[i];
-  return issue.status === "open" && graph.inWay[i] === 0 && (!issue.defer_until || issue.defer_until <= now);
-};
 
 /** PageRank by power iteration: rank flows from an issue to what it waits for. */
 function pagerank(graph: Graph): Float64Array {
@@ -217,13 +214,13 @@ export interface Scored {
   reasons: string[];
   unblocks: string[];
   blocked_by: string[];
+  ready: boolean;
   claimable: boolean;
 }
 
 function scoreAll(work: Work, now: Date): { graph: Graph; scored: Scored[] } {
   const graph = build(work);
   const n = graph.issues.length;
-  const at = now.toISOString();
   const [rank, bridge, depth] = [pagerank(graph), betweenness(graph), depths(graph)];
   const [topRank, topBridge] = [peak(rank), peak(bridge)];
   const freed = graph.issues.map((_, i) => freedBy(graph, i));
@@ -233,7 +230,7 @@ function scoreAll(work: Work, now: Date): { graph: Graph; scored: Scored[] } {
   for (let i = 0; i < n; i += 1) {
     const issue = graph.issues[i];
     const held = graph.dependents[i].length;
-    const ready = isReady(graph, i, at);
+    const ready = work.ready.has(issue.id);
     const days = Math.max(0, (now.getTime() - Date.parse(issue.updated_at)) / 86_400_000);
     const impact =
       weights.pagerank * (topRank > 0 ? rank[i] / topRank : 0) +
@@ -261,6 +258,7 @@ function scoreAll(work: Work, now: Date): { graph: Graph; scored: Scored[] } {
       ],
       unblocks: frees,
       blocked_by: graph.inWay[i] > 0 ? inTheWay(graph, i) : [],
+      ready,
       claimable: ready && !issue.assignee && issue.issue_type !== "epic",
     });
   }
@@ -269,7 +267,7 @@ function scoreAll(work: Work, now: Date): { graph: Graph; scored: Scored[] } {
 }
 
 const actionable = (scored: readonly Scored[]) =>
-  scored.filter((one) => one.blocked_by.length === 0 && one.status !== "deferred");
+  scored.filter((one) => one.ready || (one.status === "in_progress" && one.blocked_by.length === 0));
 
 export interface Triage {
   counts: { open: number; ready: number; blocked: number; in_progress: number };
@@ -284,7 +282,7 @@ export function triage(work: Work, now: Date, limit = 10): Triage {
   return {
     counts: {
       open: scored.length,
-      ready: scored.filter((one) => one.status === "open" && one.blocked_by.length === 0).length,
+      ready: scored.filter((one) => one.ready).length,
       blocked: scored.filter((one) => one.blocked_by.length > 0).length,
       in_progress: scored.filter((one) => one.status === "in_progress").length,
     },
@@ -308,13 +306,22 @@ export function next(work: Work, now: Date): Scored | null {
   return scoreAll(work, now).scored.find((one) => one.claimable) ?? null;
 }
 
-/** The paths a write scope names, without the marks around them or a trailing glob. */
+/** A word that names a file without a folder: a name, a dot, a lettered extension. */
+const FILE_NAME = /^[\w-]{2,}(?:\.[\w-]+)*\.[A-Za-z][A-Za-z0-9]*$/;
+
+/** The paths a write scope names, `./` and line numbers dropped; a glob counts from its folder. */
 const scopeOf = (issue: Issue) =>
   issue.write_scope
     .split(/[\s,;]+/)
-    .map((token) => token.replace(/^[`'"(]+|[`'"),.:;]+$/g, ""))
-    .filter((token) => /[/.]/.test(token) && /[A-Za-z0-9]/.test(token))
-    .map((token) => token.replace(/\/\*\*?$|\/+$/g, ""));
+    .map((token) =>
+      token
+        .replace(/^[`'"(]+|[`'"),.:;]+$/g, "")
+        .replace(/^\.\//, "")
+        .replace(/:\d+(?::\d+)?$/, ""),
+    )
+    .filter((token) => token.includes("/") || FILE_NAME.test(token))
+    .map((token) => (/[*?[{]/.test(token) ? token.replace(/\/?[^/]*[*?[{].*$/, "") : token.replace(/\/+$/, "")))
+    .filter((token) => /[A-Za-z0-9]/.test(token));
 
 /** Pairs of issues whose write scopes share a path or hold one inside the other. */
 function collisions(issues: readonly Issue[]): { a: string; b: string; paths: string[] }[] {

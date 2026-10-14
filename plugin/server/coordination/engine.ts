@@ -1,15 +1,22 @@
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import config from "../../shared/mail.json";
-import { paseoCli } from "../cli";
-import { maySpawn, parseSeat, type Role } from "../orchestration/seats";
-import type { PaseoApi } from "../paseo";
 import { REGISTRY_LOG, ROOM_HOME } from "../paths";
-import type { MailPolicy, RoomPolicy } from "../policy";
-import { subjectOpening } from "../signals";
+import type { MailPolicy, MidTurnDelivery } from "../policy";
+import { inRoom, maySpawn, SPAWN } from "../../shared/workflow";
+import { ANSWERS, subjectOpening } from "../signals";
 import { MailError, mayWrite, type Directory, type SeatRecord } from "./address";
-import { appendThread, dropFiles, readArchive, writeMessage } from "./archive";
+import {
+  appendThread,
+  countFiles,
+  dropFiles,
+  forgetSettled,
+  readArchive,
+  readSettled,
+  threadFile,
+  writeMessage,
+} from "./archive";
 import { digest, seatLabel } from "./envelope";
 import { MailStore, type Held, type Kind, type Needs, type PostedLine, type Priority } from "./store";
 
@@ -20,7 +27,7 @@ export type { Needs, Priority } from "./store";
 
 export interface Sender {
   agentId: string;
-  role: Role | "system" | "human";
+  role: string;
 }
 
 /** A mail to post; `id` names a kept report that now goes out. */
@@ -49,7 +56,7 @@ export interface NewMail {
 /** A mail as its first recipient holds it. */
 export type Mail = Held;
 
-/** How much of a body is shown; how long a repeat and a key count as one mail. */
+/** How much of a body is shown; how long repeats and keys count; how long a write waits. */
 export interface MailLimits {
   mailChars: number;
   quietChars: number;
@@ -64,7 +71,17 @@ export interface EngineOptions extends Partial<MailLimits> {
   now?(): Date;
 }
 
-type Status = "idle" | "running" | "permission" | "unknown" | "gone";
+/** `idle` is any seat a message starts a turn in: at rest, closed, or after a failed turn. */
+export type Status = "idle" | "running" | "permission" | "unknown" | "gone";
+
+/** What mail needs from the app that runs the seats. */
+export interface MailHost {
+  state(agentId: string): Promise<Status>;
+  /** A seat at rest starts a turn on the text; `interrupt` ends a running turn first, else it steers. */
+  send(agentId: string, text: string, interrupt: boolean): Promise<void>;
+  /** Moves the app's own record of a seat's parent. */
+  reparent(child: string, parent: string): Promise<void>;
+}
 
 export const MAIL_DIR = join(".seatwork", ".mail");
 const ROOM_MAIL = join(ROOM_HOME, "mail");
@@ -74,18 +91,11 @@ const DEFAULTS: MailLimits = {
   quietChars: 600,
   dedupeSeconds: 300,
   keyHours: 24,
-  busyTimeoutMs: 30_000,
+  busyTimeoutMs: 5000,
 };
 const PRIORITY_RANK: Record<Priority, number> = { blocking: 0, action: 1, fyi: 2 };
-const ANSWERS = new Set<string>(config.answers);
-const AGAIN_MS = 10 * 60_000;
 
 const startsNoTurn = (mail: Held, now: number) => mail.quiet || (!!mail.heldUntil && now < Date.parse(mail.heldUntil));
-
-/** A seat stopped until someone answers its permission request. */
-export function waitsOnSomeone(agent: { pendingPermissions?: unknown[] | null }): boolean {
-  return Array.isArray(agent.pendingPermissions) && agent.pendingPermissions.length > 0;
-}
 
 /** The word a subject opens with: one of the room's signals, or a notice's own name. */
 export const signalFor = (subject: string) =>
@@ -97,13 +107,18 @@ export class MailEngine implements Directory {
   private readonly stores = new Map<string, MailStore>();
   private readonly delivering = new Set<string>();
   private readonly woke = new Map<string, Mail[]>();
+  private readonly roots = new Map<string, string | null>();
+  private readonly paused = new Set<string>();
+  private readonly unwell = new Map<
+    string,
+    { state: "damaged" | "rebuilt" | "drifted"; since: string; detail: string }
+  >();
   private readonly limits: MailLimits;
   private readonly now: () => Date;
 
   constructor(
-    private readonly paseo: PaseoApi,
+    private readonly host: MailHost,
     private readonly policy: MailPolicy,
-    private readonly room: RoomPolicy,
     private readonly log: (message: string) => void,
     private readonly options: EngineOptions = {},
   ) {
@@ -117,12 +132,32 @@ export class MailEngine implements Directory {
     this.loadAdoptions();
   }
 
-  /* ---------- the stores, one per project ---------- */
+  /** A seat's project: that of the top seat of its project's tree, so a worktree elsewhere shares it. */
+  projectOf(agentId: string): string | null {
+    if (this.roots.has(agentId)) return this.roots.get(agentId)!;
+    const chain: string[] = [];
+    for (let id: string | null = agentId; id && chain.length < 16; id = this.parentOf(id)) {
+      chain.push(id);
+      const parent = this.parentOf(id);
+      if (inRoom(this.seats.get(id)?.role) || inRoom(parent ? this.seats.get(parent)?.role : undefined)) break;
+    }
+    let root: string | null = null;
+    for (const id of chain.reverse()) {
+      const cwd = this.seats.get(id)?.cwd;
+      try {
+        root = cwd ? (this.options.rootOf?.(cwd) ?? null) : null;
+      } catch (error) {
+        this.log(`mail: the project of ${cwd} could not be read: ${(error as Error).message}`);
+      }
+      if (root) break;
+    }
+    this.roots.set(agentId, root);
+    return root;
+  }
 
   /** The folder of a seat's mail: its project's, or the room home's for a seat in no project. */
   folderOf(agentId: string): string {
-    const cwd = this.seats.get(agentId)?.cwd;
-    const root = cwd ? (this.options.rootOf?.(cwd) ?? null) : null;
+    const root = this.projectOf(agentId);
     return root ? join(root, MAIL_DIR) : ROOM_MAIL;
   }
 
@@ -131,17 +166,100 @@ export class MailEngine implements Directory {
     if (known) return known;
     // a folder that holds mail files and no store lost its store: opening it reads the files back
     if (!create && !existsSync(join(dir, "mail.db")) && !existsSync(join(dir, ".gitignore"))) return null;
-    const store = new MailStore(dir, this.limits.busyTimeoutMs, this.now);
+    const since = this.now().toISOString();
+    let store: MailStore;
+    try {
+      store = new MailStore(dir, this.limits.busyTimeoutMs, this.now);
+    } catch (error) {
+      this.unwell.set(dir, { state: "damaged", since, detail: (error as Error).message });
+      throw error;
+    }
+    this.unwell.delete(dir);
     // a store that lost its file, or was set aside as damaged, gets its mail back from the files
     if (store.count() === 0) {
       const archived = readArchive(dir);
       if (archived.length > 0) {
-        const again = new Date(this.now().getTime() - AGAIN_MS).toISOString();
-        this.log(`mail: rebuilt ${store.restore(archived, again)} mails of ${dir} from their files`);
+        const back = store.restore(archived, readSettled(dir));
+        this.log(`mail: rebuilt ${back} mails of ${dir} from their files`);
+        this.unwell.set(dir, {
+          state: "rebuilt",
+          since,
+          detail: `${store.startedOver ? "its database was damaged and set aside" : "its database was gone"}; ${back} mails were read back from their files`,
+        });
       }
     }
+    const files = countFiles(dir);
+    if (files > store.count())
+      this.unwell.set(dir, {
+        state: "drifted",
+        since,
+        detail: `${files} mail files and ${store.count()} mails in the store: mail written to its file never reached the store`,
+      });
     this.stores.set(dir, store);
     return store;
+  }
+
+  /** The stores a reader of every project asks for: `all`, or one project by its folder or folder name. */
+  storesAt(project: string): { folder: string; store: MailStore | null; error?: string }[] {
+    const roots = this.projects().filter((root) => project === "all" || root === project || basename(root) === project);
+    return roots.map((root) => {
+      const folder = join(root, MAIL_DIR);
+      try {
+        return { folder: root, store: this.open(folder, false) };
+      } catch (error) {
+        return { folder: root, store: null, error: (error as Error).message };
+      }
+    });
+  }
+
+  /** A successor's view of a seat's mail: its threads, what is owed there, each file. */
+  threadsFor(seat: string, limit = 8): string[] {
+    const store = this.storeOf(seat, false);
+    if (!store) return [];
+    const owes = store.owedBy(seat);
+    const awaits = store.owedTo(seat);
+    return store.threadsOf(seat, limit).map(({ thread, last, count }) => {
+      const open = [
+        ...owes.filter((ask) => ask.thread === thread).map((ask) => `it owes an answer to #${ask.id}`),
+        ...awaits.filter((ask) => ask.thread === thread).map((ask) => `it waits for the answer to #${ask.id}`),
+      ];
+      return `- ${thread}: ${count} mail${count === 1 ? "" : "s"}, the last #${last.id} "${last.subject}" from ${this.label(last.sender, seat)}${open.length ? `; ${open.join("; ")}` : ""}. The thread: ${threadFile(this.folderOf(seat), thread)}`;
+    });
+  }
+
+  /** The project folders of the seats the room knows. */
+  projects(): string[] {
+    return [...new Set([...this.seats.keys()].map((id) => this.projectOf(id)))].filter((root) => root !== null);
+  }
+
+  /** The stores that are not well: damaged, read back from their files, or short of their files. */
+  health(): { folder: string; state: "damaged" | "rebuilt" | "drifted"; since: string; detail: string }[] {
+    return [...this.unwell].map(([folder, ill]) => ({ folder, ...ill }));
+  }
+
+  /** Withdraws unread mail sent only to be read, before `before`, in every store. */
+  expire(before: string): number {
+    let gone = 0;
+    for (const store of this.known()) {
+      try {
+        gone += store.expire(before);
+      } catch (error) {
+        this.log(`mail: expiring unread mail failed in one store: ${(error as Error).message}`);
+      }
+    }
+    return gone;
+  }
+
+  /** How the room answers its asks since `since`, and the refusals of its mail tools by code. */
+  answering(since: string): { minutes: number[]; open: number; refusals: Map<string, number> } {
+    const out = { minutes: [] as number[], open: 0, refusals: new Map<string, number>() };
+    for (const store of this.known()) {
+      const replies = store.replies(since);
+      out.minutes.push(...replies.minutes);
+      out.open += replies.open;
+      for (const [code, n] of store.refusals(since)) out.refusals.set(code, (out.refusals.get(code) ?? 0) + n);
+    }
+    return out;
   }
 
   /** The store a seat's mail lives in; null when `create` is off and none was ever written. */
@@ -152,15 +270,35 @@ export class MailEngine implements Directory {
   /** Every store that holds mail of a seat the room knows. */
   private known(): MailStore[] {
     const dirs = new Set([ROOM_MAIL, ...[...this.seats.keys()].map((id) => this.folderOf(id))]);
-    return [...dirs].flatMap((dir) => this.open(dir, false) ?? []);
+    return [...dirs].flatMap((dir) => {
+      try {
+        return this.open(dir, false) ?? [];
+      } catch (error) {
+        this.log(`mail: the store of ${dir} cannot be opened: ${(error as Error).message}`);
+        return [];
+      }
+    });
+  }
+
+  /** Runs `work` on each store; one that fails is said in the log and passed over. */
+  private each(what: string, work: (store: MailStore) => void | Promise<void>): Promise<void> {
+    return this.known().reduce(
+      (done, store) =>
+        done.then(async () => {
+          try {
+            await work(store);
+          } catch (error) {
+            this.log(`mail: ${what} failed in one store: ${(error as Error).message}`);
+          }
+        }),
+      Promise.resolve(),
+    );
   }
 
   close(): void {
     for (const store of this.stores.values()) store.close();
     this.stores.clear();
   }
-
-  /* ---------- seat directory (who is whose parent) ---------- */
 
   private loadAdoptions(): void {
     if (!existsSync(ADOPTIONS_FILE)) return;
@@ -169,9 +307,7 @@ export class MailEngine implements Directory {
         JSON.parse(readFileSync(ADOPTIONS_FILE, "utf8")) as Record<string, string>,
       ))
         this.adoptions.set(child, parent);
-    } catch {
-      // start empty
-    }
+    } catch {}
   }
 
   private loadSeats(): void {
@@ -189,14 +325,13 @@ export class MailEngine implements Directory {
           ...(rec.cwd ? { cwd: rec.cwd } : {}),
           ...(rec.version ? { version: rec.version } : {}),
         });
-      } catch {
-        // skip bad line
-      }
+      } catch {}
     }
   }
 
   rememberSeat(seat: SeatRecord): void {
     this.seats.set(seat.agentId, seat);
+    this.roots.delete(seat.agentId);
   }
 
   seat(agentId: string): SeatRecord | undefined {
@@ -208,7 +343,7 @@ export class MailEngine implements Directory {
     return [...this.seats.values()];
   }
 
-  /** The seat a seat reports to: its adopter when adopted, else the Paseo parent. */
+  /** The seat a seat reports to: its adopter when adopted, else the parent it was created under. */
   parentOf(agentId: string): string | null {
     return this.adoptions.get(agentId) ?? this.seats.get(agentId)?.parentAgentId ?? null;
   }
@@ -224,12 +359,12 @@ export class MailEngine implements Directory {
   }
 
   canWrite(from: string, to: string, viaReply = false): { ok: true } | { ok: false; reason: string } {
-    return mayWrite(this, this.room.routes, from, to, viaReply);
+    return mayWrite(this, from, to, viaReply);
   }
 
   /** The seats whose mail a seat may read: itself and every seat under it; null for all. */
   seenBy(agentId: string): string[] | null {
-    if (this.seats.get(agentId)?.role === "hq") return null;
+    if (inRoom(this.seats.get(agentId)?.role)) return null;
     return [
       agentId,
       ...this.allSeats().flatMap((seat) => (this.isAncestor(agentId, seat.agentId) ? [seat.agentId] : [])),
@@ -248,22 +383,22 @@ export class MailEngine implements Directory {
   async adopt(
     adopter: string,
     child: string,
-  ): Promise<{ ok: true; previous: string | null } | { ok: false; reason: string }> {
+  ): Promise<{ ok: true; previous: string | null; linkMoved: boolean } | { ok: false; reason: string }> {
     const a = this.seats.get(adopter);
     const c = this.seats.get(child);
     if (!a) return { ok: false, reason: `adopter ${adopter} is not a room seat` };
     if (!c) return { ok: false, reason: `${child} is not a room seat` };
     if (adopter === child) return { ok: false, reason: "a seat does not adopt itself" };
     if (this.isAncestor(child, adopter)) return { ok: false, reason: `${child} is above you` };
-    if (!maySpawn(this.room.spawn, a.role, c.role, c.title))
+    if (!maySpawn(a.role, c.role, c.title))
       return {
         ok: false,
-        reason: `a ${a.role} may own only ${(this.room.spawn[a.role] ?? []).join(", ") || "nothing"}, not this ${c.role}`,
+        reason: `a ${a.role} may own only ${(SPAWN[a.role] ?? []).join(", ") || "nothing"}, not this ${c.role}`,
       };
     const previous = this.parentOf(child);
-    if (previous === adopter) return { ok: true, previous };
-    if ((await this.status(child)) === "gone") return { ok: false, reason: `${child} is archived or gone` };
-    const previousGone = !previous || (await this.status(previous)) === "gone";
+    if (previous === adopter) return { ok: true, previous, linkMoved: true };
+    if ((await this.host.state(child)) === "gone") return { ok: false, reason: `${child} is archived or gone` };
+    const previousGone = !previous || (await this.host.state(previous)) === "gone";
     const adopterParent = this.parentOf(adopter);
     const sameChain =
       this.isAncestor(adopter, child) || (adopterParent !== null && this.isAncestor(adopterParent, child));
@@ -273,29 +408,41 @@ export class MailEngine implements Directory {
         reason: `${child} still reports to a live seat that is not in your chain; only its chain may hand it over`,
       };
     this.adoptions.set(child, adopter);
+    this.roots.clear();
     writeFileSync(ADOPTIONS_FILE, `${JSON.stringify(Object.fromEntries(this.adoptions), null, 2)}\n`);
-    // Paseo's parent link is a label; moving it keeps its archive cascade off the adopted child
+    // the app's own parent link moves too: an archive of the old parent must not take the child along
+    let linkMoved = true;
     try {
-      await paseoCli(["agent", "update", child, "--label", `paseo.parent-agent-id=${adopter}`]);
+      await this.host.reparent(child, adopter);
     } catch (error) {
+      linkMoved = false;
       this.log(
-        `adopt: could not move the Paseo parent label of ${child}: ${error instanceof Error ? error.message : String(error)}`,
+        `adopt: the app kept ${child} under its old parent: ${error instanceof Error ? error.message : String(error)}`,
       );
     }
     this.storeOf(child)?.note("adopted", child, { adopter, previous });
-    return { ok: true, previous };
+    return { ok: true, previous, linkMoved };
   }
 
   /** Live status of a seat, for callers that must not post to an archived one. */
   recipientStatus(agentId: string): Promise<Status> {
-    return this.status(agentId);
+    return this.host.state(agentId);
   }
 
-  /* ---------- post ---------- */
-
-  private print(input: Pick<NewMail, "from" | "to" | "cc" | "subject" | "body">): string {
+  private print(input: NewMail): string {
     const to = [[input.to].flat().join(","), [...(input.cc ?? [])].sort().join(",")].join("|");
-    return createHash("sha256").update([input.from.agentId, to, input.subject, input.body].join("\n")).digest("hex");
+    const said = [
+      input.from.agentId,
+      to,
+      input.subject,
+      input.body,
+      input.replyTo ?? "",
+      input.thread ?? "",
+      input.needs,
+    ];
+    return createHash("sha256")
+      .update([...said, ...(input.files ?? [])].join("\n"))
+      .digest("hex");
   }
 
   /** The mail this one repeats: the same text within the window, or the sender's own key. */
@@ -389,8 +536,10 @@ export class MailEngine implements Directory {
   /** A mail that answers one: the ask it names, or its recipient's oldest open ask. */
   private settle(store: MailStore, mail: Mail, to: readonly string[]): void {
     if (mail.senderRole === "system") return;
-    if (mail.replyTo) store.answer(mail.replyTo, mail.id);
-    else if (to.length === 1 && ANSWERS.has(mail.signal)) {
+    if (mail.replyTo) {
+      if (store.deliveries(mail.replyTo).some((to) => to.seat === mail.sender && to.kind === "to"))
+        store.answer(mail.replyTo, mail.id);
+    } else if (to.length === 1 && ANSWERS.has(mail.signal)) {
       const ask = store.openAsk(to[0], mail.sender, mail.thread) ?? store.openAsk(to[0], mail.sender);
       if (ask) store.answer(ask.id, mail.id);
     }
@@ -430,7 +579,7 @@ export class MailEngine implements Directory {
     store.mark(kept.seat, [kept.id], "withdrawn");
     return {
       id: kept.id,
-      from: { agentId: kept.sender, role: kept.senderRole as Sender["role"] },
+      from: { agentId: kept.sender, role: kept.senderRole },
       to: kept.seat,
       priority: kept.priority,
       subject: kept.subject,
@@ -462,6 +611,15 @@ export class MailEngine implements Directory {
     await this.deliver(agentId);
   }
 
+  /** A seat being replaced takes no mail: it waits until the successor can be handed it. */
+  pause(agentId: string): void {
+    this.paused.add(agentId);
+  }
+
+  unpause(agentId: string): void {
+    this.paused.delete(agentId);
+  }
+
   /** What waits for a replaced seat waits for its successor. */
   async move(from: string, to: string): Promise<void> {
     this.storeOf(from, false)?.readdress(from, to);
@@ -486,7 +644,7 @@ export class MailEngine implements Directory {
     return owed.length > 0 ? { asks: owed.length, oldestAt: owed[0].at } : undefined;
   }
 
-  /** Hands a seat its held mail (seatwork_inbox); mail on its way out is left alone. */
+  /** Hands a seat its held mail; mail on its way out is left alone. */
   takeHeld(agentId: string, peek = false): Mail[] {
     const store = this.storeOf(agentId, false);
     const mails = store?.queued(agentId).filter((mail) => mail.state === "queued") ?? [];
@@ -511,8 +669,6 @@ export class MailEngine implements Directory {
     };
   }
 
-  /* ---------- deliver ---------- */
-
   private async bounce(store: MailStore, agentId: string, queue: readonly Mail[]): Promise<void> {
     store.mark(
       agentId,
@@ -521,7 +677,7 @@ export class MailEngine implements Directory {
     );
     const who = this.seats.get(agentId);
     for (const mail of queue) {
-      if (mail.senderRole === "system" || !this.seats.has(mail.sender)) continue;
+      if (mail.kind !== "to" || mail.senderRole === "system" || !this.seats.has(mail.sender)) continue;
       // a sender that waited must learn no answer will come; one that asked nothing reads it later
       const waited = mail.needs !== "nothing";
       await this.post({
@@ -540,13 +696,13 @@ export class MailEngine implements Directory {
 
   /** Delivery pass for one recipient. Safe to call often. */
   async deliver(agentId: string): Promise<void> {
-    if (this.delivering.has(agentId)) return;
+    if (this.delivering.has(agentId) || this.paused.has(agentId)) return;
     const store = this.storeOf(agentId, false);
     if (!store) return;
     this.delivering.add(agentId);
     try {
       if (store.queued(agentId).length === 0) return;
-      const status = await this.status(agentId);
+      const status = await this.host.state(agentId);
       // read after the wait: mail posted meanwhile is in the store now
       const queue = store.queued(agentId);
       if (status === "gone") return await this.bounce(store, agentId, queue);
@@ -560,8 +716,10 @@ export class MailEngine implements Directory {
         send = queue.some((mail) => !startsNoTurn(mail, now)) ? queue : [];
       } else {
         // running: only harnesses whose steer waits for the current tool call get mail mid-turn
-        const harness = parseSeat(this.seats.get(agentId)?.provider)?.harness;
-        const mode = harness ? this.policy.midTurn[harness] : "hold";
+        // a seat is the provider <agent CLI>-<role>: how its CLI takes mail mid-turn is its own
+        const provider = this.seats.get(agentId)?.provider ?? "";
+        const midTurn: Partial<Record<string, MidTurnDelivery>> = this.policy.midTurn;
+        const mode = midTurn[provider.split("-")[0]] ?? "hold";
         send = mode === "steer" ? queue.filter((m) => m.priority !== "fyi" || !this.policy.holdFyiWhileRunning) : [];
       }
       if (send.length === 0) return;
@@ -572,9 +730,7 @@ export class MailEngine implements Directory {
       const opensTurn = status === "idle" || stops;
       if (opensTurn) this.woke.set(agentId, send);
       try {
-        // the SDK interrupts a running agent by default; the room does so for a stop order only
-        const activeTurnBehavior = stops ? "interrupt" : "steer";
-        await this.paseo.agents.ref(agentId).send(text, { activeTurnBehavior } as never);
+        await this.host.send(agentId, text, stops);
       } catch (error) {
         // refused, so nothing arrived: the mail waits as it was
         if (opensTurn) this.woke.delete(agentId);
@@ -590,31 +746,49 @@ export class MailEngine implements Directory {
 
   /** Delivers what is held, and posts the kept reports whose turn end never reached the room. */
   async sweep(): Promise<void> {
-    for (const store of this.known()) {
+    await this.each("the sweep", async (store) => {
       for (const seat of store.waiting().keys()) await this.deliver(seat);
       for (const kept of store.kept()) {
-        const status = await this.status(kept.sender);
+        const status = await this.host.state(kept.sender);
         if (status !== "idle" && status !== "gone") continue;
         const report = this.takeReport(kept.sender);
         if (report) await this.post(report);
       }
+    });
+  }
+
+  /** A mail tool refused a seat: counted by its code in the seat's project. */
+  noteRefusal(seat: string, code: string): void {
+    try {
+      this.storeOf(seat)?.note("refused", seat, { code });
+    } catch {
+      // a count is not worth a second failure
     }
   }
 
-  /* ---------- the record ---------- */
+  /** A seat's permission request was answered in the app: its PERMISSION mail is owed no more. */
+  settlePermission(agentId: string): void {
+    this.storeOf(agentId, false)?.closeAsks(agentId, "PERMISSION");
+  }
 
   /** Who sent a mail of a seat's project, and to whom; null when unknown. */
   lookupMail(id: number, forSeat: string): { from: string; to: string[]; thread: string } | null {
     const store = this.storeOf(forSeat, false);
     const message = store?.get(id);
     if (!store || !message) return null;
-    return { from: message.sender, to: store.deliveries(id).map((d) => d.seat), thread: message.thread };
+    return { from: message.sender, to: store.deliveries(id).map((to) => to.seat), thread: message.thread };
   }
 
   /** What was posted in every project since `since`, a line per recipient, oldest first. */
   posted(since: string): PostedLine[] {
     return this.known()
-      .flatMap((store) => store.posted(since))
+      .flatMap((store) => {
+        try {
+          return store.posted(since);
+        } catch {
+          return [];
+        }
+      })
       .sort((a, b) => a.at.localeCompare(b.at));
   }
 
@@ -622,33 +796,15 @@ export class MailEngine implements Directory {
   prune(before: string, stays: (subject: string) => boolean): number {
     let gone = 0;
     for (const store of this.known()) {
-      const pruned = store.prune(before, stays);
-      dropFiles(pruned.files);
-      gone += pruned.messages;
+      try {
+        const pruned = store.prune(before, stays);
+        dropFiles(store.folder, pruned.files, pruned.threads);
+        forgetSettled(store.folder, pruned.ids);
+        gone += pruned.messages;
+      } catch (error) {
+        this.log(`mail: pruning one store failed: ${(error as Error).message}`);
+      }
     }
     return gone;
-  }
-
-  /** `idle` is any seat a message starts a turn in: at rest, closed, or after a failed turn. */
-  private async status(agentId: string): Promise<Status> {
-    const handle = this.paseo.agents.ref(agentId);
-    try {
-      await handle.refresh();
-    } catch {
-      // a lost connection or a timeout proves nothing about the seat
-      return "unknown";
-    }
-    const snapshot = handle.current() as {
-      status?: string;
-      archivedAt?: string | null;
-      pendingPermissions?: unknown[];
-    } | null;
-    // the daemon answered: it has no such agent (deleted), or the agent is archived
-    if (!snapshot || snapshot.archivedAt) return "gone";
-    if (waitsOnSomeone(snapshot)) return "permission";
-    if (snapshot.status === "running") return "running";
-    if (snapshot.status === "idle" || snapshot.status === "closed" || snapshot.status === "error") return "idle";
-    // initializing: its session is still opening
-    return "unknown";
   }
 }

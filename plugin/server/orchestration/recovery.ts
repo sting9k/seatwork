@@ -1,6 +1,7 @@
-import { existsSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import type { SeatState as Liveness } from "../host";
+import { readJson, writeJson } from "../persisted";
 
-/** What the room does with a turn that failed: wait out a quota, try a service error again, or tell the Owner. */
+/** A failed turn: a quota is waited out, a service error tried again, the rest told to the Owner. */
 
 export type FailureKind = "limited" | "service" | "fatal";
 
@@ -30,7 +31,13 @@ const UNITS: Record<string, number> = { s: 1, m: 60, h: 3600 };
 /** When a quota message says it lifts, as a time; undefined when it names none the room can read. */
 function liftsAt(message: string, now: number): number | undefined {
   const after = /retry[- ]after:?\s*(\d+)/i.exec(message);
-  if (after) return now + Number(after[1]) * 1000;
+  if (after) {
+    const value = Number(after[1]);
+    // more than a day of seconds is a time, not a wait: kept when it is one in the next two days
+    if (value <= 86_400) return now + value * 1000;
+    const at = value < 1e12 ? value * 1000 : value;
+    return at > now && at < now + 2 * 86_400_000 ? at : undefined;
+  }
   const span = /(?:try again|retry|resets?|reset) (?:in|after) (\d+)\s*(s|m|h)/i.exec(message);
   if (span) return now + Number(span[1]) * UNITS[span[2].toLowerCase()] * 1000;
   const clock = /resets? (?:at )?(\d{1,2})(?::(\d{2}))?\s*(am|pm)?/i.exec(message);
@@ -43,7 +50,7 @@ function liftsAt(message: string, now: number): number | undefined {
   return at.getTime() > now ? at.getTime() : at.getTime() + 24 * 3_600_000;
 }
 
-/** A quota is waited out, an account or a prompt the service refuses is the Owner's, anything else is tried again. */
+/** A quota is waited out, a refused account or prompt goes to the Owner, the rest is tried again. */
 export function classify(message: string, now: number): { kind: FailureKind; liftsAt?: number } {
   if (LIMITED.test(message)) return { kind: "limited", liftsAt: liftsAt(message, now) };
   return { kind: FATAL.test(message) ? "fatal" : "service" };
@@ -62,15 +69,9 @@ export class Recovery {
     private readonly file: string,
     private readonly policy: RecoveryPolicy | undefined,
   ) {
-    if (!existsSync(file)) return;
-    try {
-      for (const [agentId, state] of Object.entries(
-        JSON.parse(readFileSync(file, "utf8")) as Record<string, SeatState>,
-      ))
-        this.seats.set(agentId, state);
-    } catch {
-      // an unreadable list starts empty: a seat left failed is seen by its Owner's next look
-    }
+    // an unreadable list starts empty: a seat left failed is seen by its Owner's next look
+    for (const [agentId, state] of Object.entries(readJson<Record<string, SeatState>>(file, {})))
+      this.seats.set(agentId, state);
   }
 
   /** A turn failed: the retry the room plans, or after how many tries it gives the seat up. */
@@ -131,14 +132,13 @@ export class Recovery {
   }
 
   private save(): void {
-    writeFileSync(`${this.file}.tmp`, `${JSON.stringify(Object.fromEntries(this.seats), null, 1)}\n`);
-    renameSync(`${this.file}.tmp`, this.file);
+    writeJson(this.file, Object.fromEntries(this.seats));
   }
 }
 
 /** The part of the mail engine a resume needs. */
 export interface Resumes {
-  recipientStatus(agentId: string): Promise<"idle" | "running" | "permission" | "unknown" | "gone">;
+  recipientStatus(agentId: string): Promise<Liveness>;
   post(mail: {
     from: { agentId: string; role: "system" };
     to: string;
@@ -153,20 +153,29 @@ export interface Resumes {
 /** Starts again the seats whose retry has come due, when they still are as the failure left them. */
 export async function resumeDue(recovery: Recovery, mail: Resumes, now: number): Promise<void> {
   for (const retry of recovery.due(now)) {
-    const status = await mail.recipientStatus(retry.agentId);
-    if (status === "unknown") recovery.postpone(retry, now + 60_000);
-    // gone, or at work again on someone's word: the retry has nothing left to do
-    if (status !== "idle") continue;
-    await mail.post({
-      from: { agentId: "room", role: "system" },
-      to: retry.agentId,
-      priority: "action",
-      subject: "RESUME: your last turn stopped on the model service, not on your work",
-      body: resumeText(retry),
-      needs: "nothing",
-      why: "the room starts you again after a failure that was not your work's",
-    });
+    try {
+      await resumeOne(recovery, mail, retry, now);
+    } catch {
+      // the store or the daemon failed this time: the same retry, a little later
+      recovery.postpone(retry, now + 60_000);
+    }
   }
+}
+
+async function resumeOne(recovery: Recovery, mail: Resumes, retry: Retry, now: number): Promise<void> {
+  const status = await mail.recipientStatus(retry.agentId);
+  if (status === "unknown") recovery.postpone(retry, now + 60_000);
+  // gone, or at work again on someone's word: the retry has nothing left to do
+  if (status !== "idle") return;
+  await mail.post({
+    from: { agentId: "room", role: "system" },
+    to: retry.agentId,
+    priority: "action",
+    subject: "RESUME: your last turn stopped on the model service, not on your work",
+    body: resumeText(retry),
+    needs: "nothing",
+    why: "the room starts you again after a failure that was not your work's",
+  });
 }
 
 const clock = (at: number) => new Date(at).toTimeString().slice(0, 5);

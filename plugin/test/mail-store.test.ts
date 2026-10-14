@@ -1,8 +1,9 @@
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import assert from "node:assert/strict";
 import test from "node:test";
+import { DatabaseSync } from "node:sqlite";
 import { MailStore, MailStoreError, type NewMessage } from "../server/coordination/store";
 
 const base = mkdtempSync(join(tmpdir(), "seatwork-mail-store-"));
@@ -60,7 +61,7 @@ test("what waits for a seat is handed out oldest first, and a settled delivery w
     store.queued("p1").map((m) => m.id),
     [a.id, b.id],
   );
-  assert.deepEqual([...store.waiting()], [["p1", 2]]);
+  assert.deepEqual([...store.waiting()], [["p1", { count: 2, since: a.at }]]);
   store.mark("p1", [a.id], "sending");
   assert.equal(store.queued("p1")[0].state, "sending");
   store.mark("p1", [a.id, b.id], "delivered", "idle");
@@ -87,8 +88,8 @@ test("a report kept for its sender's turn end goes out once, to the Owner the se
     [[report.id, "the offset index\n\n[room] second candidate"]],
   );
   assert.deepEqual(
-    store.posted("2026-01-01").map((line) => [line.from, line.to, line.subject, line.kind]),
-    [["p1", "lead-2", "CANDIDATE: store", "queued"]],
+    store.posted("2026-01-01").map((line) => [line.from, line.to, line.subject]),
+    [["p1", "lead-2", "CANDIDATE: store"]],
   );
 });
 
@@ -182,7 +183,7 @@ test("pruning drops finished mail older than the line and keeps what still waits
   ]);
   store.mark("lead", [owed.id], "delivered", "idle");
   const pruned = store.prune("2027-01-01T00:00:00Z", (subject) => subject.startsWith("ACCEPT"));
-  assert.deepEqual(pruned, { messages: 1, files: ["/tmp/a.md"] });
+  assert.deepEqual(pruned, { messages: 1, files: ["/tmp/a.md"], threads: [`m${done.id}`], ids: new Set([done.id]) });
   assert.equal(store.get(done.id), null);
   assert.ok(store.get(waiting.id) && store.get(owed.id));
   assert.deepEqual(
@@ -199,7 +200,7 @@ test("pruning drops finished mail older than the line and keeps what still waits
   );
 });
 
-test("a damaged database is set aside and a new one started; a newer layout is refused", () => {
+test("a damaged database is set aside, kept beside the new one, and a new one started", () => {
   const { store, dir } = fresh();
   store.insert(mail("lead", "FYI: one"), [{ seat: "p1", kind: "to", priority: "fyi" }]);
   store.close();
@@ -207,38 +208,116 @@ test("a damaged database is set aside and a new one started; a newer layout is r
   const again = new MailStore(dir, 2000, undefined, SCRIPTS);
   assert.equal(again.startedOver, true);
   assert.equal(again.count(), 0);
+  assert.equal(readdirSync(dir).filter((name) => name.startsWith("mail.db.damaged-")).length, 1);
   again.close();
-  const { store: newer, dir: newerDir } = fresh();
-  (newer as unknown as { db: { exec(sql: string): void } }).db.exec("PRAGMA user_version = 99");
-  newer.close();
-  assert.throws(
-    () => new MailStore(newerDir, 2000, undefined, SCRIPTS),
-    (error: unknown) => error instanceof MailStoreError && error.code === "SCHEMA_TOO_NEW",
+});
+
+test("every query the store runs is served by an index, but the rare whole-store ones named here with their reason", () => {
+  const { store } = fresh();
+  const ask = store.insert(mail("p1", "QUESTION: which unit", { needs: "reply" }), [
+    { seat: "lead", kind: "to", priority: "action" },
+    { seat: "p2", kind: "cc", priority: "fyi", quiet: true },
+  ]);
+  const answer = store.insert(mail("lead", "ANSWER: seconds", { thread: ask.thread, replyTo: ask.id }), [
+    { seat: "p1", kind: "to", priority: "action" },
+  ]);
+  store.answer(ask.id, answer.id);
+  store.queued("lead");
+  store.waiting();
+  store.owedBy("lead");
+  store.owedTo("p1");
+  store.duplicate("p1", "p1|QUESTION: which unit", "2026");
+  store.byKey("p1", "k", "2026");
+  store.thread(ask.thread, ["lead"], 10);
+  store.sent("p1", 10);
+  store.received("lead", 10, { signal: "QUESTION" });
+  store.search("unit", ["lead"], { limit: 5 });
+  store.posted("2026");
+  store.openAsk("p1", "lead");
+  store.kept();
+  store.seen(ask.id, ["lead"]);
+  store.mark("lead", [ask.id], "delivered", "idle");
+  store.refusals("2026");
+  store.expire("2026");
+  // on request or by GC, never in a seat's turn: room stats, a successor's threads, the count, the prune
+  const rare = [
+    "SELECT at, answered_at FROM messages",
+    "SELECT m.thread, max(m.id)",
+    "SELECT count(*) AS n FROM messages",
+    "SELECT m.id, m.file, m.thread FROM messages m WHERE m.at < ?",
+    "SELECT seq, kind, detail FROM events WHERE at < ?",
+  ];
+  store.replies("2026");
+  store.threadsOf("lead", 5);
+  store.prune("2026", () => false);
+  const scans = store
+    .plans()
+    .filter(({ plan }) => /\bSCAN (messages|deliveries|events|m|d)\b(?! USING)/.test(plan))
+    .filter(({ sql }) => !rare.some((known) => sql.replace(/\s+/g, " ").includes(known)));
+  assert.deepEqual(scans, []);
+});
+
+test("mail sent only to be read and never read is withdrawn as expired once it is old; an ask, or mail that starts a turn, never is", () => {
+  const { store } = fresh();
+  const notice = store.insert(mail("lead", "FYI: main moved"), [
+    { seat: "p1", kind: "cc", priority: "fyi", quiet: true },
+  ]);
+  const ask = store.insert(mail("lead", "QUESTION: which unit", { needs: "reply" }), [
+    { seat: "p1", kind: "to", priority: "fyi", quiet: true },
+  ]);
+  const loud = store.insert(mail("lead", "INSTRUCTION: rebase"), [{ seat: "p1", kind: "to", priority: "action" }]);
+  assert.equal(store.expire("2026-10-14T00:00:00Z"), 0);
+  assert.equal(store.expire("2026-10-15T00:00:00Z"), 1);
+  assert.deepEqual(
+    store.queued("p1").map((m) => m.id),
+    [ask.id, loud.id],
+  );
+  assert.deepEqual(
+    store.deliveries(notice.id).map((d) => [d.state, d.how]),
+    [["withdrawn", "expired"]],
   );
 });
 
-test("every lookup the delivery loop and the inbox make is served by an index", () => {
+test("how asks are answered and what the tools refused are read from the store", () => {
   const { store } = fresh();
-  const plan = (sql: string, ...params: (string | number | null)[]) => store.explain(sql, ...params);
-  assert.match(
-    plan(
-      "SELECT message_id FROM deliveries WHERE seat = ? AND state IN ('queued', 'sending') ORDER BY message_id",
-      "p1",
-    ),
-    /SEARCH deliveries USING COVERING INDEX deliveries_by_/,
+  const asked = store.insert(mail("p1", "QUESTION: which unit", { needs: "decision" }), [
+    { seat: "lead", kind: "to", priority: "action" },
+  ]);
+  store.insert(mail("p1", "QUESTION: which rounding", { needs: "reply" }), [
+    { seat: "lead", kind: "to", priority: "action" },
+  ]);
+  const answer = store.insert(mail("lead", "ANSWER: seconds"), [{ seat: "p1", kind: "to", priority: "action" }]);
+  store.answer(asked.id, answer.id);
+  for (const code of ["NO_SIGNAL", "ROUTE_REFUSED", "NO_SIGNAL"]) store.note("refused", "p1", { code });
+
+  const replies = store.replies("2026-10-14T00:00:00Z");
+  assert.equal(replies.open, 1);
+  assert.equal(replies.minutes.length, 1);
+  assert.ok(replies.minutes[0] > 0);
+  assert.deepEqual(
+    [...store.refusals("2026-10-14T00:00:00Z")],
+    [
+      ["NO_SIGNAL", 2],
+      ["ROUTE_REFUSED", 1],
+    ],
   );
-  assert.match(
-    plan("SELECT seat, count(*) FROM deliveries WHERE state IN ('queued', 'sending') GROUP BY seat"),
-    /deliveries_by_state/,
+});
+
+test("a mail written while another process writes the store is refused as one to try again", () => {
+  const { store, dir } = fresh();
+  store.close();
+  const slow = new MailStore(dir, 50, undefined, SCRIPTS);
+  const other = new DatabaseSync(join(dir, "mail.db"));
+  other.exec("BEGIN IMMEDIATE");
+  assert.throws(
+    () => slow.insert(mail("lead", "FYI: one"), [{ seat: "p1", kind: "to", priority: "fyi" }]),
+    (error: unknown) => error instanceof MailStoreError && error.code === "DATABASE_LOCKED",
   );
-  assert.match(plan("SELECT id FROM messages WHERE thread = ? ORDER BY id DESC LIMIT 5", "sw-1"), /messages_by_thread/);
-  assert.match(
-    plan("SELECT id FROM messages WHERE sender = ? AND fingerprint = ? AND at >= ?", "p1", "x", "2026"),
-    /messages_by_print/,
+  other.exec("COMMIT");
+  other.close();
+  assert.equal(
+    slow.insert(mail("lead", "FYI: one"), [{ seat: "p1", kind: "to", priority: "fyi" }]).subject,
+    "FYI: one",
   );
-  assert.match(
-    plan("SELECT id FROM messages WHERE sender = ? AND needs <> 'nothing' AND answered_at IS NULL ORDER BY id", "p1"),
-    /messages_owed/,
-  );
-  assert.match(plan("SELECT seq FROM events WHERE kind = 'posted' AND at >= ? ORDER BY seq", "2026"), /events_by_kind/);
+  slow.close();
 });

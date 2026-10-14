@@ -284,25 +284,6 @@ test("while Paseo still lists the folder of the version before, the room is not 
   rmSync(older, { recursive: true });
 });
 
-test("an install from before 0.18.0, still beside this one under its old id, is named, and the room's files stay this plugin's own", async () => {
-  const older = join(ROOM_HOME, "..", "an-old-checkout");
-  for (const [file, text] of [
-    ["room/models.json", '{"seats":{"hq":{"provider":"claude-hq/an-old-model"}}}'],
-    ["paseo/policy.json", "{}"],
-  ]) {
-    mkdirSync(join(older, file, ".."), { recursive: true });
-    writeFileSync(join(older, file), text);
-  }
-  daemon.config.plugins = { "slp-seat": { path: older }, seatwork: { path: PLUGIN_DIR } };
-
-  const beside = await state();
-
-  assert.ok(beside.checks.some((check) => check.id === "two-copies" && check.ok === false));
-  assert.doesNotMatch(JSON.stringify(beside.table), /an-old-model/);
-  delete daemon.config.plugins["slp-seat"];
-  assert.ok(!(await state()).checks.some((check) => check.id === "two-copies"));
-});
-
 test("a seat opened by an earlier version of the plugin is named on the screen until it is archived", async () => {
   const opened = (agentId: string, version?: string) =>
     `${JSON.stringify({ agentId, parentAgentId: null, provider: "claude-lead", role: "lead", title: null, version })}\n`;
@@ -326,36 +307,6 @@ test("a seat opened by an earlier version of the plugin is named on the screen u
   daemon.open = [daemon.open[2]];
   assert.ok(!(await state()).checks.some((check) => check.id === "older-seats"));
   daemon.open = [];
-});
-
-test("Init clears a room from before 0.19.0: its home and its notes in a project are kept aside, its key is carried over, nothing of the user's moves", async () => {
-  const old = join(ROOM_HOME, "..", "slp-room");
-  const project = join(realpathSync(PROJECT), "..", "old-project");
-  for (const dir of [join(old, "watch"), join(project, ".slp")]) mkdirSync(dir, { recursive: true });
-  for (const file of ["policy.json", "seats.json"]) writeFileSync(join(old, file), "{}");
-  writeFileSync(join(old, "projects.json"), JSON.stringify({ projects: [{ name: "old", cwd: project }] }));
-  writeFileSync(join(old, "watch", "key"), "sk-old-not-a-key\n");
-  for (const file of ["status.md", "mine.txt"]) writeFileSync(join(project, ".slp", file), file);
-
-  const { notes } = (await init()) as unknown as { notes: string[] };
-
-  const kept = readdirSync(join(ROOM_HOME, "..")).filter((name) => name.startsWith("slp-room.removed-"));
-  assert.deepEqual([existsSync(old), kept.length], [false, 1]);
-  assert.match(notes.join(" "), new RegExp(`A room from before 0\\.19\\.0 .* kept at .*${kept[0]}`));
-  const bundle = join(ROOM_HOME, "..", kept[0]);
-  const notesKept = readdirSync(join(bundle, "projects")).map((name) =>
-    readdirSync(join(bundle, "projects", name, ".slp")),
-  );
-  assert.deepEqual(
-    [existsSync(join(bundle, "policy.json")), notesKept, readdirSync(join(project, ".slp"))],
-    [true, [["status.md"]], ["mine.txt"]],
-  );
-  assert.equal(readFileSync(join(ROOM_HOME, "watch", "key"), "utf8"), "sk-old-not-a-key\n");
-  assert.equal(statSync(join(ROOM_HOME, "watch", "key")).mode & 0o077, 0);
-  // a second Init finds nothing to clear
-  assert.ok(!((await init()) as unknown as { notes: string[] }).notes.some((note) => note.includes("before 0.19.0")));
-  rmSync(join(ROOM_HOME, "watch", "key"));
-  rmSync(bundle, { recursive: true });
 });
 
 test("the watcher's key is kept for its owner only and never handed back to the app", async () => {

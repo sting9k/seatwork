@@ -116,20 +116,12 @@ test("a script that fails leaves nothing of itself behind", () => {
   store.close();
 });
 
-test("a file from before the history was kept counts what its version says as applied; a newer layout is refused", () => {
+test("a store at a newer layout than this plugin writes is refused", () => {
   const { file, dir } = fresh({ "V1__layout.sql": "CREATE TABLE things (id INTEGER PRIMARY KEY);" });
-  const first = new Probe(file, dir);
-  first.raw("DROP TABLE schema_history");
-  first.close();
-  writeFileSync(join(dir, "V2__add_notes.sql"), "CREATE TABLE notes (id INTEGER PRIMARY KEY);");
   const store = new Probe(file, dir);
-  assert.deepEqual(
-    store.history().map((row) => row.version),
-    [1, 2],
-  );
   store.raw("PRAGMA user_version = 99");
   store.close();
-  refuses("SCHEMA_TOO_NEW", () => new Probe(file, dir), /at layout 99 and this plugin writes 2/);
+  refuses("SCHEMA_TOO_NEW", () => new Probe(file, dir), /at layout 99 and this plugin writes 1/);
 });
 
 test("the scripts that ship are well formed: one per version, named for what they do", () => {

@@ -1,16 +1,14 @@
 import { appendFileSync, existsSync, readFileSync } from "node:fs";
-import { join } from "node:path";
 import { KEEP_LOG_DAYS } from "./gc";
-import { hqDir } from "./orchestration/hq";
-import type { PaseoApi } from "./paseo";
-import { ROOM_HOME, REGISTRY_LOG, USAGE_LOG } from "./paths";
+import type { LiveSeat, SeatUsage } from "./host";
+import { REGISTRY_LOG, USAGE_LOG } from "./paths";
+import { roomProjectDir } from "./orchestration/registry";
 import { COUNTED } from "./signals";
 
 /** Better-Seatwork input: what the mail log says happened, counted per project and per signal. */
 
 interface LogLine {
   at: string;
-  kind: string;
   from: string;
   to: string;
   subject: string;
@@ -43,26 +41,12 @@ interface UsageLine {
   usage: { outputTokens?: number; totalCostUsd?: number };
 }
 
-/** What a seat's agent CLI reports after a turn: the dollars are a running total, the context is what it holds now. */
-export interface SeatUsage {
-  totalCostUsd?: number;
-  outputTokens?: number;
-  contextWindowUsedTokens?: number;
-}
-
 /** Notes what a seat has used at the end of a turn, as its agent CLI reports it, and returns it. */
-export async function noteUsage(
-  paseo: PaseoApi,
-  agent: { id: string; cwd: string },
-  role: string,
-): Promise<SeatUsage | null> {
-  const handle = paseo.agents.ref(agent.id);
-  await handle.refresh();
-  const now = handle.current();
-  if (!now?.lastUsage) return null;
-  const line = { at: new Date().toISOString(), agentId: agent.id, role, cwd: agent.cwd, model: now.model ?? null };
-  appendFileSync(USAGE_LOG, `${JSON.stringify({ ...line, usage: now.lastUsage })}\n`, { mode: 0o600 });
-  return now.lastUsage as SeatUsage;
+export function noteUsage(seat: LiveSeat | null, role: string): SeatUsage | null {
+  if (!seat?.usage) return null;
+  const line = { at: new Date().toISOString(), agentId: seat.id, role, cwd: seat.cwd, model: seat.model };
+  appendFileSync(USAGE_LOG, `${JSON.stringify({ ...line, usage: seat.usage })}\n`, { mode: 0o600 });
+  return seat.usage;
 }
 
 /** Dollars and output tokens per project and role since `since`, one line per project. */
@@ -94,24 +78,31 @@ export function costLines(since: number, file: string = USAGE_LOG): string[] {
 }
 
 /** Signals mailed in the last `asked` days per project, then what the seats used. */
-export function roomStats(asked: number, posted: (since: string) => readonly LogLine[]): string {
+export function roomStats(
+  asked: number,
+  posted: (since: string) => readonly LogLine[],
+  mail: (since: string) => readonly string[] = () => [],
+): string {
   const days = Math.min(Math.max(1, asked), KEEP_LOG_DAYS);
   const since = Date.now() - days * 86_400_000;
   const cost = costLines(since);
-  const used = cost.length ? [`used in the last ${days} days:`, ...cost] : [];
+  const used = [
+    ...mail(new Date(since).toISOString()),
+    ...(cost.length ? [`used in the last ${days} days:`, ...cost] : []),
+  ];
   const cwdOf = new Map<string, string>();
   for (const rec of readJsonl<{ agentId: string; cwd?: string }>(REGISTRY_LOG))
     if (rec.cwd) cwdOf.set(rec.agentId, rec.cwd);
   const lines = posted(new Date(since).toISOString());
   if (lines.length === 0) return [`no mail in the last ${days} days`, ...used].join("\n");
 
-  // a mail between hq and a project counts for the project, whichever side wrote it
-  const hq = hqDir();
+  // a mail between the room's own seats and a project counts for the project, whichever side wrote it
+  const own = roomProjectDir();
   const perProject = new Map<string, Map<string, number>>();
   const sentBack = new Map<string, Map<string, number>>();
   for (const line of lines) {
     const candidates = [cwdOf.get(line.from), cwdOf.get(line.to)].filter((c): c is string => !!c);
-    const project = candidates.find((c) => c !== hq) ?? candidates[0] ?? "(unknown)";
+    const project = candidates.find((c) => c !== own) ?? candidates[0] ?? "(unknown)";
     const counts = perProject.get(project) ?? new Map<string, number>();
     const signal = signalOf(line.subject);
     counts.set(signal, (counts.get(signal) ?? 0) + 1);

@@ -1,5 +1,6 @@
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { ROOM_PROJECT } from "../shared/workflow";
 
 /** Everything the room owns lives under one directory; SEATWORK_ROOM_HOME overrides it. */
 export const USER_HOME = homedir();
@@ -22,11 +23,10 @@ export const SEATS_FILE = join(ROOM_HOME, "seats.json");
 /** Registry of Seatwork projects the room may work in (see registry.ts). */
 export const REGISTRY_FILE = join(ROOM_HOME, "projects.json");
 
-/** The default project every install has: the home of the HQ Supervisor (see hq.ts). */
-export const HQ_PROJECT = "hq-seatwork";
-export const HQ_DIR = join(ROOM_HOME, HQ_PROJECT);
+/** The default project every install has: where the seats at home in the room sit (registry.ts). */
+export const ROOM_PROJECT_DIR = join(ROOM_HOME, ROOM_PROJECT);
 
-/** Append-only log of seats created, read by the HQ Supervisor. */
+/** Append-only log of seats created. */
 export const REGISTRY_LOG = join(ROOM_HOME, "registry-log.jsonl");
 
 /** One temporary directory per seat, `tmp/<first 8 of the agent id>`: a seat's `TMPDIR`. */

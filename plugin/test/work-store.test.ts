@@ -2,12 +2,13 @@ import { ROOM_HOME, shipSql } from "./support/room";
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
-import { join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { test } from "node:test";
 import vocabulary from "../shared/work.json";
-import { DEPENDENCY_TYPES, ISSUE_TYPES, STATUSES, WorkError, WorkStore } from "../server/tasks/store";
+import { WorkError, WorkStore } from "../server/tasks/store";
+import { work } from "../server/tasks/tools";
 
 shipSql();
 
@@ -163,15 +164,17 @@ test("a write that read an older revision is refused; a write that names none go
 });
 
 /** Runs the worker in a process of its own and resolves with the one line it prints. */
-function inProcess(dir: string, ...job: string[]): Promise<{ won?: string; made?: string[]; refused?: string }> {
+function inProcess(
+  dir: string,
+  job: string[],
+  gate?: string,
+): Promise<{ won?: string; made?: string[]; refused?: string }> {
   return new Promise((resolve, reject) => {
-    const child = spawn(process.execPath, [
-      "--require",
-      join(__dirname, "register.cjs"),
-      join(__dirname, "support", "work-worker.ts"),
-      dir,
-      ...job,
-    ]);
+    const child = spawn(
+      process.execPath,
+      ["--require", join(__dirname, "register.cjs"), join(__dirname, "support", "work-worker.ts"), dir, ...job],
+      { env: { ...process.env, ...(gate ? { WORK_GATE: gate } : {}) } },
+    );
     let out = "";
     let err = "";
     child.stdout.on("data", (chunk) => (out += chunk));
@@ -184,9 +187,13 @@ test("eight processes claim one issue at once: one wins, seven are told who hold
   const { store, dir } = fresh();
   const issue = store.create({ title: "the one" }, "lead");
   store.close();
-  const results = await Promise.all(
-    Array.from({ length: 8 }, (_, i) => inProcess(dir, "claim", issue.id, `peer-${i}`)),
-  );
+  // the eight start their claim together, once every one has its store open
+  const gate = join(dir, "..", `${basename(dir)}-gate`);
+  const running = Array.from({ length: 8 }, (_, i) => inProcess(dir, ["claim", issue.id, `peer-${i}`], gate));
+  const ready = () => readdirSync(dirname(gate)).filter((name) => name.startsWith(`${basename(gate)}.`)).length;
+  while (ready() < 8) await new Promise((resolve) => setTimeout(resolve, 10));
+  writeFileSync(gate, "");
+  const results = await Promise.all(running);
   const winners = results.filter((result) => result.won);
   assert.equal(winners.length, 1, JSON.stringify(results));
   assert.equal(results.filter((result) => result.refused === "ALREADY_ASSIGNED").length, 7, JSON.stringify(results));
@@ -196,7 +203,7 @@ test("eight processes claim one issue at once: one wins, seven are told who hold
 
 test("six processes write a new store at once: every issue is there once, and the text copy is whole", async () => {
   const dir = join(ROOM_HOME, `work-test-${(stores += 1)}`);
-  const results = await Promise.all(Array.from({ length: 6 }, (_, i) => inProcess(dir, "create", "40", `seat-${i}`)));
+  const results = await Promise.all(Array.from({ length: 6 }, (_, i) => inProcess(dir, ["create", "40", `seat-${i}`])));
   const made = results.flatMap((result) => result.made ?? []);
   assert.equal(made.length, 240, JSON.stringify(results.map((result) => result.refused)));
   assert.equal(new Set(made).size, 240);
@@ -238,40 +245,44 @@ test("a store whose database is lost or damaged comes back from its text copy, a
   assert.equal(readdirSync(dir).filter((name) => name.startsWith("work.db.damaged-")).length, 1);
 });
 
-test("a store written by a newer plugin is refused, not rewritten", () => {
-  const { store, dir } = fresh();
-  store.close();
-  const raw = new DatabaseSync(join(dir, "work.db"));
-  raw.exec("PRAGMA user_version = 99");
-  raw.close();
-  refuses("SCHEMA_TOO_NEW", () => new WorkStore(dir, TIMING));
-  assert.ok(existsSync(join(dir, "work.db")));
+test("every query the store runs is served by an index, but the whole-store ones named here with their reason", () => {
+  const { store } = fresh();
+  const a = store.create({ title: "a" }, "lead");
+  const b = store.create({ title: "b", parent: a.id }, "lead");
+  const c = store.create({ title: "c" }, "lead");
+  store.addDependency(c.id, b.id, "blocks", "lead");
+  store.claim(b.id, "p1");
+  store.comment(b.id, "p1", "half way");
+  store.ready({ parent: a.id });
+  store.list({ assignee: "p1", status: "in_progress", limit: 1 });
+  store.list({ status: "open" });
+  store.get(b.id.slice(0, 6));
+  store.blockers(c.id);
+  store.comments(b.id);
+  store.events(b.id, 10);
+  store.openWork();
+  store.release("p1", null, "room");
+  store.removeDependency(c.id, b.id, "lead");
+  store.closeIssue(c.id, "done in abc1234, tests green", "lead", POLICY);
+  // a pass over every issue is the store's whole: its count and its text copy
+  const whole = ["SELECT COUNT(*) AS n FROM issues", "SELECT * FROM issues ORDER BY"];
+  const scans = store
+    .plans()
+    .filter(({ plan }) => /\bSCAN (issues|dependencies|comments|events)\b(?! USING)/.test(plan))
+    .filter(({ sql }) => !whole.some((known) => sql.startsWith(known)));
+  assert.deepEqual(scans, []);
 });
 
-test("every lookup the store makes is served by an index, and its vocabulary is the one in shared/work.json", () => {
+test("the store's checks take every word of shared/work.json", () => {
   const { store } = fresh();
-  const plan = (lookup: Parameters<WorkStore["explain"]>[0]) => store.explain(lookup).join(" | ");
-  assert.match(plan("ready"), /SEARCH i USING INDEX issues_by_status \(status=\?\)/);
-  assert.match(
-    plan("ready"),
-    /SEARCH d USING (COVERING )?INDEX dependencies_by_target \(depends_on_id=\? AND type=\?\)/,
-  );
-  assert.match(
-    plan("cycle"),
-    /SCAN waits \| SEARCH d USING (COVERING )?INDEX dependencies_by_type \(type=\? AND issue_id=\?\)/,
-  );
-  assert.match(plan("byAssignee"), /USING INDEX issues_by_assignee/);
-  assert.match(plan("byStatus"), /USING INDEX issues_by_status/);
-  assert.match(plan("blockers"), /USING (COVERING )?INDEX dependencies_by_target/);
-  assert.match(plan("prefix"), /SEARCH issues USING INDEX sqlite_autoindex_issues_1 \(id>\? AND id<\?\)/);
-  assert.match(plan("comments"), /USING (COVERING )?INDEX comments_of/);
-  assert.match(plan("events"), /USING (COVERING )?INDEX events_of/);
-  for (const lookup of ["byAssignee", "byStatus", "blockers", "prefix", "comments", "events"] as const)
-    assert.doesNotMatch(plan(lookup), /SCAN (issues|dependencies|comments|events)(?! USING)/, lookup);
-  assert.deepEqual(
-    [STATUSES, ISSUE_TYPES, DEPENDENCY_TYPES],
-    [vocabulary.statuses, vocabulary.issueTypes, Object.keys(vocabulary.dependencyTypes)],
-  );
+  for (const type of vocabulary.issueTypes) store.create({ title: type, issue_type: type as never }, "lead");
+  const [one, two] = store.all();
+  for (const type of Object.keys(vocabulary.dependencyTypes)) {
+    store.addDependency(one.id, two.id, type as never, "lead");
+    store.removeDependency(one.id, two.id, "lead", type as never);
+  }
+  for (const status of vocabulary.statuses)
+    if (status !== "closed") store.update(one.id, { status } as never, "lead", true);
 });
 
 test("a plan is written in one go: all of it or none, with issues naming each other by key", () => {
@@ -314,4 +325,146 @@ test("nothing of the store shows in the project's git: its folder keeps itself o
     execFileSync("git", ["-C", repo, "status", "--porcelain", "--untracked-files=all"], { encoding: "utf8" }),
     "",
   );
+});
+
+test("a parent waits for its children and a child for what holds its parents: an edge that would close such a ring is refused", () => {
+  const { store } = fresh();
+  const parent = store.create({ title: "billing" }, "lead");
+  const child = store.create({ title: "invoice line", parent: parent.id }, "lead");
+  refuses("CYCLE_DETECTED", () => store.addDependency(child.id, parent.id, "blocks", "lead"));
+  const other = store.create({ title: "tax table" }, "lead");
+  store.addDependency(child.id, other.id, "blocks", "lead");
+  refuses("CYCLE_DETECTED", () => store.addDependency(other.id, parent.id, "blocks", "lead"));
+  const sibling = store.create({ title: "credit line", parent: parent.id }, "lead");
+  store.addDependency(sibling.id, child.id, "blocks", "lead");
+  refuses("CYCLE_DETECTED", () =>
+    store.create({ title: "late", parent: parent.id, deps: [{ id: parent.id }] }, "lead"),
+  );
+});
+
+test("what claim refuses, update refuses too, unless an Owner does it; a closed issue is reopened before it changes", () => {
+  const { store } = fresh();
+  const first = store.create({ title: "schema" }, "lead");
+  const second = store.create({ title: "api", deps: [{ id: first.id }] }, "lead");
+  store.claim(first.id, "peer-a");
+  refuses("VALIDATION_FAILED", () => store.update(first.id, { assignee: "peer-b" }, "peer-b"));
+  refuses("ALREADY_ASSIGNED", () => store.update(first.id, { assignee: null }, "peer-b"));
+  refuses("BLOCKED", () => store.update(second.id, { status: "in_progress" }, "peer-b"));
+  assert.equal(store.update(first.id, { assignee: "peer-c" }, "lead", true).assignee, "peer-c");
+  assert.equal(store.update(first.id, { assignee: null }, "peer-c").assignee, null);
+  store.closeIssue(first.id, "schema landed in 4f2a91c, tests green", "lead", POLICY);
+  refuses("VALIDATION_FAILED", () => store.update(first.id, { status: "open" }, "lead", true));
+});
+
+test("an id is found by its whole text or by what follows the prefix, a parent before its children; an empty id names nothing", () => {
+  const { store } = fresh();
+  const parent = store.create({ title: "billing" }, "lead");
+  store.create({ title: "invoice line", parent: parent.id }, "lead");
+  assert.equal(store.get(parent.id.slice(3)).id, parent.id);
+  for (const empty of ["", "sw-", " "]) refuses("VALIDATION_FAILED", () => store.get(empty));
+  const ids = Array.from({ length: 12 }, () => store.create({ title: "line", parent: parent.id }, "lead").id);
+  assert.equal(ids.at(-1), `${parent.id}.13`);
+});
+
+test("undepend takes away the edge it names, and a parent link only when named; ready under a parent follows the links", () => {
+  const { store } = fresh();
+  const epic = store.create({ title: "billing", issue_type: "epic" }, "lead");
+  const loose = store.create({ title: "tax table" }, "lead");
+  store.addDependency(loose.id, epic.id, "parent-child", "lead");
+  store.addDependency(loose.id, epic.id, "related", "lead");
+  assert.deepEqual(
+    store.ready({ parent: epic.id }).map((issue) => issue.id),
+    [loose.id],
+  );
+  store.removeDependency(loose.id, epic.id, "lead");
+  assert.deepEqual(
+    store.dependencies().map((dep) => dep.type),
+    ["parent-child"],
+  );
+  store.removeDependency(loose.id, epic.id, "lead", "parent-child");
+  assert.deepEqual(store.dependencies(), []);
+});
+
+test("a deferred issue waits out its time: it is not ready, cannot be claimed, and stays deferred when its seat goes", () => {
+  const { store } = fresh();
+  const later = store.create({ title: "release notes" }, "lead");
+  store.update(later.id, { defer_until: "2099-01-01T00:00:00.000Z" }, "lead");
+  assert.deepEqual(store.ready(), []);
+  refuses("BLOCKED", () => store.claim(later.id, "peer-a"));
+  const parked = store.create({ title: "parked" }, "lead");
+  store.claim(parked.id, "peer-a");
+  store.update(parked.id, { status: "deferred" }, "peer-a");
+  store.release("peer-a", null, "room");
+  assert.equal(store.get(parked.id).status, "deferred");
+});
+
+test(
+  "a file the store cannot open is left where it is; only a damaged one is set aside",
+  { skip: process.getuid?.() === 0 },
+  () => {
+    const { store, dir } = fresh();
+    store.create({ title: "schema" }, "lead");
+    store.close();
+    const file = join(dir, "work.db");
+    chmodSync(file, 0o000);
+    try {
+      assert.throws(() => new WorkStore(dir, TIMING));
+      assert.deepEqual(
+        readdirSync(dir).filter((name) => name.includes("damaged")),
+        [],
+      );
+    } finally {
+      chmodSync(file, 0o644);
+    }
+    assert.equal(new WorkStore(dir, TIMING).count(), 1);
+  },
+);
+
+test("a text copy with a line that is not an issue gives back the rest", () => {
+  const { store, dir } = fresh();
+  const kept = store.create({ title: "schema" }, "lead");
+  store.close();
+  const copy = join(dir, "issues.jsonl");
+  writeFileSync(copy, `${readFileSync(copy, "utf8")}null\n{"id":"sw-bad","title":"x","status":"done"}\n`);
+  for (const suffix of ["", "-wal", "-shm"]) rmSync(join(dir, `work.db${suffix}`), { force: true });
+  const back = new WorkStore(dir, TIMING);
+  assert.deepEqual(
+    back.all().map((issue) => issue.id),
+    [kept.id],
+  );
+});
+
+test("a seat that launches no one closes nothing, and a tool call's numbers and times are checked", () => {
+  const { store } = fresh();
+  const rules = { busyTimeoutMs: 5000, flushAfterMs: 60_000, staleClaimMinutes: 120, close: POLICY };
+  const peer = { id: "peer-a", owner: false };
+  const lead = { id: "lead", owner: true };
+  const made = work(store, rules, lead, { do: "create", title: "schema", priority: "0" }) as {
+    id: string;
+    priority: number;
+  };
+  assert.equal(made.priority, 0);
+  refuses("VALIDATION_FAILED", () => work(store, rules, lead, { do: "create", title: "x", priority: "high" }));
+  refuses("VALIDATION_FAILED", () => work(store, rules, lead, { do: "create", issues: [null] }));
+  refuses("VALIDATION_FAILED", () => work(store, rules, lead, { do: "create", title: "x", deps: [null] }));
+  refuses("VALIDATION_FAILED", () => work(store, rules, lead, { do: "update", id: made.id, defer_until: "next week" }));
+  refuses("POLICY_VIOLATION", () =>
+    work(store, rules, peer, { do: "close", id: made.id, reason: "schema landed in 4f2a91c, tests green" }),
+  );
+});
+
+test("a write that finds another process writing is refused as one to try again, and goes through once that write ends", () => {
+  const { store: made, dir } = fresh();
+  made.close();
+  const store = new WorkStore(dir, { busyTimeoutMs: 50, flushAfterMs: 60_000 });
+  const other = new DatabaseSync(join(dir, "work.db"));
+  other.exec("BEGIN IMMEDIATE");
+  assert.throws(
+    () => store.create({ title: "waits" }, "lead"),
+    (error: unknown) => error instanceof WorkError && error.code === "DATABASE_LOCKED" && error.retryable,
+  );
+  other.exec("COMMIT");
+  other.close();
+  assert.equal(store.create({ title: "waits" }, "lead").title, "waits");
+  store.close();
 });

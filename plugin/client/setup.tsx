@@ -15,10 +15,9 @@ import {
   tierChoices,
   TIER_ROLES,
   type ModelChoice,
-  type SeatRole,
   type Table,
-  type TierRole,
 } from "../shared/model-choices";
+import { ROOM_PROJECT, ROOM_ROLE, traits } from "../shared/workflow";
 import {
   roomSettings,
   setupInit,
@@ -46,18 +45,20 @@ import {
   type Colors,
   type Inside,
 } from "./kit";
-import { ModelChip, ROLE_LABEL, RoleTree, type Harness } from "./models";
+import { ModelChip, RoleTree, type Harness } from "./models";
 
 type State = RpcOutput<typeof setupState>;
 type Project = State["projects"][number];
 type Choices = Record<string, unknown>;
 
 const STATE_KEY = ["seatwork", "setup.state"];
-const ROOM_ROLES = [...SEAT_ROLES, ...TIER_ROLES] as const;
+const ROOM_ROLES = [...SEAT_ROLES, ...TIER_ROLES];
+/** The room's own seat by name, for the lines that tell where to ask it. */
+const OWN = ROOM_ROLE ? traits(ROOM_ROLE).label : "the room's own seat";
 const WATCHER_DOES = {
   off: "Nothing is read.",
-  shadow: "Reads the turns of Leads and Peers and logs what it finds. Nobody is mailed.",
-  on: "Reads the turns of Leads and Peers. What it finds is mailed to the seat above.",
+  shadow: "Reads the turns of the seats it watches and logs what it finds. Nobody is mailed.",
+  on: "Reads the turns of the seats it watches. What it finds is mailed to the seat above.",
 } as const;
 const MONO = { dataSet: { pmono: "true" }, style: { fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace" } };
 
@@ -148,9 +149,8 @@ export function SetupScreen({ theme, layout, params, open }: PluginScreenProps &
   );
 }
 
-/** A role's place in a table: one seat, or a Peer's or a Lens's models. */
-const rolePart = (table: Table, role: (typeof ROOM_ROLES)[number]) =>
-  role === "peer" || role === "lens" ? table[role] : table.seats[role];
+/** A role's place in a table: one seat, or the models of a role of several. */
+const rolePart = (table: Table, role: string) => (TIER_ROLES.includes(role) ? table[role] : table.seats[role]);
 /** The room's table with what was last applied laid over it: what the room runs on now. */
 const runningTable = (data: State): Table => merge(data.table, data.applied?.models ?? {}) as Table;
 
@@ -353,7 +353,7 @@ function RoomSetup({
       ? []
       : [
           ...ROOM_ROLES.filter((role) => !sameChoices(rolePart(table, role), rolePart(running, role))).map(
-            (role) => `${ROLE_LABEL[role]} ${role === "peer" || role === "lens" ? "models" : "model"}`,
+            (role) => `${traits(role).label} ${TIER_ROLES.includes(role) ? "models" : "model"}`,
           ),
           ...(values.watcher !== applied.watcher ? ["Watcher mode"] : []),
           ...(values.chime !== applied.chime ? ["Chime"] : []),
@@ -371,7 +371,7 @@ function RoomSetup({
         <>
           <Standing tone="idle" title="Not set up yet" sub="Nothing exists before Init." colors={c} />
           <Text style={small(c)}>
-            Init creates the room's folder, its seats and profiles in Paseo, and the hq-seatwork project.
+            Init creates the room's folder, its seats and profiles in Paseo, and the {ROOM_PROJECT} project.
           </Text>
           <Btn label={init.isPending ? "Working…" : "Init"} kind="primary" disabled={busy} onPress={apply} colors={c} />
         </>
@@ -435,8 +435,8 @@ function RoomSetup({
           title="Models"
           sub={
             applied && data.projects.length
-              ? `The room's table. HQ and ${sharing} of ${data.projects.length} projects run on it.`
-              : "The room's table: what each role runs on. HQ and every project without models of its own follow it."
+              ? `The room's table. ${OWN} and ${sharing} of ${data.projects.length} projects run on it.`
+              : `The room's table: what each role runs on. ${OWN} and every project without models of its own follow it.`
           }
           right={fit.narrow ? undefined : <Legend table={table} harnesses={data.harnesses} colors={c} />}
           colors={c}
@@ -530,7 +530,7 @@ function RoomSetup({
             ))}
             {data.projects.length === 0 ? (
               <Text style={{ ...small(c), paddingVertical: 10, paddingHorizontal: 12 }}>
-                No project is in the room yet. Open HQ in the hq-seatwork project and write: set up project X.
+                No project is in the room yet. Open {OWN} in the {ROOM_PROJECT} project and write: set up project X.
               </Text>
             ) : null}
           </View>
@@ -714,9 +714,9 @@ function RoomSetup({
               Remove the room?
             </Text>
             <Text style={small(c)}>
-              Its seats, its profiles and the hq-seatwork project leave Paseo. The room's folder is moved aside with its
-              mail and logs, and with it the notes the room kept in each project's .seatwork folder; it is deleted 30
-              days later. Your projects and their code stay as they are. Archive the room's agents first.
+              Its seats, its profiles and the {ROOM_PROJECT} project leave Paseo. The room's folder is moved aside with
+              its mail and logs, and with it the notes the room kept in each project's .seatwork folder; it is deleted
+              30 days later. Your projects and their code stay as they are. Archive the room's agents first.
             </Text>
             <View style={{ flexDirection: "row", gap: 8 }}>
               <Btn
@@ -807,15 +807,15 @@ function ProjectChanges(props: {
   const own = merge(running, project.models) as Table;
   const items: { key: string; role: string; chip: Inside }[] = [];
   for (const role of roles) {
-    if (role === "peer" || role === "lens") {
+    if (TIER_ROLES.includes(role)) {
       const changed = ((project.models[role] as { tiers?: Record<string, unknown> } | undefined)?.tiers ??
         {}) as Record<string, unknown>;
-      const now = new Map(tierChoices(own, role as TierRole).map((tier) => [tier.label, tier as ModelChoice]));
+      const now = new Map(tierChoices(own, role).map((tier) => [tier.label, tier as ModelChoice]));
       for (const [label, value] of Object.entries(changed)) {
         const tier = now.get(label);
         items.push({
           key: `${role}.${label}`,
-          role: `${ROLE_LABEL[role]} ${label}`,
+          role: `${traits(role).label} ${label}`,
           chip:
             value === null || !tier ? (
               <Chip model="removed" tone="gone" colors={c} />
@@ -827,8 +827,8 @@ function ProjectChanges(props: {
     } else {
       items.push({
         key: role,
-        role: ROLE_LABEL[role],
-        chip: <ModelChip choice={seatChoice(own, role as SeatRole)} harnesses={harnesses} colors={c} />,
+        role: traits(role).label,
+        chip: <ModelChip choice={seatChoice(own, role)} harnesses={harnesses} colors={c} />,
       });
     }
   }
@@ -875,14 +875,15 @@ function ProjectModels({
       <>
         {back}
         <Text style={{ color: c.foregroundMuted }}>
-          {name} is not a project of the room. Open HQ in the hq-seatwork project and write: set up project {name}.
+          {name} is not a project of the room. Open {OWN} in the {ROOM_PROJECT} project and write: set up project {name}
+          .
         </Text>
       </>
     );
   }
   const base = runningTable(data);
   const dirty = !sameChoices(draft, project.models);
-  const roles = changedRoles(draft).map((role) => ROLE_LABEL[role]);
+  const roles = changedRoles(draft).map((role) => traits(role).label);
   const saved = save.data as RpcOutput<typeof setupProject> | undefined;
   const pad = fit.narrow ? 12 : 20;
 

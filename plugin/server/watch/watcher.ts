@@ -1,5 +1,5 @@
 import type { RoomParams, WatcherPolicy } from "../policy";
-import type { Role } from "../orchestration/seats";
+import { reviews, stallParam, traits } from "../../shared/workflow";
 import { fromTemplate, missingLines, parseBrief, type Brief } from "./brief";
 import type { Budget } from "./budget";
 import { Lru } from "./cache";
@@ -14,15 +14,15 @@ import { CREATED_WITH, gate, RULE_ORDER, unqualified, type BriefGap, type Moment
 import type { ScanFinding, ScanLog, ScanRecord } from "./scanlog";
 import { buildRequest, fitting } from "./state";
 
-/** Reads the turns of Lead and Peer seats, turns facts into findings, and tells the seat above. */
+/** Reads the turns of the watched seats, turns facts into findings, and tells the seat above. */
 
 export interface SeatView {
   agentId: string;
-  role: Role;
+  role: string;
   title: string | null;
   cwd: string;
   parent: string | null;
-  parentRole: Role | null;
+  parentRole: string | null;
 }
 
 export interface TimelineView {
@@ -83,11 +83,10 @@ interface Watched {
 const URGENT: ReadonlySet<RuleId> = new Set(["irreversible", "outside-project"]);
 /** A brief's gap is its writer's doing: it is told beside the turn's one finding, not in its place. */
 const ABOUT_BRIEF: ReadonlySet<RuleId> = new Set(["incomplete-brief"]);
-const READ_ONLY_TITLE = /\[(?:peer:(?:review|research)|lens)\b/i;
 const MAIL = /^\s*<mail id="/;
 const isPrompt = (entry: TimelineInput) => (entry.item as { type?: unknown } | null)?.type === "user_message";
 
-/** What the brief that opened a Peer's turn lacks: its creation prompt, or a brief in the mail that started it. */
+/** What the brief that opened a briefed seat's turn lacks: its creation prompt, or a brief in the mail that started it. */
 function briefGapOf(
   entries: readonly TimelineInput[],
   received: readonly string[],
@@ -97,7 +96,7 @@ function briefGapOf(
   const last = received.at(-1);
   if (last === undefined) return null;
   if (!MAIL.test(last)) {
-    // a Peer a Lead created has one prompt until its first mail: the brief, whatever its shape
+    // a seat created on a brief has one prompt until its first mail: the brief, whatever its shape
     const lines = received.length === 1 ? missingLines(parseBrief(last, cwd)) : [];
     return lines.length > 0 ? { lines } : null;
   }
@@ -115,7 +114,7 @@ function briefGapOf(
 export class Watcher {
   private readonly seats = new Map<string, Watched>();
   private readonly answers = new Lru<Record<string, DecisionAnswer>>(256);
-  /** When and where each Peer had a turn: a shared tree tells nothing about one of them. */
+  /** When and where each writing seat had a turn: a shared tree tells nothing about one of them. */
   private readonly spans = new Map<string, { cwd: string; from: number; to: number | null }[]>();
 
   constructor(private readonly deps: WatcherDeps) {}
@@ -137,7 +136,7 @@ export class Watcher {
   }
 
   turnStarted(seat: SeatView, turnId: string | null): void {
-    if (seat.role === "peer") {
+    if (traits(seat.role).writes) {
       const spans = [...(this.spans.get(seat.agentId) ?? []), { cwd: seat.cwd, from: this.deps.now(), to: null }];
       this.spans.set(seat.agentId, spans.slice(-SPANS_KEPT));
     }
@@ -157,7 +156,7 @@ export class Watcher {
     watched.ending = watched.turn ?? watched.ending;
     const turn = (watched.turn = this.open(seat, turnId));
     this.seats.set(seat.agentId, watched);
-    // a brief that lacks a line is worth knowing while the Peer has barely begun
+    // a brief that lacks a line is worth knowing while the seat has barely begun
     void this.queue(watched, turn, "start");
   }
 
@@ -201,7 +200,7 @@ export class Watcher {
     if (open) open.to = this.deps.now();
   }
 
-  /** Whether another Peer had a turn in the same directory at any time since `from`. */
+  /** Whether another writing seat had a turn in the same directory at any time since `from`. */
   private sharedSince(seat: SeatView, from: number): boolean {
     for (const [agentId, spans] of this.spans)
       if (agentId !== seat.agentId && spans.some((span) => span.cwd === seat.cwd && (span.to ?? Infinity) >= from))
@@ -228,10 +227,8 @@ export class Watcher {
   }
 
   private silentMinutes(seat: SeatView): number {
-    if (seat.role === "lead") return this.deps.params.leadStallMinutes;
-    return READ_ONLY_TITLE.test(seat.title ?? "")
-      ? this.deps.params.reviewStallMinutes
-      : this.deps.params.peerStallMinutes;
+    const minutes = Number(this.deps.params[stallParam(seat.role, seat.title) ?? ""]);
+    return minutes > 0 ? minutes : Infinity;
   }
 
   private async scan(watched: Watched, turn: Turn, moment: Moment): Promise<void> {
@@ -264,9 +261,11 @@ export class Watcher {
       briefAt = index;
     });
     const briefGap =
-      seat.role === "peer" && seat.parentRole === "lead" ? briefGapOf(entries, received, turn.id, seat.cwd) : null;
+      traits(seat.role).briefed && traits(seat.parentRole ?? undefined).briefs
+        ? briefGapOf(entries, received, turn.id, seat.cwd)
+        : null;
     const before = await turn.before;
-    // git shows what changed, not who: it speaks for a Peer that had the tree to itself
+    // git shows what changed, not who: it speaks for a seat that had the tree to itself
     const alone = !this.sharedSince(seat, turn.startedAt);
     const after = before && alone && moment === "end" ? await this.deps.snapshot(seat.cwd).catch(() => null) : null;
     const changed = before && after ? await changedBetween(before, after) : null;
@@ -286,7 +285,7 @@ export class Watcher {
     });
     // the history read is a window: what a seat loaded before it is kept from scan to scan
     for (const skill of facts.skillsSoFar) watched.skills.add(skill);
-    const writes = seat.role === "peer" && !READ_ONLY_TITLE.test(seat.title ?? "") && watched.brief?.readOnly !== true;
+    const writes = traits(seat.role).writes && !reviews(seat.role, seat.title) && watched.brief?.readOnly !== true;
     const silent = this.silentMinutes(seat);
     const result = gate({
       facts,

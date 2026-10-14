@@ -1,51 +1,67 @@
-import type { Role } from "./seats";
+import { readJson, writeJson } from "../persisted";
+import { note, rotateNote } from "../../shared/workflow";
+import { onlyAfterCandidate, verdictOf } from "../signals";
 
-/** Where a Peer's task stands: the candidates it handed in and the rejections they met since its last ACCEPT. */
+type Task = { pending: boolean; rejected: number; reread?: boolean };
+
+/** Where a task stands: its candidates and the rejections they met since its last ACCEPT. */
 export class Rounds {
-  private readonly tasks = new Map<string, { pending: boolean; rejected: number; reread?: boolean }>();
+  private readonly tasks = new Map<string, Task>();
 
-  /** Whether this candidate still owes its pass with fresh eyes; the answer yes is given once per candidate. */
-  owesFreshEyes(peer: string): boolean {
-    const task = this.tasks.get(peer) ?? { pending: false, rejected: 0 };
+  constructor(private readonly file: string) {
+    for (const [key, task] of Object.entries(readJson<Record<string, Task>>(file, {}))) this.tasks.set(key, task);
+  }
+
+  private save(): void {
+    writeJson(this.file, Object.fromEntries(this.tasks));
+  }
+
+  /** Whether this candidate still owes its fresh-eyes pass; yes is said once per candidate. */
+  owesFreshEyes(key: string): boolean {
+    const task = this.tasks.get(key) ?? { pending: false, rejected: 0 };
     if (task.reread) return false;
     task.reread = true;
-    this.tasks.set(peer, task);
+    this.tasks.set(key, task);
+    this.save();
     return true;
   }
 
-  /** A candidate went up from this Peer; returns the rejections its task has met so far. */
-  handedIn(peer: string): number {
-    const task = this.tasks.get(peer) ?? { pending: false, rejected: 0 };
+  /** A candidate of this task went up; returns the rejections its task has met so far. */
+  handedIn(key: string): number {
+    const task = this.tasks.get(key) ?? { pending: false, rejected: 0 };
     task.pending = true;
-    this.tasks.set(peer, task);
+    this.tasks.set(key, task);
+    this.save();
     return task.rejected;
   }
 
-  /** The Owner's mail to this Peer; returns the rejections so far, counting this mail when it is one. */
-  answered(peer: string, opening: string): number {
-    if (opening === "ACCEPT" || opening === "DEFER") {
-      this.tasks.delete(peer);
+  /** The Owner's mail on this task; returns the rejections so far, counting this mail when it is one. */
+  answered(key: string, opening: string): number {
+    const verdict = verdictOf(opening);
+    if (verdict === "accepted" || verdict === "deferred") {
+      if (this.tasks.delete(key)) this.save();
       return 0;
     }
-    const task = this.tasks.get(peer) ?? { pending: false, rejected: 0 };
+    const task = this.tasks.get(key) ?? { pending: false, rejected: 0 };
     // a revised brief that answers a candidate sends it back, whatever its subject calls itself
-    const rejects = opening === "REJECT" || (opening === "REVISED BRIEF" && task.pending);
+    const rejects = verdict === "returned" && (task.pending || !onlyAfterCandidate(opening));
     if (rejects) {
       task.rejected += 1;
       task.pending = false;
       // the repair is a new candidate: it owes its own pass
       task.reread = false;
-      this.tasks.set(peer, task);
+      this.tasks.set(key, task);
+      this.save();
     }
     return task.rejected;
   }
 
-  rejected(peer: string): number {
-    return this.tasks.get(peer)?.rejected ?? 0;
+  rejected(key: string): number {
+    return this.tasks.get(key)?.rejected ?? 0;
   }
 
-  forget(peer: string): void {
-    this.tasks.delete(peer);
+  forget(key: string): void {
+    if (this.tasks.delete(key)) this.save();
   }
 
   /** A successor takes the task over as it stands. */
@@ -54,39 +70,33 @@ export class Rounds {
     if (!task) return;
     this.tasks.delete(from);
     this.tasks.set(to, task);
+    this.save();
   }
 }
 
 export interface Standing {
-  role: Role;
+  role: string;
   candidate: boolean;
   rejected: number;
   contextTokens: number | null;
   rotateAtTokens: number;
 }
 
-/** What the room writes under a report for the seat above: the task's round, and a context past the rotation line. */
+/** The room's line under a report: the task's round, and a context past the rotation mark. */
 export function ownerNote(standing: Standing): string | null {
   const lines: string[] = [];
-  if (standing.candidate && standing.rejected === 1)
-    lines.push(
-      "Second candidate of this task: one rejection since its last ACCEPT. Should this one fail too, the repair goes to a new Peer with a fresh context (its brief: the defects as failing tests, this candidate's sha, what was tried), and a defect of a kind the first review did not report puts the design in question: `lens` on the design, or DECISION_NEEDED, before a writer continues.",
-    );
+  if (standing.candidate && standing.rejected === 1) lines.push(note("secondCandidate", {}));
   if (standing.candidate && standing.rejected >= 2)
-    lines.push(
-      `Candidate ${standing.rejected + 1} of this task: ${standing.rejected} rejections since its last ACCEPT. One more rejection is your Owner's call (accept-candidate, step 5): DECISION_NEEDED with what each round found and what one more costs.`,
-    );
+    lines.push(note("lastCandidate", { candidate: standing.rejected + 1, rejected: standing.rejected }));
   if (standing.contextTokens !== null && standing.contextTokens >= standing.rotateAtTokens) {
     const held = `holds ${Math.round(standing.contextTokens / 1000)}K tokens of context and reads them again at every step`;
-    if (standing.role === "lead")
-      lines.push(`This Lead ${held}. Hand its workstream to a successor at its next quiet point (lead-handoff).`);
-    else if (standing.role === "peer")
-      lines.push(`This Peer ${held}. Its next task, or its next repair, goes to a new Peer.`);
+    const line = rotateNote(standing.role, held);
+    if (line) lines.push(line);
   }
   return lines.length > 0 ? lines.map((line) => `[room] ${line}`).join("\n") : null;
 }
 
-/** What a writing Peer reads when its first hand-in of a candidate comes back for one pass with fresh eyes. */
+/** What a writing seat reads when its first hand-in comes back for a fresh-eyes pass. */
 export const FRESH_EYES = [
   "Your candidate has not gone to your Owner yet: first one pass over it with fresh eyes.",
   "Read again everything you wrote or changed for this task as if another seat had written it and you were hunting its defects:",

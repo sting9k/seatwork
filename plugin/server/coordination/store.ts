@@ -1,7 +1,8 @@
 import { join } from "node:path";
 import config from "../../shared/mail.json";
 import { SQL_DIR } from "../paths";
-import { Sqlite, storeFolder, type Param, type Row, type SqliteFailure } from "../sqlite";
+import { Sqlite, keptOutOfGit, type Row, type SqliteFailure } from "../sqlite";
+import { noteSettled, type Settled } from "./archive";
 
 /** A project's mail in SQLite: messages, how each recipient stands with them, what happened. */
 
@@ -10,8 +11,7 @@ export type Priority = "blocking" | "action" | "fyi";
 export type Kind = "to" | "cc" | "team";
 export type State = "kept" | "queued" | "sending" | "delivered" | "read" | "bounced" | "replaced" | "withdrawn";
 
-export const OPEN_STATES = config.states.open as readonly State[];
-export const SETTLED_STATES = config.states.settled as readonly State[];
+export const SETTLED_STATES = config.settled as readonly State[];
 
 export interface Message {
   id: number;
@@ -60,20 +60,11 @@ export type NewDelivery = Pick<Delivery, "seat" | "kind" | "priority"> &
 /** One line of what was posted, as room stats and the watcher's calibration read it. */
 export interface PostedLine {
   at: string;
-  kind: "queued";
   id: string;
   from: string;
   to: string;
   priority: string;
   subject: string;
-}
-
-export interface MailEvent {
-  seq: number;
-  at: string;
-  kind: string;
-  messageId: number | null;
-  seat: string | null;
 }
 
 export interface Hit {
@@ -99,6 +90,8 @@ const MESSAGE = `m.id, m.at, m.thread, m.reply_to, m.sender, m.sender_role, m.si
   m.file, m.files, m.needs, m.why, m.answered_at, m.answered_by`;
 const DELIVERY = `d.seat, d.kind, d.priority, d.state, d.quiet, d.progress, d.urgent, d.round, d.held_until,
   d.delivered_at, d.how`;
+/** A message some recipient still has or will have. */
+const LIVE = `EXISTS (SELECT 1 FROM deliveries l WHERE l.message_id = m.id AND l.state NOT IN ('replaced', 'withdrawn', 'bounced'))`;
 /** The seats a reader may see mail of, handed over as one JSON list. */
 const SEEN_BY = `(m.sender IN (SELECT value FROM json_each(?1))
   OR EXISTS (SELECT 1 FROM deliveries s WHERE s.message_id = m.id AND s.seat IN (SELECT value FROM json_each(?1))))`;
@@ -143,19 +136,18 @@ function ftsQuery(text: string): string {
   return words.map((word, index) => `"${word}"${index === words.length - 1 ? "*" : ""}`).join(" ");
 }
 
-/** The folder made, and the database file in it. */
 function databaseIn(dir: string): string {
-  return join(storeFolder(dir), "mail.db");
+  return join(keptOutOfGit(dir), "mail.db");
 }
 
 export class MailStore extends Sqlite {
   constructor(
-    dir: string,
+    readonly folder: string,
     busyTimeoutMs: number,
     private readonly now: () => Date = () => new Date(),
     scripts: string = join(SQL_DIR, "mail"),
   ) {
-    super(databaseIn(dir), {
+    super(databaseIn(folder), {
       busyTimeoutMs,
       scripts,
       fail: (code, message) => new MailStoreError(code, message),
@@ -169,10 +161,10 @@ export class MailStore extends Sqlite {
   }
 
   /** Writes one line of what happened; every caller is inside a write. */
-  private event(kind: string, messageId: number | null, seat: string | null, detail?: unknown): void {
+  private event(kind: string, messageId: number | null, seat: string | null, detail?: unknown, at?: string): void {
     this.run(
       "INSERT INTO events (at, kind, message_id, seat, detail) VALUES (?, ?, ?, ?, ?)",
-      this.stamp(),
+      at ?? this.stamp(),
       kind,
       messageId,
       seat,
@@ -217,15 +209,16 @@ export class MailStore extends Sqlite {
   }
 
   /** Puts back mail read from its files; what is younger than `again` is sent once more. */
-  restore(entries: readonly { message: Message; deliveries: readonly NewDelivery[] }[], again: string): number {
+  restore(entries: readonly { message: Message; deliveries: readonly NewDelivery[] }[], settled: Settled): number {
     return this.transaction("write", () => {
       for (const { message, deliveries } of entries) {
         this.run(
           `INSERT INTO messages (id, at, thread, reply_to, sender, sender_role, signal, subject, body, file, files,
-             needs, why, fingerprint, answered_at, answered_by) VALUES (?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, '', ?, ?)`,
+             needs, why, fingerprint, answered_at, answered_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '', ?, ?)`,
           message.id,
           message.at,
           message.thread,
+          message.replyTo ?? null,
           message.sender,
           message.senderRole,
           message.signal,
@@ -235,8 +228,8 @@ export class MailStore extends Sqlite {
           JSON.stringify(message.files ?? []),
           message.needs,
           message.why ?? "",
-          message.answeredAt ?? null,
-          message.answeredBy ?? null,
+          settled.answers.get(message.id)?.at ?? message.answeredAt ?? null,
+          settled.answers.get(message.id)?.by ?? message.answeredBy ?? null,
         );
         this.run(
           "INSERT INTO search (rowid, subject, body) VALUES (?, ?, ?)",
@@ -244,16 +237,28 @@ export class MailStore extends Sqlite {
           message.subject,
           message.body,
         );
-        for (const to of deliveries)
+        for (const to of deliveries) {
+          // settled in the journal stays settled; any other is sent again as a possible repeat
+          const state = settled.states.get(`${message.id}|${to.seat}`) ?? "sending";
           this.run(
-            "INSERT INTO deliveries (message_id, seat, kind, priority, state, delivered_at) VALUES (?, ?, ?, ?, ?, ?)",
+            "INSERT INTO deliveries (message_id, seat, kind, priority, state, quiet, delivered_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
             message.id,
             to.seat,
             to.kind,
             to.priority,
-            message.at >= again ? "sending" : "delivered",
-            message.at >= again ? null : message.at,
+            state,
+            to.quiet ? 1 : 0,
+            state === "sending" ? null : message.at,
           );
+          // the record of what was posted comes back with the mail, at the mail's own time
+          this.event(
+            "posted",
+            message.id,
+            to.seat,
+            { from: message.sender, to: to.seat, subject: message.subject, priority: to.priority },
+            message.at,
+          );
+        }
       }
       this.event("restored", null, null, { messages: entries.length });
       return entries.length;
@@ -295,7 +300,7 @@ export class MailStore extends Sqlite {
   /** The same text from the same sender since `since`: a retry, not a second mail. */
   duplicate(sender: string, fingerprint: string, since: string): Message | null {
     const row = this.row(
-      `SELECT ${MESSAGE} FROM messages m WHERE m.sender = ? AND m.fingerprint = ? AND m.at >= ? ORDER BY m.id LIMIT 1`,
+      `SELECT ${MESSAGE} FROM messages m WHERE m.sender = ? AND m.fingerprint = ? AND m.at >= ? AND ${LIVE} ORDER BY m.id LIMIT 1`,
       sender,
       fingerprint,
       since,
@@ -306,7 +311,7 @@ export class MailStore extends Sqlite {
   /** What a sender posted under a key of its own since `since`, with its text's print. */
   byKey(sender: string, key: string, since: string): { message: Message; fingerprint: string } | null {
     const row = this.row(
-      `SELECT ${MESSAGE}, m.fingerprint FROM messages m WHERE m.sender = ? AND m.key = ? AND m.at >= ?
+      `SELECT ${MESSAGE}, m.fingerprint FROM messages m WHERE m.sender = ? AND m.key = ? AND m.at >= ? AND ${LIVE}
        ORDER BY m.id LIMIT 1`,
       sender,
       key,
@@ -324,12 +329,69 @@ export class MailStore extends Sqlite {
     ).map(toHeld);
   }
 
-  /** How many mails wait for each seat that has any. */
-  waiting(): Map<string, number> {
-    const rows = this.rows<{ seat: string; n: number }>(
-      "SELECT seat, count(*) AS n FROM deliveries WHERE state IN ('queued', 'sending') GROUP BY seat",
+  /** How many mails wait for each seat that has any, and since when the oldest does. */
+  waiting(): Map<string, { count: number; since: string }> {
+    const rows = this.rows<{ seat: string; n: number; since: string }>(
+      `SELECT d.seat, count(*) AS n, min(m.at) AS since FROM deliveries d CROSS JOIN messages m ON m.id = d.message_id
+       WHERE d.state IN ('queued', 'sending') GROUP BY d.seat`,
     );
-    return new Map(rows.map((row) => [row.seat, Number(row.n)]));
+    return new Map(rows.map((row) => [row.seat, { count: Number(row.n), since: row.since }]));
+  }
+
+  /** Withdraws as expired mail sent only to be read and unread before `before`; never an ask. */
+  expire(before: string): number {
+    const stale = this.rows<{ message_id: number; seat: string }>(
+      `SELECT d.message_id, d.seat FROM deliveries d CROSS JOIN messages m ON m.id = d.message_id
+       WHERE d.state = 'queued' AND d.quiet = 1 AND m.needs = 'nothing' AND m.at < ?`,
+      before,
+    );
+    for (const { message_id, seat } of stale) this.mark(seat, [message_id], "withdrawn", "expired");
+    return stale.length;
+  }
+
+  /** The threads a seat wrote or was written in, newest first: their last mail and how many they hold. */
+  threadsOf(seat: string, limit: number): { thread: string; last: Message; count: number }[] {
+    return this.rows<{ thread: string; last: number; n: number }>(
+      `SELECT m.thread, max(m.id) AS last, count(*) AS n FROM messages m
+       WHERE m.sender = ? OR EXISTS (SELECT 1 FROM deliveries d WHERE d.message_id = m.id AND d.seat = ?)
+       GROUP BY m.thread ORDER BY last DESC LIMIT ?`,
+      seat,
+      seat,
+      limit,
+    ).flatMap((row) => {
+      const last = this.get(Number(row.last));
+      return last ? [{ thread: row.thread, last, count: Number(row.n) }] : [];
+    });
+  }
+
+  /** Asks answered since `since`: how long each took, in minutes, and how many are still open. */
+  replies(since: string): { minutes: number[]; open: number } {
+    const answered = this.rows<{ at: string; answered_at: string }>(
+      "SELECT at, answered_at FROM messages WHERE needs <> 'nothing' AND answered_at IS NOT NULL AND at >= ?",
+      since,
+    );
+    const open = this.row<{ n: number }>(
+      `SELECT count(*) AS n FROM messages m WHERE m.needs <> 'nothing' AND m.answered_at IS NULL AND m.at >= ? AND ${LIVE}`,
+      since,
+    );
+    return {
+      minutes: answered.map((row) => (Date.parse(row.answered_at) - Date.parse(row.at)) / 60_000),
+      open: Number(open?.n ?? 0),
+    };
+  }
+
+  /** The refusals of the mail tools since `since`, by code. */
+  refusals(since: string): Map<string, number> {
+    const rows = this.rows<{ detail: string }>(
+      "SELECT detail FROM events INDEXED BY events_by_kind WHERE kind = 'refused' AND at >= ?",
+      since,
+    );
+    const counts = new Map<string, number>();
+    for (const row of rows) {
+      const code = String((JSON.parse(row.detail) as { code?: unknown }).code ?? "?");
+      counts.set(code, (counts.get(code) ?? 0) + 1);
+    }
+    return counts;
   }
 
   /** The reports seats wrote before their turn ended, one per seat that has one. */
@@ -360,6 +422,7 @@ export class MailStore extends Sqlite {
           state,
         ).changes;
         this.event(how ? `${state}-${how}` : state, id, seat);
+        if (settled) noteSettled(this.folder, { id, seat, state, at: this.stamp() });
       }
       return changed;
     });
@@ -433,7 +496,9 @@ export class MailStore extends Sqlite {
   readdress(from: string, to: string): number {
     return this.transaction("write", () => {
       const moved = this.run(
-        `UPDATE deliveries SET seat = ?2 WHERE seat = ?1 AND state IN ('queued', 'kept')
+        `UPDATE deliveries SET seat = ?2 WHERE seat = ?1
+           AND (state IN ('queued', 'kept', 'sending') OR (state IN ('delivered', 'read') AND kind = 'to' AND EXISTS (
+             SELECT 1 FROM messages m WHERE m.id = deliveries.message_id AND m.needs <> 'nothing' AND m.answered_at IS NULL)))
            AND NOT EXISTS (SELECT 1 FROM deliveries o WHERE o.message_id = deliveries.message_id AND o.seat = ?2)`,
         from,
         to,
@@ -466,8 +531,28 @@ export class MailStore extends Sqlite {
         by,
         ask,
       ).changes;
-      if (changed > 0) this.event("answered", ask, null, { by });
+      if (changed > 0) {
+        this.event("answered", ask, null, { by });
+        noteSettled(this.folder, { id: ask, answeredBy: by, at: this.stamp() });
+      }
       return changed > 0;
+    });
+  }
+
+  /** Settles the open asks of `sender` that open with `signal`; returns how many. */
+  closeAsks(sender: string, signal: string): number {
+    return this.transaction("write", () => {
+      const open = this.rows<{ id: number }>(
+        "SELECT id FROM messages WHERE sender = ? AND signal = ? AND needs <> 'nothing' AND answered_at IS NULL",
+        sender,
+        signal,
+      );
+      for (const { id } of open) {
+        this.run("UPDATE messages SET answered_at = ? WHERE id = ?", this.stamp(), id);
+        this.event("answered", id, null, { by: null });
+        noteSettled(this.folder, { id, answeredBy: null, at: this.stamp() });
+      }
+      return open.length;
     });
   }
 
@@ -485,7 +570,7 @@ export class MailStore extends Sqlite {
   owedTo(seat: string): Message[] {
     return this.rows(
       `SELECT ${MESSAGE} FROM messages m INDEXED BY messages_owed
-       WHERE m.sender = ? AND m.needs <> 'nothing' AND m.answered_at IS NULL ORDER BY m.id`,
+       WHERE m.sender = ? AND m.needs <> 'nothing' AND m.answered_at IS NULL AND ${LIVE} ORDER BY m.id`,
       seat,
     ).map(toMessage);
   }
@@ -565,25 +650,19 @@ export class MailStore extends Sqlite {
       since,
     ).map((row) => {
       const detail = JSON.parse(row.detail) as { from: string; to: string; subject: string; priority: string };
-      return { at: row.at, kind: "queued", id: String(row.message_id), ...detail };
+      return { at: row.at, id: String(row.message_id), ...detail };
     });
   }
 
-  /** What happened after a place in the record: a feed a monitor reads from where it stopped. */
-  events(after: number, limit: number): MailEvent[] {
-    return this.rows<MailEvent>(
-      "SELECT seq, at, kind, message_id AS messageId, seat FROM events WHERE seq > ? ORDER BY seq LIMIT ?",
-      after,
-      limit,
-    );
-  }
-
   /** Drops what is finished and older than `before`; returns the files of those messages. */
-  prune(before: string, stays: (subject: string) => boolean): { messages: number; files: string[] } {
+  prune(
+    before: string,
+    stays: (subject: string) => boolean,
+  ): { messages: number; files: string[]; threads: string[]; ids: Set<number> } {
     return this.transaction("write", () => {
-      const gone = this.rows<{ id: number; file: string | null }>(
-        `SELECT m.id, m.file FROM messages m WHERE m.at < ?
-           AND (m.needs = 'nothing' OR m.answered_at IS NOT NULL)
+      const gone = this.rows<{ id: number; file: string | null; thread: string }>(
+        `SELECT m.id, m.file, m.thread FROM messages m WHERE m.at < ?
+           AND (m.needs = 'nothing' OR m.answered_at IS NOT NULL OR NOT ${LIVE})
            AND NOT EXISTS (SELECT 1 FROM deliveries d WHERE d.message_id = m.id AND d.state IN ('kept', 'queued', 'sending'))`,
         before,
       );
@@ -600,14 +679,11 @@ export class MailStore extends Sqlite {
           row.kind === "posted" && row.detail ? String((JSON.parse(row.detail) as Row).subject ?? "") : "";
         if (!subject || !stays(subject)) this.run("DELETE FROM events WHERE seq = ?", row.seq);
       }
-      return { messages: gone.length, files: gone.flatMap((row) => (row.file ? [row.file] : [])) };
+      const threads = [...new Set(gone.map((row) => row.thread))].filter(
+        (thread) => this.row("SELECT 1 AS found FROM messages WHERE thread = ? LIMIT 1", thread) === undefined,
+      );
+      const files = gone.flatMap((row) => (row.file ? [row.file] : []));
+      return { messages: gone.length, files, threads, ids: new Set(gone.map((row) => row.id)) };
     });
-  }
-
-  /** How SQLite will run one of this store's lookups, for the test that each has its index. */
-  explain(sql: string, ...params: Param[]): string {
-    return (this.db.prepare(`EXPLAIN QUERY PLAN ${sql}`).all(...params) as { detail: string }[])
-      .map((row) => row.detail)
-      .join("\n");
   }
 }

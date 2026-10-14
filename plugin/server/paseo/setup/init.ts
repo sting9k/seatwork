@@ -1,6 +1,6 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { parseSeat } from "../seats";
+import { parseSeat } from "../../orchestration/seats";
 import { planRoom, type Catalog, type RoomPlan, type Setup } from "./plan";
 import { readSetup, stampVersion, writeRoomHome } from "./room-home";
 

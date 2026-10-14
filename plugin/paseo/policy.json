@@ -254,12 +254,13 @@
     "bundledSkills": "none"
   },
   "mail": {
-    "$comment": "The room's MCP server (seatwork_mail, seatwork_inbox) and delivery rules. A project's mail is kept in <project>/.seatwork/.mail/: mail.db, a file per mail, a file per thread; mail of a seat in no project is kept in the room home. Seats never use send_agent_prompt; the plugin delivers each mail and interrupts only for a STOP order. A CANDIDATE, REVIEW or DONE to a parent waits for the sender's turn end and is its one report. Starting no turn, read with the next mail: an ACK; a copy (cc); a mail to the team; a DONE repeated after mail that asked nothing; a Lead's STATUS after its first (only the newest waits); a HOLD or NOTED asking nothing of a Peer under review; the bounce of a mail that asked nothing. gatherReviews: the read-only seats one Owner turn launches (Lens, review and research Peers, scouts) are one round: their REVIEWs wait for the last one, or room.params.reviewStallMinutes, and reach the Owner in one turn. quietChars: how much of a mail that starts no turn is shown; the rest is in its file. dedupeSeconds: the same text from the same sender within this long is one mail. keepDays (optional): finished mail older than this is cleared by GC; without it, as long as logs are kept.",
+    "$comment": "The room's MCP server (seatwork_mail, seatwork_inbox) and delivery rules. A project's mail is kept in <project>/.seatwork/.mail/: mail.db, a file per mail, a file per thread; mail of a seat in no project is kept in the room home. Seats never use send_agent_prompt; the plugin delivers each mail and interrupts only for a STOP order. A CANDIDATE, REVIEW or DONE to a parent waits for the sender's turn end and is its one report. Starting no turn, read with the next mail: an ACK; a copy (cc); a mail to the team; a DONE repeated after mail that asked nothing; a Lead's STATUS after its first (only the newest waits); a HOLD or NOTED asking nothing of a Peer under review; the bounce of a mail that asked nothing. gatherReviews: the read-only seats one Owner turn launches (Lens, review and research Peers, scouts) are one round: their REVIEWs wait for the last one, or room.params.reviewStallMinutes, and reach the Owner in one turn. quietChars: how much of a mail that starts no turn is shown; the rest is in its file. dedupeSeconds: the same text from the same sender within this long is one mail. keepDays (optional): finished mail older than this is cleared by GC; without it, as long as logs are kept. expireUnreadDays (optional): mail that asked nothing and started no turn, still unread after this long, is withdrawn as expired; an ask never is.",
     "port": 47611,
     "holdFyiWhileRunning": true,
     "gatherReviews": true,
     "quietChars": 600,
     "dedupeSeconds": 300,
+    "expireUnreadDays": 2,
     "midTurn": {
       "claude": "hold",
       "codex": "hold",
@@ -339,46 +340,6 @@
     "calibration": { "labelWindowMinutes": 60, "minLabels": 100, "minAuroc": 0.75, "maxFalseRaiseRate": 0.05 }
   },
   "room": {
-    "$comment": "routes: who may mail whom; spawn: who may create whom. The plugin checks both, against mistakes: no security boundary, every seat runs as the same user. Nothing goes up from a Supervisor to hq (turn ends, permissions, GC notices, mail); hq looks at the room and sends down. role:spec in spawn allows that specialization only (supervisor: peer:research). Mail off the table or outside the tree is refused; a seat created outside spawn is archived and its parent told, though its first prompt may have started.",
-    "routes": {
-      "hq>supervisor": true,
-      "supervisor>hq": false,
-      "supervisor>lead": true,
-      "lead>supervisor": true,
-      "lead>peer": true,
-      "peer>lead": true,
-      "supervisor>peer": true,
-      "peer>supervisor": true,
-      "hq>lead": false,
-      "hq>peer": false,
-      "lead>lead": false,
-      "peer>peer": false,
-      "supervisor>supervisor": false,
-      "hq>hq": false,
-      "lead>lens": true,
-      "lens>lead": true,
-      "supervisor>lens": false,
-      "lens>supervisor": false,
-      "hq>lens": false,
-      "peer>lens": false,
-      "lens>peer": false,
-      "lens>lens": false
-    },
-    "spawn": {
-      "hq": [
-        "supervisor"
-      ],
-      "supervisor": [
-        "lead",
-        "peer:research"
-      ],
-      "lead": [
-        "peer",
-        "lens"
-      ],
-      "peer": [],
-      "lens": []
-    },
     "$comment_params": "Quoted by role prompts as {{placeholders}}; change them here, never in a prompt. heartbeatCron: the Supervisor's beat; Lead reports that ask or close already wake it, so it only catches what slipped between. mailChars: how much of a mail's body a seat is shown; the rest is in the mail's file, whose path the mail gives. peerStallMinutes: a Peer silent this long with nothing pending gets a status check; its turns take minutes. reviewStallMinutes: longer, for review, research and lens seats, which read long before writing. leadStallMinutes: a Lead silent this long with no running Peer or pending permission. readBudgetTokens: reading per Peer task before the Lead must split it; ~80k tokens (~320 KB of source) is what a default-tier model reasons over well. cheapReadBudgetTokens: the same for the cheap tier, which loses the thread sooner. rotateAtTokens: a Lead or Peer past this is named with its size to the seat above under its next report; each step rereads the whole context, so its next task goes to a fresh seat.",
     "params": {
       "heartbeatCron": "*/30 * * * *",
@@ -396,13 +357,17 @@
     },
     "$comment_work": "The work store in <project>/.seatwork/.work/ (work.db, with issues.jsonl as its text copy). busyTimeoutMs: a write waits this long on another process's, then fails as DATABASE_LOCKED. flushAfterMs: the text copy is written once per burst of writes, this long after the first. staleClaimMinutes: an issue in progress untouched this long shows in the graph's alerts. close.minReasonChars: a close says what was done and its commit or evidence. close.forbidSelfClose: an issue's holder cannot close it; its Owner does. A project's own .seatwork/.work/policy.json overrides any of these.",
     "work": {
-      "busyTimeoutMs": 30000,
+      "busyTimeoutMs": 5000,
       "flushAfterMs": 250,
       "staleClaimMinutes": 120,
       "close": {
         "minReasonChars": 20,
         "forbidSelfClose": true
       }
+    },
+    "$comment_rotation": "answerMinutes: a seat asked for its handoff (seatwork_rotate) that has not answered after this long stays as it is, and the asker is told.",
+    "rotation": {
+      "answerMinutes": 120
     },
     "$comment_recovery": "A failed turn, before anyone is told. A service error (anything but a quota, an account problem or a refused prompt) is retried after delaysSeconds, once per entry: the seat gets a short note and continues. A quota is waited out until the time its message names, else limitedMinutes at a time, limitedMaxHours at most; those waits use up no try. An account, a refused prompt, and a seat out of tries go to its Owner as FAILED.",
     "recovery": {

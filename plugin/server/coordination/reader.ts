@@ -1,7 +1,8 @@
 import { MailError } from "./address";
 import { threadFile } from "./archive";
 import type { MailEngine } from "./engine";
-import { digest, envelope, line } from "./envelope";
+import { clock, digest, envelope, line } from "./envelope";
+import type { Hit } from "./store";
 
 /** A seat's mailbox as it asks to see it: what waits, one mail, a thread, sent, owed, a search. */
 
@@ -15,6 +16,7 @@ export interface InboxArgs {
   limit?: unknown;
   bodies?: unknown;
   peek?: unknown;
+  project?: unknown;
 }
 
 const VIEWS = ["new", "all", "sent", "owed", "thread", "search"] as const;
@@ -29,6 +31,9 @@ export function owedLine(engine: MailEngine, me: string, now: number): string {
   const list = owed.slice(0, 5).map((ask) => `#${ask.id} (${ask.signal}, ${minutes(ask.at, now)} min)`);
   return `[room] you owe ${owed.length === 1 ? "an answer" : `${owed.length} answers`}: ${list.join(", ")}${owed.length > 5 ? ", …" : ""}. Answer with reply_to.`;
 }
+
+/** One search hit as a line: id, time, sender, subject, the words around the match. */
+const hitLine = (hit: Hit, from: string) => `#${hit.id} ${clock(hit.at)} ${from} · ${hit.subject} · ${hit.snippet}`;
 
 export function inbox(engine: MailEngine, me: string, args: InboxArgs, now: number): string {
   const store = engine.storeOf(me, false);
@@ -46,10 +51,12 @@ export function inbox(engine: MailEngine, me: string, args: InboxArgs, now: numb
     throw new MailError("INVALID_ARGUMENT", `\`view\` is one of ${VIEWS.join(", ")}; or give \`id\``);
   const from = (sender: string) => engine.label(sender, me);
   const none = (what: string) => [what, owedLine(engine, me, now)].filter(Boolean).join("\n");
+  const project = text(args.project);
+  if (project) return acrossProjects(engine, me, project, view, args, limit);
   if (view === "new") {
     const mails = engine.takeHeld(me, args.peek === true);
     if (mails.length === 0) return none("inbox empty");
-    return [digest(mails.map((mail) => engine.shown(mail, me))), owedLine(engine, me, now)]
+    return [digest(mails.map((mail) => engine.shown(mail, me, true))), owedLine(engine, me, now)]
       .filter(Boolean)
       .join("\n\n");
   }
@@ -84,7 +91,8 @@ export function inbox(engine: MailEngine, me: string, args: InboxArgs, now: numb
     if (!thread) throw new MailError("INVALID_ARGUMENT", "give `thread`: an issue id, or the thread a mail names");
     const mails = store.thread(thread, seenBy, limit);
     if (mails.length === 0) return `no mail in thread ${thread} that you may read`;
-    const file = threadFile(engine.folderOf(me), thread);
+    const whole = store.thread(thread, null, 1000).length === mails.length;
+    const file = whole ? threadFile(engine.folderOf(me), thread) : null;
     const body =
       args.bodies === true
         ? mails.map((message) => envelope({ message, from: from(message.sender) })).join("\n\n")
@@ -99,12 +107,40 @@ export function inbox(engine: MailEngine, me: string, args: InboxArgs, now: numb
     signal: text(args.signal),
     since: text(args.since),
   });
-  return (
-    hits
-      .map(
-        (hit) =>
-          `#${hit.id} ${hit.at.slice(0, 16).replace("T", " ")} ${from(hit.sender)} · ${hit.subject} · ${hit.snippet}`,
-      )
-      .join("\n") || `nothing matches \`${q}\``
-  );
+  return hits.map((hit) => hitLine(hit, from(hit.sender))).join("\n") || `nothing matches \`${q}\``;
+}
+
+/** Search or thread in another project's store, or all, for a seat that reads every project. */
+function acrossProjects(
+  engine: MailEngine,
+  me: string,
+  project: string,
+  view: string,
+  args: InboxArgs,
+  limit: number,
+): string {
+  if (engine.seenBy(me) !== null)
+    throw new MailError("INVALID_ARGUMENT", "`project` is for a seat that reads every project; yours reads its own");
+  if (view !== "search" && view !== "thread")
+    throw new MailError("INVALID_ARGUMENT", "`project` goes with view search or thread");
+  if (view === "search" && !text(args.q)) throw new MailError("INVALID_ARGUMENT", "give `q`: the words to look for");
+  if (view === "thread" && !text(args.thread))
+    throw new MailError("INVALID_ARGUMENT", "give `thread`: an issue id, or the thread a mail names");
+  const stores = engine.storesAt(project);
+  if (stores.length === 0)
+    throw new MailError("INVALID_ARGUMENT", `no project of the room is ${project}; give its folder, its name or all`);
+  const from = (sender: string) => engine.label(sender, me);
+  const out: string[] = [];
+  for (const { folder, store, error } of stores) {
+    if (error) out.push(`[${folder}] could not be read: ${error}`);
+    if (!store) continue;
+    const found =
+      view === "thread"
+        ? store.thread(text(args.thread) ?? "", null, limit).map((message) => line(message, from(message.sender)))
+        : store
+            .search(text(args.q) ?? "", null, { limit, signal: text(args.signal), since: text(args.since) })
+            .map((hit) => hitLine(hit, from(hit.sender)));
+    if (found.length > 0) out.push(`[${folder}]`, ...found);
+  }
+  return out.join("\n") || "nothing found";
 }

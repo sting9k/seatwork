@@ -1,8 +1,9 @@
-import { PROJECT } from "./support/room";
+import { PROJECT, ROOM_HOME } from "./support/room";
 import { BRIEF } from "./support/watch";
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { briefInForce, nextTitle, parseHandoff, successorPrompt } from "../server/orchestration/rotation";
+import { join } from "node:path";
+import { briefInForce, nextTitle, parseHandoff, Rotations, successorPrompt } from "../server/orchestration/rotation";
 
 test("a handoff is read by its headings, whatever marks the seat put on them; without task and progress it is none", () => {
   const handoff = parseHandoff(
@@ -57,4 +58,33 @@ test("a successor is told its brief, its handoff and to trust the tree; its titl
     [nextTitle("[Lead] store"), nextTitle("[Lead] store (2)"), nextTitle(null)],
     ["[Lead] store (2)", "[Lead] store (3)", "seat (2)"],
   );
+});
+
+test("a handoff past its length ends at a sentence and says it was cut", () => {
+  const handoff = parseHandoff(`HANDOFF\nCURRENT TASK: the store\nPROGRESS: ${"done a step. ".repeat(800)}`)!;
+  assert.ok(handoff.text.length < 6100);
+  assert.match(handoff.text, /step\.\n\[cut by the room at 6000 characters\]$/);
+});
+
+test("a rotation asked for outlives a restart; one the room was starting is said once; one never answered runs out", () => {
+  const file = join(ROOM_HOME, "rotations-test.json");
+  const asked = new Rotations(file);
+  asked.ask("lead-a", "sup", 7, 1000);
+  asked.ask("lead-b", "sup", 8, 1000);
+  asked.starting("lead-b");
+
+  const after = new Rotations(file);
+  assert.equal(after.get("lead-a")?.mailId, 7);
+  assert.deepEqual(
+    after.interrupted.map(([seat]) => seat),
+    ["lead-b"],
+  );
+  assert.equal(after.get("lead-b"), undefined);
+  assert.deepEqual(new Rotations(file).interrupted, [], "an interrupted rotation was said twice");
+  assert.deepEqual(after.expired(1000 + 119 * 60_000, 120), []);
+  assert.deepEqual(
+    after.expired(1000 + 121 * 60_000, 120).map(([seat]) => seat),
+    ["lead-a"],
+  );
+  assert.equal(new Rotations(file).get("lead-a"), undefined);
 });

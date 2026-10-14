@@ -5,7 +5,6 @@ import { join } from "node:path";
 import { beforeEach, test } from "node:test";
 import { registerProject, unregisterProject } from "../server/orchestration/onboard";
 import { loadRegistry } from "../server/orchestration/registry";
-import type { PaseoApi } from "../server/paseo";
 
 const ROOM_SEATS = [
   "claude-hq",
@@ -25,12 +24,8 @@ const setUpSeats = async (providers: string[]) => {
   writeFileSync(seatsFile, JSON.stringify({ providers: [...ROOM_SEATS, ...providers] }));
 };
 
-// Paseo knows one project, the test's
-const paseo = {
-  projects: {
-    list: async () => ({ projects: [{ projectId: "p1", projectDisplayName: "demo", projectRootPath: PROJECT }] }),
-  },
-} as unknown as PaseoApi;
+// the app knows one project, the test's
+const paseo = async () => [{ name: "demo", path: PROJECT }];
 
 beforeEach(() => {
   installRoom(ROOM_SEATS);

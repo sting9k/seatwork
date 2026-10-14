@@ -16,12 +16,35 @@ import {
 
 export const WORK_DIR = join(".seatwork", ".work");
 
-/** The room's work policy with a project's own .seatwork/.work/policy.json on top. */
+/** The room's work policy with the project's own policy.json on top, checked. */
 export function projectPolicy(root: string, room: WorkPolicy): WorkPolicy {
   const file = join(root, WORK_DIR, "policy.json");
   if (!existsSync(file)) return room;
-  const own = JSON.parse(readFileSync(file, "utf8")) as Partial<WorkPolicy>;
-  return { ...room, ...own, close: { ...room.close, ...own.close } };
+  let own: Partial<WorkPolicy>;
+  try {
+    own = JSON.parse(readFileSync(file, "utf8")) as Partial<WorkPolicy>;
+  } catch {
+    throw new WorkError("VALIDATION_FAILED", `${file} is not JSON: fix it or remove it`);
+  }
+  const merged = { ...room, ...own, close: { ...room.close, ...own.close } };
+  const kinds = [
+    typeof merged.busyTimeoutMs,
+    typeof merged.flushAfterMs,
+    typeof merged.staleClaimMinutes,
+    typeof merged.close.minReasonChars,
+  ];
+  if (kinds.some((kind) => kind !== "number") || typeof merged.close.forbidSelfClose !== "boolean")
+    throw new WorkError(
+      "VALIDATION_FAILED",
+      `${file} sets a key of the wrong kind: numbers, and forbidSelfClose true or false`,
+    );
+  return merged;
+}
+
+/** The seat a call comes from; an Owner is a seat that launches others. */
+export interface Caller {
+  id: string;
+  owner: boolean;
 }
 
 type Args = Record<string, unknown>;
@@ -32,25 +55,45 @@ const need = (args: Args, field: string): string => {
   if (!value) throw new WorkError("VALIDATION_FAILED", `give \`${field}\``);
   return value;
 };
-const limitOf = (args: Args, fallback: number) => (Number(args.limit) > 0 ? Math.trunc(Number(args.limit)) : fallback);
+const limitOf = (args: Args, fallback: number) =>
+  Number(args.limit) >= 1 ? Math.min(Math.trunc(Number(args.limit)), 1000) : fallback;
+/** A whole number from a number or its text; refused when it is anything else. */
+function whole(value: unknown, field: string): number | undefined {
+  if (value === undefined || value === null) return undefined;
+  const number = typeof value === "string" && value.trim() ? Number(value) : value;
+  if (typeof number !== "number" || !Number.isInteger(number))
+    throw new WorkError("VALIDATION_FAILED", `\`${field}\` is a whole number`);
+  return number;
+}
+/** A time as ISO text; null clears it. */
+function when(value: unknown): string | null | undefined {
+  if (value === undefined || value === null) return value as null | undefined;
+  const at = typeof value === "string" ? Date.parse(value) : NaN;
+  if (Number.isNaN(at))
+    throw new WorkError("VALIDATION_FAILED", "`defer_until` is a time, such as 2026-10-20T09:00:00Z");
+  return new Date(at).toISOString();
+}
 
 function newIssue(from: Args): NewIssue & { key?: string } {
+  if (!from || typeof from !== "object" || Array.isArray(from))
+    throw new WorkError("VALIDATION_FAILED", "each of `issues` is an object with a title");
   return {
     title: text(from.title) ?? "",
     description: text(from.description),
     design: text(from.design),
     acceptance_criteria: text(from.acceptance_criteria),
     write_scope: text(from.write_scope),
-    priority: typeof from.priority === "number" ? from.priority : undefined,
+    priority: whole(from.priority, "priority"),
     issue_type: text(from.issue_type) as IssueType | undefined,
     labels: Array.isArray(from.labels) ? from.labels.map(String) : undefined,
     parent: text(from.parent),
     deps: Array.isArray(from.deps)
-      ? from.deps.map((dep) =>
-          typeof dep === "string"
-            ? { id: dep }
-            : { id: String((dep as Args).id ?? ""), type: text((dep as Args).type) as DependencyType | undefined },
-        )
+      ? from.deps.map((dep) => {
+          if (typeof dep === "string") return { id: dep };
+          if (!dep || typeof dep !== "object" || typeof (dep as Args).id !== "string")
+            throw new WorkError("VALIDATION_FAILED", "each of `deps` is an id, a key, or {id, type}");
+          return { id: (dep as Args).id as string, type: text((dep as Args).type) as DependencyType | undefined };
+        })
       : undefined,
     key: text(from.key),
   };
@@ -67,7 +110,8 @@ const brief = (issue: Issue) => ({
 });
 
 /** One thing done to the store, named by `do`. */
-export function work(store: WorkStore, policy: WorkPolicy, actor: string, args: Args): unknown {
+export function work(store: WorkStore, policy: WorkPolicy, caller: Caller, args: Args): unknown {
+  const actor = caller.id;
   const action = need(args, "do");
   switch (action) {
     case "create":
@@ -113,15 +157,16 @@ export function work(store: WorkStore, policy: WorkPolicy, actor: string, args: 
             design: text(args.design),
             acceptance_criteria: text(args.acceptance_criteria),
             write_scope: text(args.write_scope),
-            priority: typeof args.priority === "number" ? args.priority : undefined,
+            priority: whole(args.priority, "priority"),
             issue_type: text(args.issue_type) as IssueType | undefined,
             labels: Array.isArray(args.labels) ? args.labels.map(String) : undefined,
             status: text(args.status) as Exclude<Status, "closed"> | undefined,
             assignee: args.assignee === null ? null : args.assignee === "me" ? actor : text(args.assignee),
-            defer_until: args.defer_until === null ? null : text(args.defer_until),
-            if_revision: typeof args.if_revision === "number" ? args.if_revision : undefined,
+            defer_until: when(args.defer_until),
+            if_revision: whole(args.if_revision, "if_revision"),
           },
           actor,
+          caller.owner,
         ),
       );
     case "note":
@@ -138,9 +183,14 @@ export function work(store: WorkStore, policy: WorkPolicy, actor: string, args: 
       );
       return { id: store.get(need(args, "id")).id, blocked_by: store.blockers(need(args, "id")) };
     case "undepend":
-      store.removeDependency(need(args, "id"), need(args, "on"), actor);
+      store.removeDependency(need(args, "id"), need(args, "on"), actor, text(args.type) as DependencyType | undefined);
       return { id: store.get(need(args, "id")).id, blocked_by: store.blockers(need(args, "id")) };
     case "close": {
+      if (!caller.owner)
+        throw new WorkError(
+          "POLICY_VIOLATION",
+          "closing is your Owner's: report CANDIDATE or DONE, and it closes the issue",
+        );
       const closed = store.closeIssue(need(args, "id"), need(args, "reason"), actor, policy.close, args.force === true);
       return {
         ...brief(closed.issue),
@@ -177,7 +227,3 @@ export function graph(store: WorkStore, policy: WorkPolicy, args: Args, now: Dat
       throw new WorkError("VALIDATION_FAILED", "`view` is one of triage, next, plan, blockers, alerts");
   }
 }
-
-/** A refusal as a seat reads it: code, sentence, and whether a retry may pass. */
-export const refusal = (error: WorkError) =>
-  JSON.stringify({ error: { code: error.code, message: error.message, retryable: error.retryable } });

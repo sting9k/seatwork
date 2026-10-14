@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { ROOM_DIR } from "../paths";
 import type { RoomParams } from "../policy";
 import { merge } from "../../shared/model-choices";
+import { rolesWhere, tableNote, traits, VARS } from "../../shared/workflow";
 
 /** room/models.json: every model id the room uses; role prompts carry {{placeholders}} filled from it. */
 
@@ -12,7 +13,7 @@ export interface SeatModel {
   alternatives?: string[];
 }
 
-/** One of a role's models: what the Lead picks it for, and never for. */
+/** One of a role's models: what its Owner picks it for, and never for. */
 export interface Tier {
   providers: string[];
   thinking: string;
@@ -20,12 +21,17 @@ export interface Tier {
   never: string;
 }
 
-export interface Models {
-  seats: { hq: SeatModel; supervisor: SeatModel; lead: SeatModel };
-  peer: { tiers: Record<string, Tier>; reviewThinking: string };
-  lens: { tiers: Record<string, Tier> };
-  modes: Record<string, string | null>;
+/** A role of several models: its tiers, beside the table's own words about them. */
+export interface TierGroup {
+  tiers: Record<string, Tier>;
+  [word: string]: unknown;
 }
+
+/** `seats` holds the roles of one model each; a role of several models has its own entry. */
+export type Models = { seats: Record<string, SeatModel>; modes: Record<string, string | null> } & Record<
+  string,
+  unknown
+>;
 
 export const MODELS_FILE = join(ROOM_DIR, "models.json");
 
@@ -34,7 +40,13 @@ export function loadModels(): Models {
   return JSON.parse(readFileSync(MODELS_FILE, "utf8")) as Models;
 }
 
-/** A role's models as the Lead reads them: one row a tier, in the table's order. */
+/** A role's entry when it is one of several models. */
+export const tiersOf = (m: Models, role: string): TierGroup | undefined => {
+  const group = m[role] as TierGroup | undefined;
+  return group && typeof group === "object" && group.tiers ? group : undefined;
+};
+
+/** A role's models as its Owner reads them: one row a tier, in the table's order. */
 function tierTable(tiers: Record<string, Tier>): string {
   const rows = Object.entries(tiers).map(
     ([tier, t]) =>
@@ -47,52 +59,54 @@ function tierTable(tiers: Record<string, Tier>): string {
   ].join("\n");
 }
 
-function lensTable(m: Models): string {
-  const models = new Set(Object.values(m.lens.tiers).flatMap((tier) => tier.providers)).size;
-  const several =
-    models > 1
-      ? "Two lenses are two different models, always. More lenses: another model for each while the table has one; after that a model sits twice only on two different angles."
-      : "The table has one lens model: open one lens.";
-  return `${tierTable(m.lens.tiers)}\n\n${several}`;
+const listed = (entries: readonly string[] | undefined) => (entries ?? []).map((p) => `\`${p}\``).join(", ") || "none";
+const snake = (name: string) => name.replace(/[A-Z]/g, (letter) => `_${letter.toLowerCase()}`);
+
+/** A param as prompts quote it: `readBudgetTokens` is {{read_budget}}, shown as ~80k. */
+function paramVar(name: string, value: string | number): [string, string] {
+  const unit = /(Minutes|Tokens)$/.exec(name)?.[1];
+  const key = snake(unit ? name.slice(0, -unit.length) : name);
+  if (typeof value !== "number") return [key, value];
+  return [key, unit === "Tokens" ? `~${Math.round(value / 1000)}k` : value.toLocaleString("en-US")];
 }
 
 /** The placeholder map for role prompts. */
 export function promptVars(m: Models, params: RoomParams): Record<string, string> {
+  const vars: Record<string, string> = {};
   const withMode = Object.entries(m.modes)
     .filter(([, mode]) => mode)
     .map(([h, mode]) => `${h} \`${mode}\``);
   const without = Object.entries(m.modes)
     .filter(([, mode]) => !mode)
     .map(([h]) => h);
-  const modes = [withMode.join(", "), without.length ? `${without.join(", ")}: none, omit \`modeId\`` : ""]
+  vars.modes = [withMode.join(", "), without.length ? `${without.join(", ")}: none, omit \`modeId\`` : ""]
     .filter(Boolean)
     .join("; ");
-  return {
-    peer_table: tierTable(m.peer.tiers),
-    review_thinking: m.peer.reviewThinking,
-    // read-only research never runs on the cheap tier
-    research_providers:
-      Object.entries(m.peer.tiers)
-        .filter(([tier]) => tier !== "cheap")
-        .flatMap(([, t]) => t.providers)
-        .map((p) => `\`${p}\``)
-        .join(", ") || "none",
-    lens_table: lensTable(m),
-    modes,
-    lead_provider: m.seats.lead.provider,
-    lead_thinking: m.seats.lead.thinking,
-    lead_alternatives: (m.seats.lead.alternatives ?? []).map((p) => `\`${p}\``).join(", ") || "none",
-    supervisor_provider: m.seats.supervisor.provider,
-    supervisor_thinking: m.seats.supervisor.thinking,
-    supervisor_alternatives: (m.seats.supervisor.alternatives ?? []).map((p) => `\`${p}\``).join(", ") || "none",
-    heartbeat_cron: params.heartbeatCron,
-    peer_stall: String(params.peerStallMinutes),
-    review_stall: String(params.reviewStallMinutes),
-    lead_stall: String(params.leadStallMinutes),
-    read_budget: `~${Math.round(params.readBudgetTokens / 1000)}k`,
-    cheap_read_budget: `~${Math.round(params.cheapReadBudgetTokens / 1000)}k`,
-    mail_chars: params.mailChars.toLocaleString("en-US"),
-  };
+  for (const role of rolesWhere((role) => role.models === "one")) {
+    const seat = m.seats[role];
+    if (!seat) continue;
+    vars[`${role}_provider`] = seat.provider;
+    vars[`${role}_thinking`] = seat.thinking;
+    vars[`${role}_alternatives`] = listed(seat.alternatives);
+  }
+  for (const role of rolesWhere((role) => role.models === "tiers")) {
+    const group = tiersOf(m, role);
+    if (!group) continue;
+    const models = new Set(Object.values(group.tiers).flatMap((tier) => tier.providers)).size;
+    vars[`${role}_table`] = [tierTable(group.tiers), tableNote(role, models)].filter(Boolean).join("\n\n");
+    // the table's own words about a role: reviewThinking is {{review_thinking}}
+    for (const [word, value] of Object.entries(group)) if (typeof value === "string") vars[snake(word)] = value;
+  }
+  for (const [name, from] of Object.entries(VARS)) {
+    const tiers = Object.entries(tiersOf(m, from.role)?.tiers ?? {});
+    vars[name] = listed(tiers.filter(([tier]) => !from.except.includes(tier)).flatMap(([, t]) => t.providers));
+  }
+  for (const [name, value] of Object.entries(params))
+    if (value !== undefined) {
+      const [key, shown] = paramVar(name, value);
+      vars[key] = shown;
+    }
+  return vars;
 }
 
 /** Replace {{name}} with vars[name]; an unknown name is left as-is and reported. */
@@ -104,21 +118,24 @@ export function render(text: string, vars: Record<string, string>, onMissing?: (
   });
 }
 
-/* ---------- per-project models: the `models` object of <project>/.seatwork/room.json ---------- */
-
 type Json = Record<string, unknown>;
 const isObject = (v: unknown): v is Json => typeof v === "object" && v !== null && !Array.isArray(v);
 
 /** Every `<harness>-<role>/<model>` a role may run on, as the table names them. */
 export function allowed(m: Models): Record<string, string[]> {
-  const seat = (s: SeatModel | undefined) => (s ? [s.provider, ...(s.alternatives ?? [])] : []);
-  return {
-    hq: seat(m.seats?.hq),
-    supervisor: seat(m.seats?.supervisor),
-    lead: seat(m.seats?.lead),
-    peer: Object.values(m.peer?.tiers ?? {}).flatMap((t) => t.providers ?? []),
-    lens: Object.values(m.lens?.tiers ?? {}).flatMap((t) => t.providers ?? []),
-  };
+  return Object.fromEntries(
+    rolesWhere(() => true).map((role) => {
+      const seat = m.seats?.[role];
+      return [
+        role,
+        traits(role).models === "one"
+          ? seat
+            ? [seat.provider, ...(seat.alternatives ?? [])]
+            : []
+          : Object.values(tiersOf(m, role)?.tiers ?? {}).flatMap((t) => t.providers ?? []),
+      ];
+    }),
+  );
 }
 
 const providerOf = (entry: string): string => String(entry).split("/")[0];
@@ -140,16 +157,10 @@ export function layModels(base: Models, override: unknown, where: string): Model
         throw new Error(`${where}: "${entry}" is listed for ${role} but is not a ${role} seat`);
     }
   }
-  // a table from before the lenses were listed like Peers would read as unchanged
-  const old = ["oracle", "hard", "pair", "pool"].find((key) => key in merged.lens);
-  if (old)
-    throw new Error(
-      `${where}: lens.${old} is not a place in the table: lenses are listed under lens.tiers, as Peers are under peer.tiers`,
-    );
   return merged;
 }
 
-/** The room's table with a project's `models` laid over it; throws, naming the entry, when it cannot be used. */
+/** The room's table under a project's `models`; throws, naming the entry, when unusable. */
 export function projectModels(override: unknown, enabledProviders: string[], where: string): Models {
   if (override === undefined) return loadModels();
   const merged = laidOver(override, where);
@@ -195,19 +206,19 @@ export function modelAllowed(
 /** What the table in force makes of a seat about to be created. */
 export type SeatFit = { ok: true; model?: string; thinking?: string } | { ok: false; listed: string[] };
 
-/** Holds a new seat to the table in force, not to its creator's prompt, which may be older than the table. */
+/** Holds a new seat to the table in force, not to its creator's older prompt. */
 export function fitSeat(m: Models, role: string, provider: string, model: string | undefined): SeatFit {
   const listed = allowed(m)[role] ?? [];
   const mine = listed.filter((entry) => split(entry)[0] === provider);
   if (mine.length === 0) return { ok: false, listed };
   if (model && modelAllowed(m, role, provider, model).ok) return { ok: true };
-  const seat = role === "hq" || role === "supervisor" || role === "lead" ? m.seats[role] : null;
+  const seat = traits(role).models === "one" ? m.seats[role] : null;
   if (seat) {
     const [first, id] = split(seat.provider);
     return first === provider
       ? { ok: true, model: id, thinking: seat.thinking }
       : { ok: true, model: split(mine[0])[1] };
   }
-  // a Peer or a Lens asked for by seat alone starts on that seat's first model in the table
+  // a role of several models asked for by seat alone starts on that seat's first model in the table
   return model ? { ok: false, listed } : { ok: true, model: split(mine[0])[1] };
 }

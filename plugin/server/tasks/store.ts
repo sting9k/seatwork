@@ -123,6 +123,12 @@ const NAMED_EVENT: Partial<Record<Editable, string>> = {
 };
 const ORDERED = "priority, created_at, id";
 /** Held: a blocker of the issue or of a parent is open, or it has open children. */
+/** A blocked parent holds its children back from `ready`, never from being started or closed (br #355, #357). */
+export const PARENT_BLOCKED = ":parent-blocked";
+/** An open child keeps its parent from closing, never from being started (br #315). */
+export const CHILD_OPEN = ":child-open";
+/** The issue a blocker ref names. */
+export const refIssue = (ref: string): string => ref.replace(/:(parent-blocked|child-open)$/, "");
 const HELD = `
 WITH RECURSIVE
   held (id) AS (
@@ -135,6 +141,26 @@ WITH RECURSIVE
   parents (id) AS (
     SELECT d.depends_on_id FROM dependencies d JOIN issues c ON c.id = d.issue_id
     WHERE d.type = 'parent-child' AND c.status != 'closed'
+  )`;
+/** What stands in each issue's way, as br writes it: a blocker of its own, its parent when that is blocked, an open child. */
+const IN_THE_WAY = `
+WITH RECURSIVE
+  hard (id, ref) AS (
+    SELECT d.issue_id, d.depends_on_id FROM dependencies d JOIN issues b ON b.id = d.depends_on_id
+    WHERE d.type = 'blocks' AND b.status != 'closed'
+  ),
+  under (id, ref) AS (
+    SELECT d.issue_id, d.depends_on_id FROM dependencies d INDEXED BY dependencies_by_target
+    WHERE d.type = 'parent-child' AND d.depends_on_id IN (SELECT id FROM hard)
+    UNION
+    SELECT d.issue_id, d.depends_on_id FROM under CROSS JOIN dependencies d INDEXED BY dependencies_by_target
+      ON d.depends_on_id = under.id AND d.type = 'parent-child'
+  ),
+  way (id, ref) AS (
+    SELECT id, ref FROM hard
+    UNION SELECT id, ref || '${PARENT_BLOCKED}' FROM under
+    UNION SELECT d.depends_on_id, d.issue_id || '${CHILD_OPEN}' FROM dependencies d JOIN issues c ON c.id = d.issue_id
+      WHERE d.type = 'parent-child' AND c.status != 'closed'
   )`;
 const INSERT_ISSUE =
   "INSERT INTO issues (id, title, description, design, acceptance_criteria, notes, write_scope, status, priority, issue_type, assignee, labels, revision, created_at, created_by, updated_at, closed_at, close_reason, closed_by, defer_until) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
@@ -357,9 +383,10 @@ export class WorkStore extends Sqlite {
   }
 
   /** The issues not closed and the edges among them: all the graph reads. */
-  openWork(): { issues: Issue[]; dependencies: Dependency[]; ready: Set<string> } {
+  openWork(): { issues: Issue[]; dependencies: Dependency[]; ready: Set<string>; blocked: Map<string, string[]> } {
     return this.transaction("read", () => ({
       ready: new Set(this.ready().map((issue) => issue.id)),
+      blocked: this.inTheWay(),
       issues: this.rows(
         `SELECT * FROM issues WHERE status IN ('open', 'in_progress', 'deferred') ORDER BY ${ORDERED}`,
       ).map(toIssue),
@@ -508,23 +535,34 @@ export class WorkStore extends Sqlite {
     });
   }
 
-  /** What stands in one issue's way. */
+  /** What stands in an issue's way, as br's refs: a bare id blocks it, a suffix says it only holds it back. */
   blockers(id: string): string[] {
     const issue = this.get(id).id;
-    return this.rows<{ id: string }>(
-      `WITH RECURSIVE up (id) AS (
-         SELECT ? UNION
-         SELECT d.depends_on_id FROM up CROSS JOIN dependencies d ON d.issue_id = up.id AND d.type = 'parent-child'
-       )
-       SELECT d.depends_on_id AS id FROM up JOIN dependencies d ON d.issue_id = up.id AND d.type = 'blocks'
-         JOIN issues b ON b.id = d.depends_on_id WHERE b.status != 'closed'
-       UNION
-       SELECT d.issue_id FROM dependencies d JOIN issues c ON c.id = d.issue_id
-         WHERE d.depends_on_id = ? AND d.type = 'parent-child' AND c.status != 'closed'`,
-      issue,
-      issue,
-    ).map((one) => one.id);
+    return this.rows<{ ref: string }>(`${IN_THE_WAY} SELECT ref FROM way WHERE id = ? ORDER BY ref`, issue).map(
+      (row) => row.ref,
+    );
   }
+
+  /** What keeps an issue from being started: its own blockers only. */
+  private startBlockers(id: string): string[] {
+    return this.blockers(id).filter((ref) => !ref.endsWith(PARENT_BLOCKED) && !ref.endsWith(CHILD_OPEN));
+  }
+
+  /** What keeps an issue from being closed: its own blockers and its open children. */
+  private closeBlockers(id: string): string[] {
+    return this.blockers(id)
+      .filter((ref) => !ref.endsWith(PARENT_BLOCKED))
+      .map(refIssue);
+  }
+
+  /** What stands in the way of every issue that has anything in its way. */
+  private inTheWay(): Map<string, string[]> {
+    const out = new Map<string, string[]>();
+    for (const row of this.rows<{ id: string; ref: string }>(`${IN_THE_WAY} SELECT id, ref FROM way ORDER BY id, ref`))
+      out.set(row.id, [...(out.get(row.id) ?? []), row.ref]);
+    return out;
+  }
+
 
   /** Open, not put off, and with nothing in its way: highest priority first, then oldest. */
   ready(options: { limit?: number; parent?: string; unassigned?: boolean } = {}): Issue[] {
@@ -594,7 +632,7 @@ export class WorkStore extends Sqlite {
         throw new WorkError("ALREADY_ASSIGNED", `${issue.id} is already assigned to ${issue.assignee}`);
       if (issue.defer_until && issue.defer_until > this.stamp())
         throw new WorkError("BLOCKED", `${issue.id} is put off until ${issue.defer_until}`);
-      const blockers = this.blockers(issue.id);
+      const blockers = this.startBlockers(issue.id);
       if (blockers.length > 0) throw new WorkError("BLOCKED", `${issue.id} waits for ${blockers.join(", ")}`);
       this.touch(issue, { assignee: actor, status: "in_progress" });
       if (issue.status !== "in_progress") this.event(issue.id, "status_changed", actor, issue.status, "in_progress");
@@ -627,7 +665,7 @@ export class WorkStore extends Sqlite {
           );
       }
       if (patch.status === "in_progress" && issue.status !== "in_progress") {
-        const blockers = this.blockers(issue.id);
+        const blockers = this.startBlockers(issue.id);
         if (blockers.length > 0) throw new WorkError("BLOCKED", `${issue.id} waits for ${blockers.join(", ")}`);
       }
       if ((patch as { status?: string }).status === "closed")
@@ -696,7 +734,7 @@ export class WorkStore extends Sqlite {
           "POLICY_VIOLATION",
           `${issue.id} is yours: the seat that did the work does not close it, its Owner does`,
         );
-      const blockers = this.blockers(issue.id);
+      const blockers = this.closeBlockers(issue.id);
       if (blockers.length > 0 && !force)
         throw new WorkError("CLOSE_INCOMPLETE", `${issue.id} still waits for ${blockers.join(", ")}`);
       // what this close may free: the open issues it blocked, and its open parent

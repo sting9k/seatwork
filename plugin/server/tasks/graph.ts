@@ -1,28 +1,27 @@
 import config from "../../shared/work.json";
-import type { Dependency, Issue } from "./store";
+import { CHILD_OPEN, PARENT_BLOCKED, refIssue, type Dependency, type Issue } from "./store";
 
 /** A project's open issues as a graph: what to do next, what runs side by side, what blocks. */
 
-/** `ready`: the issues the store lets a seat claim now; without it the graph judges itself. */
+/** `ready` and `blocked` come from the store: the graph judges no issue's way itself. */
 export interface Work {
   issues: readonly Issue[];
   dependencies: readonly Dependency[];
   ready: ReadonlySet<string>;
+  blocked: ReadonlyMap<string, readonly string[]>;
 }
 
 const { weights, urgentLabels, impactShare, unblockBoost, readyBoost, exactBetweennessUpTo, sampledSources } =
   config.triage;
 const URGENT = new Set(urgentLabels);
 
-/** Open issues by number: blockers[i] is what i waits for, inWay[i] how many stand in its way. */
+/** Open issues by number: blockers[i] is what i waits for, dependents[i] what waits for i, parent[i] its parent. */
 interface Graph {
   issues: Issue[];
   at: Map<string, number>;
   blockers: number[][];
   dependents: number[][];
   parent: Int32Array;
-  children: number[][];
-  inWay: Int32Array;
 }
 
 function build({ issues, dependencies }: Work): Graph {
@@ -31,47 +30,20 @@ function build({ issues, dependencies }: Work): Graph {
   const at = new Map(open.map((issue, index) => [issue.id, index]));
   const blockers: number[][] = Array.from({ length: n }, () => []);
   const dependents: number[][] = Array.from({ length: n }, () => []);
-  const children: number[][] = Array.from({ length: n }, () => []);
   const parent = new Int32Array(n).fill(-1);
   for (const dep of dependencies) {
     const [from, to] = [at.get(dep.issue_id), at.get(dep.depends_on_id)];
     if (from === undefined || to === undefined) continue;
-    if (dep.type === "blocks") {
-      blockers[from].push(to);
-      dependents[to].push(from);
-    } else if (dep.type === "parent-child") {
-      parent[from] = to;
-      children[to].push(from);
-    }
+    if (dep.type === "parent-child") parent[from] = to;
+    if (dep.type !== "blocks") continue;
+    blockers[from].push(to);
+    dependents[to].push(from);
   }
-  // what a parent waits for, its children wait for: summed down the tree once
-  const above = new Int32Array(n).fill(-1);
-  const inherited = (start: number): number => {
-    const path: number[] = [];
-    let node = start;
-    while (node >= 0 && above[node] < 0 && path.length <= n) {
-      path.push(node);
-      node = parent[node];
-    }
-    let sum = node >= 0 && above[node] >= 0 ? above[node] + blockers[node].length : 0;
-    for (let i = path.length - 1; i >= 0; i -= 1) {
-      above[path[i]] = sum;
-      sum += blockers[path[i]].length;
-    }
-    return above[start];
-  };
-  const inWay = new Int32Array(n);
-  for (let i = 0; i < n; i += 1) inWay[i] = blockers[i].length + children[i].length + inherited(i);
-  return { issues: open, at, blockers, dependents, parent, children, inWay };
+  return { issues: open, at, blockers, dependents, parent };
 }
 
-/** The ids in an issue's way: its blockers, its open children, what blocks its parents. */
-function inTheWay(graph: Graph, i: number): string[] {
-  const found = new Set([...graph.blockers[i], ...graph.children[i]]);
-  for (let up = graph.parent[i], hops = 0; up >= 0 && hops <= graph.issues.length; up = graph.parent[up], hops += 1)
-    for (const blocker of graph.blockers[up]) found.add(blocker);
-  return [...found].map((index) => graph.issues[index].id);
-}
+/** A blocker ref of br's that only holds an issue back from `ready`, never from being started. */
+const holdsOnly = (ref: string) => ref.endsWith(PARENT_BLOCKED) || ref.endsWith(CHILD_OPEN);
 
 /** PageRank by power iteration: rank flows from an issue to what it waits for. */
 function pagerank(graph: Graph): Float64Array {
@@ -191,10 +163,13 @@ function depths(graph: Graph): Int32Array {
 }
 
 /** The issues nothing would hold back once this one closed. */
-function freedBy(graph: Graph, i: number): number[] {
-  const freed = graph.dependents[i].filter((other) => graph.inWay[other] === 1);
-  const up = graph.parent[i];
-  if (up >= 0 && graph.inWay[up] === 1) freed.push(up);
+function freedBy(work: Work, graph: Graph, i: number): number[] {
+  const id = graph.issues[i].id;
+  const freed: number[] = [];
+  for (const [other, refs] of work.blocked) {
+    const at = graph.at.get(other);
+    if (at !== undefined && refs.length > 0 && refs.every((ref) => refIssue(ref) === id)) freed.push(at);
+  }
   return freed;
 }
 
@@ -223,7 +198,7 @@ function scoreAll(work: Work, now: Date): { graph: Graph; scored: Scored[] } {
   const n = graph.issues.length;
   const [rank, bridge, depth] = [pagerank(graph), betweenness(graph), depths(graph)];
   const [topRank, topBridge] = [peak(rank), peak(bridge)];
-  const freed = graph.issues.map((_, i) => freedBy(graph, i));
+  const freed = graph.issues.map((_, i) => freedBy(work, graph, i));
   const mostHeld = Math.max(1, ...graph.dependents.map((list) => list.length));
   const mostFreed = Math.max(5, ...freed.map((list) => list.length));
   const scored: Scored[] = [];
@@ -257,7 +232,7 @@ function scoreAll(work: Work, now: Date): { graph: Graph; scored: Scored[] } {
         ...(issue.priority <= 1 ? [`priority ${issue.priority}`] : []),
       ],
       unblocks: frees,
-      blocked_by: graph.inWay[i] > 0 ? inTheWay(graph, i) : [],
+      blocked_by: [...(work.blocked.get(issue.id) ?? [])],
       ready,
       claimable: ready && !issue.assignee && issue.issue_type !== "epic",
     });
@@ -267,7 +242,7 @@ function scoreAll(work: Work, now: Date): { graph: Graph; scored: Scored[] } {
 }
 
 const actionable = (scored: readonly Scored[]) =>
-  scored.filter((one) => one.ready || (one.status === "in_progress" && one.blocked_by.length === 0));
+  scored.filter((one) => one.ready || (one.status === "in_progress" && one.blocked_by.every(holdsOnly)));
 
 export interface Triage {
   counts: { open: number; ready: number; blocked: number; in_progress: number };
@@ -283,7 +258,7 @@ export function triage(work: Work, now: Date, limit = 10): Triage {
     counts: {
       open: scored.length,
       ready: scored.filter((one) => one.ready).length,
-      blocked: scored.filter((one) => one.blocked_by.length > 0).length,
+      blocked: scored.filter((one) => one.blocked_by.some((ref) => !ref.endsWith(CHILD_OPEN))).length,
       in_progress: scored.filter((one) => one.status === "in_progress").length,
     },
     recommendations: actionable(scored).slice(0, limit),
@@ -404,12 +379,13 @@ export function blockerChain(
   if (start === undefined) return [];
   const seen = new Set([id]);
   const chain: string[][] = [];
-  for (let level = inTheWay(graph, start); level.length > 0;) {
+  const way = (one: string) => (work.blocked.get(one) ?? []).map(refIssue);
+  for (let level = way(id); level.length > 0;) {
     const fresh = level.filter((one) => !seen.has(one));
     if (fresh.length === 0) break;
     for (const one of fresh) seen.add(one);
     chain.push(fresh);
-    level = [...new Set(fresh.flatMap((one) => inTheWay(graph, graph.at.get(one)!)))];
+    level = [...new Set(fresh.flatMap(way))];
   }
   return chain.map((level) =>
     level.map((one) => {

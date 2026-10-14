@@ -149,7 +149,7 @@
     },
     "seatwork_work": {
       "callers": "any",
-      "description": "The project's work store: issues, what each waits for, who holds it. `do` names the one thing a call does. create: one issue, or a whole plan in `issues`, written all or none; each may carry a `key` and name its `parent` and `deps` by another's key. ready: open issues nothing blocks, highest priority first. claim: take an issue; refused when another seat holds it or something blocks it. note: a dated line of progress. depend: `id` waits for `on`. close: with `reason`; the seat that holds an issue does not close it, its Owner does. Also show, list, update, comment, undepend, reopen. Answers are JSON; a refusal is {\"error\": {code, message, retryable}}.",
+      "description": "The project's work store: issues, what each waits for, who holds it. `do` names the one thing a call does. create: one issue, or a whole plan in `issues`, written all or none; each may carry a `key` and name its `parent` and `deps` by another's key. ready: open issues nothing holds back (no open blocker, blocked parent or open child), highest priority first. claim: take an issue; refused when another seat holds it or an open blocker of its own waits. blocked_by: a bare id blocks; `:parent-blocked` and `:child-open` only hold back from ready. note: a dated line of progress. depend: `id` waits for `on`. close: with `reason`, once its blockers and children are closed; the seat that holds an issue does not close it, its Owner does. Also show, list, update, comment, undepend, reopen. Answers are JSON; a refusal is {\"error\": {code, message, retryable}}.",
       "inputSchema": {
         "type": "object",
         "properties": {

@@ -24,7 +24,7 @@ function fresh(): { store: WorkStore; dir: string } {
 const refuses = (code: string, work: () => unknown) =>
   assert.throws(work, (error: unknown) => error instanceof WorkError && error.code === code);
 
-test("an issue is ready when nothing is in its way: open blockers, open children and what blocks its parent all hold it back", () => {
+test("an issue is ready when nothing is in its way: open blockers, open children and a blocked parent all hold it back", () => {
   const { store } = fresh();
   const schema = store.create({ title: "schema", priority: 1 }, "lead");
   const api = store.create({ title: "api", priority: 0, deps: [{ id: schema.id }] }, "lead");
@@ -39,8 +39,8 @@ test("an issue is ready when nothing is in its way: open blockers, open children
     ["schema", "typo in README"],
   );
   assert.deepEqual(store.blockers(api.id), [schema.id]);
-  assert.deepEqual(store.blockers(epic.id).sort(), [api.id, child.id].sort());
-  assert.deepEqual(store.blockers(child.id), [api.id]);
+  assert.deepEqual(store.blockers(epic.id), [api.id, `${child.id}:child-open`].sort());
+  assert.deepEqual(store.blockers(child.id), [`${epic.id}:parent-blocked`]);
 
   store.claim(schema.id, "peer-a");
   // an issue in progress still blocks, and is no longer on offer
@@ -383,6 +383,29 @@ test("undepend takes away the edge it names, and a parent link only when named; 
   );
   store.removeDependency(loose.id, epic.id, "lead", "parent-child");
   assert.deepEqual(store.dependencies(), []);
+});
+
+test("as in br, a blocked parent and an open child hold an issue back from ready, never from being started; an open child keeps its parent open", () => {
+  const { store } = fresh();
+  const gate = store.create({ title: "gate" }, "lead");
+  const epic = store.create({ title: "epic", issue_type: "epic", deps: [{ id: gate.id }] }, "lead");
+  const child = store.create({ title: "child", parent: epic.id }, "lead");
+  const whole = store.create({ title: "whole" }, "lead");
+  const part = store.create({ title: "part", parent: whole.id }, "lead");
+  assert.deepEqual(
+    store.ready().map((issue) => issue.title),
+    ["gate", "part"],
+  );
+  // the child of a blocked parent may be what frees it: it is started, and closed while the parent waits
+  assert.equal(store.claim(child.id, "peer-a").status, "in_progress");
+  store.closeIssue(child.id, "done in 4f2a91c, npm test green", "lead", POLICY);
+  // a parent with an open child is started, and closed only once the child is
+  assert.equal(store.claim(whole.id, "peer-b").status, "in_progress");
+  refuses("CLOSE_INCOMPLETE", () => store.closeIssue(whole.id, "done in 5b3c02d, npm test green", "lead", POLICY));
+  store.closeIssue(part.id, "done in 6c4d13e, npm test green", "lead", POLICY);
+  assert.equal(store.closeIssue(whole.id, "done in 5b3c02d, npm test green", "lead", POLICY).issue.status, "closed");
+  // a blocker of its own still keeps an issue from being started
+  refuses("BLOCKED", () => store.claim(epic.id, "peer-c"));
 });
 
 test("a deferred issue waits out its time: it is not ready, cannot be claimed, and stays deferred when its seat goes", () => {

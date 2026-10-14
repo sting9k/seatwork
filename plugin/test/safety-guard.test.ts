@@ -6,7 +6,7 @@ import { test } from "node:test";
 import { Safety, type SafetyDeps } from "../server/safety/index";
 import type { SafetyPolicy } from "../server/safety/guard";
 import { GATE_ENV } from "../server/safety/hooks";
-import { redact } from "../server/safety/redact";
+import { redact } from "../server/redact";
 
 shipSql();
 
@@ -33,6 +33,7 @@ function fresh(policy: SafetyPolicy = {}, project: string | null = null) {
     guard: { paths: ["/Users/u/.config/room"], except: [] },
     roomFolder: ".seatwork",
     repeated: (seat, rule, count) => told.push(`${seat} ${rule} ${count}`),
+    decider: null,
     log: () => {},
   };
   return { safety: new Safety(deps), told, policy };

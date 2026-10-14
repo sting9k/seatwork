@@ -42,6 +42,19 @@ export interface NewSeat {
   prompt: string;
 }
 
+/** How a tool call ended, as the app records it. */
+export type ToolStatus = "running" | "completed" | "failed" | "canceled";
+
+/** One step of a seat's turn, read from the app's history; `at` only where the app dates it. */
+export type TurnEvent =
+  | { kind: "prompt"; text: string; at?: string }
+  | { kind: "say"; text: string; at?: string }
+  | { kind: "think"; text: string; at?: string }
+  | { kind: "shell"; command: string; exitCode: number | null; output: string; status: ToolStatus; at?: string }
+  | { kind: "change"; path: string; status: ToolStatus; at?: string }
+  | { kind: "read"; path: string; at?: string }
+  | { kind: "tool"; name: string; status: ToolStatus; at?: string };
+
 /** How a turn ended. */
 export type TurnOutcome = { kind: "completed" } | { kind: "canceled" } | { kind: "failed"; error: string };
 
@@ -57,6 +70,8 @@ export interface Host {
   seat(agentId: string): Promise<LiveSeat | null>;
   create(seat: NewSeat): Promise<string>;
   archive(agentId: string): Promise<void>;
+  /** The steps of a seat's latest turn among its last `limit` history entries; null when unread. */
+  turn(agentId: string, limit: number): Promise<TurnEvent[] | null>;
   /** The prompts a seat was given among its last `limit` history entries, oldest first; null when unread. */
   prompts(agentId: string, limit: number): Promise<string[] | null>;
   /** The projects the app knows, by folder. */

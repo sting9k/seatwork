@@ -1,7 +1,8 @@
 import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { Host, LiveSeat, NewSeat, SeatState, SeatUsage } from "../host";
+import type { Host, LiveSeat, NewSeat, SeatState, SeatUsage, TurnEvent } from "../host";
+import { latestTurn } from "./timeline";
 import { PASEO_SCHEDULES } from "../paths";
 import type { PaseoApi } from "./api";
 import { paseoCli } from "./cli";
@@ -196,6 +197,17 @@ export class PaseoHost implements Host {
   async archive(agentId: string): Promise<void> {
     if (this.client) await this.client.agents.ref(agentId).archive();
     else await paseoCli(["agent", "archive", agentId]);
+  }
+
+  async turn(agentId: string, limit: number): Promise<TurnEvent[] | null> {
+    try {
+      const page = await this.sdk()
+        .agents.ref(agentId)
+        .timeline.refetch({ direction: "tail", projection: "projected", limit });
+      return latestTurn(page.entries);
+    } catch {
+      return null;
+    }
   }
 
   async prompts(agentId: string, limit: number): Promise<string[] | null> {

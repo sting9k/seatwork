@@ -4,6 +4,7 @@ import { join } from "node:path";
 import type { MailEngine, SeatRecord } from "../coordination/engine";
 import type { Host } from "../host";
 import { keptOutOfGit } from "../sqlite";
+import { fromTemplate } from "./brief";
 import type { SeatFit } from "./models";
 
 /** Replacing a seat whose context has grown: its handoff, and its successor's start. */
@@ -13,41 +14,6 @@ type Heading = (typeof HANDOFF_HEADINGS)[number];
 
 const HANDOFF_CHARS = 6000;
 const BRIEF_CHARS = 12_000;
-
-const BRIEF_LABELS: readonly [RegExp, string][] = [
-  [/^project$/, "project"],
-  [/^outcome$/, "outcome"],
-  [/^(?:current )?candidate$/, "candidate"],
-  [/^context$/, "context"],
-  [/^write scope$/, "writeScope"],
-  [/^(?:contract(?: ?\/ ?invariants)?|invariants)$/, "contract"],
-  [/^yours to decide$/, "decide"],
-  [/^(?:verified )?constraints$/, "constraints"],
-  [/^output$/, "output"],
-  [/^acceptance(?: evidence)?$/, "acceptance"],
-  [/^reopen when$/, "reopenWhen"],
-  [/^what was tried$/, "tried"],
-  [/^reply with seatwork_mail to$/, "replyTo"],
-  [/^non-?goals$/, "nonGoals"],
-  [/^authority$/, "authority"],
-  [/^open assumptions$/, "openAssumptions"],
-  [/^decisions made$/, "decisions"],
-  [/^inputs$/, "inputs"],
-  [/^lane$/, "lane"],
-];
-const LABEL_LINE = /^\s*(?:[-*>]\s+)?[*_`"']*([a-z][a-z /_-]*?)[*_]*\s*:/i;
-
-/** Written from the room's template, and not some other prompt that happens to hold a label. */
-function fromTemplate(prompt: string): boolean {
-  const fields = new Set<string>();
-  for (const line of prompt.split("\n")) {
-    const label = LABEL_LINE.exec(line)?.[1].trim().toLowerCase();
-    const field = label && BRIEF_LABELS.find(([pattern]) => pattern.test(label))?.[1];
-    if (field) fields.add(field);
-    if (fields.size >= 3) return true;
-  }
-  return false;
-}
 
 export function handoffRequest(why: string): string {
   return [

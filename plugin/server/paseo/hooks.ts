@@ -5,6 +5,7 @@ import type { Room, SeatEvent } from "../room/room";
 import type { PaseoApi } from "./api";
 import type { PaseoHost } from "./host";
 import { ensureRoomProject } from "./room-project";
+import { eventsOf } from "./timeline";
 
 /** Paseo's hooks and events, told to the room in its own words; the room never sees Paseo's shapes. */
 
@@ -142,6 +143,7 @@ export function connect(server: Pick<PluginServerContext, "on" | "before">, room
         turnId: event.turnId,
         outcome,
         text: lastAssistantText(event.timeline),
+        events: eventsOf(event.timeline),
       });
     }),
     server.on("agent.archived", async (event, { paseo }) => {

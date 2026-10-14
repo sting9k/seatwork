@@ -1,0 +1,84 @@
+{
+  "$comment": "The council that reads each turn of a briefed, writing or reviewing seat. Each member owns one concern; it is scoped by role traits, never by role names. level: 0 logs only, 1 adds a [council] line under the report, 2 also mails the seat above, 3 would send the hand-in back once a chair exists. version: raise it when a member's rule or question changes; its labels then start again. lo and hi: a juror's grey zone.",
+  "checks": [
+    "\\b(npm|pnpm|yarn|bun)\\s+(run\\s+)?(test|check|verify|typecheck|lint)\\b",
+    "\\b(npx|pnpm\\s+exec|bunx)\\s+(vitest|jest|mocha|tsc|playwright|eslint)\\b",
+    "\\bnode\\s+(--[\\w-]+\\s+)*--test\\b",
+    "\\b(pytest|tox|nox|mypy|ruff\\s+check|pyright)\\b",
+    "\\bpython3?\\s+-m\\s+(pytest|unittest|mypy)\\b",
+    "\\bgo\\s+(test|vet|build)\\b",
+    "\\bcargo\\s+(test|check|clippy|build)\\b",
+    "\\b(mvn|gradle|\\./gradlew|\\./mvnw)\\b.*\\b(test|check|verify|build)\\b",
+    "\\b(make|just)\\s+(test|check|verify)\\b",
+    "\\b(deno|bun)\\s+test\\b",
+    "\\bdotnet\\s+test\\b",
+    "\\b(rspec|phpunit|ctest)\\b"
+  ],
+  "claims": {
+    "$comment": "A claim is a line of the final message that says the work passed or was checked; a line that also holds a denial is no claim.",
+    "said": [
+      "\\b(all\\s+)?(\\d+\\s+)?(tests?|specs?|checks?|suite)\\s+(now\\s+)?(pass(es|ed|ing)?|green|succeed(s|ed)?)\\b",
+      "\\b(passing|green)\\s+(tests?|suite|build|checks?)\\b",
+      "\\b(verified|tested|confirmed)\\s+(that|it|the|this|locally|end[- ]to[- ]end)\\b",
+      "\\b(type-?check|lint|build)\\s+(is\\s+)?(clean|passes|passed|green|succeeds)\\b",
+      "\\bwork(s|ing)\\s+as\\s+(expected|intended)\\b"
+    ],
+    "denied": [
+      "\\b(not|n't|never|without|unable|couldn't|cannot|can't)\\b",
+      "\\b(fail(s|ed|ing)?|skip(ped|s)?|untested|unverified|flaky|pending|todo)\\b"
+    ]
+  },
+  "members": {
+    "claims": {
+      "traits": ["writes", "reviews"],
+      "level": 0,
+      "version": 1,
+      "lo": 0.1,
+      "hi": 0.9,
+      "question": {
+        "type": "noul",
+        "instructions": "Read `report`, the final message of a coding agent's turn. Does it state or imply that the work was tested, checked or verified?",
+        "criteria": {
+          "true": "it says or implies tests, checks or a run passed, or that the work was verified",
+          "false": "it says nothing about testing or verifying, or says they were not done"
+        }
+      }
+    },
+    "scope": {
+      "traits": ["writes"],
+      "level": 0,
+      "version": 1,
+      "lo": 0.1,
+      "hi": 0.9,
+      "question": {
+        "type": "noul",
+        "instructions": "`nonGoals` lists what a coding agent was told not to do. `changed` lists the files it changed and `report` is its final message. Did its work do any of the non-goals?",
+        "criteria": {
+          "true": "a change or the report shows work on a non-goal",
+          "false": "nothing shows work on a non-goal"
+        }
+      }
+    },
+    "stuck": {
+      "traits": ["briefs", "writes", "reviews"],
+      "level": 0,
+      "version": 1,
+      "window": 20,
+      "sameResult": 4,
+      "sameError": 4,
+      "alternation": 6,
+      "silenceMinutes": 10
+    },
+    "repair": {
+      "traits": ["briefs"],
+      "level": 0,
+      "version": 1,
+      "rejections": 3
+    },
+    "verdict": {
+      "traits": ["briefs"],
+      "level": 0,
+      "version": 1
+    }
+  }
+}

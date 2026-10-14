@@ -11,6 +11,7 @@ import { rolePrompt } from "../server/orchestration/seats";
 import { after, before, test } from "node:test";
 import contribute from "../index.server";
 import { fakeServer } from "./support/server";
+import { DatabaseSync } from "node:sqlite";
 
 const paseoSide = fakeServer();
 const { call } = paseoSide;
@@ -1163,6 +1164,58 @@ test("a seat's hook reaches the room's guard; a code its Lead grants lets the co
   assert.match(
     lead.inbox.at(-1)!,
     /CANDIDATE from peer[\s\S]*acknowledged by the seat: test-focused test\/a\.test\.ts:1 \(the other suites wait/,
+  );
+});
+
+test("the council reads a seat's ended turn from the app's timeline and logs each member's reading", async () => {
+  const lead = await seat("lead-council", "claude-lead", null, "[Lead] stream");
+  const peer = await seat("peer-council", "claude-peer", lead.agent.id, "[Peer] hours");
+  const tool = (callId: string, name: string, detail: object) => ({
+    type: "tool_call",
+    callId,
+    name,
+    status: "completed",
+    error: null,
+    detail,
+  });
+  await call("on agent.turn_started", { agent: peer.agent, turnId: "turn-c" }, context);
+  await call(
+    "on agent.turn_ended",
+    {
+      agent: peer.agent,
+      turnId: "turn-c",
+      outcome: { kind: "completed" },
+      timeline: [
+        tool("1", "Edit", { type: "edit", filePath: join(PROJECT, "src/cli.js") }),
+        tool("2", "Bash", { type: "shell", command: "git status", exitCode: 0, output: "" }),
+        { type: "assistant_message", text: "CANDIDATE: hours added\nAll tests pass." },
+      ],
+    },
+    context,
+  );
+  const db = new DatabaseSync(join(ROOM_HOME, "safety", "safety.db"));
+  const rows = db
+    .prepare("SELECT id, member, zone FROM council_readings WHERE seat = ? ORDER BY member")
+    .all(peer.agent.id) as { id: number; member: string; zone: string }[];
+  db.close();
+  assert.deepEqual(
+    rows.map((row) => `${row.member}:${row.zone}`),
+    ["claims:found", "scope:skipped", "stuck:clear"],
+  );
+
+  // the seat above says whether a finding was right; the seat itself cannot
+  const id = rows[0].id;
+  const label = {
+    action: "label",
+    id: `#${id}`,
+    value: "right",
+    reason: "it never ran the suite after editing cli.js",
+  };
+  assert.match(await peer.call("seatwork_safety", label), /not under you/);
+  assert.match(await lead.call("seatwork_safety", label), new RegExp(`finding #${id} was right`));
+  assert.match(
+    await lead.call("seatwork_safety", { action: "council" }),
+    /claims: \d+ readings, \d+ found, 0 unsure, 0 shown; labelled 1 right, 0 wrong/,
   );
 });
 

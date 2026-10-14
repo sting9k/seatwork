@@ -149,7 +149,18 @@ export function registerTools(room: RoomContext, mcp: McpHttpServer): void {
         ? `Acknowledged ${id}: it rides up with your next candidate, with your reason.`
         : `No finding ${id} of yours: copy the id from the returned candidate.`;
     }
-    throw new Error("seatwork_safety: `action` is check, grant, waiting or ack");
+    if (action === "council") return room.safety.councilLines(Number(args.days) > 0 ? Number(args.days) : 30);
+    if (action === "label") {
+      const id = Number(String(args.id ?? "").replace(/^#/, ""));
+      const value = String(args.value ?? "");
+      const reason = String(args.reason ?? "").trim();
+      if (!Number.isInteger(id) || (value !== "right" && value !== "wrong") || reason.length < 10)
+        throw new Error(
+          "seatwork_safety label: give the finding's `id`, `value` right or wrong, and a `reason` of a sentence",
+        );
+      return room.safety.label(me, id, value, reason);
+    }
+    throw new Error("seatwork_safety: `action` is check, grant, waiting, ack, council or label");
   });
 
   add("seatwork_seats", async (_args, me) => {

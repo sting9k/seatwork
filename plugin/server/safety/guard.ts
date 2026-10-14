@@ -5,8 +5,9 @@ import { packsInForce, ruleOf, type Mode } from "./gate/packs";
 import { within } from "./gate/paths";
 import { guardOf } from "./gate/rules/protected";
 import { SEVERITY_RANK, type Doubt, type Finding, type Place } from "./gate/types";
-import { redact } from "./redact";
+import { redact } from "../redact";
 import { codeHash, type Grantor, type SafetyStore } from "./store";
+import type { CouncilPolicy } from "./council/council";
 
 /** The command guard: packs, the owner's exceptions and one-time codes. */
 
@@ -32,6 +33,7 @@ export interface SafetyPolicy {
   repeat?: { count: number; minutes: number };
   keepDays?: number;
   handin?: { mode: "block" | "warn" | "off" };
+  council?: CouncilPolicy;
 }
 
 export interface SeatRef {

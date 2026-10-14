@@ -1,0 +1,456 @@
+import council from "../../../shared/safety/council.json";
+import type { RoleTraits } from "../../../shared/workflow";
+import type { TurnEvent } from "../../host";
+import { briefFields, quotedCommands, scopeGlobs } from "../../orchestration/brief";
+import { CLOSES_WORK, signalOf } from "../../signals";
+import type { MemberCount, MemberState, ReadingRow, SafetyStore } from "../store";
+import { counted, hiFor, levelFor } from "./calibration";
+import { claimsIn, loopIn, outsideScope, quietMinutes, runsOneOf, turnFacts } from "./facts";
+import { changedSince, type Snapshot } from "./git";
+
+/** The council: each member reads a turn for one concern, and speaks at the level it has earned. */
+
+export type MemberName = keyof typeof council.members;
+const MEMBERS = Object.keys(council.members) as MemberName[];
+
+export interface CouncilPolicy {
+  mode: "on" | "off";
+  keepDays: number;
+  tickSeconds: number;
+  levels?: Partial<Record<MemberName, number>>;
+}
+
+/** The decision district as the council uses it; any provider of typed decisions fits. */
+export interface Decider {
+  why(): string | null;
+  decide(
+    caller: string,
+    state: Record<string, unknown>,
+    questions: Record<string, unknown>,
+    options?: { deadlineMs?: number },
+  ): Promise<{ answers: Record<string, { type: string; noul?: number }>; asks: Record<string, number> }>;
+}
+
+export interface CouncilSeat {
+  id: string;
+  role: string | null;
+  traits: RoleTraits;
+  root: string;
+  task: string | null;
+}
+
+/** A verdict the seat gave this turn on work handed in to it, with what the room knows of that work. */
+export interface Verdict {
+  to: string;
+  accepted: boolean;
+  brief: string | null;
+  task: string | null;
+  rejected: number;
+  contextTokens: number | null;
+  costUsd: number | null;
+}
+
+export interface TurnInput {
+  seat: CouncilSeat;
+  turn: string | null;
+  events: readonly TurnEvent[];
+  text: string;
+  brief: string | null;
+  verdicts: readonly Verdict[];
+  changed?: readonly string[] | null;
+}
+
+export interface Finding {
+  member: MemberName;
+  level: number;
+  line: string;
+}
+
+/** One member's reading before it is logged; a juror's comes back later. */
+interface Reading {
+  tier: "fact" | "juror";
+  zone: ReadingRow["zone"];
+  line?: string;
+  fingerprint?: string;
+  evidence?: unknown;
+  score?: number;
+  askId?: number;
+}
+
+const JUROR_DEADLINE_MS = 8000;
+const MAX_JURORS_IN_FLIGHT = 8;
+const REPORT_CHARS = 6000;
+
+const clip = (text: string, most: number) => (text.length > most ? `${text.slice(0, most)}…` : text);
+const quoted = (text: string) => `"${clip(text.replace(/\s+/g, " "), 120)}"`;
+
+/** A loop among a turn's last steps, as a found reading. */
+function loopReading(events: readonly TurnEvent[]): Reading | null {
+  const loop = loopIn(events, council.members.stuck);
+  return loop
+    ? {
+        tier: "fact",
+        zone: "found",
+        fingerprint: `${loop.pattern}:${loop.command}`,
+        line: `stuck: ${loop.pattern} ${loop.count} times in a row: ${quoted(loop.command)}`,
+        evidence: loop,
+      }
+    : null;
+}
+
+/** Labels read per member when it is weighed again; the newest decide. */
+const LABELS_READ = 500;
+/** A juror's threshold moves only after this many new labels. */
+const MOVE_EVERY = 20;
+const IMPLIED = { acceptanceRun: "implied:acceptance-run", nextVerdict: "implied:next-verdict" } as const;
+
+export class Council {
+  private readonly started = new Map<string, { at: number; snapshot: Promise<Snapshot | null> }>();
+  private inFlight = 0;
+
+  constructor(
+    private readonly deps: {
+      store(): SafetyStore;
+      decider: Decider | null;
+      policy(): CouncilPolicy | undefined;
+      log(message: string): void;
+      now?: () => number;
+      snapshot?: (cwd: string) => Promise<Snapshot | null>;
+    },
+  ) {}
+
+  get on(): boolean {
+    return this.deps.policy()?.mode === "on";
+  }
+
+  private now(): number {
+    return this.deps.now?.() ?? Date.now();
+  }
+
+  /** A member's state as its labels last set it, for its current version only. */
+  private state(member: MemberName): MemberState | null {
+    const state = this.deps.store().memberState(member);
+    return state && state.version === council.members[member].version ? state : null;
+  }
+
+  /** The level a member speaks at: the policy's when it pins one, else the one its labels earned. */
+  level(member: MemberName): number {
+    return this.deps.policy()?.levels?.[member] ?? this.state(member)?.level ?? council.members[member].level;
+  }
+
+  private hi(member: "claims" | "scope"): number {
+    return this.state(member)?.hi ?? council.members[member].hi;
+  }
+
+  private watches(member: MemberName, traits: RoleTraits): boolean {
+    return council.members[member].traits.some((trait) => traits[trait as keyof RoleTraits] === true);
+  }
+
+  /** A turn begins: its time, and the commit its folder stands on, for what the turn changes. */
+  turnStarted(seat: string, cwd: string): void {
+    const snapshot = this.on && this.deps.snapshot ? this.deps.snapshot(cwd).catch(() => null) : Promise.resolve(null);
+    this.started.set(seat, { at: this.now(), snapshot });
+  }
+
+  /** When the seat's running turn began, if the room saw it begin. */
+  startOf(seat: string): number | null {
+    return this.started.get(seat)?.at ?? null;
+  }
+
+  /** The work tree of the seat's running turn and every file that differs from the commit it began on. */
+  async changedIn(seat: string): Promise<{ root: string; files: string[] } | null> {
+    const found = await (this.started.get(seat)?.snapshot ?? null);
+    const files = found ? await changedSince(found) : null;
+    return found && files ? { root: found.root, files } : null;
+  }
+
+  forget(seat: string): void {
+    this.started.delete(seat);
+  }
+
+  /** Reads an ended turn; returns what is to be shown with its report, a member's line at a time. */
+  async endOfTurn(input: TurnInput): Promise<Finding[]> {
+    this.started.delete(input.seat.id);
+    if (!this.on) return [];
+    this.implied(input);
+    const findings: Finding[] = [];
+    for (const member of MEMBERS) {
+      if (!this.watches(member, input.seat.traits)) continue;
+      for (const reading of this.read(member, input)) {
+        if (!(reading instanceof Promise)) {
+          const shown = this.log(member, input, reading);
+          if (shown) findings.push(shown);
+        } else if (this.level(member) > 0) {
+          // a member that speaks is waited for; one that only logs is not
+          const settled = await reading.catch((error) => this.failed(member, error));
+          const shown = this.log(member, input, settled);
+          if (shown) findings.push(shown);
+        } else if (this.inFlight < MAX_JURORS_IN_FLIGHT) {
+          this.inFlight += 1;
+          void reading
+            .catch((error) => this.failed(member, error))
+            .then((settled) => this.log(member, input, settled))
+            .catch((error) => this.deps.log(`council: ${member} could not be logged: ${String(error)}`))
+            .finally(() => (this.inFlight -= 1));
+        }
+      }
+    }
+    return findings;
+  }
+
+  /** Reads a running turn for loops and silence; returns what is to be mailed now. */
+  whileRunning(seat: CouncilSeat, events: readonly TurnEvent[]): Finding[] {
+    if (!this.on || !this.watches("stuck", seat.traits)) return [];
+    const quiet = quietMinutes(events, this.now());
+    const reading: Reading | null =
+      loopReading(events) ??
+      (quiet !== null && quiet >= council.members.stuck.silenceMinutes
+        ? {
+            tier: "fact",
+            zone: "found",
+            fingerprint: `silence:${events.findLast((event) => event.at)?.at}`,
+            line: `stuck: no step for ${Math.round(quiet)} minutes in a running turn`,
+            evidence: { quietMinutes: Math.round(quiet) },
+          }
+        : null);
+    // a running turn is logged only for a finding not yet logged: the turn's end logs the turn
+    if (!reading || this.deps.store().readBefore(seat.id, "stuck", reading.fingerprint!)) return [];
+    const shown = this.log("stuck", { seat, turn: null, events, text: "", brief: null, verdicts: [] }, reading);
+    return shown && shown.level >= 2 ? [shown] : [];
+  }
+
+  /** Each member's readings and labels over the last `days`. */
+  counts(days: number): MemberCount[] {
+    return this.deps.store().councilCounts(new Date(this.now() - days * 86_400_000).toISOString());
+  }
+
+  /** A seat's word on a finding; the member is weighed again. Null when no such finding is kept. */
+  label(id: number, source: string, value: "right" | "wrong", note: string | null): MemberName | null {
+    const member = this.deps.store().labelReading(id, source, value, note) as MemberName | null;
+    if (member && member in council.members) this.weigh(member);
+    return member;
+  }
+
+  /** What a Lead's verdict this turn says of earlier findings: a check run on the work, a task sent back again. */
+  private implied(input: TurnInput): void {
+    const store = this.deps.store();
+    const touched = new Set<MemberName>();
+    for (const verdict of input.verdicts) {
+      const wanted = verdict.brief ? quotedCommands(briefFields(verdict.brief).acceptance ?? "") : [];
+      const runs = input.events.filter(
+        (event): event is Extract<TurnEvent, { kind: "shell" }> =>
+          event.kind === "shell" && event.status !== "running" && runsOneOf(event.command, wanted),
+      );
+      const claim = runs.length ? store.openFinding("claims", verdict.to, IMPLIED.acceptanceRun) : null;
+      if (claim !== null) {
+        // the Owner ran the work's own check: a claim it passes was true, one it fails was not
+        store.labelReading(claim, IMPLIED.acceptanceRun, runs.at(-1)!.exitCode === 0 ? "wrong" : "right", null);
+        touched.add("claims");
+      }
+      const repair = store.openFinding(
+        "repair",
+        input.seat.id,
+        IMPLIED.nextVerdict,
+        `${verdict.task ?? verdict.to}:`,
+        input.turn,
+      );
+      if (repair !== null) {
+        // after a repair finding, the same seat's work sent back again bears it out; accepted, it did not
+        store.labelReading(repair, IMPLIED.nextVerdict, verdict.accepted ? "wrong" : "right", null);
+        touched.add("repair");
+      }
+    }
+    for (const member of touched) this.weigh(member);
+  }
+
+  /** Weighs a member again from its labels: the level they earn, and a juror's threshold. */
+  private weigh(member: MemberName): void {
+    const store = this.deps.store();
+    const shipped = council.members[member];
+    const labels = counted(store.labelsOf(member, shipped.version, LABELS_READ));
+    const total = store.labelCount(member, shipped.version);
+    const held = this.state(member);
+    // the third level sends work back, and waits for a chair
+    const level = Math.min(levelFor(labels, held?.level ?? 0), 2);
+    const shippedHi = "hi" in shipped ? shipped.hi : null;
+    const due = shippedHi !== null && total - (held?.labels ?? 0) >= MOVE_EVERY;
+    const hi = due ? hiFor(labels, held?.hi ?? shippedHi) : (held?.hi ?? shippedHi);
+    if (held && held.level === level && !due) return;
+    store.setMemberState({ member, version: shipped.version, level, hi, labels: due || !held ? total : held.labels });
+    if (level !== (held?.level ?? shipped.level))
+      this.deps.log(`council: ${member} now speaks at level ${level}, from ${labels.length} labels`);
+  }
+
+  /** Drops readings older than the policy keeps that no label holds. */
+  expire(): number {
+    const keepDays = this.deps.policy()?.keepDays ?? 90;
+    return this.deps.store().expireCouncil(new Date(this.now() - keepDays * 86_400_000));
+  }
+
+  private failed(member: MemberName, error: unknown): Reading {
+    this.deps.log(`council: the ${member} juror could not be asked: ${error instanceof Error ? error.message : error}`);
+    return { tier: "juror", zone: "skipped", evidence: { error: String(error).slice(0, 200) } };
+  }
+
+  /** Logs a reading; returns it as a finding when it is found, new, and its member speaks. */
+  private log(member: MemberName, input: TurnInput, reading: Reading): Finding | null {
+    const level = this.level(member);
+    const store = this.deps.store();
+    const shows =
+      reading.zone === "found" &&
+      level > 0 &&
+      !!reading.line &&
+      !(reading.fingerprint && store.shownBefore(input.seat.id, member, reading.fingerprint));
+    const id = store.read({
+      member,
+      version: council.members[member].version,
+      seat: input.seat.id,
+      role: input.seat.role,
+      task: input.seat.task,
+      turn: input.turn,
+      tier: reading.tier,
+      zone: reading.zone,
+      score: reading.score ?? null,
+      askId: reading.askId ?? null,
+      level,
+      shown: shows,
+      fingerprint: reading.fingerprint ?? null,
+      evidence: reading.evidence === undefined ? null : JSON.stringify(reading.evidence),
+    });
+    // the number lets the seat above say whether the finding was right
+    return shows ? { member, level, line: reading.line!.replace(/^(\w+):/, `$1 #${id}:`) } : null;
+  }
+
+  /** A juror's one question, read into a zone by the member's grey band. */
+  private async ask(
+    member: "claims" | "scope",
+    state: Record<string, unknown>,
+    line: (score: number) => string,
+    evidence: unknown,
+  ): Promise<Reading> {
+    const { question, lo } = council.members[member];
+    const hi = this.hi(member);
+    const decided = await this.deps.decider!.decide(
+      `council.${member}@${council.members[member].version}`,
+      state,
+      { [member]: question },
+      { deadlineMs: JUROR_DEADLINE_MS },
+    );
+    const score = decided.answers[member]?.noul;
+    if (typeof score !== "number") return { tier: "juror", zone: "skipped", evidence };
+    const zone = score >= hi ? "found" : score <= lo ? "clear" : "grey";
+    return { tier: "juror", zone, score, askId: decided.asks[member], line: line(score), evidence };
+  }
+
+  private jurorReady(): boolean {
+    return !!this.deps.decider && this.deps.decider.why() === null;
+  }
+
+  private read(member: MemberName, input: TurnInput): (Reading | Promise<Reading>)[] {
+    const fields = input.brief ? briefFields(input.brief) : {};
+    switch (member) {
+      case "claims": {
+        const named = quotedCommands([fields.acceptance, fields.contract].filter(Boolean).join("\n"));
+        const facts = turnFacts(input.events, named);
+        const writes = input.seat.traits.writes === true;
+        // a writer's checks count after its last change; a reviewer changes nothing, so any check counts
+        const after = writes ? facts.checksAfterChange : facts.checks;
+        if (writes && facts.lastChange < 0) return [{ tier: "fact", zone: "skipped" }];
+        if (after.some((run) => run.exitCode === 0))
+          return [{ tier: "fact", zone: "clear", evidence: { checks: after } }];
+        const claims = claimsIn(input.text);
+        const where = writes ? "after the last change" : "in the turn";
+        if (claims.length)
+          return [
+            {
+              tier: "fact",
+              zone: "found",
+              line: `claims: the report says ${quoted(claims[0])}, and no check passed ${where}`,
+              evidence: { claim: claims[0], checks: after },
+            },
+          ];
+        const signal = signalOf(input.text);
+        if (!signal || !CLOSES_WORK.has(signal) || !this.jurorReady()) return [{ tier: "fact", zone: "clear" }];
+        return [
+          this.ask(
+            "claims",
+            { report: clip(input.text, REPORT_CHARS) },
+            (score) => `claims: the report reads as tested (${score.toFixed(2)}), and no check passed ${where}`,
+            { signal, checks: after },
+          ),
+        ];
+      }
+      case "scope": {
+        // git sees every change, a shell's included; the tool calls are what is left without it
+        const changed = input.changed ?? turnFacts(input.events, []).changed;
+        if (changed.length === 0) return [{ tier: "fact", zone: "skipped" }];
+        const out: (Reading | Promise<Reading>)[] = [];
+        const globs = fields.writeScope ? scopeGlobs(fields.writeScope) : [];
+        if (globs.length) {
+          const outside = outsideScope(changed, globs, input.seat.root);
+          out.push(
+            outside.length
+              ? {
+                  tier: "fact",
+                  zone: "found",
+                  fingerprint: [...outside].sort().join("|"),
+                  line: `scope: changed ${outside.slice(0, 3).join(", ")}${outside.length > 3 ? ` and ${outside.length - 3} more` : ""}, outside the write scope ${clip(fields.writeScope!, 80)}`,
+                  evidence: { outside, globs },
+                }
+              : { tier: "fact", zone: "clear" },
+          );
+        }
+        if (fields.nonGoals && this.jurorReady())
+          out.push(
+            this.ask(
+              "scope",
+              {
+                nonGoals: fields.nonGoals,
+                changed: changed.slice(0, 50),
+                report: clip(input.text, REPORT_CHARS),
+              },
+              (score) =>
+                `scope: the work reads as touching a non-goal (${score.toFixed(2)}): ${clip(fields.nonGoals!, 80)}`,
+              { nonGoals: fields.nonGoals },
+            ),
+          );
+        return out.length ? out : [{ tier: "fact", zone: "skipped" }];
+      }
+      case "stuck":
+        return [loopReading(input.events) ?? { tier: "fact", zone: "clear" }];
+      case "repair":
+        return input.verdicts
+          .filter((verdict) => !verdict.accepted)
+          .map((verdict) =>
+            verdict.rejected >= council.members.repair.rejections
+              ? {
+                  tier: "fact",
+                  zone: "found",
+                  fingerprint: `${verdict.task ?? verdict.to}:${verdict.rejected}`,
+                  line: `repair: ${verdict.to}'s work was sent back ${verdict.rejected} times${verdict.contextTokens ? `; its context holds ${Math.round(verdict.contextTokens / 1000)}K tokens` : ""}${verdict.costUsd ? `, it cost ${verdict.costUsd.toFixed(2)} USD` : ""}: a fresh seat, given a failing test for what is wrong, may do better`,
+                  evidence: verdict,
+                }
+              : { tier: "fact", zone: "clear", evidence: { rejected: verdict.rejected } },
+          );
+      case "verdict":
+        return input.verdicts
+          .filter((verdict) => verdict.accepted)
+          .map((verdict) => {
+            const wanted = verdict.brief ? quotedCommands(briefFields(verdict.brief).acceptance ?? "") : [];
+            if (wanted.length === 0) return { tier: "fact", zone: "skipped" } as Reading;
+            const ran = input.events.some(
+              (event) => event.kind === "shell" && event.exitCode === 0 && runsOneOf(event.command, wanted),
+            );
+            return ran
+              ? { tier: "fact", zone: "clear" }
+              : {
+                  tier: "fact",
+                  zone: "found",
+                  fingerprint: `${verdict.to}:${input.turn}`,
+                  line: `verdict: accepted ${verdict.to}'s work without running its acceptance check ${quoted(wanted[0])}`,
+                  evidence: { wanted },
+                };
+          });
+    }
+  }
+}

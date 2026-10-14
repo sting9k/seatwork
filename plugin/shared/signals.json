@@ -40,6 +40,7 @@
     { "name": "RESUME" },
     { "name": "ROTATED" },
     { "name": "ROTATION FAILED" },
-    { "name": "HAND-IN RETURNED" }
+    { "name": "HAND-IN RETURNED" },
+    { "name": "COUNCIL" }
   ]
 }

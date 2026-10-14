@@ -31,6 +31,12 @@ function logLine(kind: string, detail: Record<string, unknown>): void {
   appendFileSync(GC_LOG, `${JSON.stringify({ at: new Date().toISOString(), kind, ...detail })}\n`);
 }
 
+/** A district's records that age out with the logs, and the words GC logs them by. */
+export interface DistrictRecords {
+  what: string;
+  expire(before: Date): number;
+}
+
 export class Collector {
   private running = false;
 
@@ -42,7 +48,7 @@ export class Collector {
     private readonly forgetAgent: (agentId: string) => void,
     private readonly keepMailDays: number = KEEP_LOG_DAYS,
     private readonly expireUnreadDays?: number,
-    private readonly expireGuard?: (before: Date) => number,
+    private readonly districts: readonly DistrictRecords[] = [],
   ) {}
 
   /** One full pass: idle seats, orphan heartbeats, seat leftovers, finished mail. */
@@ -64,8 +70,10 @@ export class Collector {
         const unread = this.engine.expire(new Date(Date.now() - this.expireUnreadDays * 86_400_000).toISOString());
         if (unread > 0) this.log(`gc: ${unread} mails sent only to be read went unread ${this.expireUnreadDays} days`);
       }
-      const guard = this.expireGuard?.(new Date(cutoff)) ?? 0;
-      if (guard > 0) this.log(`gc: ${guard} guard records older than ${this.keepMailDays} days left the safety store`);
+      for (const district of this.districts) {
+        const gone = district.expire(new Date(cutoff));
+        if (gone > 0) this.log(`gc: ${gone} ${district.what} older than ${this.keepMailDays} days left the room`);
+      }
       // a successor holds its handoff in its prompt: the file is a copy for people
       const before = Date.now() - KEEP_LOG_DAYS * 86_400_000;
       for (const root of this.engine.projects())

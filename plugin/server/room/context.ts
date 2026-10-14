@@ -1,5 +1,6 @@
 import type { MailEngine } from "../coordination/engine";
 import type { Host, SeatUsage } from "../host";
+import type { Jev } from "../jev/index";
 import type { Recovery } from "../orchestration/recovery";
 import type { ReviewGate } from "../orchestration/review-gate";
 import type { Rotations } from "../orchestration/rotation";
@@ -25,11 +26,13 @@ export interface RoomContext {
   owed: OwedList;
   callers: Callers;
   safety: Safety;
+  jev: Jev;
   /** seat → the signals it mailed its parent in the turn it is in; read when that turn ends */
   mailedUp: Map<string, Set<string>>;
   /** seat → the signal its last turn ended with */
   lastSignal: Map<string, string>;
   lastUsage: Map<string, SeatUsage>;
+  briefs: Map<string, string>;
   rotateAt: number;
   /** Sets up seats the room does not have yet, for a project whose own model table names them. */
   addSeats(providers: string[]): Promise<void>;

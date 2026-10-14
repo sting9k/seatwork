@@ -1,6 +1,6 @@
 import { REVIEW_STALL, routeOpen, traits } from "../../shared/workflow";
 import type { Mail, NewMail, Needs, Priority, SeatRecord } from "../coordination/engine";
-import type { TurnOutcome } from "../host";
+import type { TurnEvent, TurnOutcome } from "../host";
 import { nextTitle, parseHandoff, rotate } from "../orchestration/rotation";
 import { FRESH_EYES, ownerNote } from "../orchestration/rounds";
 import { parseSeat } from "../orchestration/seats";
@@ -8,6 +8,7 @@ import { handInLine, handInReturn, type HandIn } from "../safety/handin";
 import { asksOwner, DECIDES, signalOf, subjectSignal } from "../signals";
 import { noteUsage } from "../stats";
 import { fromRoom, releaseWork, taskOf, type RoomContext } from "./context";
+import { councilLine, councilRead } from "./council";
 import { fitAt } from "./launch";
 
 /** A seat as an event of the app names it. */
@@ -25,6 +26,7 @@ export interface TurnEnd {
   turnId: string | null;
   outcome: TurnOutcome;
   text: string;
+  events: TurnEvent[];
 }
 
 /** True when a turn was started by mail and none of it asked the seat for anything. */
@@ -241,11 +243,23 @@ export async function turnEnded(room: RoomContext, end: TurnEnd): Promise<void> 
       } as HandIn;
     });
   const sendBack = check?.state === "blocked" && room.safety.handInBlocks;
+  // the council reads the turn; a member that has earned it speaks under the report, or to the seat above
+  const findings =
+    role && !canceled
+      ? await councilRead(room, end, role).catch((error) => {
+          room.log(
+            `the council could not read the turn of ${id}: ${error instanceof Error ? error.message : String(error)}`,
+          );
+          return [];
+        })
+      : [];
   if (sendBack) kept = report = null;
   // under what goes up, the room's own line: the task's round, and a context past the rotation line
   const up = kept ?? report;
   if (role && up) {
-    const guarded = [check ? handInLine(check) : null, room.safety.blocksLine(id)].filter((l): l is string => !!l);
+    const guarded = [check ? handInLine(check) : null, room.safety.blocksLine(id), councilLine(findings)].filter(
+      (l): l is string => !!l,
+    );
     if (guarded.length) up.why = [up.why, ...guarded].filter(Boolean).join("; ");
     const candidate = subjectSignal(up.subject) === "CANDIDATE";
     const line = ownerNote({
@@ -292,6 +306,16 @@ export async function turnEnded(room: RoomContext, end: TurnEnd): Promise<void> 
       body: handInReturn(check),
       needs: "reply",
       why: "the room reads a candidate before its Owner does",
+    });
+  for (const finding of findings.filter((one) => one.level >= 2 && reportsTo))
+    await eng.post({
+      from: fromRoom,
+      to: reportsTo!,
+      priority: "action",
+      subject: `COUNCIL: ${finding.member} on ${seat.title ?? id}`,
+      body: finding.line,
+      needs: "nothing",
+      why: "the room's council read a turn of a seat under you",
     });
   // held mail may now start the next turn
   await eng.deliver(id);

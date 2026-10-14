@@ -5,6 +5,8 @@ import { packsInForce } from "./gate/packs";
 import type { Place } from "./gate/types";
 import { Guard, type SafetyPolicy, type SeatRef } from "./guard";
 import { inspectHandIn, type HandIn } from "./handin";
+import { Council, type Decider } from "./council/council";
+import { snapshot } from "./council/git";
 import { answerHook, claudePlugin, GATE_ENV, type Cli } from "./hooks";
 import { SafetyStore, type CodeRow } from "./store";
 import { machineTools } from "./system";
@@ -25,6 +27,7 @@ export interface SafetyDeps {
   roomFolder: string;
   /** its Owner hears of a rule a seat keeps hitting */
   repeated(seat: string, rule: string, count: number, command: string): void;
+  decider: Decider | null;
   log(message: string): void;
 }
 
@@ -33,6 +36,7 @@ const BUSY_MS = 2000;
 export class Safety {
   private storeHandle: SafetyStore | null = null;
   readonly guard: Guard;
+  readonly council: Council;
   private readonly starts = new Map<string, number>();
   private readonly noted = new Map<string, string>();
 
@@ -43,6 +47,13 @@ export class Safety {
       tools: machineTools(() => null),
       place: (seat) => this.placeOf(seat),
       repeated: (seat, rule, count, command) => deps.repeated(seat.id, rule, count, command),
+    });
+    this.council = new Council({
+      store: () => this.store(),
+      decider: deps.decider,
+      policy: () => deps.policy()?.council,
+      log: deps.log,
+      snapshot,
     });
   }
 
@@ -172,10 +183,37 @@ export class Safety {
   forget(agentId: string): void {
     this.starts.delete(agentId);
     this.noted.delete(agentId);
+    this.council.forget(agentId);
   }
 
   expire(before: Date): number {
     return this.storeHandle || existsSync(join(this.deps.dir, "safety.db")) ? this.store().expire(before) : 0;
+  }
+
+  /** A seat's word on a council finding about a seat under it. */
+  label(by: string, id: number, value: "right" | "wrong", reason: string): string {
+    const seat = this.storeHandle || existsSync(join(this.deps.dir, "safety.db")) ? this.store().readingSeat(id) : null;
+    if (!seat) return `No council finding #${id}: copy the number from the [council] line.`;
+    if (seat === by || !this.deps.isAncestor(by, seat)) return `Finding #${id} is about a seat that is not under you.`;
+    const member = this.council.label(id, `seat:${by}`, value, reason);
+    return `Noted: finding #${id} was ${value}. ${member} speaks at level ${member ? this.council.level(member) : 0} now.`;
+  }
+
+  /** How each council member has read turns over the last `days`, as lines. */
+  councilLines(days: number): string {
+    const counts = this.storeHandle || existsSync(join(this.deps.dir, "safety.db")) ? this.council.counts(days) : [];
+    if (!counts.length) return `The council read no turn in the last ${days} days.`;
+    return counts
+      .map(
+        (c) =>
+          `${c.member}: ${c.readings} readings, ${c.found} found, ${c.grey} unsure, ${c.shown} shown; labelled ${c.right} right, ${c.wrong} wrong`,
+      )
+      .join("\n");
+  }
+
+  /** Drops council readings past the policy's days that no label holds. */
+  expireCouncil(): number {
+    return this.storeHandle || existsSync(join(this.deps.dir, "safety.db")) ? this.council.expire() : 0;
   }
 
   close(): void {

@@ -315,7 +315,39 @@
     "budgetMs": 1000,
     "codeHours": 24,
     "repeat": { "count": 3, "minutes": 30 },
-    "handin": { "mode": "block" }
+    "handin": { "mode": "block" },
+    "council": {
+      "$comment": "The council that reads each turn of a briefed, writing or reviewing seat (shared/safety/council.json). levels: a member's level on this machine, over the shipped one. Readings no label holds are kept keepDays; tickSeconds paces the look at running turns.",
+      "mode": "on",
+      "keepDays": 90,
+      "tickSeconds": 60,
+      "levels": {}
+    }
+  },
+  "jev": {
+    "$comment": "The decision district. provider: jev (TypeSafe direct), openrouter (sent with zdr and no data collection) or custom (an url, a model and a dialect: systemone or openai-decisions). A key is read from keyEnv when set, else from <room home>/jev/<provider>.key. Calls stop at monthlyCapUsd. Calls no label holds are kept keepDays; the states they read go with the logs.",
+    "provider": "openrouter",
+    "providers": {
+      "jev": {
+        "url": "https://api.typesafe.ai/v1/systemone",
+        "model": "jev-1.13.0",
+        "dialect": "systemone",
+        "keyEnv": "",
+        "usdPerMillionInput": 0.042
+      },
+      "openrouter": {
+        "url": "https://openrouter.ai/api/alpha/decisions",
+        "model": "typesafe/jev-1.13",
+        "dialect": "openrouter",
+        "keyEnv": "",
+        "usdPerMillionInput": 0.042
+      },
+      "custom": { "url": "", "model": "", "dialect": "systemone", "keyEnv": "", "usdPerMillionInput": 0 }
+    },
+    "monthlyCapUsd": 10,
+    "attemptSeconds": 10,
+    "retries": 2,
+    "keepDays": 90
   },
   "room": {
     "$comment_params": "Quoted by role prompts as {{placeholders}}; change them here, never in a prompt. heartbeatCron: the Supervisor's beat; Lead reports that ask or close already wake it, so it only catches what slipped between. mailChars: how much of a mail's body a seat is shown; the rest is in the mail's file, whose path the mail gives. peerStallMinutes: a Peer silent this long with nothing pending gets a status check; its turns take minutes. reviewStallMinutes: longer, for review, research and lens seats, which read long before writing. leadStallMinutes: a Lead silent this long with no running Peer or pending permission. readBudgetTokens: reading per Peer task before the Lead must split it; ~80k tokens (~320 KB of source) is what a default-tier model reasons over well. cheapReadBudgetTokens: the same for the cheap tier, which loses the thread sooner. rotateAtTokens: a Lead or Peer past this is named with its size to the seat above under its next report; each step rereads the whole context, so its next task goes to a fresh seat.",

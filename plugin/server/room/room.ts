@@ -1,6 +1,6 @@
 import { appendFileSync, chmodSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
-import { maySpawn, reviews, routeOpen, SPAWN } from "../../shared/workflow";
+import { maySpawn, reviews, routeOpen, SPAWN, traits } from "../../shared/workflow";
 import { MailEngine } from "../coordination/engine";
 import { Collector } from "../gc";
 import type { Host } from "../host";
@@ -21,16 +21,18 @@ import {
   REGISTRY_LOG,
   ROOM_HOME,
   SAFETY_DIR,
+  JEV_DIR,
   SEAT_TMP_DIR,
   USER_HOME,
 } from "../paths";
 import { loadPolicy, type RuntimePolicy } from "../policy";
 import { OwedList, roomStatus } from "./status";
+import { Jev } from "../jev/index";
 import { Safety } from "../safety/index";
 import { render, type Cli } from "../safety/hooks";
 import { WorkStores } from "../tasks/stores";
 import { Callers, serverToken } from "./callers";
-import { fromRoom, releaseWork, type RoomContext } from "./context";
+import { fromRoom, releaseWork, taskOf, type RoomContext } from "./context";
 import { launch, type Launched, type SeatLaunch } from "./launch";
 import { registerTools } from "./tools";
 import { rotationFailed, turnEnded, type SeatEvent, type TurnEnd } from "./turns";
@@ -109,6 +111,7 @@ export function startRoom(input: {
     quietChars: policy.mail.quietChars,
     dedupeSeconds: policy.mail.dedupeSeconds,
   });
+  const jev = new Jev({ dir: JEV_DIR, policy: () => policy.jev });
   const safety = new Safety({
     dir: SAFETY_DIR,
     userHome: USER_HOME,
@@ -141,6 +144,7 @@ export function startRoom(input: {
         })
         .catch((error) => console.error("seatwork: the guard's notice was not sent", error));
     },
+    decider: jev,
     log,
   });
   if (safety.on) safety.install();
@@ -158,9 +162,11 @@ export function startRoom(input: {
     owed: new OwedList(join(ROOM_HOME, "owed.json")),
     callers: new Callers(join(ROOM_MAIL, "nonces.json")),
     safety,
+    jev,
     mailedUp: new Map(),
     lastSignal: new Map(),
     lastUsage: new Map(),
+    briefs: new Map(),
     rotateAt: policy.room.params.rotateAtTokens ?? Infinity,
     addSeats: input.addSeats,
   };
@@ -169,18 +175,14 @@ export function startRoom(input: {
     room.rounds.forget(agentId);
     room.lastUsage.delete(agentId);
     room.callers.forget(agentId);
+    room.briefs.delete(agentId);
     safety.forget(agentId);
   };
-  const gc = new Collector(
-    host,
-    engine,
-    policy.gc,
-    log,
-    forget,
-    policy.mail.keepDays,
-    policy.mail.expireUnreadDays,
-    (before) => safety.expire(before),
-  );
+  const gc = new Collector(host, engine, policy.gc, log, forget, policy.mail.keepDays, policy.mail.expireUnreadDays, [
+    { what: "guard records", expire: (before) => safety.expire(before) },
+    { what: "decision states", expire: (before) => jev.expire(before) },
+    { what: "council readings", expire: () => safety.expireCouncil() },
+  ]);
 
   const mcp = new McpHttpServer(serverToken(join(ROOM_MAIL, "token")), "seatwork", version);
   registerTools(room, mcp);
@@ -255,6 +257,45 @@ export function startRoom(input: {
     },
     Math.max(1, policy.gc.everyMinutes) * 60_000,
   );
+  // the council looks at running turns for loops and silence; one look at a time
+  let looking = false;
+  const councilTick = setInterval(
+    () => {
+      if (looking || !safety.council.on) return;
+      looking = true;
+      void lookAtRunningTurns()
+        .catch((error) => log(`the council could not look at running turns: ${String(error)}`))
+        .finally(() => (looking = false));
+    },
+    Math.max(15, policy.safety?.council?.tickSeconds ?? 60) * 1000,
+  );
+  async function lookAtRunningTurns(): Promise<void> {
+    for (const [id, live] of await host.live()) {
+      const record = live.status === "running" ? engine.seat(id) : undefined;
+      if (!record) continue;
+      const events = await host.turn(id, 60);
+      if (!events) continue;
+      const seat = {
+        id,
+        role: record.role,
+        traits: traits(record.role),
+        root: engine.projectOf(id) ?? live.cwd,
+        task: taskOf(room, id),
+      };
+      const reader = engine.parentOf(id);
+      for (const finding of safety.council.whileRunning(seat, events))
+        if (reader)
+          await engine.post({
+            from: fromRoom,
+            to: reader,
+            priority: "action",
+            subject: `COUNCIL: ${finding.member} on ${live.title ?? id}`,
+            body: finding.line,
+            needs: "nothing",
+            why: "the room's council saw a running turn of a seat under you",
+          });
+    }
+  }
 
   return {
     policy,
@@ -334,6 +375,7 @@ export function startRoom(input: {
       touch();
       room.owed.clear(seat.id);
       room.gate.turnStarted(seat.id);
+      safety.council.turnStarted(seat.id, seat.cwd);
     },
     turnEnded: (end) => turnEnded(room, end),
     async archived(seat) {
@@ -404,9 +446,11 @@ export function startRoom(input: {
     async stop() {
       clearInterval(sweep);
       clearInterval(collect);
+      clearInterval(councilTick);
       room.works.close();
       engine.close();
       safety.close();
+      jev.close();
       // a mail server still binding would stay open behind a close that came first
       await starting;
       await mcp.close();

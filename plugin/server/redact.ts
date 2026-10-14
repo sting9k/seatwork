@@ -1,4 +1,4 @@
-/** Hides secrets in a command before the room keeps or shows it. */
+/** Hides secrets in text before the room keeps it, shows it, or sends it out. */
 
 const PATTERNS: [RegExp, string][] = [
   [/-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?(-----END [A-Z ]*PRIVATE KEY-----|$)/g, "***private key***"],

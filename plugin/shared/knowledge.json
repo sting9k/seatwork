@@ -1,0 +1,28 @@
+{
+  "$comment": "The gate: what the Knowledge district asks the decision model before it keeps a decision. Under `at` for `keep`, a decision is noise; at `at` or more for a repeat of one in force, it is a repeat.",
+  "gate": {
+    "version": 1,
+    "at": 0.6,
+    "most": 5,
+    "deadlineMs": 10000,
+    "keep": "rule",
+    "question": {
+      "type": "choice",
+      "instructions": "`new` is a note a software team may keep as a decision: what a person with the authority decided, written down by an agent from the person's words. `scope` is what it binds. Say what `new` is.",
+      "criteria": {
+        "rule": "a lasting choice or rule that later work in its scope must follow: what to use, how to work, what not to do, a limit or a date",
+        "request": "a request for one piece of work, done once; when it is done nothing is left to follow",
+        "other": "a fact, a status, a question, a mood, or an idea not settled"
+      }
+    },
+    "same": {
+      "type": "choice",
+      "instructions": "`new` and `old.{{id}}` are two decisions a software team keeps. Compare `new` with `old.{{id}}`.",
+      "criteria": {
+        "duplicate": "new says what old says, in other words",
+        "replaces": "new changes or overrides what old says on the same matter, so old no longer holds",
+        "independent": "they speak of different matters, or both hold together"
+      }
+    }
+  }
+}

@@ -1,4 +1,4 @@
-import { existsSync, readFileSync, statSync } from "node:fs";
+import { readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { evaluate, type Tools } from "./gate/evaluate";
 import { packsInForce, ruleOf, type Mode } from "./gate/packs";
@@ -31,7 +31,6 @@ export interface SafetyPolicy {
   maxBytes?: number;
   codeHours?: number;
   repeat?: { count: number; minutes: number };
-  keepDays?: number;
   handin?: { mode: "block" | "warn" | "off" };
   council?: CouncilPolicy;
 }
@@ -64,9 +63,10 @@ export interface GuardDeps {
 const DEFAULTS = { budgetMs: 1000, maxBytes: 64 * 1024, codeHours: 24, repeat: { count: 3, minutes: 30 } };
 const CHAIN = /[;&|`\n<>]|\$\(/;
 const RANK: Record<Mode, number> = { log: 0, warn: 1, ask: 2, deny: 3 };
+const RULES_LOOKED_MS = 3000;
 
 export class Guard {
-  private projectRules = new Map<string, { mtime: number; rules: ProjectRules }>();
+  private projectRules = new Map<string, { mtime: number; at: number; rules: ProjectRules }>();
 
   constructor(private readonly deps: GuardDeps) {}
 
@@ -84,19 +84,7 @@ export class Guard {
         (e.command === command ||
           (e.prefix !== undefined && command.startsWith(e.prefix) && !CHAIN.test(command.slice(e.prefix.length)))),
     );
-    if (allowAll) {
-      if (dry) return pass();
-      store.record({
-        ...base,
-        verdict: "allow",
-        pack: null,
-        rule: null,
-        severity: null,
-        code: null,
-        elapsedUs: elapsed(),
-      });
-      return pass();
-    }
+    if (allowAll) return pass();
     const hash = codeHash(seat?.id ?? null, cwd, command);
     const used = dry ? null : store.consume(hash);
     if (used) {
@@ -201,7 +189,8 @@ export class Guard {
     const blocks = ranked.filter((r) => r.mode === "deny" || r.mode === "ask");
     if (!blocks.length && !doubts.length) {
       const verdict = top ? (top.mode === "warn" ? "warn" : "log") : "allow";
-      if (!dry)
+      // a command that only passes is no news: what is kept is what a rule said something of
+      if (!dry && verdict !== "allow")
         store.record({
           ...base,
           verdict,
@@ -269,10 +258,23 @@ export class Guard {
     const none: ProjectRules = { add: [], rules: {} };
     if (!project) return none;
     const file = join(project, ".seatwork", "safety.json");
-    if (!existsSync(file)) return none;
-    const mtime = statSync(file).mtimeMs;
     const cached = this.projectRules.get(file);
-    if (cached?.mtime === mtime) return cached.rules;
+    // the file is looked at again every few seconds, not on every command
+    if (cached && Date.now() - cached.at < RULES_LOOKED_MS) return cached.rules;
+    let mtime = -1;
+    try {
+      mtime = statSync(file).mtimeMs;
+    } catch {
+      // no file raises no rule
+    }
+    if (mtime < 0) {
+      this.projectRules.set(file, { mtime, at: Date.now(), rules: none });
+      return none;
+    }
+    if (cached?.mtime === mtime) {
+      cached.at = Date.now();
+      return cached.rules;
+    }
     let rules = none;
     try {
       const raw = JSON.parse(readFileSync(file, "utf8")) as {
@@ -288,7 +290,7 @@ export class Guard {
     } catch {
       rules = none;
     }
-    this.projectRules.set(file, { mtime, rules });
+    this.projectRules.set(file, { mtime, at: Date.now(), rules });
     return rules;
   }
 }

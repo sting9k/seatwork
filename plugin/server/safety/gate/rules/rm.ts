@@ -214,5 +214,3 @@ export async function wouldBlockAsRm(scene: Scene, tools: RmTools): Promise<bool
   const found = await rmRules({ ...scene, call: { ...scene.call, name: "rm" } }, tools);
   return found !== null && found.rule !== "rm-generated";
 }
-
-export type { Value };

@@ -8,6 +8,7 @@ import { loadPolicy } from "../server/policy";
 import { projectBlock } from "../server/orchestration/registry";
 import { roleSkillNames } from "../server/orchestration/runtimes";
 import { rolePrompt } from "../server/orchestration/seats";
+import { sinceMark } from "../server/paseo/timeline";
 import { after, before, test } from "node:test";
 import contribute from "../index.server";
 import { fakeServer } from "./support/server";
@@ -1217,6 +1218,202 @@ test("the council reads a seat's ended turn from the app's timeline and logs eac
     await lead.call("seatwork_safety", { action: "council" }),
     /claims: \d+ readings, \d+ found, 0 unsure, 0 shown; labelled 1 right, 0 wrong/,
   );
+});
+
+test("a seat's ended turn is kept in the record: another seat finds it and reads around it", async () => {
+  const lead = await seat("lead-record", "claude-lead", null, "[Lead] record");
+  const peer = await seat("peer-record", "claude-peer", lead.agent.id, "[Peer] record");
+  await call("on agent.turn_started", { agent: peer.agent, turnId: "turn-r" }, context);
+  await call(
+    "on agent.turn_ended",
+    {
+      agent: peer.agent,
+      turnId: "turn-r",
+      outcome: { kind: "completed" },
+      timeline: [
+        { type: "user_message", text: "Fix the flaky session refresh" },
+        {
+          type: "tool_call",
+          callId: "1",
+          name: "Skill",
+          status: "completed",
+          error: null,
+          detail: { type: "plain_text", label: "debugging" },
+        },
+        {
+          type: "tool_call",
+          callId: "2",
+          name: "Bash",
+          status: "completed",
+          error: null,
+          detail: { type: "shell", command: "npm test", exitCode: 1, output: "session refresh: timeout" },
+        },
+        { type: "assistant_message", text: "The refresh timer raced the logout; fixed with a lock." },
+      ],
+    },
+    context,
+  );
+  const found = JSON.parse(
+    await lead.call("seatwork_knowledge", { do: "search", q: "refresh race", also: ["session timeout"] }),
+  );
+  assert.ok(found.hits.length >= 2, JSON.stringify(found));
+  const failed = found.hits.find((hit: { kind: string }) => hit.kind === "shell");
+  assert.equal(failed.exitCode, 1);
+  const around = JSON.parse(
+    await lead.call("seatwork_knowledge", { do: "expand", address: failed.address, around: 1 }),
+  );
+  assert.deepEqual(
+    around.entries.map((entry: { kind: string }) => entry.kind),
+    ["tool", "shell", "say"],
+  );
+  assert.equal(around.entries[0].text, "Skill debugging");
+  const refused = await lead.call("seatwork_knowledge", { do: "search" }).then(
+    () => "",
+    (error: Error) => error.message,
+  );
+  assert.equal(JSON.parse(refused).error.code, "BAD_REQUEST");
+});
+
+test("the app hands a seat's whole timeline at each turn's end, and the room keeps only the turn that ended", async () => {
+  const lead = await seat("lead-whole", "claude-lead", null, "[Lead] whole");
+  const peer = await seat("peer-whole", "claude-peer", lead.agent.id, "[Peer] whole");
+  const said = (text: string) => ({ type: "assistant_message", text });
+  const asked = (text: string) => ({ type: "user_message", text });
+  const first = [asked("Add the hours flag"), said("Hours flag added to the duration parser.")];
+  const second = [
+    ...first,
+    asked("Now the minutes flag"),
+    said("Started on minutes."),
+    asked("Also keep the old flag working"),
+    said("Minutes flag added; the old flag still parses."),
+  ];
+  for (const [turnId, timeline] of [
+    ["turn-w1", first],
+    ["turn-w2", second],
+  ] as const) {
+    await call("on agent.turn_started", { agent: peer.agent, turnId }, context);
+    await call("on agent.turn_ended", { agent: peer.agent, turnId, outcome: { kind: "completed" }, timeline }, context);
+  }
+  const kept = async (turn: string) =>
+    JSON.parse(
+      await lead.call("seatwork_knowledge", { do: "expand", address: `turn:${peer.agent.id}:${turn}#0`, around: 20 }),
+    ).entries.map((entry: { text: string }) => entry.text);
+  assert.deepEqual(await kept("turn-w1"), ["Add the hours flag", "Hours flag added to the duration parser."]);
+  assert.deepEqual(
+    await kept("turn-w2"),
+    [
+      "Now the minutes flag",
+      "Started on minutes.",
+      "Also keep the old flag working",
+      "Minutes flag added; the old flag still parses.",
+    ],
+    "the earlier turn is not kept again, and words typed into the running turn stay with it",
+  );
+});
+
+test("a turn that ends with no words of the seat's own sends up its outcome, never the prompt that opened it", async () => {
+  const lead = await seat("lead-silent", "claude-lead", null, "[Lead] silent");
+  const peer = await seat("peer-silent", "claude-peer", lead.agent.id, "[Peer] silent");
+  const prompt = { type: "user_message", text: "BLOCKED if the parser tests fail; end with DONE once they pass" };
+  await call("on agent.turn_started", { agent: peer.agent, turnId: "turn-silent" }, context);
+  await call(
+    "on agent.turn_ended",
+    { agent: peer.agent, turnId: "turn-silent", outcome: { kind: "completed" }, timeline: [prompt] },
+    context,
+  );
+  const report = lead.inbox.at(-1) ?? "";
+  assert.match(report, /no final message; outcome completed/);
+  assert.doesNotMatch(report, /subject="(BLOCKED|DONE)/, "the brief's protocol words are not the seat's report");
+  const own = { id: "users-own-agent", parentAgentId: null, provider: "claude", cwd: PROJECT, title: "mine" };
+  await call("on agent.turn_started", { agent: own, turnId: "turn-own" }, context);
+  await call(
+    "on agent.turn_ended",
+    { agent: own, turnId: "turn-own", outcome: { kind: "completed" }, timeline: [prompt] },
+    context,
+  );
+  const found = JSON.parse(await lead.call("seatwork_knowledge", { do: "search", q: "parser tests", agent: own.id }));
+  assert.deepEqual(found.hits, [], "an agent of the user's own is none of the room's business");
+});
+
+test("a turn read with no mark from before starts at its prompt", () => {
+  const timeline = [
+    { type: "user_message", text: "one" },
+    { type: "assistant_message", text: "done one" },
+    { type: "user_message", text: "two" },
+    { type: "assistant_message", text: "done two" },
+  ];
+  const fresh = sinceMark(timeline, undefined);
+  assert.deepEqual(
+    fresh.items,
+    timeline.slice(2),
+    "after a restart the room has no mark: the last prompt opens the turn",
+  );
+  const moved = sinceMark([...timeline.slice(1), { type: "user_message", text: "three" }], {
+    count: 2,
+    last: sinceMark(timeline.slice(0, 2), undefined).mark.last,
+  });
+  assert.deepEqual(
+    moved.items,
+    [timeline[2], timeline[3], { type: "user_message", text: "three" }],
+    "a cut timeline is read after the last item seen",
+  );
+});
+
+test("a person's decision reaches every seat: a new seat starts with it, a working seat is told its change by the guard", async () => {
+  const project = join(PROJECT, "..", "decisions-project");
+  mkdirSync(join(project, ".seatwork"), { recursive: true });
+  writeFileSync(join(project, ".seatwork", "room.json"), "{}");
+  const hq = await seat("hq-decide", "claude-hq", null, "HQ Supervisor", join(ROOM_HOME, "hq-seatwork"));
+  const lead = await seat("lead-decide", "claude-lead", null, "[Lead] decide", project);
+  const ownerSays = async (words: string, turnId: string, args: Record<string, unknown>) => {
+    await call("on agent.turn_started", { agent: hq.agent, turnId }, context);
+    const answer = JSON.parse(
+      await hq.call("seatwork_knowledge", { do: "decide", scope: "project", project: "decisions-project", ...args }),
+    );
+    await call(
+      "on agent.turn_ended",
+      {
+        agent: hq.agent,
+        turnId,
+        outcome: { kind: "completed" },
+        timeline: [
+          { type: "user_message", text: words },
+          { type: "assistant_message", text: "Noted." },
+        ],
+      },
+      context,
+    );
+    return answer;
+  };
+  const asked = await ownerSays("dùng pnpm thôi, đừng dùng npm", "hq-t1", {
+    topic: "package manager",
+    statement: "Use pnpm for every install; never npm.",
+  });
+  assert.equal(asked.state, "pending");
+  const peer = await seat("peer-decide", "claude-peer", lead.agent.id, "[Peer] install", project);
+  assert.match(
+    peer.prompt,
+    /## Decisions in force[\s\S]*package-manager: Use pnpm for every install; never npm\. \(since/,
+  );
+
+  const gate = peer.url.replace(/\/mcp\/([^/]+)\/[^/]+$/, "/gate/$1");
+  const hook = async (command: string) =>
+    (
+      await fetch(`${gate}?cli=claude`, {
+        method: "POST",
+        headers: { "content-type": "application/json", "x-seat": peer.agent.id },
+        body: JSON.stringify({ tool_name: "Bash", tool_input: { command }, cwd: project }),
+      })
+    ).text();
+  assert.equal(await hook("ls"), "", "a seat that holds every decision is told nothing");
+  await ownerSays("thôi chuyển qua yarn", "hq-t2", {
+    topic: "package manager",
+    statement: "Use yarn for every install; pnpm and npm are out.",
+    replaces_version: 1,
+  });
+  const told = JSON.parse(await hook("ls"));
+  assert.match(told.hookSpecificOutput.additionalContext, /Decision changed: \[project\] package-manager: Use yarn/);
+  assert.equal(await hook("ls"), "", "told once");
 });
 
 test("the work store through the room's tools: a Lead writes a plan, a Peer takes what is ready, only the Owner closes, and a seat that is gone holds nothing", async () => {

@@ -91,7 +91,7 @@ export function inbox(engine: MailEngine, me: string, args: InboxArgs, now: numb
     if (!thread) throw new MailError("INVALID_ARGUMENT", "give `thread`: an issue id, or the thread a mail names");
     const mails = store.thread(thread, seenBy, limit);
     if (mails.length === 0) return `no mail in thread ${thread} that you may read`;
-    const whole = store.thread(thread, null, 1000).length === mails.length;
+    const whole = store.threadCount(thread) === mails.length;
     const file = whole ? threadFile(engine.folderOf(me), thread) : null;
     const body =
       args.bodies === true

@@ -205,6 +205,77 @@ test("a report kept for a turn end goes out once: as it stands when the turn end
   assert.match(lead.got[1], /subject="DONE: docs"/);
 });
 
+test("an answer that names no ask settles the one the chooser picks, none when it says none, and the oldest when it is unsure", async () => {
+  for (const [pick, answered] of [
+    [1, [false, true]],
+    ["none", [false, false]],
+    ["unsure", [true, false]],
+  ] as const) {
+    const id = names("lead", "peer");
+    const engine = engineFor({ [id.lead]: listener().handle, [id.peer]: listener().handle });
+    engine.rememberSeat(seat(id.lead, "lead"));
+    engine.rememberSeat(seat(id.peer, "peer", id.lead));
+    const ask = (subject: string) =>
+      engine.post(mail(id.lead, subject, { from: { agentId: id.peer, role: "peer" }, needs: "reply" }));
+    const asks = [await ask("QUESTION: which unit"), await ask("QUESTION: which port")];
+    const offered: number[][] = [];
+    engine.chooseAsk = async (_answer, open) => {
+      offered.push(open.map((one) => one.id));
+      return pick === "unsure" ? null : { ask: pick === "none" ? null : asks[pick].id };
+    };
+    await engine.post(mail(id.peer, "ANSWER: port 8080", { from: { agentId: id.lead, role: "lead" } }));
+    assert.deepEqual(offered, [asks.map((one) => one.id)]);
+    const store = engine.storeOf(id.peer)!;
+    assert.deepEqual(
+      asks.map((one) => store.get(one.id)?.answeredAt !== null),
+      answered,
+      String(pick),
+    );
+  }
+});
+
+test("a report taken at a turn end that cannot go out is kept again for the next pass, never lost", async () => {
+  const id = names("lead", "peer");
+  const engine = engineFor({ [id.lead]: listener().handle, [id.peer]: idle });
+  engine.rememberSeat(seat(id.lead, "lead"));
+  engine.rememberSeat(seat(id.peer, "peer", id.lead));
+  const kept = engine.keepReport(
+    mail(id.lead, "CANDIDATE: store", { from: { agentId: id.peer, role: "peer" }, needs: "reply" }),
+  );
+  const draft = engine.takeReport(id.peer)!;
+  const post = engine.post.bind(engine);
+  engine.post = async () => {
+    throw new Error("the store is busy");
+  };
+  await assert.rejects(engine.postReport(draft), /busy/);
+  engine.post = post;
+  assert.equal(engine.takeReport(id.peer)?.id, kept.id);
+});
+
+test("mail posted while a delivery is under way gets its own pass at once, not at the next sweep", async () => {
+  const id = names("lead");
+  const first = deferred();
+  const got: string[] = [];
+  const engine = engineFor({
+    [id.lead]: {
+      ...idle,
+      send: async (text) => {
+        got.push(text);
+        if (got.length === 1) await first.promise;
+      },
+    },
+  });
+  engine.rememberSeat(seat(id.lead, "lead"));
+  const one = engine.post(mail(id.lead, "ANSWER: use v2"));
+  await new Promise((done) => setTimeout(done, 10));
+  await engine.post(mail(id.lead, "INSTRUCTION: rebase now"));
+  first.resolve();
+  await one;
+  await new Promise((done) => setTimeout(done, 10));
+  assert.equal(got.length, 2);
+  assert.match(got[1], /INSTRUCTION: rebase now/);
+});
+
 test("mail whose delivery was cut off is still there for the next engine, marked as a possible repeat", async () => {
   const id = names("lead");
   const stuck = deferred();

@@ -225,15 +225,12 @@ export class WorkStore extends Sqlite {
     this.pending = undefined;
     const lines = this.transaction("read", () => {
       const deps = new Map<string, Dependency[]>();
-      for (const dep of this.dependencies()) deps.set(dep.issue_id, [...(deps.get(dep.issue_id) ?? []), dep]);
+      for (const dep of this.dependencies()) push(deps, dep.issue_id, dep);
       const said = new Map<string, Comment[]>();
       for (const one of this.rows<Comment & { issue_id: string }>(
         "SELECT issue_id, author, text, created_at FROM comments ORDER BY id",
       ))
-        said.set(one.issue_id, [
-          ...(said.get(one.issue_id) ?? []),
-          { author: one.author, text: one.text, created_at: one.created_at },
-        ]);
+        push(said, one.issue_id, { author: one.author, text: one.text, created_at: one.created_at });
       return this.all().map((issue) =>
         JSON.stringify({ ...issue, dependencies: deps.get(issue.id) ?? [], comments: said.get(issue.id) ?? [] }),
       );
@@ -261,29 +258,35 @@ export class WorkStore extends Sqlite {
       for (const one of read) {
         if (!one || typeof one.id !== "string" || typeof one.title !== "string" || !STATUSES.includes(one.status))
           continue;
-        this.run(
-          INSERT_ISSUE,
-          one.id,
-          one.title,
-          one.description ?? "",
-          one.design ?? "",
-          one.acceptance_criteria ?? "",
-          one.notes ?? "",
-          one.write_scope ?? "",
-          one.status,
-          one.priority,
-          one.issue_type,
-          one.assignee ?? null,
-          JSON.stringify(one.labels ?? []),
-          one.revision ?? 1,
-          one.created_at,
-          one.created_by,
-          one.updated_at,
-          one.closed_at ?? null,
-          one.close_reason ?? null,
-          one.closed_by ?? null,
-          one.defer_until ?? null,
-        );
+        // a line the layout refuses is passed over, as a line that is no JSON is: the rest still comes back
+        if (
+          !this.kept(() =>
+            this.run(
+              INSERT_ISSUE,
+              one.id,
+              one.title,
+              one.description ?? "",
+              one.design ?? "",
+              one.acceptance_criteria ?? "",
+              one.notes ?? "",
+              one.write_scope ?? "",
+              one.status,
+              one.priority,
+              one.issue_type,
+              one.assignee ?? null,
+              JSON.stringify(one.labels ?? []),
+              one.revision ?? 1,
+              one.created_at,
+              one.created_by,
+              one.updated_at,
+              one.closed_at ?? null,
+              one.close_reason ?? null,
+              one.closed_by ?? null,
+              one.defer_until ?? null,
+            ),
+          )
+        )
+          continue;
         this.event(one.id, "restored", "room", null, null);
         kept.add(one.id);
       }
@@ -291,23 +294,37 @@ export class WorkStore extends Sqlite {
         console.error(`seatwork: ${read.length - kept.size} lines of ${this.jsonl} could not be read back`);
       for (const one of read.filter((line) => kept.has(line?.id))) {
         for (const dep of (one.dependencies ?? []).filter((dep) => kept.has(dep.depends_on_id)))
-          this.run(
-            "INSERT OR IGNORE INTO dependencies (issue_id, depends_on_id, type, created_at, created_by) VALUES (?, ?, ?, ?, 'room')",
-            one.id,
-            dep.depends_on_id,
-            dep.type,
-            this.stamp(),
+          this.kept(() =>
+            this.run(
+              "INSERT OR IGNORE INTO dependencies (issue_id, depends_on_id, type, created_at, created_by) VALUES (?, ?, ?, ?, 'room')",
+              one.id,
+              dep.depends_on_id,
+              dep.type,
+              this.stamp(),
+            ),
           );
         for (const said of one.comments ?? [])
-          this.run(
-            "INSERT INTO comments (issue_id, author, text, created_at) VALUES (?, ?, ?, ?)",
-            one.id,
-            said.author,
-            said.text,
-            said.created_at,
+          this.kept(() =>
+            this.run(
+              "INSERT INTO comments (issue_id, author, text, created_at) VALUES (?, ?, ?, ?)",
+              one.id,
+              said.author,
+              said.text,
+              said.created_at,
+            ),
           );
       }
     });
+  }
+
+  /** One write of a restore: false when the layout refuses it, which leaves the rest of the restore standing. */
+  private kept(write: () => unknown): boolean {
+    try {
+      write();
+      return true;
+    } catch {
+      return false;
+    }
   }
 
   private stamp(): string {
@@ -559,7 +576,7 @@ export class WorkStore extends Sqlite {
   private inTheWay(): Map<string, string[]> {
     const out = new Map<string, string[]>();
     for (const row of this.rows<{ id: string; ref: string }>(`${IN_THE_WAY} SELECT id, ref FROM way ORDER BY id, ref`))
-      out.set(row.id, [...(out.get(row.id) ?? []), row.ref]);
+      push(out, row.id, row.ref);
     return out;
   }
 
@@ -797,4 +814,11 @@ export class WorkStore extends Sqlite {
       limit,
     ) as never;
   }
+}
+
+/** Adds a value to its key's list, made on first use. */
+function push<K, V>(map: Map<K, V[]>, key: K, value: V): void {
+  const list = map.get(key);
+  if (list) list.push(value);
+  else map.set(key, [value]);
 }

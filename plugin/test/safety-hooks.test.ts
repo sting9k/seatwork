@@ -1,6 +1,7 @@
 import { ROOM_HOME } from "./support/room";
 import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
+import { request } from "node:http";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { test } from "node:test";
@@ -170,4 +171,33 @@ test("OpenCode's plugin turns a blocked call into one that prints the room's rea
     delete process.env[GATE_ENV.url];
     await live.close();
   }
+});
+
+test("the room's server reads a letter split between two chunks whole, and a client gone mid-body leaves no failure behind", async () => {
+  const live = await room(async (body) => ({ type: "text/plain", text: body }));
+  const { port, pathname } = new URL(live.url);
+  /** A POST written in the parts given, then ended or dropped. */
+  const post = (parts: Buffer[], drop: boolean) =>
+    new Promise<string>((resolve) => {
+      const sent = request({ host: "127.0.0.1", port, path: pathname, method: "POST" }, (res) => {
+        let text = "";
+        res.setEncoding("utf8");
+        res.on("data", (chunk) => (text += chunk));
+        res.on("end", () => resolve(text));
+      });
+      sent.on("error", () => resolve(""));
+      for (const part of parts) sent.write(part);
+      if (drop) setTimeout(() => (sent.destroy(), resolve("")), 20);
+      else sent.end();
+    });
+  const word = Buffer.from("café", "utf8");
+  assert.equal(await post([word.subarray(0, 4), word.subarray(4)], false), "café");
+  const unhandled: unknown[] = [];
+  const note = (reason: unknown) => unhandled.push(reason);
+  process.on("unhandledRejection", note);
+  await post([Buffer.from("half of a pay")], true);
+  await new Promise((resolve) => setTimeout(resolve, 50));
+  process.off("unhandledRejection", note);
+  assert.deepEqual(unhandled, []);
+  await live.close();
 });

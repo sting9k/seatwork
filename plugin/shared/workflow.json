@@ -2,7 +2,7 @@
   "$comment": "The orchestration in force: its roles, their traits, who may create and mail whom. Code reads traits, never role names; another way of working is another copy of this file.",
   "$comment_roomProject": "Where the seats at home in the room sit: a folder in the room home, a project in the app.",
   "roomProject": "hq-seatwork",
-  "$comment_roles": "home \"room\": above every project, reads all mail, keeps the registry. models: one, or named tiers. progress: a later STATUS starts no turn. briefs, briefed: whose briefs are checked. writes: changes the tree. reviews: one Owner turn's reviewers are one round. stall: the params entry for its silence. rotate: the line under its report past rotateAtTokens. tableNote: the line under its table in prompts.",
+  "$comment_roles": "home \"room\": above every project, reads all mail, keeps the registry. models: one, or named tiers. progress: a later STATUS starts no turn. briefs, briefed: whose briefs are checked. writes: changes the tree. reviews: one Owner turn's reviewers are one round. rotate: the line under its report past rotateAtTokens. tableNote: the line under its table in prompts.",
   "roles": {
     "hq": {
       "label": "HQ",
@@ -30,7 +30,6 @@
       "models": "one",
       "progress": true,
       "briefs": true,
-      "stall": "leadStallMinutes",
       "rotate": "This Lead {{held}}. Hand its workstream to a successor at its next quiet point (lead-handoff)."
     },
     "peer": {
@@ -42,7 +41,6 @@
       "models": "tiers",
       "briefed": true,
       "writes": true,
-      "stall": "peerStallMinutes",
       "rotate": "This Peer {{held}}. Its next task, or its next repair, goes to a new Peer."
     },
     "lens": {

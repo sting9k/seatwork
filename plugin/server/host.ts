@@ -53,7 +53,8 @@ export type TurnEvent =
   | { kind: "shell"; command: string; exitCode: number | null; output: string; status: ToolStatus; at?: string }
   | { kind: "change"; path: string; status: ToolStatus; at?: string }
   | { kind: "read"; path: string; at?: string }
-  | { kind: "tool"; name: string; status: ToolStatus; at?: string };
+  | { kind: "tool"; name: string; label?: string; status: ToolStatus; at?: string }
+  | { kind: "compaction"; at?: string };
 
 /** How a turn ended. */
 export type TurnOutcome = { kind: "completed" } | { kind: "canceled" } | { kind: "failed"; error: string };
@@ -76,6 +77,6 @@ export interface Host {
   prompts(agentId: string, limit: number): Promise<string[] | null>;
   /** The projects the app knows, by folder. */
   projects(): Promise<{ name: string; path: string }[]>;
-  /** Deletes the app's timers that wake a seat for which `orphan` holds; returns what went. */
-  dropWakers(orphan: (agentId: string) => boolean): Promise<string[]>;
+  /** Deletes the app's timers that wake a seat `seat` calls gone, or a live one's the app finished; `null` marks an agent that is not the room's. */
+  dropWakers(seat: (agentId: string) => "gone" | "live" | null): Promise<string[]>;
 }

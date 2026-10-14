@@ -198,10 +198,7 @@ function fingerprint(harness: Exclude<Harness, "claude">, policy: RuntimePolicy)
 }
 
 /** A seat's home with its role's skills, rebuilt when its fingerprint changes; null for Claude. */
-export function ensureRuntime(
-  seat: Pick<Seat, "harness" | "role">,
-  policy: RuntimePolicy = loadPolicy(),
-): string | null {
+export function ensureRuntime(seat: Pick<Seat, "harness" | "role">, policy: RuntimePolicy): string | null {
   if (seat.harness === "claude") {
     installRoleSkills("", seat);
     return null;

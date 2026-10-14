@@ -51,7 +51,8 @@ export async function answerHook(
   cli: Cli,
   body: Record<string, unknown>,
   seat: SeatRef | null,
-): Promise<{ type: string; text: string }> {
+  note?: string,
+): Promise<{ type: string; text: string; noted: boolean }> {
   const call = callOf(body);
   let verdict: Verdict | null = null;
   if (call.shell !== null) verdict = await guard.check(seat, cli, call.shell, call.cwd);
@@ -61,7 +62,10 @@ export async function answerHook(
     const found = await guard.checkWrite(seat, cli, abs, call.cwd);
     if (!found.allow || !verdict) verdict = found;
   }
-  return render(cli, verdict);
+  if (!note || (verdict && !verdict.allow)) return { ...render(cli, verdict), noted: false };
+  const message = [verdict?.message, note].filter(Boolean).join("\n\n");
+  verdict = verdict ? { ...verdict, message } : { allow: true, message, finding: null, code: null, grantor: null };
+  return { ...render(cli, verdict), noted: true };
 }
 
 export function render(cli: Cli, verdict: Verdict | null): { type: string; text: string } {

@@ -25,6 +25,7 @@ const ROOM_FILES = new Set([
   "handoffs",
   ".mail",
   ".work",
+  ".knowledge",
 ]);
 const isRoomFile = (name: string) => ROOM_FILES.has(name) || name.endsWith("-law.md");
 

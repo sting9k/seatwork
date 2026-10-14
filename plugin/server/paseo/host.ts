@@ -230,12 +230,14 @@ export class PaseoHost implements Host {
   }
 
   /** A heartbeat is a Paseo schedule aimed at a seat; one pass at a time. */
-  dropWakers(orphan: (agentId: string) => boolean): Promise<string[]> {
+  dropWakers(seat: (agentId: string) => "gone" | "live" | null): Promise<string[]> {
     const run = this.wakerLock.then(async () => {
       const gone: string[] = [];
       for (const schedule of storedSchedules()) {
         const target = schedule.target?.type === "agent" ? schedule.target.agentId : undefined;
-        if (!target || (!orphan(target) && schedule.status !== "completed")) continue;
+        const state = target ? seat(target) : null;
+        // a schedule aimed at an agent that is not the room's is the user's own, finished or not
+        if (!target || state === null || (state === "live" && schedule.status !== "completed")) continue;
         await paseoCli(["schedule", "delete", schedule.id]);
         gone.push(`heartbeat ${schedule.id} (${schedule.name ?? ""}) of ${target}`);
       }

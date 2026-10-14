@@ -1,6 +1,8 @@
 import type { MailEngine } from "../coordination/engine";
 import type { Host, SeatUsage } from "../host";
 import type { Jev } from "../jev/index";
+import type { Forks } from "../orchestration/forks";
+import type { Knowledge } from "../knowledge/index";
 import type { Recovery } from "../orchestration/recovery";
 import type { ReviewGate } from "../orchestration/review-gate";
 import type { Rotations } from "../orchestration/rotation";
@@ -27,6 +29,8 @@ export interface RoomContext {
   callers: Callers;
   safety: Safety;
   jev: Jev;
+  forks: Forks;
+  knowledge: Knowledge;
   /** seat → the signals it mailed its parent in the turn it is in; read when that turn ends */
   mailedUp: Map<string, Set<string>>;
   /** seat → the signal its last turn ended with */

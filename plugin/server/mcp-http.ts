@@ -28,7 +28,24 @@ interface JsonRpcRequest {
 }
 
 const PROTOCOL_VERSION = "2025-06-18";
-const MAX_ROUTE_BODY = 32 * 1024 * 1024;
+const MAX_BODY = 32 * 1024 * 1024;
+
+/** A request's body as text, whole; null when it passes the cap or the client goes away before it ends. */
+async function bodyOf(req: IncomingMessage): Promise<string | null> {
+  const chunks: Buffer[] = [];
+  let size = 0;
+  try {
+    for await (const chunk of req as AsyncIterable<Buffer>) {
+      // a payload past the cap is refused, never read whole into memory
+      if ((size += chunk.length) > MAX_BODY) return null;
+      chunks.push(chunk);
+    }
+  } catch {
+    return null;
+  }
+  // joined as bytes first: a letter split between two chunks stays one letter
+  return Buffer.concat(chunks).toString("utf8");
+}
 
 export class McpHttpServer {
   private server: Server | null = null;
@@ -56,7 +73,14 @@ export class McpHttpServer {
   /** Listens on 127.0.0.1:port (0 = random) and resolves the bound port. */
   listen(port: number): Promise<number> {
     return new Promise((resolve, reject) => {
-      const server = createServer((req, res) => void this.handle(req, res));
+      const server = createServer((req, res) =>
+        // a request that fails where nothing caught it ends here, never as an unhandled rejection
+        this.handle(req, res).catch((error) => {
+          console.error("seatwork: a request to the room's server failed", error);
+          if (!res.headersSent) res.writeHead(500);
+          res.end();
+        }),
+      );
       server.on("error", reject);
       server.listen(port, "127.0.0.1", () => {
         const address = server.address();
@@ -88,15 +112,11 @@ export class McpHttpServer {
         res.writeHead(404).end();
         return;
       }
-      let body = "";
-      for await (const chunk of req) {
-        body += chunk;
-        // a payload past the cap is refused, never read whole into memory
-        if (body.length > MAX_ROUTE_BODY) {
-          res.writeHead(413).end();
-          req.destroy();
-          return;
-        }
+      const body = await bodyOf(req);
+      if (body === null) {
+        res.writeHead(413).end();
+        req.destroy();
+        return;
       }
       try {
         const answer = await route(body, {
@@ -128,8 +148,12 @@ export class McpHttpServer {
       res.writeHead(405).end();
       return;
     }
-    let body = "";
-    for await (const chunk of req) body += chunk;
+    const body = await bodyOf(req);
+    if (body === null) {
+      res.writeHead(413).end();
+      req.destroy();
+      return;
+    }
     let parsed: JsonRpcRequest | JsonRpcRequest[];
     try {
       parsed = JSON.parse(body) as JsonRpcRequest | JsonRpcRequest[];

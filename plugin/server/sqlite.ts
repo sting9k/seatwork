@@ -51,13 +51,14 @@ export function readScripts(dir: string): Script[] {
     .sort((a, b) => a.version - b.version);
 }
 
-/** `scripts`: the folder of `V<number>__<what>.sql` files; `fail`: the store's own error. */
+/** `scripts`: the folder of `V<number>__<what>.sql` files; `fail`: the store's own error; `reclaims`: a new file gives freed pages back. */
 export interface SqliteOptions {
   busyTimeoutMs: number;
   scripts: string;
   fail: (code: SqliteFailure, message: string) => Error;
   name: string;
   now?: () => Date;
+  reclaims?: boolean;
 }
 
 /** The file is damaged or no database: SQLITE_CORRUPT, SQLITE_NOTADB, a failed check. */
@@ -99,6 +100,8 @@ export class Sqlite {
     const attempt = () => {
       const db = new DatabaseSync(this.file);
       try {
+        // only a file with no table yet takes the setting; an older file keeps its own
+        if (this.options.reclaims) db.exec("PRAGMA auto_vacuum = INCREMENTAL");
         db.exec(`PRAGMA busy_timeout = ${Math.trunc(this.options.busyTimeoutMs)}; PRAGMA journal_mode = WAL;`);
         db.exec("PRAGMA synchronous = FULL; PRAGMA foreign_keys = ON;");
         const check = db.prepare("PRAGMA quick_check").get() as { quick_check?: string } | undefined;
@@ -181,6 +184,11 @@ export class Sqlite {
         .map((row) => row.detail)
         .join(" | "),
     }));
+  }
+
+  /** Gives up to `pages` of the pages deletes freed back to the file system, on a file made to reclaim them. */
+  reclaim(pages = 0): void {
+    this.db.exec(`PRAGMA incremental_vacuum(${Math.max(0, Math.trunc(pages))})`);
   }
 
   close(): void {

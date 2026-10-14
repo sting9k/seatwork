@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { existsSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { test } from "node:test";
-import type { CodexRuntimePolicy, RuntimePolicy } from "../server/policy";
+import { loadPolicy, type CodexRuntimePolicy, type RuntimePolicy } from "../server/policy";
 import { claudeRoleDir, ensureRuntime, roleSkillNames, runtimeDir } from "../server/orchestration/runtimes";
 
 const seat = { harness: "codex", role: "peer" } as const;
@@ -133,7 +133,7 @@ test("a Pi seat's home takes the user's settings without their packages and exte
     JSON.stringify({ theme: "dark", packages: ["npm:pi-mcp-adapter", "npm:mine"], extensions: ["-builtin:mcp"] }),
   );
 
-  ensureRuntime(pi);
+  ensureRuntime(pi, loadPolicy());
 
   // nothing of the user's may stand in for Pi's own MCP: that is where Paseo puts the room's servers
   assert.deepEqual(JSON.parse(readFileSync(join(runtimeDir(pi), "settings.json"), "utf8")), {
@@ -144,10 +144,10 @@ test("a Pi seat's home takes the user's settings without their packages and exte
 });
 
 test("a Claude seat's skill folder holds the role's skills as they are named now: a link to a skill that is gone is dropped", () => {
-  ensureRuntime({ harness: "claude", role: "peer" });
+  ensureRuntime({ harness: "claude", role: "peer" }, loadPolicy());
   const skills = join(claudeRoleDir("peer"), ".claude", "skills");
   symlinkSync(join(skills, "..", "no-such-skill"), join(skills, "seatwork-hard-cut"));
-  ensureRuntime({ harness: "claude", role: "peer" });
+  ensureRuntime({ harness: "claude", role: "peer" }, loadPolicy());
   assert.deepEqual(readdirSync(skills).sort(), roleSkillNames("peer"));
   assert.ok(existsSync(join(skills, "hard-cut", "SKILL.md")));
 });

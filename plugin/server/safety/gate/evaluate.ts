@@ -113,7 +113,8 @@ class Walk {
     const head = src.slice(0, cut);
     if (cut > 0) await this.script(parseShell(head).script, state, { pipeline: null, stage: 0, src: head, depth });
     const rest = src.slice(cut);
-    if (RISKY.test(rest))
+    // a line too costly to read may hide anything: it is a doubt whatever its words
+    if (RISKY.test(rest) || parsed.error.costly)
       this.doubts.push({
         reason: `the room could not read the line (${parsed.error.message})`,
         text: rest.slice(0, 200),

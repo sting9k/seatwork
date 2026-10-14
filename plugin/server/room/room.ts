@@ -1,11 +1,12 @@
 import { appendFileSync, chmodSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
-import { maySpawn, reviews, routeOpen, SPAWN, traits } from "../../shared/workflow";
+import { inRoom, maySpawn, reviews, routeOpen, SPAWN, traits } from "../../shared/workflow";
 import { MailEngine } from "../coordination/engine";
 import { Collector } from "../gc";
 import type { Host } from "../host";
 import { McpHttpServer } from "../mcp-http";
 import { findProject, findRoomMarker, loadRegistry, roomProjectDir } from "../orchestration/registry";
+import { clip, Forks } from "../orchestration/forks";
 import { Recovery, resumeDue } from "../orchestration/recovery";
 import { ReviewGate } from "../orchestration/review-gate";
 import { Rotations } from "../orchestration/rotation";
@@ -22,12 +23,14 @@ import {
   ROOM_HOME,
   SAFETY_DIR,
   JEV_DIR,
+  KNOWLEDGE_DIR,
   SEAT_TMP_DIR,
   USER_HOME,
 } from "../paths";
 import { loadPolicy, type RuntimePolicy } from "../policy";
 import { OwedList, roomStatus } from "./status";
 import { Jev } from "../jev/index";
+import { Knowledge } from "../knowledge/index";
 import { Safety } from "../safety/index";
 import { render, type Cli } from "../safety/hooks";
 import { WorkStores } from "../tasks/stores";
@@ -111,7 +114,65 @@ export function startRoom(input: {
     quietChars: policy.mail.quietChars,
     dedupeSeconds: policy.mail.dedupeSeconds,
   });
-  const jev = new Jev({ dir: JEV_DIR, policy: () => policy.jev });
+  const jev = new Jev({ dir: JEV_DIR, policy: () => policy.jev, log });
+  const forks = new Forks({ router: jev, on: (name) => policy.jev?.forks?.includes(name) === true, log });
+  const knowledge = new Knowledge({
+    roomDir: KNOWLEDGE_DIR,
+    policy: () => policy.knowledge,
+    projectOf: (id) => engine.projectOf(id),
+    projects: () => engine.projects(),
+    mailAfter: (root, id, limit) => engine.mailAfter(root, id, limit),
+    seen: (reader) =>
+      inRoom(engine.seat(reader)?.role)
+        ? null
+        : [
+            reader,
+            ...engine.allSeats().flatMap((seat) => (engine.isAncestor(reader, seat.agentId) ? [seat.agentId] : [])),
+          ],
+    ownedTask: (id, task) => {
+      // a short id names the same task as its full one; the work store knows the full one
+      let full = task;
+      let createdBy: string | null = null;
+      try {
+        const issue = room.works.existing(engine.projectOf(id))?.get(task);
+        if (issue) [full, createdBy] = [issue.id, issue.created_by];
+      } catch {
+        // a task the store does not know is checked by its id as given
+      }
+      if (taskOf(room, id) === full || createdBy === id) return full;
+      const below = engine
+        .allSeats()
+        .some((seat) => engine.isAncestor(id, seat.agentId) && taskOf(room, seat.agentId) === full);
+      return below ? full : null;
+    },
+    isRoomSeat: (id) => inRoom(engine.seat(id)?.role),
+    briefs: (id) => traits(engine.seat(id)?.role).briefs === true,
+    taskOf: (id) => taskOf(room, id),
+    rootOf: projectRoot,
+    threadsOf: (id) => engine.threadsFor(id, 5),
+    judge: jev,
+    busyTimeoutMs: policy.room.work?.busyTimeoutMs ?? 5000,
+    log,
+  });
+  engine.appendix = (agentId) => knowledge.appendix(agentId);
+  engine.chooseAsk = async (answer, asks) => {
+    const idOf = (id: number) => `m${id}`;
+    const label = await forks.take(
+      "answers",
+      {
+        reply: { subject: answer.subject, body: clip(answer.body, 1500) },
+        asks: Object.fromEntries(
+          asks.map((ask) => [idOf(ask.id), { subject: ask.subject, body: clip(ask.body, 600) }]),
+        ),
+      },
+      Object.fromEntries([
+        ...asks.map((ask) => [idOf(ask.id), `it answers asks.${idOf(ask.id)}`] as const),
+        ["none", "it answers none of them"] as const,
+      ]),
+    );
+    if (label === null) return null;
+    return { ask: label === "none" ? null : Number(label.slice(1)) };
+  };
   const safety = new Safety({
     dir: SAFETY_DIR,
     userHome: USER_HOME,
@@ -163,6 +224,8 @@ export function startRoom(input: {
     callers: new Callers(join(ROOM_MAIL, "nonces.json")),
     safety,
     jev,
+    forks,
+    knowledge,
     mailedUp: new Map(),
     lastSignal: new Map(),
     lastUsage: new Map(),
@@ -177,11 +240,13 @@ export function startRoom(input: {
     room.callers.forget(agentId);
     room.briefs.delete(agentId);
     safety.forget(agentId);
+    knowledge.forget(agentId);
   };
   const gc = new Collector(host, engine, policy.gc, log, forget, policy.mail.keepDays, policy.mail.expireUnreadDays, [
     { what: "guard records", expire: (before) => safety.expire(before) },
     { what: "decision states", expire: (before) => jev.expire(before) },
     { what: "council readings", expire: () => safety.expireCouncil() },
+    { what: "knowledge record", expire: () => knowledge.expire() },
   ]);
 
   const mcp = new McpHttpServer(serverToken(join(ROOM_MAIL, "token")), "seatwork", version);
@@ -190,7 +255,12 @@ export function startRoom(input: {
   mcp.route("gate", async (body, request) => {
     const cli = (request.query.get("cli") ?? "claude") as Cli;
     try {
-      return await safety.answer(cli, JSON.parse(body) as Record<string, unknown>, request.header("x-seat") || null);
+      const seat = request.header("x-seat") || null;
+      // what a seat should be told rides on the guard's answer to its next command, inside its turn
+      const notices = seat ? knowledge.noticesFor(seat) : null;
+      const answered = await safety.answer(cli, JSON.parse(body) as Record<string, unknown>, seat, notices?.text);
+      if (answered.noted) notices?.told();
+      return { type: answered.type, text: answered.text };
     } catch (error) {
       const reason = error instanceof Error ? error.message : String(error);
       log(`the guard failed on a ${cli} call: ${reason}`);
@@ -204,6 +274,7 @@ export function startRoom(input: {
     }
   });
   let port = policy.mail.port;
+  let unbound: string | null = null;
   const starting = mcp
     .listen(port)
     .then((bound) => {
@@ -211,6 +282,7 @@ export function startRoom(input: {
       log(`the room's MCP server on 127.0.0.1:${port}`);
     })
     .catch((error) => {
+      unbound = error instanceof Error ? error.message : String(error);
       console.error(
         `seatwork: the room's MCP server failed to listen on ${port}; the room's tools are unavailable`,
         error,
@@ -232,6 +304,11 @@ export function startRoom(input: {
   // what waits is moved every minute: held mail, failed turns due again, handoffs never written
   const sweep = setInterval(() => {
     void engine.sweep().catch((error) => console.error("seatwork: the mail sweep failed", error));
+    try {
+      knowledge.tick();
+    } catch (error) {
+      log(`knowledge: the minute's pass failed: ${(error as Error).message}`);
+    }
     void resumeDue(room.recovery, engine, Date.now()).catch((error) =>
       console.error("seatwork: resuming a failed seat did not work", error),
     );
@@ -302,7 +379,15 @@ export function startRoom(input: {
     filesFrom,
     async launch(request) {
       await starting;
+      // a seat started now would hold an address nothing answers: it is refused, and says why
+      if (unbound)
+        throw new Error(
+          `seatwork: the room's server could not listen on 127.0.0.1:${port} (${unbound}); no seat starts until the room is started again`,
+        );
       const launched = launch(request, policy, log);
+      // the decisions in force reach every seat at its start, whoever opens it
+      const decisions = knowledge.promptFor(request.cwd);
+      if (decisions) launched.systemPrompt = `${launched.systemPrompt}\n\n${decisions}`;
       // agent.session_open ties this nonce to the agent id
       const nonce = room.callers.issue();
       return { ...launched, env: { SEATWORK_NONCE: nonce }, mcpUrl: mcp.urlFor(port, nonce) };
@@ -313,7 +398,7 @@ export function startRoom(input: {
       const seat = parseSeat(provider);
       if (!seat) return null;
       // the app saves no env with an agent: a reopened seat would start on the user's own home
-      ensureRuntime(seat);
+      ensureRuntime(seat, policy);
       // a temporary directory per seat: one seat's cleanup cannot take another seat's files
       const tmp = join(SEAT_TMP_DIR, agentId.slice(0, 8));
       mkdirSync(tmp, { recursive: true, mode: 0o700 });
@@ -360,6 +445,7 @@ export function startRoom(input: {
         version,
       };
       engine.rememberSeat(record);
+      knowledge.opened(agent.id, agent.cwd);
       void safety
         .started(agent.id, agent.cwd)
         .catch((error) => console.error("seatwork: the guard did not note where a seat starts", error));
@@ -376,6 +462,7 @@ export function startRoom(input: {
       room.owed.clear(seat.id);
       room.gate.turnStarted(seat.id);
       safety.council.turnStarted(seat.id, seat.cwd);
+      knowledge.turnStarted(seat.id);
     },
     turnEnded: (end) => turnEnded(room, end),
     async archived(seat) {
@@ -405,14 +492,19 @@ export function startRoom(input: {
           })
           .catch((error) => console.error("seatwork: the notice of a failed rotation was not sent", error));
       // a reviewer archived before its report holds its round back no longer
-      const round = room.gate.gone(id);
-      const owner = round ? engine.parentOf(id) : null;
-      if (round && owner) await engine.release(owner, round);
-      await gc.onArchived(id);
+      try {
+        const round = room.gate.gone(id);
+        const owner = round ? engine.parentOf(id) : null;
+        if (round && owner) await engine.release(owner, round);
+      } finally {
+        // what the room held for the seat goes even when the step before failed
+        await gc.onArchived(id);
+      }
     },
     closed(agentId) {
       room.mailedUp.delete(agentId);
       engine.takeWake(agentId);
+      knowledge.turnLost(agentId);
     },
     async permissionAsked(agent, request) {
       const seat = parseSeat(agent.provider);
@@ -451,6 +543,7 @@ export function startRoom(input: {
       engine.close();
       safety.close();
       jev.close();
+      knowledge.close();
       // a mail server still binding would stay open behind a close that came first
       await starting;
       await mcp.close();

@@ -8,6 +8,7 @@ import {
   rmSync,
   writeFileSync,
 } from "node:fs";
+import { createHash } from "node:crypto";
 import { dirname, join } from "node:path";
 import { keptOutOfGit } from "../sqlite";
 import { threadEntry } from "./envelope";
@@ -28,9 +29,13 @@ export interface Settled {
 
 const OPENING = "---json\n";
 const CLOSING = "\n---\n";
-/** A name as a file name: each odd character, `_` too, written as `_` and its code. */
-const safe = (name: string) =>
-  name.replace(/[^A-Za-z0-9.-]/g, (char) => `_${char.codePointAt(0)!.toString(16)}`).slice(0, 120) || "none";
+/** A name as a file name: each odd character, `_` too, written as `_` and its code; a long one cut, with a digest so two never share. */
+function safe(name: string): string {
+  const written = name.replace(/[^A-Za-z0-9.-]/g, (char) => `_${char.codePointAt(0)!.toString(16)}`) || "none";
+  return written.length <= 120
+    ? written
+    : `${written.slice(0, 100)}-${createHash("sha256").update(name).digest("hex").slice(0, 16)}`;
+}
 const JOURNAL = "states.jsonl";
 
 /** Notes in the journal that a delivery settled, or that an ask was answered. */
@@ -145,7 +150,11 @@ export function readArchive(dir: string): Archived[] {
 }
 
 /** Removes mail files that are no longer in the store, and the files of threads left empty. */
-export function dropFiles(dir: string, files: readonly string[], threads: readonly string[] = []): void {
-  for (const file of files) rmSync(file, { force: true });
+export function dropFiles(
+  dir: string,
+  mails: readonly Pick<Message, "id" | "at" | "signal">[],
+  threads: readonly string[] = [],
+): void {
+  for (const mail of mails) rmSync(messageFile(dir, mail), { force: true });
   for (const thread of threads) rmSync(join(dir, "threads", `${safe(thread)}.md`), { force: true });
 }

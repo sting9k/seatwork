@@ -6,7 +6,6 @@ import { test } from "node:test";
 import { Safety, type SafetyDeps } from "../server/safety/index";
 import type { SafetyPolicy } from "../server/safety/guard";
 import { GATE_ENV } from "../server/safety/hooks";
-import { redact } from "../server/redact";
 
 shipSql();
 
@@ -177,14 +176,6 @@ test("with the guard off nothing is checked, and a seat still gets the guard's a
   const { safety } = fresh({ mode: "off" });
   assert.equal((await safety.answer("claude", bash("rm -rf ~"), "peer")).text, "");
   assert.deepEqual(safety.env("peer", "http://x"), { [GATE_ENV.url]: "http://x", [GATE_ENV.seat]: "peer" });
-});
-
-test("what the guard keeps hides secrets: tokens, passwords, auth headers, key variables", () => {
-  const shown = redact(
-    "curl -H 'Authorization: Bearer abc.def.ghi' -u me:pw https://me:hunter2@host/x --password s3cret && OPENAI_API_KEY=sk-proj-aaaaaaaaaaaaaaaaaaaaaaaa node x.js ghp_aaaaaaaaaaaaaaaaaaaaaaaa",
-  );
-  for (const secret of ["abc.def.ghi", "hunter2", "s3cret", "sk-proj-aaaa", "ghp_aaaa"])
-    assert.ok(!shown.includes(secret), `${secret} in ${shown}`);
 });
 
 test("every statement the safety store runs uses an index", async () => {

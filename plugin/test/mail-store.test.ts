@@ -108,8 +108,8 @@ test("an ask is owed until its answer; the first answer stands", () => {
     store.owedTo("p1").map((m) => m.id),
     [ask.id],
   );
-  assert.equal(store.openAsk("p1", "lead")?.id, ask.id);
-  assert.equal(store.openAsk("p1", "lead", "another-thread"), null);
+  assert.equal(store.openAsks("p1", "lead", null, 1)[0]?.id, ask.id);
+  assert.deepEqual(store.openAsks("p1", "lead", "another-thread", 1), []);
   const answer = store.insert(mail("lead", "ANSWER: v2"), [{ seat: "p1", kind: "to", priority: "blocking" }]);
   assert.equal(store.answer(ask.id, answer.id), true);
   assert.equal(store.answer(ask.id, answer.id + 1), false);
@@ -183,7 +183,16 @@ test("pruning drops finished mail and the posted lines older than the line, and 
   ]);
   store.mark("lead", [owed.id], "delivered", "idle");
   const pruned = store.prune("2027-01-01T00:00:00Z");
-  assert.deepEqual(pruned, { messages: 1, files: ["/tmp/a.md"], threads: [`m${done.id}`], ids: new Set([done.id]) });
+  assert.deepEqual(
+    pruned,
+    {
+      messages: 1,
+      files: [{ id: done.id, at: done.at, signal: done.signal }],
+      threads: [`m${done.id}`],
+      ids: new Set([done.id]),
+    },
+    "what a mail's file is comes from the mail, never from a path kept in the store",
+  );
   assert.equal(store.get(done.id), null);
   assert.ok(store.get(waiting.id) && store.get(owed.id));
   assert.deepEqual(store.posted("2026-01-01"), []);
@@ -229,7 +238,7 @@ test("every query the store runs is served by an index, but the rare whole-store
   store.received("lead", 10, { signal: "QUESTION" });
   store.search("unit", ["lead"], { limit: 5 });
   store.posted("2026");
-  store.openAsk("p1", "lead");
+  store.openAsks("p1", "lead", null, 5);
   store.kept();
   store.seen(ask.id, ["lead"]);
   store.mark("lead", [ask.id], "delivered", "idle");
@@ -240,8 +249,6 @@ test("every query the store runs is served by an index, but the rare whole-store
     "SELECT at, answered_at FROM messages",
     "SELECT m.thread, max(m.id)",
     "SELECT count(*) AS n FROM messages",
-    "SELECT m.id, m.file, m.thread FROM messages m WHERE m.at < ?",
-    "DELETE FROM events WHERE at < ?",
   ];
   store.replies("2026");
   store.threadsOf("lead", 5);

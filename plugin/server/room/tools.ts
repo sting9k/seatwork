@@ -1,6 +1,7 @@
 import { ROLES } from "../../shared/workflow";
 import { KEEP_LOG_DAYS } from "../gc";
 import type { McpHttpServer, McpToolHandler } from "../mcp-http";
+import { clip } from "../orchestration/forks";
 import { describeProjects, registerProject, unregisterProject } from "../orchestration/onboard";
 import { retryNote } from "../orchestration/recovery";
 import { handoffRequest } from "../orchestration/rotation";
@@ -9,9 +10,12 @@ import { parseSeat } from "../orchestration/seats";
 import { refusedCaller, roomTool, TOOL_NAMES } from "./tool-table";
 import { SUBJECT_SIGNALS } from "../signals";
 import { roomStats } from "../stats";
+import { unreadScopes, type Plan, type Work } from "../tasks/graph";
 import { graph, work } from "../tasks/tools";
 import { refusal } from "../refusal";
 import { WorkError } from "../tasks/store";
+import { KnowledgeRefused } from "../knowledge/refused";
+import { KnowledgeError } from "../knowledge/store";
 import { owns } from "../../shared/workflow";
 import { fromRoom, taskOf, type RoomContext } from "./context";
 import { readInbox, refused, sendMail } from "./mail-tools";
@@ -49,13 +53,40 @@ function mailHealth(room: RoomContext, since: string): string[] {
 }
 
 /** Runs one call on a work store; a refusal reaches the seat as JSON. */
-function asJson(run: () => unknown): string {
+const OVERLAPS_ASKED = 64;
+
+/** A Task district call's answer; its refusal is said as JSON a seat can act on. */
+function answered<T>(run: () => T): T {
   try {
-    return JSON.stringify(run());
+    return run();
   } catch (error) {
     if (error instanceof WorkError) throw new Error(refusal(error));
     throw error;
   }
+}
+
+function asJson(run: () => unknown): string {
+  return JSON.stringify(answered(run));
+}
+
+/** A plan with the overlaps the decision model is sure of, where a scope names no path to compare. */
+async function readOverlaps(room: RoomContext, work: () => Work, plan: Plan): Promise<Plan> {
+  if (!room.forks.open("overlap")) return plan;
+  const pairs = unreadScopes(work(), plan, OVERLAPS_ASKED);
+  const ids = pairs.map((_, index) => `p${index + 1}`);
+  const labels = await room.forks.takeMany(
+    "overlap",
+    {
+      pairs: Object.fromEntries(
+        pairs.map((pair, index) => [ids[index], { a: clip(pair.scopes[0], 400), b: clip(pair.scopes[1], 400) }]),
+      ),
+    },
+    ids,
+  );
+  const read = pairs
+    .filter((_, index) => labels[index] === "true")
+    .map(({ a, b }) => ({ a, b, paths: [], read: "the decision model reads both scopes as the same code" }));
+  return read.length ? { ...plan, overlaps: [...plan.overlaps, ...read] } : plan;
 }
 
 export function registerTools(room: RoomContext, mcp: McpHttpServer): void {
@@ -107,12 +138,26 @@ export function registerTools(room: RoomContext, mcp: McpHttpServer): void {
       return work(store, rules, caller, args);
     }),
   );
-  add("seatwork_graph", (args, me) =>
-    asJson(() => {
-      const { store, rules } = workOf("seatwork_graph", me);
-      return graph(store, rules, args, new Date());
-    }),
-  );
+  add("seatwork_graph", async (args, me) => {
+    const { store, rules } = workOf("seatwork_graph", me);
+    const answer = answered(() => graph(store, rules, args, new Date()));
+    return JSON.stringify(
+      args.view === "plan" ? await readOverlaps(room, () => store.openWork(), answer as Plan) : answer,
+    );
+  });
+
+  add("seatwork_knowledge", async (args, me) => {
+    try {
+      return JSON.stringify(await room.knowledge.act(me, args));
+    } catch (error) {
+      if (error instanceof KnowledgeRefused) throw new Error(refusal(error));
+      if (error instanceof KnowledgeError)
+        throw new Error(
+          refusal({ code: error.code, message: error.message, retryable: error.code === "DATABASE_LOCKED" }),
+        );
+      throw error;
+    }
+  });
 
   add("seatwork_safety", async (args, me) => {
     const action = String(args.action ?? "");

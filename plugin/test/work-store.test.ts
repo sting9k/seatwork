@@ -443,12 +443,14 @@ test(
   },
 );
 
-test("a text copy with a line that is not an issue gives back the rest", () => {
+test("a text copy with a line that is not an issue, or one the layout refuses, gives back the rest", () => {
   const { store, dir } = fresh();
   const kept = store.create({ title: "schema" }, "lead");
   store.close();
   const copy = join(dir, "issues.jsonl");
-  writeFileSync(copy, `${readFileSync(copy, "utf8")}null\n{"id":"sw-bad","title":"x","status":"done"}\n`);
+  const whole = JSON.parse(readFileSync(copy, "utf8").trim());
+  const refused = JSON.stringify({ ...whole, id: "sw-refused", priority: 9, issue_type: "saga" });
+  writeFileSync(copy, `${readFileSync(copy, "utf8")}null\n{"id":"sw-bad","title":"x","status":"done"}\n${refused}\n`);
   for (const suffix of ["", "-wal", "-shm"]) rmSync(join(dir, `work.db${suffix}`), { force: true });
   const back = new WorkStore(dir, TIMING);
   assert.deepEqual(

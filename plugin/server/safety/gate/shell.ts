@@ -88,7 +88,7 @@ export type Script = Sequence[];
 
 export interface Parsed {
   script: Script;
-  error: { at: number; message: string } | null;
+  error: { at: number; message: string; costly?: true } | null;
 }
 
 export class ShellSyntaxError extends Error {
@@ -100,7 +100,11 @@ export class ShellSyntaxError extends Error {
   }
 }
 
+/** A command line too costly to read: the reading stops, whatever try was under way. */
+export class ShellLimitError extends Error {}
+
 const MAX_DEPTH = 64;
+const MAX_STEPS = 100_000;
 const WORD_END = new Set([" ", "\t", "\n", ";", "&", "|", "<", ">", "(", ")"]);
 const NAME = /^[A-Za-z_][A-Za-z0-9_]*/;
 const SPECIAL_PARAM = new Set(["@", "*", "#", "?", "-", "$", "!", "0", "1", "2", "3", "4", "5", "6", "7", "8", "9"]);
@@ -133,11 +137,18 @@ class Parser {
   constructor(
     readonly src: string,
     private depth: number,
+    private readonly budget: { steps: number } = { steps: 0 },
   ) {}
+
+  /** Counts work toward the budget every parser of one line shares; past it the reading stops. */
+  private spend(steps: number): void {
+    if ((this.budget.steps += steps) > MAX_STEPS) throw new ShellLimitError("the line is too costly to read");
+  }
 
   /** Lists of commands until the end, a closing `)`, or one of `ends` at command position. */
   script(ends: ReadonlySet<string>, closer: ")" | null, caseBody = false): Script {
     if (this.depth > MAX_DEPTH) throw new ShellSyntaxError(this.pos, "nested too deep");
+    this.spend(1);
     const out: Script = [];
     for (;;) {
       this.space(true);
@@ -455,13 +466,15 @@ class Parser {
       if (readsAsCommands(raw)) throw new ShellSyntaxError(start, "not arithmetic");
       return {
         kind: "arith",
-        bodies: substitutionsIn(raw, this.depth + 1),
+        bodies: substitutionsIn(raw, this.depth + 1, this.budget),
         words: [],
         redirects: [],
         start,
         end: this.pos,
       };
-    } catch {
+    } catch (error) {
+      // only a syntax error means "not arithmetic": a limit stops the whole reading
+      if (!(error instanceof ShellSyntaxError)) throw error;
       this.pos = save;
       return null;
     }
@@ -477,6 +490,7 @@ class Parser {
       else if (c === ")") {
         if (depth === 0 && this.src[this.pos + 1] === ")") {
           const raw = this.src.slice(from, this.pos);
+          this.spend(raw.length);
           this.pos += 2;
           return raw;
         }
@@ -642,6 +656,7 @@ class Parser {
   }
 
   dollar(quoted: boolean): Part {
+    this.spend(1);
     const from = this.pos;
     const next = this.src[this.pos + 1];
     if (next === "'" && !quoted) {
@@ -661,8 +676,9 @@ class Parser {
       try {
         const raw = this.arithBody();
         if (readsAsCommands(raw)) throw new ShellSyntaxError(save, "not arithmetic");
-        return { kind: "arith", raw, scripts: substitutionsIn(raw, this.depth + 1) };
-      } catch {
+        return { kind: "arith", raw, scripts: substitutionsIn(raw, this.depth + 1, this.budget) };
+      } catch (error) {
+        if (!(error instanceof ShellSyntaxError)) throw error;
         this.pos = save;
       }
     }
@@ -771,7 +787,8 @@ class Parser {
       inner += c;
       this.pos += 1;
     }
-    const script = parseScriptAt(inner, this.depth + 1);
+    this.spend(inner.length);
+    const script = parseScriptAt(inner, this.depth + 1, this.budget);
     return { kind: "command", script, raw: this.src.slice(from, this.pos), quoted };
   }
 
@@ -843,7 +860,7 @@ class Parser {
     }
     heredoc.body = body;
     if (!heredoc.quoted) {
-      const reader = new Parser(body, this.depth + 1);
+      const reader = new Parser(body, this.depth + 1, this.budget);
       heredoc.parts = reader.doubleQuoted(null);
     }
   }
@@ -894,7 +911,7 @@ class Parser {
   /** What was read before a syntax error: the lists that ended before it. */
   partial(): Script {
     const out: Script = [];
-    const copy = new Parser(this.src, this.depth);
+    const copy = new Parser(this.src, this.depth, this.budget);
     try {
       for (;;) {
         copy.space(true);
@@ -957,8 +974,9 @@ function scriptsIn(parts: Part[]): Script[] {
 }
 
 /** The command substitutions inside text that is not shell, such as an arithmetic body. */
-function substitutionsIn(text: string, depth: number): Script[] {
-  const reader = new Parser(text, depth);
+function substitutionsIn(text: string, depth: number, budget: { steps: number }): Script[] {
+  if (depth > MAX_DEPTH) throw new ShellSyntaxError(0, "nested too deep");
+  const reader = new Parser(text, depth, budget);
   const out: Script[] = [];
   while (reader.pos < text.length) {
     const c = text[reader.pos];
@@ -969,8 +987,8 @@ function substitutionsIn(text: string, depth: number): Script[] {
   return out;
 }
 
-function parseScriptAt(text: string, depth: number): Script {
-  const parser = new Parser(text, depth);
+function parseScriptAt(text: string, depth: number, budget: { steps: number }): Script {
+  const parser = new Parser(text, depth, budget);
   return parser.script(new Set(), null);
 }
 
@@ -980,6 +998,7 @@ export function parseShell(text: string): Parsed {
   try {
     return { script: parser.script(new Set(), null), error: null };
   } catch (error) {
+    if (error instanceof ShellLimitError) return { script: [], error: { at: 0, message: error.message, costly: true } };
     if (!(error instanceof ShellSyntaxError)) {
       if (error instanceof RangeError)
         return { script: parser.partial(), error: { at: 0, message: "nested too deep" } };
@@ -1001,35 +1020,3 @@ function literalOf(parts: readonly Part[]): string | null {
 }
 
 export const literal = (word: Word): string | null => literalOf(word.parts);
-
-/** Every simple command in a script, in reading order, those inside substitutions too. */
-export function* simpleCommands(script: Script): Generator<Simple> {
-  for (const sequence of script)
-    for (const pipeline of sequence.pipelines) for (const command of pipeline.commands) yield* commandsIn(command);
-}
-
-function* commandsIn(command: Command): Generator<Simple> {
-  if (command.kind === "function") return yield* commandsIn(command.body);
-  if (command.kind === "simple") {
-    for (const assign of command.assigns) {
-      if (assign.value) yield* wordScripts(assign.value);
-      for (const item of assign.items ?? []) yield* wordScripts(item);
-    }
-    for (const word of command.words) yield* wordScripts(word);
-    for (const redirect of command.redirects) yield* redirectScripts(redirect);
-    yield command;
-    return;
-  }
-  for (const word of command.words) yield* wordScripts(word);
-  for (const body of command.bodies) yield* simpleCommands(body);
-  for (const redirect of command.redirects) yield* redirectScripts(redirect);
-}
-
-function* wordScripts(word: Word): Generator<Simple> {
-  for (const script of scriptsIn(word.parts)) yield* simpleCommands(script);
-}
-
-function* redirectScripts(redirect: Redirect): Generator<Simple> {
-  if (redirect.target) yield* wordScripts(redirect.target);
-  if (redirect.heredoc) for (const script of scriptsIn(redirect.heredoc.parts)) yield* simpleCommands(script);
-}

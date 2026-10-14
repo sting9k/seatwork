@@ -8,15 +8,8 @@ import { traits } from "../shared/workflow";
 import { quotedCommands } from "../server/orchestration/brief";
 import type { TurnEvent } from "../server/host";
 import { Council, type CouncilPolicy, type Decider, type TurnInput } from "../server/safety/council/council";
-import {
-  counted,
-  hiFor,
-  levelFor,
-  lowerBound,
-  trustedSources,
-  upperBound,
-  type Label,
-} from "../server/safety/council/calibration";
+import { counted, hiFor, levelFor, trustedSources, type Label } from "../server/safety/council/calibration";
+import { lowerBound, upperBound } from "../server/bounds";
 import { claimsIn, isCheck, loopIn, outsideScope, turnFacts } from "../server/safety/council/facts";
 import { snapshot } from "../server/safety/council/git";
 import { SafetyStore } from "../server/safety/store";

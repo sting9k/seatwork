@@ -68,10 +68,6 @@ export function subjectOpening(subject: string): string | undefined {
   return SUBJECT_SIGNALS.find((signal) => opening === signal || new RegExp(`^${signal}\\b`).test(opening));
 }
 
-export function opensWithSignal(subject: string): boolean {
-  return subjectOpening(subject) !== undefined;
-}
-
 /** An acknowledgement counts only where a line opens with it: the word turns up inside other reports. */
 const ACK = /^\W*ACK\b/;
 /** Signals that say "my work is finished": the parent acts on the seat when it reads one. */

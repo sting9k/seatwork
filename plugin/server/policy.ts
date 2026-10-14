@@ -2,6 +2,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { RecoveryPolicy } from "./orchestration/recovery";
 import type { JevPolicy } from "./jev/index";
+import type { KnowledgePolicy } from "./knowledge/index";
 import type { SafetyPolicy } from "./safety/guard";
 import type { WorkPolicy } from "./tasks/store";
 import { ROOM_HOME } from "./paths";
@@ -105,6 +106,7 @@ export interface RuntimePolicy {
   opencode: OpenCodeRuntimePolicy;
   safety?: SafetyPolicy;
   jev?: JevPolicy;
+  knowledge?: KnowledgePolicy;
 }
 
 export const POLICY_FILE = join(ROOM_HOME, "policy.json");
@@ -157,5 +159,6 @@ export function loadPolicy(): RuntimePolicy {
     opencode: need(parsed.opencode?.runtime, "opencode.runtime"),
     safety: parsed.safety,
     jev: parsed.jev,
+    knowledge: parsed.knowledge,
   };
 }

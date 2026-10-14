@@ -2,7 +2,7 @@ import { ROOM_HOME, shipSql } from "./support/room";
 import assert from "node:assert/strict";
 import { join } from "node:path";
 import { test } from "node:test";
-import { alerts, blockerChain, next, plan, triage } from "../server/tasks/graph";
+import { alerts, blockerChain, next, plan, triage, unreadScopes } from "../server/tasks/graph";
 import { WorkStore } from "../server/tasks/store";
 
 shipSql();
@@ -92,26 +92,62 @@ test("a blocker chain goes down level by level to what nothing blocks; alerts na
   );
 });
 
-test("a plan of eight hundred issues is still read in well under a second", () => {
+test("pairs whose overlap no path can tell are the ones put to the model, and none past the most it may ask", () => {
   let tick = Date.parse("2026-10-14T09:00:00Z");
-  const store = new WorkStore(join(ROOM_HOME, `graph-test-${(stores += 1)}`), TIMING, () => new Date((tick += 10)));
-  store.createMany(
-    Array.from({ length: 800 }, (_, i) => ({
-      key: `k${i}`,
-      title: `issue ${i}`,
-      priority: i % 5,
-      deps: i > 3 ? [{ id: `k${i - 1 - (i % 3)}` }, { id: `k${Math.floor(i / 2)}` }] : [],
-    })),
-    "lead",
-  );
+  const store = new WorkStore(join(ROOM_HOME, `graph-test-${(stores += 1)}`), TIMING, () => new Date((tick += 1000)));
+  const make = (title: string, write_scope: string) => store.create({ title, write_scope }, "lead").id;
+  const login = make("login", "the login module and its session handling");
+  const api = make("api", "src/api/**");
+  const docs = make("docs", "docs/");
+  make("unscoped", "");
   const work = store.openWork();
-  const started = Date.now();
-  const read = triage(work, NOW);
-  plan(work, NOW);
-  const took = Date.now() - started;
-  assert.equal(read.counts.open, 800);
-  assert.ok(store.ready().length > 0);
-  assert.ok(took < 1000, `triage and plan took ${took} ms`);
+  const pairs = unreadScopes(work, plan(work, NOW), 10);
+  assert.deepEqual(
+    pairs.map(({ a, b }) => [a, b].sort().join(" ")).sort(),
+    [
+      [api, login],
+      [docs, login],
+    ]
+      .map((pair) => pair.sort().join(" "))
+      .sort(),
+  );
+  assert.deepEqual(unreadScopes(work, plan(work, NOW), 1), [], "more pairs than may be asked: none is asked");
+  store.close();
+});
+
+test("triage and plan grow with the issues, not with their square: six times the issues, far less than thirty-six times the work", () => {
+  const store = new WorkStore(join(ROOM_HOME, `graph-test-${(stores += 1)}`), TIMING, () => NOW);
+  const shape = store.create({ title: "shape" }, "lead");
+  store.close();
+  /** A chain of `count` issues in memory, each held by the one before it. */
+  const chain = (count: number) => {
+    const ids = Array.from({ length: count }, (_, i) => `sw-${i}`);
+    return {
+      issues: ids.map((id, i) => ({ ...shape, id, title: `issue ${i}`, priority: i % 5 })),
+      dependencies: ids.slice(1).map((id, i) => ({ issue_id: id, depends_on_id: ids[i], type: "blocks" as const })),
+      ready: new Set([ids[0]]),
+      blocked: new Map(ids.slice(1).map((id, i) => [id, [ids[i]]])),
+    };
+  };
+  const [small, large] = [chain(1000), chain(6000)];
+  const once = (work: ReturnType<typeof chain>) => {
+    const started = performance.now();
+    triage(work, NOW);
+    plan(work, NOW);
+    return performance.now() - started;
+  };
+  // warmed first, then taken in turns, the fastest of each: a busy machine slows one reading, not the ratio
+  once(small);
+  once(large);
+  let [fastSmall, fastLarge] = [Infinity, Infinity];
+  for (let i = 0; i < 5; i += 1) {
+    fastSmall = Math.min(fastSmall, once(small));
+    fastLarge = Math.min(fastLarge, once(large));
+  }
+  assert.ok(
+    fastLarge < Math.max(fastSmall, 5) * 24,
+    `1000 issues: ${fastSmall.toFixed(0)} ms, 6000 issues: ${fastLarge.toFixed(0)} ms`,
+  );
 });
 
 test("the graph takes readiness from the store: a deferred issue is no pick, and the counts agree with the ready list", () => {

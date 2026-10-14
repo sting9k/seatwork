@@ -378,6 +378,3 @@ export function valueWord(word: Word, cut: number): Word {
   }
   return { raw: word.raw.slice(Math.min(cut, word.raw.length)), start: word.start + cut, end: word.end, parts };
 }
-
-/** The literal text of each word, null for a word only known at run time. */
-export const texts = (words: readonly Word[]): (string | null)[] => words.map(literal);

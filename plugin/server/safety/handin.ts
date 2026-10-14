@@ -1,4 +1,4 @@
-import { execFile } from "node:child_process";
+import { runGit } from "../git";
 import { createHash } from "node:crypto";
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
@@ -62,12 +62,9 @@ const SECRET_NAME =
 const PLACEHOLDER =
   /example|sample|dummy|placeholder|changeme|your[_-]|xxx|fake|test|<|\$\{|process\.env|os\.environ|getenv/i;
 
-function git(args: string[], cwd: string): Promise<{ ok: boolean; out: string }> {
-  return new Promise((resolve) =>
-    execFile("git", args, { cwd, timeout: GIT_MS, encoding: "utf8", maxBuffer: 64 << 20 }, (error, stdout) =>
-      resolve({ ok: !error, out: stdout ?? "" }),
-    ),
-  );
+async function git(args: string[], cwd: string): Promise<{ ok: boolean; out: string }> {
+  const ran = await runGit(cwd, args, { timeoutMs: GIT_MS, maxBytes: 64 << 20 });
+  return { ok: ran.code === 0, out: ran.out };
 }
 
 interface Change {
@@ -79,7 +76,10 @@ interface Change {
 
 /** The changes since a commit: tracked edits, and new files git does not ignore. */
 async function changesSince(cwd: string, head: string): Promise<Change[] | string> {
-  const diff = await git(["diff", "--no-color", "--no-ext-diff", "-U0", "--no-renames", head, "--"], cwd);
+  const diff = await git(
+    ["diff", "--no-color", "--no-ext-diff", "--no-textconv", "-U0", "--no-renames", head, "--"],
+    cwd,
+  );
   if (!diff.ok) return `git diff from ${head.slice(0, 8)} failed`;
   const changes = new Map<string, Change>();
   let current: Change | null = null;

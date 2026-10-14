@@ -21,6 +21,14 @@ const HOME_FILES = table.homeFiles.map(lower);
 const ETC_DIRS = table.etcDirs.map(lower);
 const ETC_FILES = table.etcFiles.map(lower);
 const APPEND = table.append.map(lower);
+const FREE = table.free.map(
+  (glob) =>
+    new RegExp(
+      `^${lower(glob)
+        .replace(/[.+?^${}()|[\]\\]/g, "\\$&")
+        .replace(/\*/g, "[^/]*")}$`,
+    ),
+);
 const ANCHORS = table.anchors.map(lower);
 const ANCHOR_FILES = table.anchorFiles.map(lower);
 const ROOM_HOME_FILES = table.roomHomeFiles.map(lower);
@@ -57,7 +65,7 @@ function guardOfPath(path: string, mode: WriteMode, scene: Pick<Scene, "place">)
 }
 
 function homeEntry(rel: string, mode: WriteMode): boolean {
-  if (/^\.ssh\/[^/]+\.pub$/.test(rel)) return false;
+  if (FREE.some((free) => free.test(rel))) return false;
   if (mode === "append" && APPEND.includes(rel)) return false;
   return HOME_FILES.includes(rel) || HOME_DIRS.some((d) => rel === d || rel.startsWith(`${d}/`));
 }
@@ -140,6 +148,10 @@ interface Entry {
   guard: Omit<Guarded, "path">;
 }
 
+const compiled = new Map<string, (name: string) => boolean>();
+const COMPILED_KEPT = 512;
+const PATTERN_CHARS = 1000;
+
 /** True when a shell pattern can name the entry, or a path inside an entry folder. */
 function reaches(pattern: string, entry: string, dir: boolean): boolean {
   const want = pattern.split("/").filter(Boolean);
@@ -148,12 +160,25 @@ function reaches(pattern: string, entry: string, dir: boolean): boolean {
   return have.every((name, i) => componentTest(want[i])(name));
 }
 
+/** A test for one path component against a shell pattern; one the room cannot compile is taken to match, the safe side. */
 function componentTest(pattern: string): (name: string) => boolean {
+  const kept = compiled.get(pattern);
+  if (kept) return kept;
+  const test = compile(pattern);
+  if (compiled.size >= COMPILED_KEPT) compiled.delete(compiled.keys().next().value!);
+  compiled.set(pattern, test);
+  return test;
+}
+
+function compile(pattern: string): (name: string) => boolean {
+  if (pattern.length > PATTERN_CHARS) return () => true;
   let source = "";
   for (let i = 0; i < pattern.length; i += 1) {
     const c = pattern[i];
-    if (c === "*") source += ".*";
-    else if (c === "?") source += ".";
+    // a run of stars is one star: many in a row would make the match backtrack without end
+    if (c === "*") {
+      if (!source.endsWith(".*")) source += ".*";
+    } else if (c === "?") source += ".";
     else if (c === "[") {
       const close = pattern.indexOf("]", i + 1);
       if (close < 0) source += "\\[";
@@ -177,8 +202,13 @@ function componentTest(pattern: string): (name: string) => boolean {
       }
     } else source += escape(c);
   }
-  const test = new RegExp(`^${source}$`, "i");
-  return (name) => test.test(name);
+  try {
+    const test = new RegExp(`^${source}$`, "i");
+    return (name) => test.test(name);
+  } catch {
+    // a range out of order, or anything else bash may read its own way
+    return () => true;
+  }
 }
 
 const escape = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");

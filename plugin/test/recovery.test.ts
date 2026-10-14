@@ -68,6 +68,15 @@ test("a quota is waited out without using a try, for so many hours at most", () 
   });
 });
 
+test("a failure the room's own words miss is taken as the kind the model was sure of", () => {
+  const recovery = new Recovery(fresh(), POLICY);
+  const words = "Error: overloaded_error: the account's weekly allowance is spent";
+  assert.equal((recovery.failed("p1", words, T0) as { retry: { kind: string } }).retry.kind, "service");
+  const read = recovery.failed("p2", words, T0, "limited") as { retry: { kind: string; at: number; attempt: number } };
+  assert.deepEqual([read.retry.kind, read.retry.at, read.retry.attempt], ["limited", T0 + 600_000, 0]);
+  assert.deepEqual(recovery.failed("p3", words, T0, "fatal"), { gaveUpAfter: 0, kind: "fatal" });
+});
+
 test("a retry that has come due starts the seat again once, and only a seat still at rest; the list survives a restart", async () => {
   const file = fresh();
   new Recovery(file, POLICY).failed("p1", "529 Overloaded", T0);

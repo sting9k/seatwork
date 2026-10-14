@@ -28,9 +28,13 @@ export interface CallRow {
   latencyMs: number;
   attempts: number;
   error: string | null;
+  suspect?: string | null;
 }
 
 const PRUNE_BATCH = 2000;
+
+/** The district a caller belongs to: the part of its name before the first dot, colon or at sign. */
+export const districtOf = (caller: string): string => caller.split(/[.:@]/, 1)[0] || caller;
 
 /** The number calibration reads: a noul's probability, a choice's confidence, a score. */
 const valueOf = (answer: Answer): number =>
@@ -71,7 +75,7 @@ export class JevStore extends Sqlite {
         );
       const { lastInsertRowid: callId } = this.run(
         `INSERT INTO calls (at, caller, provider, model_asked, model, state_hash, input_tokens, output_tokens,
-           usd, usd_source, latency_ms, attempts, error) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+           usd, usd_source, latency_ms, attempts, error, suspect) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         at,
         call.caller,
         call.provider,
@@ -85,6 +89,7 @@ export class JevStore extends Sqlite {
         call.latencyMs,
         call.attempts,
         call.error,
+        call.suspect ?? null,
       );
       const asks: Record<string, number> = {};
       for (const [question, answer] of Object.entries(answers))
@@ -104,6 +109,15 @@ export class JevStore extends Sqlite {
         call.usd ?? 0,
         call.error === null ? 0 : 1,
       );
+      this.run(
+        `INSERT INTO spend_daily (day, district, usd, calls, failed) VALUES (?, ?, ?, 1, ?)
+           ON CONFLICT (day, district) DO UPDATE SET usd = usd + excluded.usd, calls = calls + 1,
+             failed = failed + excluded.failed`,
+        at.slice(0, 10),
+        districtOf(call.caller),
+        call.usd ?? 0,
+        call.error === null ? 0 : 1,
+      );
       return { callId, asks };
     });
   }
@@ -111,6 +125,21 @@ export class JevStore extends Sqlite {
   /** What one month's calls cost, in USD; the month as `YYYY-MM`. */
   spent(month: string): number {
     return this.row<{ usd: number }>("SELECT usd FROM spend WHERE month = ?", month)?.usd ?? 0;
+  }
+
+  /** What one district's calls cost on one day, in USD; the day as `YYYY-MM-DD`. */
+  spentOn(day: string, district: string): number {
+    return (
+      this.row<{ usd: number }>("SELECT usd FROM spend_daily WHERE day = ? AND district = ?", day, district)?.usd ?? 0
+    );
+  }
+
+  /** Each district's calls and failed calls on one day. */
+  dayOf(day: string): { district: string; calls: number; failed: number }[] {
+    return this.rows<{ district: string; calls: number; failed: number }>(
+      "SELECT district, calls, failed FROM spend_daily WHERE day = ? ORDER BY district",
+      day,
+    ).map(({ district, calls, failed }) => ({ district, calls, failed }));
   }
 
   /** A label that came later for one answer; false when no such answer is kept. */
@@ -152,6 +181,9 @@ export class JevStore extends Sqlite {
       calls += gone;
       if (gone < PRUNE_BATCH) break;
     }
+    this.transaction("write", () =>
+      this.run("DELETE FROM spend_daily WHERE day < ?", callsBefore.toISOString().slice(0, 10)),
+    );
     return { states, calls };
   }
 }

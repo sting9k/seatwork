@@ -15,7 +15,6 @@ export interface RoleTraits {
   briefed?: boolean;
   writes?: boolean;
   reviews?: boolean;
-  stall?: string;
   rotate?: string;
   tableNote?: { one: string; several: string };
 }
@@ -35,8 +34,9 @@ export const SPAWN: Readonly<Record<string, readonly string[]>> = table.spawn;
 export const REVIEW_STALL: string = table.reviewers.stall;
 export const VARS: Readonly<Record<string, { role: string; except: readonly string[] }>> = table.vars;
 
-export const isRole = (name: string): boolean => name in TRAITS;
-export const traits = (role: string | undefined): RoleTraits => (role && TRAITS[role]) || NONE;
+export const isRole = (name: string): boolean => Object.hasOwn(TRAITS, name);
+export const traits = (role: string | undefined): RoleTraits =>
+  role && Object.hasOwn(TRAITS, role) ? TRAITS[role] : NONE;
 export const rolesWhere = (pick: (traits: RoleTraits) => unknown): string[] =>
   ROLES.filter((role) => pick(TRAITS[role]));
 
@@ -81,12 +81,8 @@ export function reviews(role: string, title: string | null | undefined): boolean
   );
 }
 
-/** The room.params entry for how long a seat may stay silent. */
-export const stallParam = (role: string, title: string | null | undefined): string | undefined =>
-  reviews(role, title) ? table.reviewers.stall : traits(role).stall;
-
 const fill = (text: string, vars: Record<string, string | number>) =>
-  text.replace(/\{\{(\w+)\}\}/g, (whole, name: string) => (name in vars ? String(vars[name]) : whole));
+  text.replace(/\{\{(\w+)\}\}/g, (whole, name: string) => (Object.hasOwn(vars, name) ? String(vars[name]) : whole));
 
 /** One of the room's lines about a task's rounds, filled. */
 export const note = (name: Note, vars: Record<string, string | number>): string => fill(table.notes[name], vars);

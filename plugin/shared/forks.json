@@ -1,0 +1,69 @@
+{
+  "$comment": "The room's forks: small choices about mail and work put to the decision model. A label at sharpAt or more is acted on; anything less keeps the room's own rule. Each is asked only where its condition in the code holds; policy.jev.forks lists those that are on.",
+  "forks": {
+    "report": {
+      "version": 1,
+      "sharpAt": 0.9,
+      "deadlineMs": 5000,
+      "question": {
+        "type": "choice",
+        "instructions": "`report` is the last message a software agent wrote when its turn of work ended, with no protocol word on its first line; `woke_by` are the subjects of the mail that started that turn. The agent's owner reads it. Say what the report brings its owner.",
+        "criteria": {
+          "result": "a result, a finding, a finished piece of work or a change of plan the owner should act on",
+          "question": "a question, a request, a problem or a blocker that needs the owner",
+          "nothing_new": "an acknowledgement, a repeat, or progress with nothing for the owner to act on"
+        }
+      }
+    },
+    "wake": {
+      "version": 2,
+      "sharpAt": 0.8,
+      "deadlineMs": 5000,
+      "question": {
+        "type": "choice",
+        "instructions": "`subject` and `body` are a mail one software agent sent another that is idle. Say what the mail asks of its reader.",
+        "criteria": {
+          "act": "to do, change, check, decide or answer something",
+          "nothing": "nothing: it only informs, and can wait for the reader's next mail"
+        }
+      }
+    },
+    "failure": {
+      "version": 1,
+      "sharpAt": 0.9,
+      "deadlineMs": 5000,
+      "question": {
+        "type": "choice",
+        "instructions": "`error` is what an AI coding agent's program reported when a turn of its work failed. Say what kind of failure it is.",
+        "criteria": {
+          "limited": "a rate limit, a quota, or a usage or spending limit that lifts with time",
+          "fatal": "a refused account or key, billing, or a prompt too long for the model: trying again changes nothing",
+          "service": "a passing fault of the service or the network: trying again soon may work"
+        }
+      }
+    },
+    "answers": {
+      "version": 1,
+      "sharpAt": 0.9,
+      "deadlineMs": 5000,
+      "question": {
+        "type": "choice",
+        "instructions": "`reply` is a mail that answers one of the questions in `asks`, sent by the agent the questions were asked of; it names none of them. Say which one it answers.",
+        "criteria": {}
+      }
+    },
+    "overlap": {
+      "version": 1,
+      "sharpAt": 0.75,
+      "deadlineMs": 8000,
+      "question": {
+        "type": "noul",
+        "instructions": "`pairs.{{id}}.a` and `pairs.{{id}}.b` are the write scopes of two tasks in one code base: what each task may change, said in words. Would doing both tasks at once change the same files?",
+        "criteria": {
+          "true": "they name the same files, module or feature",
+          "false": "they touch different parts of the code"
+        }
+      }
+    }
+  }
+}

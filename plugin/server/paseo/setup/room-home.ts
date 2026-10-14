@@ -1,4 +1,3 @@
-import settings from "../../../shared/settings.json";
 import {
   chmodSync,
   cpSync,
@@ -34,15 +33,12 @@ export function readSetup(roomHome: string): Setup {
   return checkSetup(parsed, file);
 }
 
-/** Moves a room home aside, whole, and returns where it went; it is kept for KEEP_REMOVED_DAYS. */
+/** Moves a room home aside, whole, and returns where it went; it is kept for keepRemovedDays (shared/settings.json). */
 export function moveRoomHomeAside(roomHome: string, now = new Date()): string {
   const target = `${roomHome}.removed-${stamp(now)}`;
   renameSync(roomHome, target);
   return target;
 }
-
-/** How many days a folder set aside by Remove or by Init is kept before the plugin deletes it. */
-export const KEEP_REMOVED_DAYS: number = settings.keepRemovedDays;
 
 /** A local date and time for a file name: 20261012-145625. */
 export function stamp(now = new Date()): string {

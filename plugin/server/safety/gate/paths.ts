@@ -187,7 +187,6 @@ function lossOfAbsolute(path: string, unknownTail: boolean, home: string): "crit
   if (parts.some((c) => c === ".." || EXPANSION.test(c))) return "critical";
   if (/^[a-z]$/i.test(parts[0] ?? "")) parts.shift();
   if (parts.length <= 1) return "critical";
-  if (unknownTail && parts.length < 2) return "critical";
   if (SYSTEM.has(parts[0].toLowerCase())) return "critical";
   const homeRoot = home.split("/").filter(Boolean);
   if (parts[0] === "home" || parts[0] === "Users" || (homeRoot.length && parts[0] === homeRoot[0])) {

@@ -52,6 +52,14 @@ export function envelope({ message, delivery, from, chars }: Shown): string {
   return `<mail ${marks.join(" ")}>\n${shownBody(message, chars)}\n</mail>`;
 }
 
+/** A prompt with the mail and the room's notes it carried taken out: what is left was typed to the seat. */
+export function withoutMail(prompt: string): string {
+  return prompt
+    .replace(/<mail\s[^>]*>[\s\S]*?\n<\/mail>/g, "")
+    .replace(/<knowledge>[\s\S]*?\n<\/knowledge>/g, "")
+    .trim();
+}
+
 /** Several mails as one prompt: those that ask the most first, then by age. */
 export function digest(mails: readonly (Shown & { rank: number })[]): string {
   return [...mails]

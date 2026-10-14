@@ -301,6 +301,109 @@
         },
         "required": ["agent_id"]
       }
+    },
+    "seatwork_knowledge": {
+      "callers": "any",
+      "description": "The room's record and its decisions; `do` is the action. search: words in `q`, best first; other wordings in `also` find more; narrow by task, agent, kinds, since; you read what you or seats under you saw. view, expand: entries by `address`. pack: a task's evidence. decide: a rule a person decided that later work follows, one English `statement` under a `topic`; `scope` room or project (the room's own seat) or task (a seat that briefs); it takes effect when your turn ends, on the person's words in it, or at once `from` their address. Change: restate with `replaces_version`; withdraw: a `reason`. list: decisions in force for you. Answers are JSON, maybe with `notices`. A refusal is {\"error\": {code, message, retryable}}.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "do": {
+            "type": "string",
+            "enum": ["search", "view", "expand", "pack", "decide", "withdraw", "list"]
+          },
+          "q": {
+            "type": "string",
+            "description": "search: English words."
+          },
+          "also": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "search: up to four other wordings."
+          },
+          "task": {
+            "type": "string",
+            "description": "search, pack: one task."
+          },
+          "agent": {
+            "type": "string",
+            "description": "search: one seat."
+          },
+          "kinds": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": ["owner", "prompt", "say", "shell", "change", "read", "tool", "mail"]
+            },
+            "description": "search: entry kinds."
+          },
+          "since": {
+            "type": "string",
+            "description": "search: ISO time."
+          },
+          "limit": {
+            "type": "integer"
+          },
+          "address": {
+            "type": "string",
+            "description": "view, expand: an entry's address."
+          },
+          "around": {
+            "type": "integer"
+          },
+          "budget": {
+            "type": "integer"
+          },
+          "project": {
+            "type": "string",
+            "description": "Another project by folder or name, or room; decide: the bound project."
+          },
+          "scope": {
+            "type": "string",
+            "enum": ["room", "project", "task"],
+            "description": "decide, withdraw: what it binds."
+          },
+          "topic": {
+            "type": "string",
+            "description": "decide, withdraw: a few English words; one decision per topic."
+          },
+          "statement": {
+            "type": "string",
+            "description": "decide: the whole decision, one English sentence."
+          },
+          "from": {
+            "type": "string",
+            "description": "decide, withdraw: the address of the person's words."
+          },
+          "replaces_version": {
+            "type": "integer",
+            "description": "decide, withdraw: the version in force."
+          },
+          "new_topic": {
+            "type": "boolean",
+            "description": "decide: not one of the near topics."
+          },
+          "valid_from": {
+            "type": "string",
+            "description": "decide: ISO start."
+          },
+          "valid_until": {
+            "type": "string",
+            "description": "decide: ISO end; the replaced one returns."
+          },
+          "reason": {
+            "type": "string",
+            "description": "withdraw: why, in English."
+          },
+          "all": {
+            "type": "boolean",
+            "description": "list: every scope."
+          }
+        },
+        "required": ["do"]
+      }
     }
   }
 }

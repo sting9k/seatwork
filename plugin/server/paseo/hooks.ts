@@ -5,7 +5,7 @@ import type { Room, SeatEvent } from "../room/room";
 import type { PaseoApi } from "./api";
 import type { PaseoHost } from "./host";
 import { ensureRoomProject } from "./room-project";
-import { eventsOf } from "./timeline";
+import { eventsOf, sinceMark, type ReadMark } from "./timeline";
 
 /** Paseo's hooks and events, told to the room in its own words; the room never sees Paseo's shapes. */
 
@@ -26,32 +26,6 @@ const seatOf = (agent: Agent): SeatEvent => ({
   cwd: agent.cwd,
   parentId: agent.parentAgentId ?? null,
 });
-
-/** The last thing the assistant said in a turn's timeline. */
-function lastAssistantText(timeline: readonly unknown[]): string {
-  for (let i = timeline.length - 1; i >= 0; i -= 1) {
-    const item = timeline[i] as Record<string, unknown>;
-    const type = String(item.type ?? "");
-    const role = String(item.role ?? "assistant");
-    if (!/assistant|message|text/i.test(type) || role !== "assistant") continue;
-    const text = item.text ?? item.content ?? item.message;
-    if (typeof text === "string" && text.trim()) return text.trim();
-    if (Array.isArray(text)) {
-      const joined = text
-        .map((p) =>
-          typeof p === "string"
-            ? p
-            : typeof (p as { text?: unknown })?.text === "string"
-              ? (p as { text: string }).text
-              : "",
-        )
-        .join("\n")
-        .trim();
-      if (joined) return joined;
-    }
-  }
-  return "";
-}
 
 /** A seat's create request with the room's start laid in. */
 export async function seatRequest(room: Room, request: CreateRequest): Promise<CreateRequest> {
@@ -105,6 +79,7 @@ export async function seatRequest(room: Room, request: CreateRequest): Promise<C
 /** Wires Paseo's events to a running room; returns what takes them back. */
 export function connect(server: Pick<PluginServerContext, "on" | "before">, room: Room, host: PaseoHost): () => void {
   let projectOpened = false;
+  const marks = new Map<string, ReadMark>();
   /** Every hook hands the room Paseo's client; the first also opens the room's own project. */
   const enter = (paseo: PaseoApi): Room => {
     host.use(paseo);
@@ -130,27 +105,38 @@ export function connect(server: Pick<PluginServerContext, "on" | "before">, room
     server.on("agent.created", async (event, { paseo }) => {
       await enter(paseo).created(seatOf(event.agent));
     }),
+    // the app runs the user's own agents too: only the room's seats are the room's business
     server.on("agent.turn_started", (event, { paseo }) => {
-      enter(paseo).turnStarted(seatOf(event.agent));
+      if (parseSeat(event.agent.provider)) enter(paseo).turnStarted(seatOf(event.agent));
     }),
     server.on("agent.turn_ended", async (event, { paseo }) => {
+      if (!parseSeat(event.agent.provider)) return;
       const outcome: TurnOutcome =
         event.outcome.kind === "failed"
           ? { kind: "failed", error: event.outcome.error.message }
           : { kind: event.outcome.kind === "canceled" ? "canceled" : "completed" };
+      // the app hands the seat's whole timeline: the turn is what came after the last one read
+      const read = sinceMark(event.timeline, marks.get(event.agent.id));
+      marks.set(event.agent.id, read.mark);
+      const events = eventsOf(read.items);
       await enter(paseo).turnEnded({
         seat: seatOf(event.agent),
         turnId: event.turnId,
         outcome,
-        text: lastAssistantText(event.timeline),
-        events: eventsOf(event.timeline),
+        // the seat's last words, never the prompt that opened its turn
+        text: events.findLast((one) => one.kind === "say")?.text ?? "",
+        events,
       });
     }),
     server.on("agent.archived", async (event, { paseo }) => {
+      if (!parseSeat(event.agent.provider)) return;
+      marks.delete(event.agent.id);
       await enter(paseo).archived(seatOf(event.agent));
     }),
     // a runtime that closes takes its turn with it and Paseo sends no end
     server.on("agent.closed", (event) => {
+      if (!parseSeat(event.agent.provider)) return;
+      marks.delete(event.agent.id);
       room.closed(event.agent.id);
     }),
     server.on("agent.permission_requested", async (event, { paseo }) => {

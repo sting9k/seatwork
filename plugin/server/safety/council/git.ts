@@ -1,16 +1,13 @@
-import { execFile } from "node:child_process";
+import { runGit } from "../../git";
 
 /** What git says of a seat's folder: where its work tree starts, the commit a turn began on, the files it changed. */
 
 const GIT_MS = 5000;
 const MOST_FILES = 5000;
 
-function git(cwd: string, args: string[]): Promise<string | null> {
-  return new Promise((resolve) =>
-    execFile("git", args, { cwd, timeout: GIT_MS, maxBuffer: 8 * 1024 * 1024, encoding: "utf8" }, (error, stdout) =>
-      resolve(error ? null : stdout),
-    ),
-  );
+async function git(cwd: string, args: string[]): Promise<string | null> {
+  const ran = await runGit(cwd, args, { timeoutMs: GIT_MS, maxBytes: 8 * 1024 * 1024 });
+  return ran.code === 0 ? ran.out : null;
 }
 
 export interface Snapshot {

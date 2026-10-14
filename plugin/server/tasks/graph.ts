@@ -162,13 +162,16 @@ function depths(graph: Graph): Int32Array {
   return depth;
 }
 
-/** The issues nothing would hold back once this one closed. */
-function freedBy(work: Work, graph: Graph, i: number): number[] {
-  const id = graph.issues[i].id;
-  const freed: number[] = [];
+/** For each issue, the issues nothing would hold back once it closed: those it alone holds; one pass over what is blocked. */
+function freedByEach(work: Work, graph: Graph): number[][] {
+  const freed: number[][] = graph.issues.map(() => []);
   for (const [other, refs] of work.blocked) {
     const at = graph.at.get(other);
-    if (at !== undefined && refs.length > 0 && refs.every((ref) => refIssue(ref) === id)) freed.push(at);
+    if (at === undefined || refs.length === 0) continue;
+    const holder = refIssue(refs[0]);
+    if (!refs.every((ref) => refIssue(ref) === holder)) continue;
+    const by = graph.at.get(holder);
+    if (by !== undefined) freed[by].push(at);
   }
   return freed;
 }
@@ -198,9 +201,10 @@ function scoreAll(work: Work, now: Date): { graph: Graph; scored: Scored[] } {
   const n = graph.issues.length;
   const [rank, bridge, depth] = [pagerank(graph), betweenness(graph), depths(graph)];
   const [topRank, topBridge] = [peak(rank), peak(bridge)];
-  const freed = graph.issues.map((_, i) => freedBy(work, graph, i));
-  const mostHeld = Math.max(1, ...graph.dependents.map((list) => list.length));
-  const mostFreed = Math.max(5, ...freed.map((list) => list.length));
+  const freed = freedByEach(work, graph);
+  // a loop, not a spread: a spread of many thousand values overflows the call stack
+  const mostHeld = Math.max(1, peak(graph.dependents.map((list) => list.length)));
+  const mostFreed = Math.max(5, peak(freed.map((list) => list.length)));
   const scored: Scored[] = [];
   for (let i = 0; i < n; i += 1) {
     const issue = graph.issues[i];
@@ -324,7 +328,29 @@ export interface Plan {
   }[];
   ready: number;
   blocked: number;
-  overlaps: { a: string; b: string; paths: string[] }[];
+  overlaps: { a: string; b: string; paths: string[]; read?: string }[];
+}
+
+/** Pairs of a plan's issues whose overlap no path can tell, one side's scope naming none; none when there are more than `most`. */
+export function unreadScopes(
+  work: Work,
+  plan: Plan,
+  most: number,
+): { a: string; b: string; scopes: [string, string] }[] {
+  const byId = new Map(work.issues.map((issue) => [issue.id, issue]));
+  const planned = plan.tracks
+    .flatMap((track) => track.items.map((item) => byId.get(item.id)!))
+    .filter((issue) => issue.write_scope.trim());
+  const prose = new Set(planned.filter((issue) => scopeOf(issue).length === 0).map((issue) => issue.id));
+  const pairs: { a: string; b: string; scopes: [string, string] }[] = [];
+  for (let i = 0; i < planned.length; i += 1)
+    for (let j = i + 1; j < planned.length; j += 1) {
+      const [a, b] = [planned[i], planned[j]];
+      if (!prose.has(a.id) && !prose.has(b.id)) continue;
+      if (pairs.length === most) return [];
+      pairs.push({ a: a.id, b: b.id, scopes: [a.write_scope, b.write_scope] });
+    }
+  return pairs;
 }
 
 /** Groups no dependency joins, which can run side by side, and the scopes that collide. */
@@ -352,7 +378,9 @@ export function plan(work: Work, now: Date): Plan {
   const byRoot = new Map<number, Scored[]>();
   for (const one of can) {
     const key = root(graph.at.get(one.id)!);
-    byRoot.set(key, [...(byRoot.get(key) ?? []), one]);
+    const items = byRoot.get(key);
+    if (items) items.push(one);
+    else byRoot.set(key, [one]);
   }
   const tracks = [...byRoot.values()]
     .map((items) => items.sort((a, b) => a.priority - b.priority || a.id.localeCompare(b.id)))

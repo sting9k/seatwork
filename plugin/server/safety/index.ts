@@ -1,4 +1,4 @@
-import { execFile } from "node:child_process";
+import { runGit } from "../git";
 import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { packsInForce } from "./gate/packs";
@@ -84,14 +84,16 @@ export class Safety {
     return { [GATE_ENV.url]: url, [GATE_ENV.seat]: agentId };
   }
 
-  /** One hook's question, answered in its CLI's shape. */
+  /** One hook's question, answered in its CLI's shape; `note` rides on an allow, and `noted` says it did. */
   async answer(
     cli: Cli,
     body: Record<string, unknown>,
     agentId: string | null,
-  ): Promise<{ type: string; text: string }> {
-    if (!this.on) return { type: "text/plain", text: cli === "pi" || cli === "opencode" ? '{"block":false}' : "" };
-    return answerHook(this.guard, cli, body, agentId ? this.seatRef(agentId) : null);
+    note?: string,
+  ): Promise<{ type: string; text: string; noted: boolean }> {
+    if (!this.on)
+      return { type: "text/plain", text: cli === "pi" || cli === "opencode" ? '{"block":false}' : "", noted: false };
+    return answerHook(this.guard, cli, body, agentId ? this.seatRef(agentId) : null, note);
   }
 
   /** What the guard would make of a command, without running it or keeping anything. */
@@ -184,6 +186,7 @@ export class Safety {
     this.starts.delete(agentId);
     this.noted.delete(agentId);
     this.council.forget(agentId);
+    if (this.storeHandle || existsSync(join(this.deps.dir, "safety.db"))) this.store().forgetSeat(agentId);
   }
 
   expire(before: Date): number {
@@ -244,12 +247,9 @@ export class Safety {
   }
 }
 
-function gitHead(cwd: string): Promise<string | null> {
-  return new Promise((resolve) =>
-    execFile("git", ["rev-parse", "HEAD"], { cwd, timeout: 3000, encoding: "utf8" }, (error, stdout) =>
-      resolve(error ? null : stdout.trim() || null),
-    ),
-  );
+async function gitHead(cwd: string): Promise<string | null> {
+  const ran = await runGit(cwd, ["rev-parse", "HEAD"], { timeoutMs: 3000, maxBytes: 1 << 20 });
+  return ran.code === 0 ? ran.out.trim() || null : null;
 }
 
 function writeIfChanged(path: string, text: string, mode: number): void {

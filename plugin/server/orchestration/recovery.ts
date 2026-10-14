@@ -74,10 +74,12 @@ export class Recovery {
       this.seats.set(agentId, state);
   }
 
-  /** A turn failed: the retry the room plans, or after how many tries it gives the seat up. */
-  failed(agentId: string, message: string, now: number): Outcome {
+  /** A turn failed: the retry the room plans, or after how many tries it gives the seat up; `read` is a kind the model was sure of. */
+  failed(agentId: string, message: string, now: number, read: FailureKind | null = null): Outcome {
     const state = this.seats.get(agentId) ?? { attempts: 0 };
-    const { kind, liftsAt: lifts } = classify(message, now);
+    const found = classify(message, now);
+    const kind = read ?? found.kind;
+    const lifts = found.liftsAt;
     // a home an earlier version wrote names no recovery: every failure goes to the Owner, as it did
     if (!this.policy) return { gaveUpAfter: 0, kind };
     const of = this.policy.delaysSeconds.length;

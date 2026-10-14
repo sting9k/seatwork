@@ -1,4 +1,5 @@
 import { existsSync } from "node:fs";
+import mailConfig from "../../shared/mail.json";
 import { isAbsolute, join } from "node:path";
 import { note, owns } from "../../shared/workflow";
 import { MailError, namesTeam, reachable, resolve, shown } from "../coordination/address";
@@ -7,6 +8,7 @@ import type { Mail, MailEngine, NewMail, Needs } from "../coordination/engine";
 import { inbox } from "../coordination/reader";
 import { MailStoreError } from "../coordination/store";
 import type { LiveSeat } from "../host";
+import { clip } from "../orchestration/forks";
 import { CLOSES_WORK, isReceiptWord, priorityOf, SUBJECT_SIGNALS, subjectOpening, subjectSignal } from "../signals";
 import { fromRoom, taskOf, type RoomContext } from "./context";
 
@@ -31,6 +33,8 @@ function isReceipt(subject: string, needs: unknown, toWorker: boolean, endedWith
     toWorker && needs === "nothing" && isReceiptWord(subject) && endedWith !== undefined && CLOSES_WORK.has(endedWith)
   );
 }
+
+const INFORMS = new Set(["FYI", "HANDOFF"]);
 
 const words = (value: unknown) =>
   Array.isArray(value) ? value.map(String) : typeof value === "string" && value.trim() ? [value] : [];
@@ -115,6 +119,13 @@ export async function sendMail(room: RoomContext, from: string, args: Record<str
       "STOP_GOES_DOWN",
       "STOP goes to one seat you launched or one below it; to your Owner, write what must stop and why under BLOCKED or QUESTION",
     );
+  const body = String(args.body ?? "");
+  // a body is kept four times over, in the store, its search, its file and its thread: a long one goes in a file
+  if (body.length > mailConfig.bodyChars)
+    throw new MailError(
+      "INVALID_ARGUMENT",
+      `the body is ${body.length} characters; ${mailConfig.bodyChars} at most: put the rest in a file and name it in files`,
+    );
   const needs = (["reply", "decision", "nothing"].includes(String(args.needs)) ? args.needs : "nothing") as Needs;
   if (team && needs !== "nothing")
     throw new MailError(
@@ -136,7 +147,7 @@ export async function sendMail(room: RoomContext, from: string, args: Record<str
     cc,
     priority: priorityOf(subject, needs, toWorker),
     subject,
-    body: String(args.body ?? ""),
+    body,
     needs,
     thread,
     ...(replyTo ? { replyTo } : {}),
@@ -166,7 +177,8 @@ export async function sendMail(room: RoomContext, from: string, args: Record<str
   const waits =
     team ||
     signal === "ACK" ||
-    (to.length === 1 && isReceipt(subject, args.needs, toWorker, room.lastSignal.get(to[0])));
+    (to.length === 1 && isReceipt(subject, args.needs, toWorker, room.lastSignal.get(to[0]))) ||
+    (await informsOnly(room, draft, found.get(to[0]), stops, cc.length));
   const mail = await eng.post({
     ...draft,
     priority: stops ? "blocking" : waits ? "fyi" : draft.priority,
@@ -193,6 +205,21 @@ export async function sendMail(room: RoomContext, from: string, args: Record<str
     state: waits ? "read with the recipient's next mail" : held ? "held until the recipient can take it" : "delivered",
     ...(round ? { note: round } : {}),
   });
+}
+
+/** An FYI or a HANDOFF to one idle seat that the decision model is sure asks it nothing: it waits for that seat's next mail. */
+async function informsOnly(
+  room: RoomContext,
+  draft: NewMail,
+  status: string | undefined,
+  stops: boolean,
+  copies: number,
+): Promise<boolean> {
+  const signal = subjectSignal(draft.subject);
+  if (stops || copies > 0 || draft.needs !== "nothing" || status !== "idle" || !signal || !INFORMS.has(signal))
+    return false;
+  if ([draft.to].flat().length !== 1) return false;
+  return (await room.forks.take("wake", { subject: draft.subject, body: clip(draft.body, 1500) })) === "nothing";
 }
 
 /** Every seat at work under a stopped one is stopped with it. */

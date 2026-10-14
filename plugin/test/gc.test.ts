@@ -173,16 +173,18 @@ test("room stats count the seats whose work came back three times or more", () =
   );
 });
 
-test("GC deletes a closed seat's temporary directory after a week and leaves an open seat's", () => {
+test("GC deletes a closed seat's temporary directory once its keep has passed, and leaves an open seat's", () => {
   const tmp = join(ROOM_HOME, "tmp");
-  const old = new Date(Date.now() - 8 * 86_400_000);
+  const old = new Date(Date.now() - (KEEP_LOG_DAYS * 86_400_000 + 60_000));
+  const within = new Date(Date.now() - (KEEP_LOG_DAYS * 86_400_000 - 60_000));
   for (const name of ["aaaaaaaa", "bbbbbbbb", "cccccccc"]) {
     mkdirSync(join(tmp, name), { recursive: true });
     writeFileSync(join(tmp, name, "scratch.txt"), "x");
   }
   utimesSync(join(tmp, "aaaaaaaa"), old, old);
   utimesSync(join(tmp, "bbbbbbbb"), old, old);
-  // aaaaaaaa is closed and old, bbbbbbbb is old and still open, cccccccc was closed today
+  utimesSync(join(tmp, "cccccccc"), within, within);
+  // aaaaaaaa is closed and past its keep, bbbbbbbb is past it and still open, cccccccc closed a minute short of it
   assert.deepEqual(dropSeatTmp(tmp, ["bbbbbbbb-1111-2222"]), [join(tmp, "aaaaaaaa")]);
   assert.deepEqual(readdirSync(tmp).sort(), ["bbbbbbbb", "cccccccc"]);
 });

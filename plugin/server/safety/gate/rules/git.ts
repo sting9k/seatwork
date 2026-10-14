@@ -28,7 +28,7 @@ const BUILTIN = new Set(
 check-mailmap check-ref-format checkout checkout-index cherry cherry-pick citool clean clone column commit commit-graph
 commit-tree config count-objects credential credential-cache credential-store cvsexportcommit cvsimport cvsserver daemon
 describe diagnose diff diff-files diff-index diff-pairs diff-tree difftool fast-export fast-import fetch fetch-pack
-filter-branch fmt-merge-msg for-each-ref for-each-repo format-patch fsck fsck-objects fsmonitor--daemon gc
+filter-branch filter-repo fmt-merge-msg for-each-ref for-each-repo format-patch fsck fsck-objects fsmonitor--daemon gc
 get-tar-commit-id grep gui hash-object help hook http-backend imap-send index-pack init init-db instaweb
 interpret-trailers last-modified lfs log ls-files ls-remote ls-tree mailinfo mailsplit maintenance merge merge-base
 merge-file merge-index merge-one-file merge-tree mergetool mktag mktree multi-pack-index mv name-rev notes p4

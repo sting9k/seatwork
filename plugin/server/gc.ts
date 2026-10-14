@@ -72,7 +72,7 @@ export class Collector {
       }
       for (const district of this.districts) {
         const gone = district.expire(new Date(cutoff));
-        if (gone > 0) this.log(`gc: ${gone} ${district.what} older than ${this.keepMailDays} days left the room`);
+        if (gone > 0) this.log(`gc: ${gone} ${district.what} past their keep left the room`);
       }
       // a successor holds its handoff in its prompt: the file is a copy for people
       const before = Date.now() - KEEP_LOG_DAYS * 86_400_000;
@@ -157,7 +157,9 @@ export class Collector {
 
   /** Deletes the app's timers that wake seats `orphaned` says are gone, or that the app finished. */
   private async dropWakers(orphaned: (agentId: string) => boolean): Promise<void> {
-    for (const line of await this.host.dropWakers((agentId) => !!this.engine.seat(agentId) && orphaned(agentId))) {
+    for (const line of await this.host.dropWakers((agentId) =>
+      !this.engine.seat(agentId) ? null : orphaned(agentId) ? "gone" : "live",
+    )) {
       logLine("deleted-waker", { what: line });
       this.log(`gc: deleted ${line}`);
     }
@@ -171,13 +173,10 @@ const KEEP_REMOVED_DAYS: number = settings.keepRemovedDays;
 
 type Line = Record<string, unknown>;
 
-const LOGS: readonly { file: string; stays?(line: Line): boolean }[] = [
-  { file: "gc.log" },
-  { file: "usage-log.jsonl" },
-];
+const LOGS: readonly string[] = ["gc.log", "usage-log.jsonl"];
 
 /** Drops a log's lines dated before `before`; returns how many. */
-function trimLines(file: string, before: number, stays: (line: Line) => boolean = () => false): number {
+function trimLines(file: string, before: number): number {
   if (!existsSync(file)) return 0;
   const lines = readFileSync(file, "utf8")
     .split("\n")
@@ -185,7 +184,7 @@ function trimLines(file: string, before: number, stays: (line: Line) => boolean 
   const kept = lines.filter((text) => {
     try {
       const line = JSON.parse(text) as Line;
-      return Date.parse(String(line.at)) >= before || stays(line);
+      return Date.parse(String(line.at)) >= before;
     } catch {
       return false;
     }
@@ -218,8 +217,8 @@ export function collectFiles(roomHome: string, backups: readonly Stamped[], now 
   }
   const before = now.getTime() - KEEP_LOG_DAYS * 86_400_000;
   for (const log of LOGS) {
-    const gone = trimLines(join(roomHome, log.file), before, log.stays);
-    if (gone > 0) done.push(`${gone} lines older than ${KEEP_LOG_DAYS} days left ${log.file}`);
+    const gone = trimLines(join(roomHome, log), before);
+    if (gone > 0) done.push(`${gone} lines older than ${KEEP_LOG_DAYS} days left ${log}`);
   }
   for (const backup of backups)
     for (const file of dropStamped(backup.dir, backup.prefixes, KEEP_LOG_DAYS, now, backup.spare))
@@ -270,7 +269,6 @@ export function dropSeatTmp(dir: string, open: readonly string[], days = KEEP_LO
   return gone;
 }
 
-/** Drops the files under `dir` unwritten since `before`, and emptied folders; follows no link. */
 /** Deletes the `suffix` files of a folder not written since `before`; returns them. */
 function dropOld(dir: string, suffix: string, before: number): string[] {
   if (!existsSync(dir)) return [];
@@ -282,6 +280,7 @@ function dropOld(dir: string, suffix: string, before: number): string[] {
   return gone;
 }
 
+/** Drops the files under `dir` unwritten since `before`, and emptied folders; follows no link. */
 function dropUnwritten(dir: string, before: number): number {
   let gone = 0;
   for (const entry of readdirSync(dir, { withFileTypes: true })) {

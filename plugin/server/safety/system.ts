@@ -1,6 +1,6 @@
-import { execFile } from "node:child_process";
 import { accessSync, constants, existsSync, lstatSync, readFileSync, statSync } from "node:fs";
 import { delimiter, dirname, join } from "node:path";
+import { runGit } from "../git";
 import type { Tools } from "./gate/evaluate";
 
 /** The guard's questions to the machine: git, a rebase under way, changed files. */
@@ -9,21 +9,7 @@ const GIT_TIMEOUT_MS = 400;
 const MAX_SCRIPT = 256 * 1024;
 
 function git(args: string[], cwd: string | null): Promise<{ code: number; out: string }> {
-  return new Promise((resolve) => {
-    execFile(
-      "git",
-      args,
-      { cwd: cwd ?? undefined, timeout: GIT_TIMEOUT_MS, encoding: "utf8", maxBuffer: 1 << 20 },
-      (error, stdout) => {
-        const code = error
-          ? typeof (error as { code?: unknown }).code === "number"
-            ? (error as { code: number }).code
-            : -1
-          : 0;
-        resolve({ code, out: stdout ?? "" });
-      },
-    );
-  });
+  return runGit(cwd, args, { timeoutMs: GIT_TIMEOUT_MS, maxBytes: 1 << 20 });
 }
 
 /** The folder a path lies in that exists, to run git from. */

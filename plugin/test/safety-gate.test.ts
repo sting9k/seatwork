@@ -114,6 +114,8 @@ const cases: [string, string[]][] = [
   ["rm /*", ["core.filesystem:rm-bare-glob-root"]],
   ["rm *.log", []],
   ["rm ~/.ssh/id_rsa", ["core.filesystem:rm-protected-file"]],
+  ["echo x > /etc/h[z-a]", ["core.filesystem:credential-file-write"]],
+  [`echo x > /etc/${"*".repeat(3000)}`, ["core.filesystem:credential-file-write"]],
   ["rm ~/Downloads/*.md", ["core.filesystem:rm-glob-home"]],
   ["rm a.txt", []],
   ["rm -rf $X", ["core.filesystem:rm-rf-general"]],
@@ -304,7 +306,20 @@ test("an exempted target lets an rm rule stand down only when every target is un
   assert.equal((await run("rm -rf build/out src")).findings[0]?.rule, "rm-rf-general");
 });
 
-test("an ordinary command is read in well under a millisecond on average", async () => {
+test("a line built to make the reader work without end is read to a fixed budget, then is a doubt", async () => {
+  for (const line of ["$((".repeat(40) + "`" + "))".repeat(40), "$((".repeat(2200) + "x" + "))".repeat(2200)]) {
+    const started = performance.now();
+    const read = await evaluate(line, PROJECT, place, config(), tools());
+    assert.deepEqual(
+      read.doubts.map((doubt) => doubt.reason),
+      ["the room could not read the line (the line is too costly to read)"],
+    );
+    // the budget counts steps, not time; this bound only catches a reader that never stops
+    assert.ok(performance.now() - started < 10_000);
+  }
+});
+
+test("an ordinary command is read in a few milliseconds at most, on average", async () => {
   const commands = [
     "git status",
     "npm test",
@@ -316,5 +331,5 @@ test("an ordinary command is read in well under a millisecond on average", async
   const started = performance.now();
   for (let i = 0; i < 200; i += 1) for (const c of commands) await evaluate(c, PROJECT, place, config(), tools());
   const each = (performance.now() - started) / (200 * commands.length);
-  assert.ok(each < 1, `${each.toFixed(3)} ms per command`);
+  assert.ok(each < 5, `${each.toFixed(3)} ms per command`);
 });

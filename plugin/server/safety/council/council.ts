@@ -177,17 +177,18 @@ export class Council {
     for (const member of MEMBERS) {
       if (!this.watches(member, input.seat.traits)) continue;
       for (const reading of this.read(member, input)) {
-        if (!(reading instanceof Promise)) {
+        if (typeof reading !== "function") {
           const shown = this.log(member, input, reading);
           if (shown) findings.push(shown);
         } else if (this.level(member) > 0) {
           // a member that speaks is waited for; one that only logs is not
-          const settled = await reading.catch((error) => this.failed(member, error));
+          const settled = await reading().catch((error) => this.failed(member, error));
           const shown = this.log(member, input, settled);
           if (shown) findings.push(shown);
         } else if (this.inFlight < MAX_JURORS_IN_FLIGHT) {
+          // a juror past the cap is never asked: its question is not even sent
           this.inFlight += 1;
-          void reading
+          void reading()
             .catch((error) => this.failed(member, error))
             .then((settled) => this.log(member, input, settled))
             .catch((error) => this.deps.log(`council: ${member} could not be logged: ${String(error)}`))
@@ -346,7 +347,8 @@ export class Council {
     return !!this.deps.decider && this.deps.decider.why() === null;
   }
 
-  private read(member: MemberName, input: TurnInput): (Reading | Promise<Reading>)[] {
+  /** A member's readings of a turn: a fact at once, or a juror's question to ask, started only when its caller says so. */
+  private read(member: MemberName, input: TurnInput): (Reading | (() => Promise<Reading>))[] {
     const fields = input.brief ? briefFields(input.brief) : {};
     switch (member) {
       case "claims": {
@@ -372,19 +374,20 @@ export class Council {
         const signal = signalOf(input.text);
         if (!signal || !CLOSES_WORK.has(signal) || !this.jurorReady()) return [{ tier: "fact", zone: "clear" }];
         return [
-          this.ask(
-            "claims",
-            { report: clip(input.text, REPORT_CHARS) },
-            (score) => `claims: the report reads as tested (${score.toFixed(2)}), and no check passed ${where}`,
-            { signal, checks: after },
-          ),
+          () =>
+            this.ask(
+              "claims",
+              { report: clip(input.text, REPORT_CHARS) },
+              (score) => `claims: the report reads as tested (${score.toFixed(2)}), and no check passed ${where}`,
+              { signal, checks: after },
+            ),
         ];
       }
       case "scope": {
         // git sees every change, a shell's included; the tool calls are what is left without it
         const changed = input.changed ?? turnFacts(input.events, []).changed;
         if (changed.length === 0) return [{ tier: "fact", zone: "skipped" }];
-        const out: (Reading | Promise<Reading>)[] = [];
+        const out: (Reading | (() => Promise<Reading>))[] = [];
         const globs = fields.writeScope ? scopeGlobs(fields.writeScope) : [];
         if (globs.length) {
           const outside = outsideScope(changed, globs, input.seat.root);
@@ -401,7 +404,7 @@ export class Council {
           );
         }
         if (fields.nonGoals && this.jurorReady())
-          out.push(
+          out.push(() =>
             this.ask(
               "scope",
               {

@@ -100,7 +100,7 @@ export function launch(request: SeatLaunch, policy: RuntimePolicy, log: (message
     );
   // without its own home a seat would start on the user's, with the user's MCP servers and plugins
   try {
-    ensureRuntime(seat);
+    ensureRuntime(seat, policy);
   } catch (error) {
     throw new Error(
       `seatwork: ${seat.provider} refused: its runtime could not be built (${error instanceof Error ? error.message : String(error)}). Fix that and create the seat again.`,

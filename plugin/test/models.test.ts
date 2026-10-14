@@ -43,9 +43,7 @@ test("the Lead is shown the lenses as one role's models with what each is for, a
   };
   const params = {
     heartbeatCron: "*/15 * * * *",
-    peerStallMinutes: 6,
     reviewStallMinutes: 30,
-    leadStallMinutes: 30,
     readBudgetTokens: 80000,
     cheapReadBudgetTokens: 40000,
     mailChars: 6000,
@@ -75,9 +73,7 @@ test("a harness without session modes is one a seat is told to create with no mo
   };
   const params = {
     heartbeatCron: "*/15 * * * *",
-    peerStallMinutes: 6,
     reviewStallMinutes: 30,
-    leadStallMinutes: 30,
     readBudgetTokens: 80000,
     cheapReadBudgetTokens: 40000,
     mailChars: 6000,

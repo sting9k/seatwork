@@ -1,13 +1,25 @@
 import { createHash } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import { firstNotEnglish } from "../english";
 import { redact } from "../redact";
 import { call } from "./client";
-import { checkRequest, DecisionError, type Answer, type Questions, type State } from "./contract";
+import {
+  checkRequest,
+  DecisionError,
+  tokensOf,
+  type Answer,
+  type ChoiceQuestion,
+  type DecisionFailure,
+  type NoulQuestion,
+  type Questions,
+  type State,
+} from "./contract";
 import { DIALECTS, type Dialect } from "./dialects";
-import { JevStore } from "./store";
+import { cleanState, guarded } from "./input";
+import { districtOf, JevStore, type CallRow } from "./store";
 
-/** The Jev district: decisions from the provider in force, logged, costed and held under a monthly cap. */
+/** The Jev district: decisions from the provider in force, its input made safe, logged, costed, capped, and held off while the provider is down. */
 
 export type ProviderName = "jev" | "openrouter" | "custom";
 
@@ -23,9 +35,11 @@ export interface JevPolicy {
   provider: ProviderName;
   providers: Record<ProviderName, ProviderPolicy>;
   monthlyCapUsd: number;
+  dailyCapUsd?: Record<string, number>;
   attemptSeconds: number;
   retries: number;
   keepDays: number;
+  forks?: string[];
 }
 
 export interface JevDeps {
@@ -34,6 +48,7 @@ export interface JevDeps {
   env?: Record<string, string | undefined>;
   now?: () => Date;
   fetch?: typeof fetch;
+  log?: (line: string) => void;
 }
 
 export interface Decision {
@@ -44,26 +59,36 @@ export interface Decision {
   usd: number | null;
   latencyMs: number;
   attempts: number;
+  suspect: string | null;
+  cached: boolean;
+}
+
+/** A fork the room takes on the model's word: `sharp` when the model is sure and the state gave it no orders. */
+export interface Fork {
+  label: string | null;
+  probability: number;
+  sharp: boolean;
+  askId: number | null;
+  why: string | null;
 }
 
 const BUSY_MS = 2000;
 const DEADLINE_MS = 20_000;
 const KEYLESS: readonly ProviderName[] = ["custom"];
-
-/** A state with every string's secrets hidden, before it leaves the machine or is logged. */
-function hidden(value: unknown): unknown {
-  if (typeof value === "string") return redact(value);
-  if (Array.isArray(value)) return value.map(hidden);
-  if (value && typeof value === "object")
-    return Object.fromEntries(Object.entries(value).map(([key, inner]) => [key, hidden(inner)]));
-  return value;
-}
+const KEY_KEPT_MS = 30_000;
+const FLOW = { inFlight: 8, waiting: 32 } as const;
+const BREAKER = { trips: 3, firstMs: 30_000, mostMs: 600_000 } as const;
+const CACHE = { entries: 256, keptMs: 600_000 } as const;
+const PROVIDER_DOWN: readonly DecisionFailure[] = ["TIMEOUT", "NETWORK", "HTTP"];
+const OWN_FAULT = new Set([400, 413, 422]);
 
 /** The first number of the policy that no call could run with, by its name. */
 function outOfRange(policy: JevPolicy, settings: ProviderPolicy): string | null {
   const within = (value: unknown, least: number, most: number) =>
     typeof value === "number" && Number.isFinite(value) && value >= least && value <= most;
   if (!within(policy.monthlyCapUsd, 0, 10_000)) return "monthlyCapUsd";
+  for (const [district, cap] of Object.entries(policy.dailyCapUsd ?? {}))
+    if (!within(cap, 0, 10_000)) return `dailyCapUsd.${district}`;
   if (!within(policy.attemptSeconds, 1, 120)) return "attemptSeconds";
   if (!Number.isInteger(policy.retries) || !within(policy.retries, 0, 5)) return "retries";
   if (!within(policy.keepDays, 1, 3650)) return "keepDays";
@@ -71,8 +96,32 @@ function outOfRange(policy: JevPolicy, settings: ProviderPolicy): string | null 
   return null;
 }
 
+/** The log row of a call that failed or was refused. */
+function failedRow(
+  logged: Pick<CallRow, "caller" | "provider" | "modelAsked" | "stateHash" | "suspect">,
+  error: DecisionError,
+  latencyMs: number,
+): CallRow {
+  return {
+    ...logged,
+    model: null,
+    inputTokens: 0,
+    outputTokens: 0,
+    usd: null,
+    usdSource: null,
+    latencyMs,
+    attempts: error.attempts,
+    error: `${error.code}: ${error.message}`,
+  };
+}
+
 export class Jev {
   private storeHandle: JevStore | null = null;
+  private readonly keys = new Map<ProviderName, { at: number; key: string | undefined }>();
+  private running = 0;
+  private readonly waiting: (() => void)[] = [];
+  private readonly down = { failures: 0, opens: 0, until: 0, round: 0, probing: false };
+  private readonly cache = new Map<string, { at: number; decision: Decision }>();
 
   constructor(private readonly deps: JevDeps) {}
 
@@ -85,11 +134,17 @@ export class Jev {
     return join(this.deps.dir, `${name}.key`);
   }
 
+  /** A provider's key from its env variable, or its file read again at most every half minute. */
   private key(name: ProviderName, settings: ProviderPolicy): string | undefined {
     const fromEnv = settings.keyEnv ? (this.deps.env ?? process.env)[settings.keyEnv]?.trim() : undefined;
     if (fromEnv) return fromEnv;
+    const now = this.now().getTime();
+    const kept = this.keys.get(name);
+    if (kept && now - kept.at < KEY_KEPT_MS) return kept.key;
     const file = this.keyFile(name);
-    return existsSync(file) ? readFileSync(file, "utf8").trim() || undefined : undefined;
+    const key = existsSync(file) ? readFileSync(file, "utf8").trim() || undefined : undefined;
+    this.keys.set(name, { at: now, key });
+    return key;
   }
 
   /** The provider in force, or why there is none. */
@@ -114,7 +169,79 @@ export class Jev {
   /** Why no decision can be asked now; null when one can. */
   why(): string | null {
     const found = this.provider();
-    return "why" in found ? found.why : null;
+    if ("why" in found) return found.why;
+    return this.now().getTime() < this.down.until ? this.downWhy() : null;
+  }
+
+  private downWhy(): string {
+    return `the provider failed ${BREAKER.trips} times in a row; it is asked again after ${new Date(this.down.until).toISOString()}`;
+  }
+
+  /** After a hold, one call tries the provider again while the others are refused; null when no hold is on. */
+  private probe(): boolean | null {
+    if (this.down.opens === 0) return null;
+    if (this.down.probing) throw new DecisionError("DOWN", "another call is trying the provider again after its hold");
+    return (this.down.probing = true);
+  }
+
+  /** A provider's failure in a call that began in this round counts toward holding it off; a failed try after a hold holds it off longer. */
+  private failed(error: DecisionError, round: number, probing: boolean): void {
+    // the caller's own fault, or a call that never reached the provider, says nothing of the provider
+    if (!PROVIDER_DOWN.includes(error.code) || OWN_FAULT.has(error.status ?? 0) || error.attempts === 0) return;
+    // a call that began before the last hold was counted by that hold already
+    if (round !== this.down.round) return;
+    if (!probing && (this.down.failures += 1) < BREAKER.trips) return;
+    this.down.opens += 1;
+    this.down.failures = 0;
+    this.down.round += 1;
+    this.down.until = this.now().getTime() + Math.min(BREAKER.mostMs, BREAKER.firstMs * 2 ** (this.down.opens - 1));
+    this.deps.log?.(`jev: ${this.downWhy()} (${error.code}: ${error.message.slice(0, 120)})`);
+  }
+
+  /** A place among the calls in flight, waited for until the deadline; refused when too many already wait. */
+  private async slot(deadline: number): Promise<() => void> {
+    const release = () => {
+      this.running -= 1;
+      const next = this.waiting.shift();
+      if (next) next();
+    };
+    if (this.running < FLOW.inFlight) {
+      this.running += 1;
+      return release;
+    }
+    if (this.waiting.length >= FLOW.waiting)
+      throw new DecisionError("BUSY", `${FLOW.inFlight} calls are in flight and ${FLOW.waiting} wait`);
+    await new Promise<void>((resolve, reject) => {
+      const turn = () => {
+        clearTimeout(timer);
+        this.running += 1;
+        resolve();
+      };
+      const timer = setTimeout(
+        () => {
+          this.waiting.splice(this.waiting.indexOf(turn), 1);
+          reject(new DecisionError("BUSY", "no call ended in time to make room for this one"));
+        },
+        Math.max(0, deadline - Date.now()),
+      );
+      this.waiting.push(turn);
+    });
+    return release;
+  }
+
+  /** The same question about the same state asked again lately: its answer, without a call. */
+  private remembered(key: string): Decision | null {
+    const kept = this.cache.get(key);
+    if (!kept) return null;
+    this.cache.delete(key);
+    if (this.now().getTime() - kept.at > CACHE.keptMs) return null;
+    this.cache.set(key, kept);
+    return { ...kept.decision, usd: 0, latencyMs: 0, attempts: 0, cached: true };
+  }
+
+  private remember(key: string, decision: Decision): void {
+    this.cache.set(key, { at: this.now().getTime(), decision });
+    if (this.cache.size > CACHE.entries) this.cache.delete(this.cache.keys().next().value!);
   }
 
   store(): JevStore {
@@ -141,25 +268,44 @@ export class Jev {
   ): Promise<Decision> {
     const found = this.provider();
     if ("why" in found) throw new DecisionError(found.why.startsWith("no key") ? "NO_KEY" : "OFF", found.why);
+    if (this.now().getTime() < this.down.until) throw new DecisionError("DOWN", this.downWhy());
     const { name, settings, policy, key } = found;
-    const { usd: spent, capUsd } = this.spent();
-    if (spent >= capUsd)
-      throw new DecisionError("CAP", `this month's decisions cost ${spent.toFixed(4)} USD; the cap is ${capUsd} USD`);
-    const sent = hidden(state) as State;
-    checkRequest(sent, questions);
+    // every string's secrets are hidden before the state leaves the machine or is logged
+    const cleaned = cleanState(state, redact);
+    const sent = cleaned.state;
+    const asked = guarded(questions);
     const text = JSON.stringify(sent);
     const stateHash = createHash("sha256").update(text).digest("hex");
-    const logged = { caller, provider: name, modelAsked: settings.model, stateHash };
+    const logged = { caller, provider: name, modelAsked: settings.model, stateHash, suspect: cleaned.suspect };
+    const refused = this.refusal(caller, policy, sent, asked);
+    if (refused) {
+      this.store().record(failedRow(logged, refused, 0));
+      throw refused;
+    }
+    checkRequest(sent, asked);
+    const memo = createHash("sha256")
+      .update(`${caller}\u0000${name}\u0000${settings.model}\u0000${text}\u0000${JSON.stringify(asked)}`)
+      .digest("hex");
+    const again = this.remembered(memo);
+    if (again) return again;
+    const deadline = Date.now() + (options.deadlineMs ?? DEADLINE_MS);
+    const probing = this.probe() === true;
+    const round = this.down.round;
+    let release = () => {};
     const started = Date.now();
     try {
-      const reply = await call(settings.dialect, { url: settings.url, model: settings.model, key }, sent, questions, {
+      release = await this.slot(deadline);
+      const reply = await call(settings.dialect, { url: settings.url, model: settings.model, key }, sent, asked, {
         attemptMs: policy.attemptSeconds * 1000,
         retries: policy.retries,
-        deadlineMs: options.deadlineMs ?? DEADLINE_MS,
+        deadlineMs: Math.max(0, deadline - Date.now()),
         signal: options.signal,
         fetch: this.deps.fetch,
       });
-      const priced = settings.usdPerMillionInput > 0 ? (reply.inputTokens * settings.usdPerMillionInput) / 1e6 : null;
+      Object.assign(this.down, { failures: 0, opens: 0, until: 0 });
+      // a reply that counts no tokens is priced on what was sent, so the caps still hold
+      const tokens = reply.inputTokens > 0 ? reply.inputTokens : tokensOf(sent, asked);
+      const priced = settings.usdPerMillionInput > 0 ? (tokens * settings.usdPerMillionInput) / 1e6 : null;
       const usd = reply.costUsd ?? priced;
       const { callId, asks } = this.store().record(
         {
@@ -176,7 +322,7 @@ export class Jev {
         reply.answers,
         { hash: stateHash, text },
       );
-      return {
+      const decision: Decision = {
         callId,
         model: reply.model,
         answers: reply.answers,
@@ -184,22 +330,80 @@ export class Jev {
         usd,
         latencyMs: reply.latencyMs,
         attempts: reply.attempts,
+        suspect: cleaned.suspect,
+        cached: false,
       };
+      this.remember(memo, decision);
+      return decision;
     } catch (error) {
-      if (error instanceof DecisionError)
-        this.store().record({
-          ...logged,
-          model: null,
-          inputTokens: 0,
-          outputTokens: 0,
-          usd: null,
-          usdSource: null,
-          latencyMs: Date.now() - started,
-          attempts: error.attempts,
-          error: `${error.code}: ${error.message}`,
-        });
+      if (error instanceof DecisionError) {
+        this.failed(error, round, probing);
+        this.store().record(failedRow(logged, error, Date.now() - started));
+      }
+      throw error;
+    } finally {
+      if (probing) this.down.probing = false;
+      release();
+    }
+  }
+
+  /** Forks asked in one call, each by its id: the model's label, how sure it is, sharp at `sharpAt` or more with no orders in the state. Never throws on a failed call. */
+  async routes(
+    caller: string,
+    state: State,
+    questions: Record<string, ChoiceQuestion | NoulQuestion>,
+    sharpAt: number,
+    options: { signal?: AbortSignal; deadlineMs?: number } = {},
+  ): Promise<Record<string, Fork>> {
+    const ids = Object.keys(questions);
+    const unsure = (why: string): Record<string, Fork> =>
+      Object.fromEntries(ids.map((id) => [id, { label: null, probability: 0, sharp: false, askId: null, why }]));
+    const off = this.why();
+    if (off) return unsure(off);
+    let decided: Decision;
+    try {
+      decided = await this.decide(caller, state, questions, options);
+    } catch (error) {
+      if (error instanceof DecisionError) return unsure(`${error.code}: ${error.message}`);
       throw error;
     }
+    const why = decided.suspect ? `the state speaks to the model: ${decided.suspect}` : null;
+    return Object.fromEntries(
+      ids.map((id) => {
+        const answer = decided.answers[id];
+        const [label, probability] =
+          answer.type === "noul"
+            ? [answer.noul >= 0.5 ? "true" : "false", Math.max(answer.noul, 1 - answer.noul)]
+            : answer.type === "choice"
+              ? [answer.choice, answer.probabilities[answer.choice] ?? answer.confidence]
+              : [String(answer.score), answer.confidence];
+        return [
+          id,
+          { label, probability, sharp: probability >= sharpAt && !why, askId: decided.asks[id] ?? null, why },
+        ];
+      }),
+    );
+  }
+
+  /** Why a call may not go out before it is sent: text that is not English, or a cap reached; null when it may. */
+  private refusal(caller: string, policy: JevPolicy, state: State, questions: Questions): DecisionError | null {
+    const foreign = firstNotEnglish({ state, questions });
+    if (foreign) return new DecisionError("NOT_ENGLISH", `${foreign.path} ${foreign.why}; only English is sent`);
+    const { usd: spent, capUsd } = this.spent();
+    if (spent >= capUsd)
+      return new DecisionError("CAP", `this month's decisions cost ${spent.toFixed(4)} USD; the cap is ${capUsd} USD`);
+    const district = districtOf(caller);
+    const dailyCap = policy.dailyCapUsd?.[district];
+    if (dailyCap === undefined) return null;
+    const today = this.existing()?.spentOn(this.now().toISOString().slice(0, 10), district) ?? 0;
+    return today >= dailyCap
+      ? new DecisionError("CAP", `${district} spent ${today.toFixed(4)} USD today; its daily share is ${dailyCap} USD`)
+      : null;
+  }
+
+  /** Today's calls and failed calls per district, for the room's status. */
+  today(): { district: string; calls: number; failed: number }[] {
+    return this.existing()?.dayOf(this.now().toISOString().slice(0, 10)) ?? [];
   }
 
   /** A label that came later for one logged answer. */

@@ -1,8 +1,9 @@
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { basename, join } from "node:path";
 import config from "../../shared/mail.json";
 import { REGISTRY_LOG, ROOM_HOME } from "../paths";
+import { writeJson } from "../persisted";
 import type { MailPolicy, MidTurnDelivery } from "../policy";
 import { inRoom, maySpawn, SPAWN } from "../../shared/workflow";
 import { ANSWERS, subjectOpening } from "../signals";
@@ -18,7 +19,7 @@ import {
   writeMessage,
 } from "./archive";
 import { digest, seatLabel } from "./envelope";
-import { MailStore, type Held, type Kind, type Needs, type PostedLine, type Priority } from "./store";
+import { MailStore, type Held, type Kind, type Message, type Needs, type PostedLine, type Priority } from "./store";
 
 /** The room's mail: kept per project, checked against the routes, handed to a seat at rest. */
 
@@ -83,7 +84,7 @@ export interface MailHost {
   reparent(child: string, parent: string): Promise<void>;
 }
 
-export const MAIL_DIR = join(".seatwork", ".mail");
+const MAIL_DIR = join(".seatwork", ".mail");
 const ROOM_MAIL = join(ROOM_HOME, "mail");
 const ADOPTIONS_FILE = join(ROOM_MAIL, "adoptions.json");
 const DEFAULTS: MailLimits = {
@@ -94,18 +95,25 @@ const DEFAULTS: MailLimits = {
   busyTimeoutMs: 5000,
 };
 const PRIORITY_RANK: Record<Priority, number> = { blocking: 0, action: 1, fyi: 2 };
+const ASKS_WEIGHED = 8;
 
 const startsNoTurn = (mail: Held, now: number) => mail.quiet || (!!mail.heldUntil && now < Date.parse(mail.heldUntil));
 
 /** The word a subject opens with: one of the room's signals, or a notice's own name. */
-export const signalFor = (subject: string) =>
+const signalFor = (subject: string) =>
   subjectOpening(subject) ?? subject.split(":")[0].replace(/^\W+/, "").trim().slice(0, 40).toUpperCase();
 
 export class MailEngine implements Directory {
+  /** What another district adds to a seat's delivered mail, and the call that marks it told. */
+  appendix: ((agentId: string) => { text: string; told(): void } | null) | null = null;
+  /** Which of several open asks an answer that names none settles, `ask` null for none of them; null keeps the oldest. Another district gives it. */
+  chooseAsk: ((answer: Mail, asks: readonly Message[]) => Promise<{ ask: number | null } | null>) | null = null;
+
   private readonly seats = new Map<string, SeatRecord>();
   private readonly adoptions = new Map<string, string>();
   private readonly stores = new Map<string, MailStore>();
   private readonly delivering = new Set<string>();
+  private readonly again = new Set<string>();
   private readonly woke = new Map<string, Mail[]>();
   private readonly roots = new Map<string, string | null>();
   private readonly paused = new Set<string>();
@@ -167,6 +175,8 @@ export class MailEngine implements Directory {
     // a folder that holds mail files and no store lost its store: opening it reads the files back
     if (!create && !existsSync(join(dir, "mail.db")) && !existsSync(join(dir, ".gitignore"))) return null;
     const since = this.now().toISOString();
+    // only a store that is new on disk was lost: one that merely holds no mail now has had its mail pruned
+    const fresh = !existsSync(join(dir, "mail.db"));
     let store: MailStore;
     try {
       store = new MailStore(dir, this.limits.busyTimeoutMs, this.now);
@@ -176,7 +186,7 @@ export class MailEngine implements Directory {
     }
     this.unwell.delete(dir);
     // a store that lost its file, or was set aside as damaged, gets its mail back from the files
-    if (store.count() === 0) {
+    if ((fresh || store.startedOver) && store.count() === 0) {
       const archived = readArchive(dir);
       if (archived.length > 0) {
         const back = store.restore(archived, readSettled(dir));
@@ -197,6 +207,11 @@ export class MailEngine implements Directory {
       });
     this.stores.set(dir, store);
     return store;
+  }
+
+  /** The mails after `id` in a project's store, or the room home's for `null`; none where no store exists. */
+  mailAfter(root: string | null, id: number, limit: number): (Message & { to: string[] })[] {
+    return this.open(root ? join(root, MAIL_DIR) : ROOM_MAIL, false)?.after(id, limit) ?? [];
   }
 
   /** The stores a reader of every project asks for: `all`, or one project by its folder or folder name. */
@@ -307,7 +322,11 @@ export class MailEngine implements Directory {
         JSON.parse(readFileSync(ADOPTIONS_FILE, "utf8")) as Record<string, string>,
       ))
         this.adoptions.set(child, parent);
-    } catch {}
+    } catch (error) {
+      this.log(
+        `mail: ${ADOPTIONS_FILE} could not be read; seats adopted before start under their first owner: ${String(error)}`,
+      );
+    }
   }
 
   private loadSeats(): void {
@@ -409,7 +428,7 @@ export class MailEngine implements Directory {
       };
     this.adoptions.set(child, adopter);
     this.roots.clear();
-    writeFileSync(ADOPTIONS_FILE, `${JSON.stringify(Object.fromEntries(this.adoptions), null, 2)}\n`);
+    writeJson(ADOPTIONS_FILE, Object.fromEntries(this.adoptions));
     // the app's own parent link moves too: an archive of the old parent must not take the child along
     let linkMoved = true;
     try {
@@ -440,8 +459,9 @@ export class MailEngine implements Directory {
       input.thread ?? "",
       input.needs,
     ];
+    // a list as JSON: a field holding the separator can never pass for two fields
     return createHash("sha256")
-      .update([...said, ...(input.files ?? [])].join("\n"))
+      .update(JSON.stringify([...said, ...(input.files ?? [])]))
       .digest("hex");
   }
 
@@ -533,16 +553,29 @@ export class MailEngine implements Directory {
     }
   }
 
-  /** A mail that answers one: the ask it names, or its recipient's oldest open ask. */
-  private settle(store: MailStore, mail: Mail, to: readonly string[]): void {
+  /** A mail that answers one: the ask it names; else, of its recipient's open asks, the one `chooseAsk` picks or the oldest. */
+  private async settle(store: MailStore, mail: Mail, to: readonly string[]): Promise<void> {
     if (mail.senderRole === "system") return;
     if (mail.replyTo) {
       if (store.deliveries(mail.replyTo).some((to) => to.seat === mail.sender && to.kind === "to"))
         store.answer(mail.replyTo, mail.id);
-    } else if (to.length === 1 && ANSWERS.has(mail.signal)) {
-      const ask = store.openAsk(to[0], mail.sender, mail.thread) ?? store.openAsk(to[0], mail.sender);
-      if (ask) store.answer(ask.id, mail.id);
+      return;
     }
+    if (to.length !== 1 || !ANSWERS.has(mail.signal)) return;
+    const inThread = store.openAsks(to[0], mail.sender, mail.thread, ASKS_WEIGHED);
+    const asks = inThread.length ? inThread : store.openAsks(to[0], mail.sender, null, ASKS_WEIGHED);
+    if (asks.length === 0) return;
+    const chosen =
+      asks.length > 1 && this.chooseAsk
+        ? await this.chooseAsk(mail, asks).catch((error) => {
+            this.log(
+              `mail: no ask was chosen for #${mail.id}: ${error instanceof Error ? error.message : String(error)}`,
+            );
+            return null;
+          })
+        : null;
+    if (chosen?.ask === null) return;
+    store.answer(asks.find((ask) => ask.id === chosen?.ask)?.id ?? asks[0].id, mail.id);
   }
 
   async post(input: NewMail): Promise<Mail> {
@@ -559,9 +592,19 @@ export class MailEngine implements Directory {
       mail = this.heldBy(store, input.id, to[0])!;
     } else mail = this.write(store, input, "queued");
     this.file(store, dir, mail.id);
-    this.settle(store, mail, to);
+    await this.settle(store, mail, to);
     for (const seat of recipients) await this.deliver(seat);
     return this.heldBy(store, mail.id, to[0])!;
+  }
+
+  /** A report taken at its sender's turn end goes out; one that fails to is kept again for the next pass, never lost. */
+  async postReport(report: NewMail): Promise<Mail> {
+    try {
+      return await this.post(report);
+    } catch (error) {
+      if (report.id !== undefined) this.storeOf(report.from.agentId, false)?.keepAgain(report.id);
+      throw error;
+    }
   }
 
   /** A report written before its sender's turn ended: kept, one per seat, until that turn ends. */
@@ -694,9 +737,14 @@ export class MailEngine implements Directory {
     }
   }
 
-  /** Delivery pass for one recipient. Safe to call often. */
+  /** Delivery pass for one recipient, with what another district's `appendix` adds to it. Safe to call often. */
   async deliver(agentId: string): Promise<void> {
-    if (this.delivering.has(agentId) || this.paused.has(agentId)) return;
+    if (this.paused.has(agentId)) return;
+    // mail posted while a pass is under way gets a pass of its own right after, not at the next sweep
+    if (this.delivering.has(agentId)) {
+      this.again.add(agentId);
+      return;
+    }
     const store = this.storeOf(agentId, false);
     if (!store) return;
     this.delivering.add(agentId);
@@ -724,7 +772,8 @@ export class MailEngine implements Directory {
       }
       if (send.length === 0) return;
       const ids = send.map((mail) => mail.id);
-      const text = digest(send.map((mail) => this.shown(mail, agentId)));
+      const extra = this.appendix?.(agentId) ?? null;
+      const text = [digest(send.map((mail) => this.shown(mail, agentId))), extra?.text].filter(Boolean).join("\n\n");
       // marked in the store until the daemon has it: a process that dies here loses nothing
       store.mark(agentId, ids, "sending");
       const opensTurn = status === "idle" || stops;
@@ -739,8 +788,17 @@ export class MailEngine implements Directory {
         return;
       }
       store.mark(agentId, ids, "delivered", status === "idle" ? "idle" : stops ? "interrupt" : "steer");
+      try {
+        extra?.told();
+      } catch (error) {
+        this.log(`mail: what went out with the mail of ${agentId} was not marked: ${String(error)}`);
+      }
     } finally {
       this.delivering.delete(agentId);
+      if (this.again.delete(agentId))
+        void this.deliver(agentId).catch((error) =>
+          this.log(`mail: a second pass for ${agentId} failed: ${String(error)}`),
+        );
     }
   }
 
@@ -752,7 +810,7 @@ export class MailEngine implements Directory {
         const status = await this.host.state(kept.sender);
         if (status !== "idle" && status !== "gone") continue;
         const report = this.takeReport(kept.sender);
-        if (report) await this.post(report);
+        if (report) await this.postReport(report);
       }
     });
   }

@@ -48,3 +48,4 @@ export const OPENCODE_CONFIG_HOME = process.env.OPENCODE_CONFIG_DIR?.trim() || j
 /** The command guard's store and the hook files every seat runs. */
 export const SAFETY_DIR = join(ROOM_HOME, "safety");
 export const JEV_DIR = join(ROOM_HOME, "jev");
+export const KNOWLEDGE_DIR = join(ROOM_HOME, "knowledge");

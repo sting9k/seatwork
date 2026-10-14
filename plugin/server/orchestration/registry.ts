@@ -74,7 +74,13 @@ export function checkPlacement(role: string, provider: string, cwd: string): voi
 /** Finds the registered project that contains cwd, and reads its .seatwork files. */
 export function findProject(registry: Registry, cwd: string): ProjectMatch | null {
   const real = realOrSelf(cwd);
-  const entry = registry.projects.find((p) => isInside(real, p.cwd));
+  // a project inside another is the one a folder in it belongs to: the longest match wins
+  const entry = registry.projects
+    .filter((p) => isInside(real, p.cwd))
+    .reduce<(typeof registry.projects)[number] | undefined>(
+      (best, p) => (!best || p.cwd.length > best.cwd.length ? p : best),
+      undefined,
+    );
   if (!entry) return null;
   const seatworkDir = join(entry.cwd, ".seatwork");
   const roomFile = join(seatworkDir, "room.json");

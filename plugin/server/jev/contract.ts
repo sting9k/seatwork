@@ -56,7 +56,19 @@ export interface Reply {
 }
 
 export type DecisionFailure =
-  "OFF" | "NO_KEY" | "CAP" | "INVALID" | "TOO_LARGE" | "CONTRACT" | "HTTP" | "TIMEOUT" | "NETWORK" | "ABORTED";
+  | "OFF"
+  | "NO_KEY"
+  | "CAP"
+  | "NOT_ENGLISH"
+  | "INVALID"
+  | "TOO_LARGE"
+  | "CONTRACT"
+  | "HTTP"
+  | "TIMEOUT"
+  | "NETWORK"
+  | "ABORTED"
+  | "DOWN"
+  | "BUSY";
 
 export class DecisionError extends Error {
   attempts = 0;

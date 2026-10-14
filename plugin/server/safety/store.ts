@@ -112,6 +112,7 @@ export interface MemberCount {
 }
 
 const PRUNE_BATCH = 2000;
+const FINGERPRINT = /^[0-9a-f]{6,64}$/;
 
 export class SafetyStore extends Sqlite {
   constructor(
@@ -213,6 +214,9 @@ export class SafetyStore extends Sqlite {
 
   /** A granted code for exactly this command, used up by this call; null when there is none. */
   consume(hash: string): CodeRow | null {
+    // nearly every command has no code waiting: a plain read says so without taking the write lock
+    if (!this.row("SELECT 1 AS found FROM codes WHERE hash = ? AND granted_at IS NOT NULL AND used_at IS NULL", hash))
+      return null;
     return this.transaction("write", () => {
       const row = this.row<CodeRow>(
         "SELECT * FROM codes WHERE hash = ? AND granted_at IS NOT NULL AND used_at IS NULL AND expires_at > ?",
@@ -329,32 +333,58 @@ export class SafetyStore extends Sqlite {
     });
   }
 
-  /** A seat's word on one of its findings; false when it is not one of its open ones. */
+  /** A seat's word on one of its findings, named whole or by a prefix that names no other; false when it names none or several. */
   acknowledge(seat: string, fingerprint: string, reason: string): boolean {
-    return this.transaction(
-      "write",
-      () =>
+    if (!FINGERPRINT.test(fingerprint)) return false;
+    return this.transaction("write", () => {
+      const named = this.rows<{ fingerprint: string }>(
+        "SELECT fingerprint FROM findings WHERE seat = ? AND fingerprint >= ? AND fingerprint < ? LIMIT 2",
+        seat,
+        fingerprint,
+        `${fingerprint}\uffff`,
+      );
+      if (named.length !== 1) return false;
+      return (
         this.run(
-          "UPDATE findings SET ack = ?, acked_at = ? WHERE seat = ? AND fingerprint LIKE ?",
+          "UPDATE findings SET ack = ?, acked_at = ? WHERE seat = ? AND fingerprint = ?",
           reason,
           this.stamp(),
           seat,
-          `${fingerprint}%`,
-        ).changes > 0,
+          named[0].fingerprint,
+        ).changes > 0
+      );
+    });
+  }
+
+  /** Drops decisions, used or lapsed codes and findings older than the keep; the decisions, the largest, a slice at a time. */
+  expire(before: Date): number {
+    const at = before.toISOString();
+    let gone = 0;
+    for (;;) {
+      const slice = this.transaction(
+        "write",
+        () =>
+          this.run("DELETE FROM decisions WHERE id IN (SELECT id FROM decisions WHERE at < ? LIMIT ?)", at, PRUNE_BATCH)
+            .changes,
+      );
+      gone += slice;
+      if (slice < PRUNE_BATCH) break;
+    }
+    return (
+      gone +
+      this.transaction("write", () =>
+        [
+          this.run("DELETE FROM codes WHERE expires_at < ?", at),
+          this.run("DELETE FROM escalations WHERE at < ?", at),
+          this.run("DELETE FROM findings WHERE last_at < ?", at),
+        ].reduce((n, done) => n + done.changes, 0),
+      )
     );
   }
 
-  /** Drops decisions, used or lapsed codes and findings older than the keep. */
-  expire(before: Date): number {
-    const at = before.toISOString();
-    return this.transaction("write", () =>
-      [
-        this.run("DELETE FROM decisions WHERE at < ?", at),
-        this.run("DELETE FROM codes WHERE expires_at < ?", at),
-        this.run("DELETE FROM escalations WHERE at < ?", at),
-        this.run("DELETE FROM findings WHERE last_at < ?", at),
-      ].reduce((n, done) => n + done.changes, 0),
-    );
+  /** A seat that is gone: the commit it began on is no longer needed. */
+  forgetSeat(agentId: string): void {
+    this.run("DELETE FROM seats WHERE agent_id = ?", agentId);
   }
 
   /** One council reading; returns its id. */

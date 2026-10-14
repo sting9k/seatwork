@@ -3,7 +3,7 @@ import { basename } from "node:path";
 import type { PaseoApi } from "./paseo";
 import { liveAgents, type LiveAgent } from "./gc";
 import { hqDir } from "./orchestration/hq";
-import { waitsOnSomeone, type MailEngine, type SeatRecord } from "./mail";
+import { waitsOnSomeone, type MailEngine, type SeatRecord } from "./coordination/engine";
 import { findRoomMarker, isInside, loadRegistry, realOrSelf, type Registry } from "./orchestration/registry";
 
 /** What a turn left for the Owner to answer, kept by the plugin until that seat works again. */

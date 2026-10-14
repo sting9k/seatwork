@@ -1,12 +1,23 @@
 import { appendFileSync, chmodSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { randomBytes } from "node:crypto";
-import { join } from "node:path";
+import { isAbsolute, join } from "node:path";
 import type { PluginBeforeRequests, PluginServerContext } from "@getpaseo/plugin/server";
 import type { PaseoApi } from "./server/paseo";
 import { z } from "zod";
 import { paseoCli } from "./server/cli";
 import { collectFiles, Collector, KEEP_LOG_DAYS, liveAgents, type LiveAgent } from "./server/gc";
-import { MailEngine, waitsOnSomeone, type Mail, type Priority, type Needs, type SeatRecord } from "./server/mail";
+import { MailError, namesTeam, reachable, refusal as mailRefusal, resolve, shown } from "./server/coordination/address";
+import {
+  MailEngine,
+  waitsOnSomeone,
+  type Mail,
+  type NewMail,
+  type Priority,
+  type Needs,
+  type SeatRecord,
+} from "./server/coordination/engine";
+import { inbox } from "./server/coordination/reader";
+import { MailStoreError } from "./server/coordination/store";
 import { checkHqPlacement, ensureHqProject, hqDir, removeHqProject } from "./server/orchestration/hq";
 import { McpHttpServer } from "./server/mcp-http";
 import { HQ_PROJECT, PASEO_HOME, REGISTRY_LOG, ROOM_HOME, SEAT_TMP_DIR, WATCH_DIR } from "./server/paths";
@@ -83,7 +94,7 @@ import { graph, projectPolicy, refusal, work, WORK_DIR } from "./server/tasks/to
 
 type CreateRequest = PluginBeforeRequests["agent.create"];
 
-const VERSION = "0.24.0";
+const VERSION = "0.25.0";
 const PLUGIN_ID = "seatwork";
 const MAIL_DIR = join(ROOM_HOME, "mail");
 const MCP_TOKEN_FILE = join(MAIL_DIR, "token");
@@ -500,7 +511,12 @@ function startRoom(server: Pick<PluginServerContext, "on" | "before">): Room {
   const getEngine = (paseo: PaseoApi) => {
     client = paseo;
     if (!engine) {
-      engine = new MailEngine(paseo, policy.mail, policy.room, log);
+      engine = new MailEngine(paseo, policy.mail, policy.room, log, {
+        rootOf: (cwd) => projectRoot(cwd),
+        mailChars: policy.room.params.mailChars,
+        quietChars: policy.mail.quietChars,
+        dedupeSeconds: policy.mail.dedupeSeconds,
+      });
       // the first Paseo client the room is handed: the HQ project gets its place in Paseo
       void ensureHqProject(paseo, log).catch((error) =>
         console.error("seatwork: the hq-seatwork project could not be opened", error),
@@ -529,7 +545,7 @@ function startRoom(server: Pick<PluginServerContext, "on" | "before">): Room {
   const rounds = new Rounds();
   const gate = new ReviewGate();
   const stores = new Map<string, WorkStore>();
-  const rotations = new Map<string, { by: string; mailId: string }>();
+  const rotations = new Map<string, { by: string; mailId: number }>();
   const rotateAt = policy.room.params.rotateAtTokens ?? Infinity;
   const lastUsage = new Map<string, SeatUsage>();
   /** What the last turn of a seat nobody above reads by mail left for the Owner to answer. */
@@ -537,7 +553,7 @@ function startRoom(server: Pick<PluginServerContext, "on" | "before">): Room {
   const recovery = new Recovery(join(ROOM_HOME, "recovery.json"), policy.room.recovery);
   let gc: Collector | null = null;
   const getGc = (paseo: Parameters<typeof getEngine>[0]) => {
-    if (!gc) gc = new Collector(paseo, getEngine(paseo), policy.gc, log, forgetAgent);
+    if (!gc) gc = new Collector(paseo, getEngine(paseo), policy.gc, log, forgetAgent, policy.mail.keepDays);
     return gc;
   };
   const budget = new Budget(join(WATCH_DIR, "usage-{month}.json"), policy.watcher.budget);
@@ -560,17 +576,16 @@ function startRoom(server: Pick<PluginServerContext, "on" | "before">): Room {
       notify: async (notice) => {
         const mail = await getEngine(paseo).post({
           from: { agentId: "room", role: "system" },
-          fromLabel: "room",
           to: notice.to,
           priority: "action",
           subject: notice.subject,
           body: notice.body,
           needs: "nothing",
-          whyNow: "the room noticed something in a seat you launched; its own report does not say it",
+          why: "the room noticed something in a seat you launched; its own report does not say it",
           // a notice about a finished turn rides with that turn's report
           ...(notice.withReport ? { quiet: true as const } : {}),
         });
-        return mail.id;
+        return String(mail.id);
       },
       now: Date.now,
       log,
@@ -599,157 +614,242 @@ function startRoom(server: Pick<PluginServerContext, "on" | "before">): Room {
     signals: SUBJECT_SIGNALS.join(", "),
     keep_log_days: String(KEEP_LOG_DAYS),
     rotate_k: String(Math.round(rotateAt / 1000)),
+    mail_chars: policy.room.params.mailChars.toLocaleString("en-US"),
   };
-  mcp.register(roomTool("seatwork_mail", toolVars), async (args, context) => {
-    if (!engine) throw new Error("mail engine not ready (no room seat has been created on this daemon yet)");
-    const from = resolveCaller(context.nonce);
-    if (!from) throw new Error("seatwork_mail: this session is not a registered room seat (unknown caller)");
-    const replyTo = String(args.reply_to ?? "")
-      .trim()
-      .replace(/^#/, "");
-    let to: string;
+  /** A mail tool's refusal as JSON a seat can act on. */
+  const refused = (error: unknown): Error =>
+    error instanceof MailError
+      ? new Error(mailRefusal(error))
+      : error instanceof MailStoreError
+        ? new Error(mailRefusal(new MailError("STORE_UNAVAILABLE", error.message)))
+        : (error as Error);
+
+  const sendMail = async (args: Record<string, unknown>, nonce: string): Promise<string> => {
+    const eng = engine;
+    const from = resolveCaller(nonce);
+    const sender = from && eng ? eng.seat(from) : undefined;
+    if (!eng || !from || !sender) throw new MailError("NOT_A_SEAT", "this session is not a registered room seat");
+    const live = client ? await liveAgents(client) : new Map<string, LiveAgent>();
+    const open = (id: string) => live.size === 0 || live.has(id);
+    const words = (value: unknown) =>
+      Array.isArray(value) ? value.map(String) : typeof value === "string" && value.trim() ? [value] : [];
+    const whom = () => ({
+      to: shown(
+        eng,
+        from,
+        reachable(eng, from).filter((seat) => open(seat.agentId)),
+      ),
+    });
+    const replyTo =
+      Number(
+        String(args.reply_to ?? "")
+          .trim()
+          .replace(/^#/, ""),
+      ) || 0;
+    let to: string[];
     let viaReply = false;
+    let team = false;
+    let thread = typeof args.thread === "string" && args.thread.trim() ? args.thread.trim() : undefined;
     if (replyTo) {
-      const ref = engine.lookupMail(replyTo);
-      if (!ref) throw new Error(`seatwork_mail: no mail #${replyTo} is known; copy the id from the mail header`);
-      if (ref.to !== from)
-        throw new Error(`seatwork_mail: mail #${replyTo} was not addressed to you; you can only answer your own mail`);
-      if (ref.from === "room")
-        throw new Error(`seatwork_mail: #${replyTo} is a notice from the room; nobody waits for an answer`);
-      to = ref.from;
-      viaReply = true;
-    } else {
-      const rawTo = String(args.to ?? "")
-        .trim()
-        .replace(/^(hq|supervisor|lead|peer):/i, "");
-      to = /^(owner|parent|human)$/i.test(rawTo) ? (engine.parentOf(from) ?? "") : rawTo;
-      if (!to)
-        throw new Error(
-          `seatwork_mail: ${rawTo === "" ? "give `to` (owner, or a seat you launched) or reply_to" : "you have no parent seat; the Owner reads your final message, no mail is needed"}`,
+      const ref = eng.lookupMail(replyTo, from);
+      if (!ref)
+        throw new MailError("UNKNOWN_MAIL", `no mail #${replyTo} is known; copy the id from the mail you answer`);
+      if (!ref.to.includes(from))
+        throw new MailError(
+          "NOT_YOUR_MAIL",
+          `mail #${replyTo} was not addressed to you; you can only answer your own mail`,
         );
+      if (ref.from === "room")
+        throw new MailError("NOT_YOUR_MAIL", `#${replyTo} is a notice from the room; nobody waits for an answer`);
+      to = [ref.from];
+      viaReply = true;
+      thread ??= ref.thread;
+    } else {
+      const named = words(args.to);
+      const below = reachable(eng, from).filter((seat) => eng.isAncestor(from, seat.agentId) && open(seat.agentId));
+      if (named.some(namesTeam)) {
+        team = true;
+        to = below.filter((seat) => eng.canWrite(from, seat.agentId).ok).map((seat) => seat.agentId);
+        if (to.length === 0) throw new MailError("NO_RECIPIENT", "no open seat under you takes your mail", whom());
+      } else if (named.length === 0) {
+        // a seat with no seat under it has one place to write to
+        const owner = eng.parentOf(from);
+        if (below.length > 0 || !owner)
+          throw new MailError("NO_RECIPIENT", "give `to`, or `reply_to` to answer a mail", whom());
+        to = [owner];
+      } else to = [...new Set(named.map((word) => resolve(eng, from, word, open)))];
     }
-    const check = engine.canWrite(from, to, viaReply);
-    if (!check.ok) throw new Error(`seatwork_mail refused: ${check.reason}`);
-    const found = await engine.recipientStatus(to);
-    if (found === "gone") throw new Error(`seatwork_mail refused: ${to} is archived or gone; nothing was sent`);
-    const sender = engine.seat(from)!;
-    const recipient = engine.seat(to)!;
+    const cc = [...new Set(words(args.cc).map((word) => resolve(eng, from, word, open)))].filter(
+      (seat) => !to.includes(seat),
+    );
+    for (const seat of [...to, ...cc]) {
+      const check = eng.canWrite(from, seat, viaReply);
+      if (!check.ok) throw new MailError("ROUTE_REFUSED", check.reason, whom());
+    }
+    const found = new Map<string, Awaited<ReturnType<MailEngine["recipientStatus"]>>>();
+    for (const seat of [...to, ...cc]) {
+      found.set(seat, await eng.recipientStatus(seat));
+      if (found.get(seat) === "gone")
+        throw new MailError("RECIPIENT_GONE", `${seat} is archived or gone; nothing was sent`, whom());
+    }
+    const recipient = eng.seat(to[0])!;
     const subject = String(args.subject ?? "").trim() || "(no subject)";
     const body = String(args.body ?? "");
     const opening = subjectOpening(subject);
     if (!opening)
-      throw new Error(
-        `seatwork_mail: the subject opens with none of the room's signals (${SUBJECT_SIGNALS.join(", ")}); a change to what a seat must do is a REVISED BRIEF, a fact it should know is an FYI. Nothing was sent.`,
+      throw new MailError(
+        "NO_SIGNAL",
+        "the subject opens with none of the room's signals; a change to what a seat must do is a REVISED BRIEF, a fact it should know is an FYI",
+        { subject_opens_with: SUBJECT_SIGNALS },
       );
     // a stop order ends running turns: it travels down only
     const stops = opening === "STOP";
-    if (stops && !engine.isAncestor(from, to))
-      throw new Error(
-        "seatwork_mail: STOP goes down, to a seat you launched or one below it; to your Owner, write what must stop and why under BLOCKED or QUESTION. Nothing was sent.",
-      );
-    const limit = policy.room.params.mailChars;
-    if (body.length > limit)
-      throw new Error(
-        `seatwork_mail: the body is ${body.length} characters and a mail takes ${limit}. Put the long part in a file (.seatwork/reviews/ for a review, .seatwork/plans/ for a plan or a handoff) and send the verdict or the ask, one line per finding, and the file's path. Nothing was sent.`,
+    if (stops && (to.length !== 1 || !eng.isAncestor(from, to[0])))
+      throw new MailError(
+        "STOP_GOES_DOWN",
+        "STOP goes to one seat you launched or one below it; to your Owner, write what must stop and why under BLOCKED or QUESTION",
       );
     const needs = (["reply", "decision", "nothing"].includes(String(args.needs)) ? args.needs : "nothing") as Needs;
-    const suggested = (["blocking", "action", "fyi"].includes(String(args.priority)) ? args.priority : undefined) as
-      Priority | undefined;
-    const priority = classifyAgentMail({
-      senderRole: sender.role,
-      recipientRole: recipient.role,
-      subject,
-      needs,
-      suggested,
-    });
+    if (team && needs !== "nothing")
+      throw new MailError(
+        "TEAM_ASKS_NOTHING",
+        "a mail to your team informs; ask a seat by name when you need its answer",
+      );
+    // a file the mail points at is named where every seat finds it
+    const files = words(args.files).map((file) => (isAbsolute(file) || !sender.cwd ? file : join(sender.cwd, file)));
+    const missing = files.filter((file) => !existsSync(file));
+    if (missing.length > 0) throw new MailError("MISSING_FILE", "the mail names files that do not exist", { missing });
+    const priority = classifyAgentMail({ senderRole: sender.role, recipientRole: recipient.role, subject, needs });
     const signal = subjectSignal(subject);
-    if (signal && engine.parentOf(from) === to) {
+    const draft: NewMail = {
+      from: { agentId: from, role: sender.role },
+      to,
+      cc,
+      priority,
+      subject,
+      body,
+      needs,
+      thread,
+      ...(replyTo ? { replyTo } : {}),
+      ...(files.length > 0 ? { files } : {}),
+      ...(typeof args.key === "string" && args.key.trim() ? { key: args.key.trim().slice(0, 255) } : {}),
+    };
+    const again = eng.repeatOf(draft);
+    if (again) return JSON.stringify({ sent: again.id, thread: again.thread, replayed: true, state: again.state });
+    if (signal && to.length === 1 && eng.parentOf(from) === to[0]) {
       mailedUp.set(from, (mailedUp.get(from) ?? new Set()).add(signal));
       // "my work is finished" is true only once the turn has ended: the report is kept until then
       if (CLOSES_WORK.has(signal)) {
-        const kept = engine.keepReport({
-          from: { agentId: from, role: sender.role },
-          to,
-          priority,
-          subject,
-          body,
+        const kept = eng.keepReport({
+          ...draft,
+          cc: [],
           needs: needs === "nothing" ? "reply" : needs,
-          whyNow: `the seat ended its turn with ${signal}`,
+          why: `the seat ended its turn with ${signal}`,
         });
-        return `kept #${kept.id} as your report to owner: it is delivered once, when your turn ends. End your turn with ${signal} on the first line; do not send it again.`;
+        return JSON.stringify({
+          kept: kept.id,
+          thread: kept.thread,
+          note: `your report to owner: it is delivered once, when your turn ends. End your turn with ${signal} on the first line; do not send it again.`,
+        });
       }
     }
     // an ACK, or a receipt for a candidate under review, asks nothing of anyone: neither starts a turn
     const waits =
+      team ||
       signal === "ACK" ||
-      isReceipt({
-        recipientRole: recipient.role,
-        subject,
-        needs: args.needs,
-        fromAbove: engine.isAncestor(from, to),
-        recipientEndedWith: lastSignal.get(to),
-      });
-    const mail = await engine.post({
-      from: { agentId: from, role: sender.role },
-      to,
+      (to.length === 1 &&
+        isReceipt({
+          recipientRole: recipient.role,
+          subject,
+          needs: args.needs,
+          fromAbove: eng.isAncestor(from, to[0]),
+          recipientEndedWith: lastSignal.get(to[0]),
+        }));
+    const mail = await eng.post({
+      ...draft,
       priority: stops ? "blocking" : waits ? "fyi" : priority,
-      subject,
-      body,
-      needs,
-      whyNow: stops
-        ? "the seat above you stopped this work; the turn you were in was ended to bring you this"
-        : whyNowFor(engine.isAncestor(from, to) ? "owner" : sender.role, needs),
-      ...(waits ? { quiet: true as const } : {}),
-      ...(stops ? { urgent: true as const } : {}),
+      ...(team ? { kind: "team" as const } : {}),
+      ...(stops
+        ? { why: "the seat above you stopped this work; the turn you were in was ended to bring you this" }
+        : {}),
+      quiet: waits,
+      urgent: stops,
     });
+    const sentTo = to.map((seat) =>
+      eng.isAncestor(seat, from) ? "owner" : `${eng.seat(seat)?.role ?? "seat"} ${seat}`,
+    );
     if (stops) {
       // every seat at work under the stopped one is stopped with it
-      const live = client ? await liveAgents(client) : new Map<string, LiveAgent>();
-      const busy = engine
+      const busy = eng
         .allSeats()
-        .filter((under) => engine!.isAncestor(to, under.agentId))
+        .filter((under) => eng.isAncestor(to[0], under.agentId))
         .filter((under) => {
           const now = live.get(under.agentId);
           return now !== undefined && (now.status === "running" || waitsOnSomeone(now));
         });
       for (const under of busy)
-        await engine.post({
+        await eng.post({
           from: { agentId: "room", role: "system" },
-          fromLabel: "room",
           to: under.agentId,
           priority: "blocking",
           subject: "STOP: the work above you was stopped",
           body: `The seat above your Owner stopped this work with: "${subject}". Stop where you are: leave the tree as it is, start nothing new, and end your turn with what is finished, what is half-done and where it lies. Your Owner writes next.`,
           needs: "nothing",
-          whyNow: "the work you are part of was stopped; the turn you were in was ended to bring you this",
+          why: "the work you are part of was stopped; the turn you were in was ended to bring you this",
+          thread: mail.thread,
           urgent: true,
         });
-      const ended = found === "running" || found === "permission" ? "its running turn was ended" : "it was at rest";
-      const also =
-        busy.length > 0
-          ? ` Ended with it: the turns of ${busy.map((under) => `${under.role} ${under.title ?? under.agentId}`).join("; ")}.`
-          : "";
-      return `sent #${mail.id} to ${recipient.role} ${to} as a stop order; ${ended} and your text opens its next turn.${also}`;
+      const was = found.get(to[0]);
+      return JSON.stringify({
+        sent: mail.id,
+        to: sentTo,
+        thread: mail.thread,
+        state: was === "running" || was === "permission" ? "its running turn was ended" : "it was at rest",
+        note: "a stop order: your text opens its next turn",
+        ...(busy.length > 0
+          ? { ended_with_it: busy.map((under) => `${under.role} ${under.title ?? under.agentId}`) }
+          : {}),
+      });
     }
-    const held = engine.held(to).some((m) => m.id === mail.id);
+    const held = eng.held(to[0]).some((m) => m.id === mail.id);
     // the skill allows two rounds of repair: the third is said where the Lead sends it
-    let round = "";
-    if (sender.role === "lead" && recipient.role === "peer") {
-      const before = rounds.rejected(to);
-      const count = rounds.answered(to, opening);
+    let round: string | undefined;
+    if (sender.role === "lead" && recipient.role === "peer" && to.length === 1) {
+      const before = rounds.rejected(to[0]);
+      const count = rounds.answered(to[0], opening);
       if (count > before && count >= 3)
-        round = ` This is rejection ${count} of this Peer's task since its last ACCEPT: a round past the second is your Owner's call (accept-candidate, step 5). Unless the Owner gave you this round, report DECISION_NEEDED with what each round found and what one more costs; the task holds meanwhile.`;
+        round = `This is rejection ${count} of this Peer's task since its last ACCEPT: a round past the second is your Owner's call (accept-candidate, step 5). Unless the Owner gave you this round, report DECISION_NEEDED with what each round found and what one more costs; the task holds meanwhile.`;
     }
-    return `sent #${mail.id} to ${engine.isAncestor(to, from) ? "owner" : `${recipient.role} ${to}`} as ${mail.priority}; ${waits ? "it is read with the recipient's next mail" : held ? "held until the recipient can take it" : "delivered"}. Continue your work; do not wait for a reply unless needs=decision blocks you.${round}`;
+    return JSON.stringify({
+      sent: mail.id,
+      to: sentTo,
+      thread: mail.thread,
+      state: waits
+        ? "read with the recipient's next mail"
+        : held
+          ? "held until the recipient can take it"
+          : "delivered",
+      ...(round ? { note: round } : {}),
+    });
+  };
+
+  mcp.register(roomTool("seatwork_mail", toolVars), async (args, context) => {
+    try {
+      return await sendMail(args, context.nonce);
+    } catch (error) {
+      throw refused(error);
+    }
   });
 
-  mcp.register(roomTool("seatwork_inbox", toolVars), async (_args, context) => {
-    if (!engine) throw new Error("mail engine not ready");
-    const me = resolveCaller(context.nonce);
-    if (!me) throw new Error("seatwork_inbox: unknown caller");
-    const mails = engine.takeHeld(me);
-    if (mails.length === 0) return "inbox empty";
-    return mails.map((m) => formatForInbox(m)).join("\n\n");
+  mcp.register(roomTool("seatwork_inbox", toolVars), async (args, context) => {
+    try {
+      const me = resolveCaller(context.nonce);
+      if (!engine || !me || !engine.seat(me))
+        throw new MailError("NOT_A_SEAT", "this session is not a registered room seat");
+      return inbox(engine, me, args, Date.now());
+    } catch (error) {
+      throw refused(error);
+    }
   });
 
   // the registry is the top seat's; tool descriptions stay neutral because every seat can read them
@@ -788,24 +888,13 @@ function startRoom(server: Pick<PluginServerContext, "on" | "before">): Room {
 
   mcp.register(roomTool("seatwork_room_stats", toolVars), async (args, context) => {
     registryOwner(context.nonce, "seatwork_room_stats");
-    return roomStats(Number(args.days) > 0 ? Number(args.days) : KEEP_LOG_DAYS);
+    return roomStats(Number(args.days) > 0 ? Number(args.days) : KEEP_LOG_DAYS, (since) => engine?.posted(since) ?? []);
   });
 
   mcp.register(roomTool("seatwork_watch_stats", toolVars), async (_args, context) => {
     registryOwner(context.nonce, "seatwork_watch_stats");
     const spend = budget.summary();
-    const mailLog = join(MAIL_DIR, "log.jsonl");
-    const mail = existsSync(mailLog)
-      ? readFileSync(mailLog, "utf8")
-          .split("\n")
-          .flatMap((line) => {
-            try {
-              return line.trim() ? [JSON.parse(line) as MailLine] : [];
-            } catch {
-              return [];
-            }
-          })
-      : [];
+    const mail: MailLine[] = engine?.posted("") ?? [];
     const lines = [
       `watcher mode ${policy.watcher.mode}; ${spend.month}: ${spend.total.calls} calls, ${spend.total.tokens} tokens, $${spend.total.usd.toFixed(4)} of a $${spend.planUsd} plan (cap $${spend.capUsd}); today $${spend.today.usd.toFixed(4)}; asking is ${spend.pace}`,
       renderCalibration(
@@ -892,6 +981,7 @@ function startRoom(server: Pick<PluginServerContext, "on" | "before">): Room {
           updatedAt: now.updatedAt ?? null,
           turnStartedAt: now.activeTurn?.startedAt ?? null,
           heldMail: eng.held(seat.agentId).length,
+          owes: eng.owes(seat.agentId),
           retry: retry ? retryNote(retry) : null,
           error: now.status === "error" ? (now.lastError ?? "").slice(0, 160) || null : null,
           contextTokens: usage?.contextWindowUsedTokens ?? null,
@@ -923,13 +1013,12 @@ function startRoom(server: Pick<PluginServerContext, "on" | "before">): Room {
       return `${seat.role} ${target} was already asked for its handoff; the notice comes when it answers.`;
     const asked = await engine.post({
       from: { agentId: "room", role: "system" },
-      fromLabel: "room",
       to: target,
       priority: "action",
       subject: "HANDOFF: write your handoff; a fresh seat continues your work",
       body: handoffRequest(String(args.why ?? "").trim()),
       needs: "reply",
-      whyNow: "the seat above you is replacing this seat with a fresh one, for the size of its context",
+      why: "the seat above you is replacing this seat with a fresh one, for the size of its context",
     });
     rotations.set(target, { by: me, mailId: asked.id });
     return `asked ${seat.role} ${target} for its handoff${status === "running" ? "; it reads the request when its turn ends" : ""}. When it answers, the room starts its successor, hands its open seats over and archives it. You get one notice with the new seat's id.`;
@@ -949,13 +1038,12 @@ function startRoom(server: Pick<PluginServerContext, "on" | "before">): Room {
     if (result.previous !== me) {
       await engine.post({
         from: { agentId: "room", role: "system" },
-        fromLabel: "room",
         to: child,
         priority: "fyi",
         subject: "OWNER CHANGED: you were handed over",
         body: "Your Owner seat changed. Mail addressed `to: owner`, your final messages and your permission requests now reach the new Owner; answer its mail with reply_to as usual. Your brief stands until the new Owner writes; continue your current work.",
         needs: "nothing",
-        whyNow: "a handoff moved you under a new Owner",
+        why: "a handoff moved you under a new Owner",
       });
     }
     return `adopted ${seat.role} ${child} (${seat.title ?? ""}); it now reports to you. Mail it its brief and your disposition of its last signal.`;
@@ -1009,16 +1097,15 @@ function startRoom(server: Pick<PluginServerContext, "on" | "before">): Room {
       if (!adopted.ok) continue;
       await eng.post({
         from: { agentId: "room", role: "system" },
-        fromLabel: "room",
         to: child.agentId,
         priority: "fyi",
         subject: "OWNER CHANGED: your Owner continues in a fresh seat",
         body: "Your Owner was replaced by a fresh seat that holds its brief and its handoff. Mail addressed `to: owner`, your final messages and your permission requests reach the new seat; your brief stands. Continue your work.",
         needs: "nothing",
-        whyNow: "the seat that launched you was rotated out",
+        why: "the seat that launched you was rotated out",
       });
     }
-    for (const mail of eng.takeHeld(old.agentId)) await eng.post({ ...mail, to: successor.id });
+    await eng.move(old.agentId, successor.id);
     rounds.move(old.agentId, successor.id);
     releaseWork(old.cwd, old.agentId, successor.id);
     await handle.archive();
@@ -1069,13 +1156,12 @@ function startRoom(server: Pick<PluginServerContext, "on" | "before">): Room {
           }
           await getEngine(paseo).post({
             from: { agentId: "room", role: "system" },
-            fromLabel: "room",
             to: parentId!,
             priority: "blocking",
             subject: `SPAWN REFUSED: a ${parent.role} may create only ${allowed.length ? allowed.join(", ") : "nothing"}`,
             body: `You created ${what} titled "${event.agent.title ?? ""}". ${outcome} Create only the roles your role allows (${allowed.length ? allowed.join(", ") : "none"}), on the room's providers, and continue.`,
             needs: "nothing",
-            whyNow: "a seat you created was outside the room's spawn rules",
+            why: "a seat you created was outside the room's spawn rules",
           });
           return;
         }
@@ -1189,7 +1275,7 @@ function startRoom(server: Pick<PluginServerContext, "on" | "before">): Room {
           });
       }
       // the turn's own report; it stays null when the parent has this turn's signal from the seat's own mail
-      let report: Parameters<MailEngine["post"]>[0] | null = null;
+      let report: NewMail | null = null;
       if (seat && reportsTo && !canceled) {
         const text = lastAssistantText(event.timeline);
         const signal = signalOf(text);
@@ -1233,7 +1319,7 @@ function startRoom(server: Pick<PluginServerContext, "on" | "before">): Room {
             subject,
             body: text || `(no final message; outcome ${event.outcome.kind})`,
             needs,
-            whyNow:
+            why:
               event.outcome.kind === "failed"
                 ? `the seat's turn failed${failure && "gaveUpAfter" in failure && failure.gaveUpAfter > 0 ? `, and again after the room's ${failure.gaveUpAfter} tries` : ""}; its work is stopped`
                 : progress
@@ -1275,7 +1361,7 @@ function startRoom(server: Pick<PluginServerContext, "on" | "before">): Room {
         if (round) up.round = round.round;
         if (round && round.awaited > 0) {
           up.heldUntil = new Date(Date.now() + policy.room.params.reviewStallMinutes * 60_000).toISOString();
-          up.whyNow = `${up.whyNow}; held for the ${round.awaited} other${round.awaited === 1 ? "" : "s"} of its review round`;
+          up.why = `${up.why}; held for the ${round.awaited} other${round.awaited === 1 ? "" : "s"} of its review round`;
         }
       }
       // the reply to a handoff request: the room starts the successor, or says why it did not
@@ -1293,13 +1379,12 @@ function startRoom(server: Pick<PluginServerContext, "on" | "before">): Room {
             for (const told of new Set([rotation.by, ...(reportsTo ? [reportsTo] : [])]))
               await eng.post({
                 from: { agentId: "room", role: "system" },
-                fromLabel: "room",
                 to: told,
                 priority: "fyi",
                 subject: `ROTATED: ${record.role} ${record.title ?? id} continues in a fresh seat`,
                 body: `The room started ${nextTitle(record.title)} (${next.id}) on the brief in force and the handoff at ${next.file}. The seats the old one launched report to it now. The old seat ${id} is archived: write to ${next.id} from here on.`,
                 needs: "nothing",
-                whyNow: "a seat under you was replaced by a fresh one",
+                why: "a seat under you was replaced by a fresh one",
                 quiet: true,
               });
             // the handoff is the old seat's last word: nothing more goes up from it
@@ -1310,13 +1395,12 @@ function startRoom(server: Pick<PluginServerContext, "on" | "before">): Room {
         }
         await eng.post({
           from: { agentId: "room", role: "system" },
-          fromLabel: "room",
           to: rotation.by,
           priority: "action",
           subject: `ROTATION FAILED: ${record.role} ${record.title ?? id} stays as it is`,
           body: `The room did not replace this seat: ${problem}. It is as it was. Ask again with seatwork_rotate, or brief a new seat yourself and archive this one.`,
           needs: "nothing",
-          whyNow: "the rotation you asked for did not happen",
+          why: "the rotation you asked for did not happen",
         });
       }
       // the watcher reads the turn before anything goes up: its notice rides with the report, or goes alone
@@ -1328,13 +1412,12 @@ function startRoom(server: Pick<PluginServerContext, "on" | "before">): Room {
       if (rereads)
         await eng.post({
           from: { agentId: "room", role: "system" },
-          fromLabel: "room",
           to: id,
           priority: "action",
           subject: "HAND-IN RETURNED: one pass with fresh eyes, then hand in again",
           body: FRESH_EYES,
           needs: "reply",
-          whyNow: "the room returns a first hand-in once before the Owner reads it",
+          why: "the room returns a first hand-in once before the Owner reads it",
         });
       // the watcher has read the turn: held mail may now start the next one
       await eng.deliver(id);
@@ -1360,7 +1443,7 @@ function startRoom(server: Pick<PluginServerContext, "on" | "before">): Room {
         subject: `PERMISSION: ${seat.role} ${event.agent.title ?? event.agent.id} is waiting for approval`,
         body: JSON.stringify(event.request).slice(0, 2000),
         needs: "decision",
-        whyNow: "the seat is stopped until someone answers with respond_to_permission",
+        why: "the seat is stopped until someone answers with respond_to_permission",
       });
     }),
   );
@@ -1416,6 +1499,7 @@ function startRoom(server: Pick<PluginServerContext, "on" | "before">): Room {
       clearInterval(collect);
       clearInterval(watch);
       for (const store of stores.values()) store.close();
+      engine?.close();
       stores.clear();
       // a mail server still binding would stay open behind a close that came first
       await starting;
@@ -1578,7 +1662,7 @@ function startRoom(server: Pick<PluginServerContext, "on" | "before">): Room {
 function askedNothing(wake: readonly Mail[]): boolean {
   return (
     wake.length > 0 &&
-    wake.every((mail) => mail.needs === "nothing" && (mail.priority === "fyi" || mail.from.role === "system"))
+    wake.every((mail) => mail.needs === "nothing" && (mail.priority === "fyi" || mail.senderRole === "system"))
   );
 }
 
@@ -1646,10 +1730,6 @@ function lastAssistantText(timeline: readonly unknown[]): string {
     }
   }
   return "";
-}
-
-function formatForInbox(mail: Mail): string {
-  return `#${mail.id} ${mail.priority.toUpperCase()} from ${mail.fromLabel ?? `${mail.from.role}:${mail.from.agentId}`} re: ${mail.subject}\nneeds: ${mail.needs}\n${mail.body.trim()}`;
 }
 
 /* ---------- the watcher's view of Paseo ---------- */

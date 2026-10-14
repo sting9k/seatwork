@@ -91,27 +91,26 @@ export interface Letter {
   body: string;
 }
 
-const ENVELOPE = /^SEATWORK MAIL #(\S+) [A-Z]+ from (.+?) re: (.*)$/;
+const ENVELOPE = /^<mail id="([^"]+)" from="([^"]*)" subject="([^"]*)"[^>]*>$/;
 
-/** The mails in a prompt the room delivered, one envelope or a digest of several; none for any other prompt. */
+/** The mails in a prompt the room delivered, one block or several; none for any other prompt. */
 export function letters(prompt: string): Letter[] {
   const found: Letter[] = [];
-  let open: (Letter & { lines: string[] | null }) | null = null;
+  let open: (Letter & { lines: string[] }) | null = null;
   for (const line of prompt.split("\n")) {
-    // inside a body every line is the sender's text, a quoted envelope included
-    if (open?.lines) {
-      if (line === "--- how to handle ---") {
+    // inside a block every line is the sender's text, a quoted block's opening included
+    if (open) {
+      if (line === "</mail>") {
         found.push({ id: open.id, from: open.from, subject: open.subject, body: open.lines.join("\n") });
         open = null;
       } else open.lines.push(line);
       continue;
     }
     const header = ENVELOPE.exec(line);
-    if (header) open = { id: header[1], from: header[2], subject: header[3], body: "", lines: null };
-    else if (open && line === "--- body ---") open.lines = [];
+    if (header) open = { id: header[1], from: header[2], subject: header[3], body: "", lines: [] };
   }
-  // a prompt that ends inside a body: the rest of it is that body
-  if (open?.lines) found.push({ id: open.id, from: open.from, subject: open.subject, body: open.lines.join("\n") });
+  // a prompt that ends inside a block: the rest of it is that mail
+  if (open) found.push({ id: open.id, from: open.from, subject: open.subject, body: open.lines.join("\n") });
   return found;
 }
 

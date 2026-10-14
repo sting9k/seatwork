@@ -54,6 +54,9 @@ export interface MailPolicy {
   holdFyiWhileRunning: boolean;
   gatherReviews?: boolean;
   midTurn: Record<Harness, MidTurnDelivery>;
+  quietChars?: number;
+  dedupeSeconds?: number;
+  keepDays?: number;
 }
 
 export type RoleName = Role;

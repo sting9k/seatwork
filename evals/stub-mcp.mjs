@@ -18,6 +18,7 @@ const VARS = {
     .join(", "),
   keep_log_days: String(plugin("shared/settings.json").keepLogDays),
   rotate_k: String(Math.round(plugin("paseo/policy.json").room.params.rotateAtTokens / 1000)),
+  mail_chars: plugin("paseo/policy.json").room.params.mailChars.toLocaleString("en-US"),
 };
 const filled = (value) =>
   JSON.parse(JSON.stringify(value).replace(/\{\{(\w+)\}\}/g, (whole, name) => VARS[name] ?? whole));

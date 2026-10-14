@@ -30,6 +30,11 @@ Object.assign(process.env, {
 /** The plugin folder: the room files and the policy ship inside it. */
 export const PLUGIN_DIR = join(__dirname, "..", "..");
 
+/** Puts the stores' layout scripts where a store looks for them: they ship with the room files. */
+export function shipSql(): void {
+  cpSync(join(PLUGIN_DIR, "room", "sql"), join(ROOM_HOME, "room", "sql"), { recursive: true });
+}
+
 /** A room home as setting the room up leaves it: the room files, the policy and the enabled seats. */
 export function installRoom(
   providers: string[],

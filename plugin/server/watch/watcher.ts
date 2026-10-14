@@ -84,7 +84,7 @@ const URGENT: ReadonlySet<RuleId> = new Set(["irreversible", "outside-project"])
 /** A brief's gap is its writer's doing: it is told beside the turn's one finding, not in its place. */
 const ABOUT_BRIEF: ReadonlySet<RuleId> = new Set(["incomplete-brief"]);
 const READ_ONLY_TITLE = /\[(?:peer:(?:review|research)|lens)\b/i;
-const MAIL = /^\s*SEATWORK MAIL\b/;
+const MAIL = /^\s*<mail id="/;
 const isPrompt = (entry: TimelineInput) => (entry.item as { type?: unknown } | null)?.type === "user_message";
 
 /** What the brief that opened a Peer's turn lacks: its creation prompt, or a brief in the mail that started it. */

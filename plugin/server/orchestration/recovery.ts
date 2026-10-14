@@ -141,13 +141,12 @@ export interface Resumes {
   recipientStatus(agentId: string): Promise<"idle" | "running" | "permission" | "unknown" | "gone">;
   post(mail: {
     from: { agentId: string; role: "system" };
-    fromLabel: string;
     to: string;
     priority: "action";
     subject: string;
     body: string;
     needs: "nothing";
-    whyNow: string;
+    why: string;
   }): Promise<unknown>;
 }
 
@@ -160,13 +159,12 @@ export async function resumeDue(recovery: Recovery, mail: Resumes, now: number):
     if (status !== "idle") continue;
     await mail.post({
       from: { agentId: "room", role: "system" },
-      fromLabel: "room",
       to: retry.agentId,
       priority: "action",
       subject: "RESUME: your last turn stopped on the model service, not on your work",
       body: resumeText(retry),
       needs: "nothing",
-      whyNow: "the room starts you again after a failure that was not your work's",
+      why: "the room starts you again after a failure that was not your work's",
     });
   }
 }

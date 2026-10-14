@@ -1,9 +1,13 @@
-import { deferred, MAIL_POLICY, ROOM_HOME } from "./support/room";
+import { deferred, MAIL_POLICY, ROOM_HOME, shipSql } from "./support/room";
 import assert from "node:assert/strict";
-import { existsSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { test } from "node:test";
-import { MailEngine, type Mail, type SeatRecord } from "../server/mail";
+import { MailError } from "../server/coordination/address";
+import { MailEngine, type EngineOptions, type NewMail, type SeatRecord } from "../server/coordination/engine";
+import { inbox } from "../server/coordination/reader";
+
+shipSql();
 
 interface Handle {
   refresh(): Promise<unknown>;
@@ -12,345 +16,415 @@ interface Handle {
 }
 
 const idle = { refresh: async () => {}, current: () => ({ status: "idle" }) };
+const ROUTES = { "lead>peer": true, "peer>lead": true, "supervisor>lead": true, "lead>supervisor": true };
 
 /** An engine over these agents; any other id is one the daemon no longer has: it answers, with no agent. */
-function engineFor(handles: Record<string, Partial<Handle>>, spawn: Record<string, string[]> = {}): MailEngine {
+function engineFor(handles: Record<string, Partial<Handle>>, options: EngineOptions = {}): MailEngine {
   const missing = { refresh: async () => null, current: () => null };
   const paseo = { agents: { ref: (id: string) => handles[id] ?? missing } };
-  return new MailEngine(paseo as never, MAIL_POLICY, { routes: {}, spawn } as never, () => {});
+  return new MailEngine(
+    paseo as never,
+    MAIL_POLICY,
+    { routes: ROUTES, spawn: { lead: ["peer"] } } as never,
+    () => {},
+    options,
+  );
 }
 
-function lead(agentId: string): SeatRecord {
-  return { agentId, parentAgentId: null, role: "lead", provider: "claude-lead", title: null };
+let cases = 0;
+/** Seat ids no other test of this file uses: every engine here shares the room home's store. */
+function names<T extends string>(...roles: T[]): Record<T, string> {
+  cases += 1;
+  return Object.fromEntries(roles.map((role) => [role, `${role}-${cases}`])) as Record<T, string>;
 }
 
-function mail(
-  to: string,
-  subject: string,
-  from: Mail["from"] = { agentId: "room", role: "system" },
-  needs: Mail["needs"] = "nothing",
-): Omit<Mail, "id" | "at"> {
-  return { from, to, priority: "action", subject, body: `body of ${subject}`, needs, whyNow: "test" };
+function seat(
+  agentId: string,
+  role: SeatRecord["role"],
+  parentAgentId: string | null = null,
+  cwd?: string,
+): SeatRecord {
+  return {
+    agentId,
+    parentAgentId,
+    role,
+    provider: `claude-${role}`,
+    title: `[${role}] ${agentId}`,
+    ...(cwd ? { cwd } : {}),
+  };
 }
+
+function mail(to: string | string[], subject: string, more: Partial<NewMail> = {}): NewMail {
+  return {
+    from: { agentId: "room", role: "system" },
+    to,
+    priority: "action",
+    subject,
+    body: `body of ${subject}`,
+    needs: "nothing",
+    ...more,
+  };
+}
+
+/** A seat at rest that keeps what it is sent. */
+function listener(): { handle: Handle; got: string[] } {
+  const got: string[] = [];
+  return { got, handle: { ...idle, send: async (text) => void got.push(text) } };
+}
+
+test("a mail reaches a seat at rest as one tagged block, and the store remembers how it went", async () => {
+  const id = names("lead");
+  const { handle, got } = listener();
+  const engine = engineFor({ [id.lead]: handle });
+  engine.rememberSeat(seat(id.lead, "lead"));
+  const sent = await engine.post(mail(id.lead, "FYI: main moved", { why: "the base branch changed" }));
+  assert.match(
+    got[0],
+    new RegExp(
+      `^<mail id="${sent.id}" from="room" subject="FYI: main moved" needs="nothing" thread="m${sent.id}" note="the base branch changed">\nbody of FYI: main moved\n</mail>$`,
+    ),
+  );
+  assert.equal(sent.state, "delivered");
+  assert.equal(sent.how, "idle");
+  assert.deepEqual(engine.held(id.lead), []);
+  assert.equal(engine.takeWake(id.lead)[0].id, sent.id);
+});
 
 test("mail posted while a delivery waits for the recipient's status is not lost", async () => {
-  const waiting = deferred();
-  const release = deferred();
-  const sent: string[] = [];
+  const id = names("lead");
+  const gate = deferred();
+  const got: string[] = [];
+  let reads = 0;
   const engine = engineFor({
-    r1: {
-      refresh: async () => {
-        waiting.resolve();
-        await release.promise;
-      },
+    [id.lead]: {
+      refresh: async () => void ((reads += 1) === 1 && (await gate.promise)),
       current: () => ({ status: "idle" }),
-      send: async (text) => void sent.push(text),
+      send: async (text) => void got.push(text),
     },
   });
-
-  const first = engine.post(mail("r1", "A"));
-  await waiting.promise;
-  const second = await engine.post(mail("r1", "B"));
-  release.resolve();
-  await first;
-
-  const delivered = sent.some((text) => text.includes(second.id));
-  const held = engine.held("r1").some((m) => m.id === second.id);
-  assert.ok(delivered || held, "B was accepted, then neither delivered nor held");
+  engine.rememberSeat(seat(id.lead, "lead"));
+  const first = engine.post(mail(id.lead, "FYI: one"));
+  const second = engine.post(mail(id.lead, "FYI: two"));
+  gate.resolve();
+  await Promise.all([first, second]);
+  await engine.deliver(id.lead);
+  assert.match(got.join("\n"), /FYI: one[\s\S]*FYI: two/);
+  assert.deepEqual(engine.held(id.lead), []);
 });
 
-test("mail that arrives while the room learns its recipient is archived is bounced, not erased", async () => {
-  const waiting = deferred();
-  const release = deferred();
-  const toSender: string[] = [];
-  const engine = engineFor({
-    gone1: {
-      refresh: async () => {
-        waiting.resolve();
-        await release.promise;
-      },
-      current: () => ({ status: "idle", archivedAt: "2026-10-01T00:00:00Z" }),
-    },
-    lead1: { ...idle, send: async (text) => void toSender.push(text) },
-  });
-  engine.rememberSeat(lead("lead1"));
-  const from = { agentId: "lead1", role: "lead" } as const;
-
-  const first = engine.post(mail("gone1", "A", from, "reply"));
-  await waiting.promise;
-  const second = await engine.post(mail("gone1", "B", from, "reply"));
-  release.resolve();
-  await first;
-
-  assert.ok(
-    toSender.some((text) => text.includes(`UNDELIVERABLE: #${second.id}`)),
-    "the sender of B was never told",
+test("mail to a seat the daemon no longer has is bounced, and a sender that waited is told", async () => {
+  const id = names("lead", "peer", "gone");
+  const lead = listener();
+  const engine = engineFor({ [id.lead]: lead.handle });
+  engine.rememberSeat(seat(id.lead, "lead"));
+  engine.rememberSeat(seat(id.gone, "peer", id.lead));
+  const asked = await engine.post(
+    mail(id.gone, "ANSWER: use v2", { from: { agentId: id.lead, role: "lead" }, needs: "reply" }),
   );
-  assert.deepEqual(engine.held("gone1"), []);
+  assert.equal(engine.storeOf(id.gone)!.deliveries(asked.id)[0].state, "bounced");
+  assert.match(lead.got[0], new RegExp(`subject="UNDELIVERABLE: #${asked.id} re: ANSWER: use v2"`));
+  // one that asked nothing reads the notice with its next mail
+  await engine.post(mail(id.gone, "FYI: nothing to do", { from: { agentId: id.lead, role: "lead" } }));
+  assert.equal(lead.got.length, 1);
+  assert.equal(engine.held(id.lead).length, 1);
+  assert.equal(engine.held(id.lead)[0].quiet, true);
 });
 
-test("a failed status read holds the mail until the daemon answers again", async () => {
-  let down = true;
-  const sent: string[] = [];
+test("a failed status read, or a seat still opening, holds the mail; any seat a message can start takes it", async () => {
+  const id = names("lost", "opening", "closed", "failed");
+  const closed = listener();
+  const failed = listener();
   const engine = engineFor({
-    r2: {
-      refresh: async () => {
-        if (down) throw new Error("connection lost");
-      },
-      current: () => ({ status: "idle" }),
-      send: async (text) => void sent.push(text),
-    },
+    [id.lost]: { refresh: async () => Promise.reject(new Error("timeout")), current: () => null },
+    [id.opening]: { ...idle, current: () => ({ status: "initializing" }) },
+    [id.closed]: { ...closed.handle, current: () => ({ status: "closed" }) },
+    [id.failed]: { ...failed.handle, current: () => ({ status: "error" }) },
   });
-
-  const posted = await engine.post(mail("r2", "retry me"));
-  assert.deepEqual(
-    engine.held("r2").map((m) => m.id),
-    [posted.id],
-  );
-
-  down = false;
-  await engine.sweep();
-  assert.equal(sent.length, 1);
-  assert.ok(sent[0].includes(posted.id));
+  for (const agent of Object.values(id)) engine.rememberSeat(seat(agent, "lead"));
+  for (const agent of Object.values(id)) await engine.post(mail(agent, "FYI: hello"));
+  assert.equal(engine.held(id.lost).length, 1);
+  assert.equal(engine.held(id.opening).length, 1);
+  assert.equal(closed.got.length, 1);
+  assert.equal(failed.got.length, 1);
 });
 
-test("a seat that a message can start takes its mail, whatever left it at rest; one still opening does not", async () => {
-  const cases = [
-    ["closed", true], // no runtime: every seat after a daemon restart
-    ["error", true], // its last turn failed
-    ["initializing", false],
-  ] as const;
-  for (const [status, taken] of cases) {
-    const sent: string[] = [];
-    const id = `seat-${status}`;
-    const engine = engineFor({
-      [id]: { refresh: async () => {}, current: () => ({ status }), send: async (text) => void sent.push(text) },
-    });
-
-    const posted = await engine.post(mail(id, "QUESTION"));
-
-    assert.equal(sent.length, taken ? 1 : 0, status);
-    assert.deepEqual(
-      engine.held(id).map((m) => m.id),
-      taken ? [] : [posted.id],
-      status,
-    );
-  }
-});
-
-test("mail to a seat the daemon no longer has is dropped and its sender told", async () => {
-  const toSender: string[] = [];
-  const engine = engineFor({ lead2: { ...idle, send: async (text) => void toSender.push(text) } });
-  engine.rememberSeat(lead("lead2"));
-
-  const posted = await engine.post(mail("deleted2", "anyone there", { agentId: "lead2", role: "lead" }, "reply"));
-
-  assert.deepEqual(engine.held("deleted2"), []);
-  assert.ok(toSender.some((text) => text.includes(`UNDELIVERABLE: #${posted.id}`)));
-});
-
-test("a dropped mail that asked for nothing does not start its sender's turn; the notice comes with its next mail", async () => {
-  const toSender: string[] = [];
-  const engine = engineFor({ lead3: { ...idle, send: async (text) => void toSender.push(text) } });
-  engine.rememberSeat(lead("lead3"));
-
-  const dropped = await engine.post(mail("deleted3", "ACCEPT: released", { agentId: "lead3", role: "lead" }));
-  assert.equal(toSender.length, 0, "the sender was started for a mail nobody waited on");
-
-  const next = await engine.post(mail("lead3", "a mail that does start a turn"));
-  assert.equal(toSender.length, 1);
-  assert.ok(toSender[0].includes(`UNDELIVERABLE: #${dropped.id}`));
-  assert.ok(toSender[0].includes(next.id));
-  assert.deepEqual(engine.held("lead3"), []);
-});
-
-test("quiet mail waits for the next mail that starts a turn, and the inbox hands it out meanwhile", async () => {
-  const sent: string[] = [];
-  const engine = engineFor({
-    r6: { ...idle, send: async (text) => void sent.push(text) },
-    r7: { ...idle, send: async (text) => void sent.push(text) },
-  });
-
-  const quiet = await engine.post({ ...mail("r6", "ACK"), priority: "fyi", quiet: true });
-  await engine.sweep();
-  assert.equal(sent.length, 0, "a quiet mail started a turn");
-
-  const loud = await engine.post(mail("r6", "QUESTION"));
-  assert.equal(sent.length, 1);
-  assert.ok(sent[0].includes(quiet.id) && sent[0].includes(loud.id));
-
-  const other = await engine.post({ ...mail("r7", "ACK"), priority: "fyi", quiet: true });
-  assert.deepEqual(
-    engine.takeHeld("r7").map((m) => m.id),
-    [other.id],
-  );
+test("quiet mail waits for the next mail that starts a turn, cut to its opening; the inbox hands it out whole meanwhile", async () => {
+  const id = names("lead", "other");
+  const { handle, got } = listener();
+  const engine = engineFor({ [id.lead]: handle, [id.other]: listener().handle }, { quietChars: 20 });
+  engine.rememberSeat(seat(id.lead, "lead"));
+  engine.rememberSeat(seat(id.other, "lead"));
+  const quiet = await engine.post(mail(id.lead, "STATUS: half way", { quiet: true, body: "x".repeat(50) }));
+  assert.equal(got.length, 0);
+  await engine.post(mail(id.lead, "QUESTION: which format?", { needs: "decision", priority: "blocking" }));
+  assert.equal(got.length, 1);
+  assert.match(got[0], /^<mail [^>]*subject="QUESTION: which format\?"[\s\S]*<mail [^>]*subject="STATUS: half way"/);
+  const file = engine.storeOf(id.lead)!.get(quiet.id)!.file!;
+  assert.ok(got[0].includes(`${"x".repeat(20)}\n[cut at 20 of 50 characters; the whole mail is in ${file}]`));
+  assert.match(readFileSync(file, "utf8"), new RegExp(`# STATUS: half way\n\n${"x".repeat(50)}\n$`));
+  // held again, and read through the inbox
+  await engine.post(mail(id.other, "ACK: noted", { quiet: true }));
+  assert.match(inbox(engine, id.other, {}, Date.now()), /^<mail [^>]*subject="ACK: noted"/);
+  assert.equal(inbox(engine, id.other, {}, Date.now()), "inbox empty");
+  assert.equal(engine.storeOf(id.other)!.received(id.other, 5)[0].state, "read");
 });
 
 test("a held review starts no turn until its hold runs out or its round is released", async () => {
-  const sent: string[] = [];
-  const engine = engineFor({ l1: { ...idle, send: async (text) => void sent.push(text) } });
-  const soon = new Date(Date.now() + 60_000).toISOString();
-  const first = await engine.post({ ...mail("l1", "REVIEW one"), round: "l1:1", heldUntil: soon });
-  assert.equal(sent.length, 0);
-  // a hold that has run out is delivered by the next pass
-  await engine.post({ ...mail("l1", "REVIEW late"), round: "l1:0", heldUntil: new Date(Date.now() - 1).toISOString() });
-  assert.equal(sent.length, 1);
-  assert.match(sent[0], /SEATWORK MAIL DIGEST — 2 messages/);
-  const second = await engine.post({ ...mail("l1", "REVIEW two"), round: "l1:2", heldUntil: soon });
-  assert.equal(sent.length, 1);
-  await engine.release("l1", "l1:2");
-  assert.equal(sent.length, 2);
-  assert.ok(sent[1].includes(second.id) && !sent[1].includes(first.id));
+  const id = names("lead");
+  const { handle, got } = listener();
+  const engine = engineFor({ [id.lead]: handle });
+  engine.rememberSeat(seat(id.lead, "lead"));
+  const later = new Date(Date.now() + 60_000).toISOString();
+  await engine.post(mail(id.lead, "REVIEW: one", { round: "r1", heldUntil: later }));
+  await engine.post(mail(id.lead, "REVIEW: two", { round: "r1", heldUntil: later }));
+  assert.equal(got.length, 0);
+  await engine.release(id.lead, "r1");
+  assert.equal(got.length, 1);
+  assert.match(got[0], /REVIEW: one[\s\S]*REVIEW: two/);
 });
 
-test("a report kept for a turn end that never reached the room is posted once its seat is at rest", async () => {
-  let status = "running";
-  const toLead: string[] = [];
-  const engine = engineFor({
-    peer8: { refresh: async () => {}, current: () => ({ status }) },
-    lead8: { ...idle, send: async (text) => void toLead.push(text) },
-  });
-
-  const kept = engine.keepReport(mail("lead8", "REVIEW: abc123 PASS", { agentId: "peer8", role: "peer" }, "reply"));
+test("a report kept for a turn end goes out once: as it stands when the turn ends, or by the sweep when that never reached the room", async () => {
+  const id = names("lead", "peer", "slow");
+  const lead = listener();
+  const engine = engineFor({ [id.lead]: lead.handle, [id.peer]: idle, [id.slow]: idle });
+  engine.rememberSeat(seat(id.lead, "lead"));
+  engine.rememberSeat(seat(id.peer, "peer", id.lead));
+  engine.rememberSeat(seat(id.slow, "peer", id.lead));
+  const report = (from: string, subject: string) =>
+    mail(id.lead, subject, { from: { agentId: from, role: "peer" }, needs: "reply" });
+  engine.keepReport(report(id.peer, "CANDIDATE: first try"));
+  const kept = engine.keepReport(report(id.peer, "CANDIDATE: store"));
+  assert.equal(lead.got.length, 0);
+  const draft = engine.takeReport(id.peer)!;
+  assert.equal(draft.id, kept.id);
+  assert.equal(engine.takeReport(id.peer), null, "taken once");
+  await engine.post({ ...draft, body: `${draft.body}\n\n[room] second candidate` });
+  assert.equal(lead.got.length, 1);
+  assert.match(
+    lead.got[0],
+    new RegExp(
+      `<mail id="${kept.id}" [^>]*subject="CANDIDATE: store"[^>]*>\nbody of CANDIDATE: store\n\n\\[room\\] second candidate\n</mail>`,
+    ),
+  );
+  engine.keepReport(report(id.slow, "DONE: docs"));
   await engine.sweep();
-  assert.equal(toLead.length, 0, "the report went out while its seat was still in the turn");
-
-  status = "idle";
-  await engine.sweep();
-  assert.equal(toLead.length, 1);
-  assert.ok(toLead[0].includes(`#${kept.id}`));
-  await engine.sweep();
-  assert.equal(toLead.length, 1);
+  assert.equal(lead.got.length, 2);
+  assert.match(lead.got[1], /subject="DONE: docs"/);
 });
 
 test("mail whose delivery was cut off is still there for the next engine, marked as a possible repeat", async () => {
-  const sending = deferred();
-  const before = engineFor({
-    r3: {
-      ...idle,
-      send: () => {
-        sending.resolve();
-        return new Promise<void>(() => {}); // the daemon never answers
-      },
-    },
-  });
-  void before.post(mail("r3", "survive"));
-  await sending.promise;
-  const [queued] = before.held("r3");
-  assert.ok(queued, "the mail left the disk before its delivery was confirmed");
-
-  // the plugin process dies here; a new one starts on the same room home
-  const sent: string[] = [];
-  const after = engineFor({ r3: { ...idle, send: async (text) => void sent.push(text) } });
-  await after.sweep();
-
-  assert.equal(sent.length, 1);
-  assert.ok(sent[0].includes(`#${queued.id}`));
-  assert.match(sent[0], /possible repeat/);
-  assert.deepEqual(after.held("r3"), []);
-});
-
-test("a handover still holds for the engine that starts after a reload", async () => {
-  const spawn = { lead: ["peer"] };
-  const peer: SeatRecord = {
-    agentId: "peer10",
-    parentAgentId: "deleted10",
-    role: "peer",
-    provider: "claude-peer",
-    title: null,
-  };
-  const before = engineFor({ peer10: idle }, spawn);
-  before.rememberSeat(lead("lead10"));
-  before.rememberSeat(peer);
-  assert.deepEqual(await before.adopt("lead10", "peer10"), { ok: true, previous: "deleted10" });
-
-  // the plugin reloads: the registry it reads the seats from still names the Peer's first owner
-  const after = engineFor({}, spawn);
-  after.rememberSeat(peer);
-  assert.equal(after.parentOf("peer10"), "lead10");
+  const id = names("lead");
+  const stuck = deferred();
+  const first = engineFor({ [id.lead]: { ...idle, send: () => stuck.promise } });
+  first.rememberSeat(seat(id.lead, "lead"));
+  void first.post(mail(id.lead, "ANSWER: use v2"));
+  await new Promise((done) => setTimeout(done, 20));
+  const { handle, got } = listener();
+  const next = engineFor({ [id.lead]: handle });
+  next.rememberSeat(seat(id.lead, "lead"));
+  assert.equal(next.held(id.lead)[0].state, "sending");
+  assert.equal(
+    inbox(next, id.lead, { peek: true }, Date.now()),
+    "inbox empty",
+    "the inbox leaves mail on its way out alone",
+  );
+  await next.deliver(id.lead);
+  assert.match(got[0], /repeat="an earlier delivery was cut off; if you handled it, do nothing"/);
+  stuck.resolve();
 });
 
 test("a refused delivery keeps the mail for the next attempt, as a first delivery", async () => {
+  const id = names("lead");
+  const got: string[] = [];
   let refuse = true;
-  const sent: string[] = [];
   const engine = engineFor({
-    r4: {
-      ...idle,
-      send: async (text) => {
-        if (refuse) throw new Error("agent busy");
-        sent.push(text);
-      },
-    },
+    [id.lead]: { ...idle, send: async (text) => (refuse ? Promise.reject(new Error("busy")) : void got.push(text)) },
   });
-
-  const posted = await engine.post(mail("r4", "again"));
-  assert.deepEqual(
-    engine.held("r4").map((m) => m.id),
-    [posted.id],
-  );
-
+  engine.rememberSeat(seat(id.lead, "lead"));
+  await engine.post(mail(id.lead, "FYI: later"));
+  assert.equal(engine.held(id.lead)[0].state, "queued");
+  assert.deepEqual(engine.takeWake(id.lead), []);
   refuse = false;
-  await engine.deliver("r4");
-  assert.equal(sent.length, 1);
-  assert.doesNotMatch(sent[0], /possible repeat/);
-});
-
-test("the inbox does not hand out mail that is being delivered", async () => {
-  const sending = deferred();
-  const release = deferred();
-  const sent: string[] = [];
-  const engine = engineFor({
-    r5: {
-      ...idle,
-      send: async (text) => {
-        sending.resolve();
-        await release.promise;
-        sent.push(text);
-      },
-    },
-  });
-
-  const posting = engine.post(mail("r5", "once"));
-  await sending.promise;
-  assert.deepEqual(engine.takeHeld("r5"), []);
-  release.resolve();
-  await posting;
-
-  assert.equal(sent.length, 1);
-  assert.deepEqual(engine.held("r5"), []);
-});
-
-test("a long body reaches its recipient whole", async () => {
-  const sent: string[] = [];
-  const engine = engineFor({ r9: { ...idle, send: async (text) => void sent.push(text) } });
-  // five times the length the room used to cut at
-  const brief = `${"Contract / invariants: one line of the contract.\n".repeat(400)}Reply with seatwork_mail to: owner`;
-
-  await engine.post({ ...mail("r9", "BRIEF: the lock"), body: brief });
-
-  assert.equal(sent.length, 1);
-  assert.ok(sent[0].includes(brief), "the body was cut on its way");
-});
-
-test("a queue with nothing waiting has no file, and the sweep drops the empty ones an older version left", async () => {
-  const queue = (agentId: string) => join(ROOM_HOME, "mail", "queue", `${agentId}.jsonl`);
-  const sent: string[] = [];
-  const engine = engineFor({ q1: { ...idle, send: async (text) => void sent.push(text) } });
-
-  await engine.post(mail("q1", "A"));
-  assert.equal(sent.length, 1);
-  assert.ok(!existsSync(queue("q1")), "a delivered queue stays on disk: the sweep would read it every minute for good");
-
-  writeFileSync(queue("seat-of-an-older-version"), "");
   await engine.sweep();
-  assert.ok(!existsSync(queue("seat-of-an-older-version")));
+  assert.equal(got.length, 1);
+  assert.doesNotMatch(got[0], /repeat=/);
 });
 
-test("a mail is still known by its id after the plugin starts again: its sender and recipient are read from the log", async () => {
-  const before = engineFor({ k1: { ...idle, send: async () => {} } });
-  const sent = await before.post(mail("k1", "QUESTION: which unit", { agentId: "peer-k", role: "peer" }, "reply"));
+test("an answer settles the ask it names, or the oldest open ask of its recipient; an unanswered ask is owed", async () => {
+  const id = names("lead", "peer");
+  const engine = engineFor({ [id.lead]: listener().handle, [id.peer]: listener().handle });
+  engine.rememberSeat(seat(id.lead, "lead"));
+  engine.rememberSeat(seat(id.peer, "peer", id.lead));
+  const peer = { agentId: id.peer, role: "peer" as const };
+  const lead = { agentId: id.lead, role: "lead" as const };
+  const first = await engine.post(mail(id.lead, "QUESTION: which format?", { from: peer, needs: "decision" }));
+  const second = await engine.post(mail(id.lead, "QUESTION: and the name?", { from: peer, needs: "reply" }));
+  assert.match(
+    inbox(engine, id.lead, { view: "owed" }, Date.now()),
+    new RegExp(`^you owe: #${first.id} [\\s\\S]*\nyou owe: #${second.id} `),
+  );
+  assert.match(
+    inbox(engine, id.lead, {}, Date.now()),
+    /^inbox empty\n\[room\] you owe 2 answers: #\d+ \(QUESTION, \d+ min\), #\d+ /,
+  );
+  const answer = await engine.post(
+    mail(id.peer, "ANSWER: the second one", { from: lead, replyTo: second.id, thread: second.thread }),
+  );
+  const store = engine.storeOf(id.lead)!;
+  assert.equal(store.get(second.id)!.answeredBy, answer.id);
+  const other = await engine.post(mail(id.peer, "ANSWER: v2", { from: lead }));
+  assert.equal(store.get(first.id)!.answeredBy, other.id);
+  assert.equal(inbox(engine, id.lead, { view: "owed" }, Date.now()), "nothing is owed");
+  assert.deepEqual(
+    store.thread(second.thread, null, 10).map((message) => message.id),
+    [second.id, answer.id],
+  );
+});
 
-  const after = engineFor({});
-  assert.deepEqual(after.lookupMail(sent.id), { from: "peer-k", to: "k1" });
-  assert.equal(after.lookupMail("no-such-mail"), null);
+test("the same text sent again within the window is one mail; a key stands for the text it was first used with", async () => {
+  const id = names("lead", "peer");
+  const { handle, got } = listener();
+  const engine = engineFor({ [id.lead]: handle });
+  engine.rememberSeat(seat(id.lead, "lead"));
+  engine.rememberSeat(seat(id.peer, "peer", id.lead));
+  const draft = mail(id.lead, "STATUS: half way", { from: { agentId: id.peer, role: "peer" }, key: "status-1" });
+  assert.equal(engine.repeatOf(draft), null);
+  const sent = await engine.post(draft);
+  assert.equal(engine.repeatOf(draft)?.id, sent.id);
+  assert.equal(engine.repeatOf({ ...draft, key: undefined })?.id, sent.id);
+  assert.throws(
+    () => engine.repeatOf({ ...draft, body: "another text" }),
+    (error: unknown) => error instanceof MailError && error.code === "KEY_REUSED",
+  );
+  assert.equal(engine.repeatOf({ ...draft, key: undefined, body: "another text" }), null);
+  assert.equal(got.length, 1);
+});
+
+test("a copy and a mail to the team inform without starting a turn; a seat reads its own mail and that of the seats under it", async () => {
+  const id = names("lead", "peer", "other", "stranger");
+  const peer = listener();
+  const other = listener();
+  const engine = engineFor({
+    [id.lead]: listener().handle,
+    [id.peer]: peer.handle,
+    [id.other]: other.handle,
+    [id.stranger]: idle,
+  });
+  engine.rememberSeat(seat(id.lead, "lead"));
+  engine.rememberSeat(seat(id.peer, "peer", id.lead));
+  engine.rememberSeat(seat(id.other, "peer", id.lead));
+  engine.rememberSeat(seat(id.stranger, "lead"));
+  const lead = { agentId: id.lead, role: "lead" as const };
+  const sent = await engine.post(mail(id.peer, "INSTRUCTION: rebase on main", { from: lead, cc: [id.other] }));
+  assert.equal(peer.got.length, 1);
+  assert.equal(other.got.length, 0);
+  assert.match(
+    inbox(engine, id.other, {}, Date.now()),
+    new RegExp(`^<mail id="${sent.id}" from="owner" [^>]* as="cc">`),
+  );
+  const team = await engine.post(
+    mail([id.peer, id.other], "FYI: the law changed", { from: lead, kind: "team", quiet: true }),
+  );
+  assert.deepEqual(
+    engine
+      .storeOf(id.lead)!
+      .deliveries(team.id)
+      .map((to) => [to.kind, to.state]),
+    [
+      ["team", "queued"],
+      ["team", "queued"],
+    ],
+  );
+  assert.match(
+    inbox(engine, id.lead, { view: "sent" }, Date.now()),
+    new RegExp(`^#${team.id} [^\n]*\\[queued\\][^\n]*\\[queued\\]`),
+  );
+  assert.match(
+    inbox(engine, id.lead, { id: sent.id }, Date.now()),
+    /^<mail [^>]*subject="INSTRUCTION: rebase on main"/,
+  );
+  assert.match(inbox(engine, id.lead, { q: "rebase" }, Date.now()), new RegExp(`^#${sent.id} `));
+  assert.throws(
+    () => inbox(engine, id.stranger, { id: sent.id }, Date.now()),
+    (error: unknown) => error instanceof MailError && error.code === "UNKNOWN_MAIL",
+  );
+  assert.equal(inbox(engine, id.stranger, { q: "rebase" }, Date.now()), "nothing matches `rebase`");
+});
+
+test("a project's mail lives in the project: its store, a file per mail, a file per thread, kept out of its commits", async () => {
+  const id = names("lead", "peer");
+  const project = join(ROOM_HOME, `project-${cases}`);
+  mkdirSync(project, { recursive: true });
+  const folder = join(project, ".seatwork", ".mail");
+  const options = { rootOf: (cwd: string) => (cwd.startsWith(project) ? project : null) };
+  const peer = listener();
+  const engine = engineFor({ [id.peer]: peer.handle, [id.lead]: listener().handle }, options);
+  engine.rememberSeat(seat(id.lead, "lead", null, project));
+  engine.rememberSeat(seat(id.peer, "peer", id.lead, join(project, ".worktrees", "a")));
+  assert.equal(engine.folderOf(id.peer), folder);
+  const brief = await engine.post(
+    mail(id.peer, "INSTRUCTION: build the index", { from: { agentId: id.lead, role: "lead" }, thread: "sw-k3f" }),
+  );
+  await engine.post(
+    mail(id.lead, "QUESTION: sorted?", {
+      from: { agentId: id.peer, role: "peer" },
+      replyTo: brief.id,
+      thread: "sw-k3f",
+      needs: "reply",
+    }),
+  );
+  assert.ok(existsSync(join(folder, "mail.db")));
+  assert.equal(readFileSync(join(folder, ".gitignore"), "utf8"), "*\n");
+  const thread = readFileSync(join(folder, "threads", "sw-k3f.md"), "utf8");
+  assert.match(
+    thread,
+    /^# Thread sw-k3f\n\n## #1 · [^\n]* → peer [^\n]*\n\n\*\*INSTRUCTION: build the index\*\*[\s\S]*## #2 · [^\n]* → owner\n\n\*\*QUESTION: sorted\?\*\*/,
+  );
+  assert.match(
+    inbox(engine, id.peer, { thread: "sw-k3f" }, Date.now()),
+    /^#1 [^\n]*\n#2 [^\n]*\nthe whole thread as one file: .*sw-k3f\.md$/,
+  );
+  // the store is lost: the next engine reads the mail back from its files, history as delivered
+  engine.close();
+  for (const suffix of ["", "-wal", "-shm"]) rmSync(join(folder, `mail.db${suffix}`), { force: true });
+  const again = engineFor({ [id.peer]: peer.handle, [id.lead]: listener().handle }, options);
+  again.rememberSeat(seat(id.lead, "lead", null, project));
+  again.rememberSeat(seat(id.peer, "peer", id.lead, join(project, ".worktrees", "a")));
+  assert.deepEqual(again.lookupMail(brief.id, id.peer), { from: id.lead, to: [id.peer], thread: "sw-k3f" });
+  assert.match(inbox(again, id.peer, { q: "sorted" }, Date.now()), /^#2 /);
+  const next = await again.post(
+    mail(id.peer, "ANSWER: yes", { from: { agentId: id.lead, role: "lead" }, thread: "sw-k3f" }),
+  );
+  assert.equal(next.id, 3, "ids go on from the files");
+});
+
+test("a handover holds for the engine that starts after a reload, and held mail follows a seat's successor", async () => {
+  const id = names("lead", "next", "peer", "heir");
+  const heir = listener();
+  const handles = {
+    [id.lead]: idle,
+    [id.next]: idle,
+    [id.peer]: { ...idle, current: () => ({ status: "running" }) },
+    [id.heir]: heir.handle,
+  };
+  const engine = engineFor(handles);
+  engine.rememberSeat(seat(id.lead, "lead"));
+  engine.rememberSeat(seat(id.next, "lead"));
+  engine.rememberSeat(seat(id.peer, "peer", id.lead));
+  engine.rememberSeat(seat(id.heir, "peer", id.lead));
+  assert.deepEqual(await engine.adopt(id.next, id.peer), {
+    ok: false,
+    reason: `${id.peer} still reports to a live seat that is not in your chain; only its chain may hand it over`,
+  });
+  const gone = engineFor({ ...handles, [id.lead]: { refresh: async () => null, current: () => null } });
+  for (const record of engine.allSeats()) gone.rememberSeat(record);
+  assert.deepEqual(await gone.adopt(id.next, id.peer), { ok: true, previous: id.lead });
+  const reloaded = engineFor(handles);
+  reloaded.rememberSeat(seat(id.peer, "peer", id.lead));
+  assert.equal(reloaded.parentOf(id.peer), id.next);
+  await engine.post(mail(id.peer, "ANSWER: use v2"));
+  assert.equal(engine.held(id.peer).length, 1);
+  await engine.move(id.peer, id.heir);
+  assert.equal(engine.held(id.peer).length, 0);
+  assert.match(heir.got[0], /subject="ANSWER: use v2"/);
 });

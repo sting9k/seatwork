@@ -1,0 +1,150 @@
+import config from "../../shared/mail.json";
+import type { Role } from "../orchestration/seats";
+import type { RoomPolicy } from "../policy";
+import { seatLabel } from "./envelope";
+
+/** Whom a seat may write to, and which seat a word in `to` names. */
+
+export interface SeatRecord {
+  agentId: string;
+  parentAgentId: string | null;
+  role: Role;
+  provider: string;
+  title: string | null;
+  cwd?: string;
+  version?: string;
+}
+
+/** The room's seats and who stands above whom, as the mail engine keeps them. */
+export interface Directory {
+  seat(agentId: string): SeatRecord | undefined;
+  allSeats(): SeatRecord[];
+  parentOf(agentId: string): string | null;
+  isAncestor(ancestor: string, agentId: string): boolean;
+}
+
+export type MailErrorCode =
+  | "NOT_A_SEAT"
+  | "NO_RECIPIENT"
+  | "NO_OWNER"
+  | "UNKNOWN_RECIPIENT"
+  | "AMBIGUOUS_RECIPIENT"
+  | "ROUTE_REFUSED"
+  | "RECIPIENT_GONE"
+  | "UNKNOWN_MAIL"
+  | "NOT_YOUR_MAIL"
+  | "NO_SIGNAL"
+  | "STOP_GOES_DOWN"
+  | "TEAM_ASKS_NOTHING"
+  | "MISSING_FILE"
+  | "KEY_REUSED"
+  | "INVALID_ARGUMENT"
+  | "STORE_UNAVAILABLE";
+
+/** A refusal a seat can act on: what went wrong, and what a right call looks like. */
+export class MailError extends Error {
+  readonly retryable: boolean;
+  constructor(
+    readonly code: MailErrorCode,
+    message: string,
+    readonly fix?: unknown,
+  ) {
+    super(message);
+    this.name = "MailError";
+    this.retryable = code === "STORE_UNAVAILABLE";
+  }
+}
+
+export const refusal = (error: MailError) =>
+  JSON.stringify({
+    error: {
+      code: error.code,
+      message: error.message,
+      retryable: error.retryable,
+      ...(error.fix === undefined ? {} : { fix: error.fix }),
+    },
+  });
+
+const OWNER = new Set<string>(config.owner);
+const TEAM = new Set<string>(config.team);
+const ROLE_TAG = /^(hq|supervisor|lead|peer|lens):/i;
+const bare = (title: string | null) =>
+  (title ?? "")
+    .replace(/^\[[^\]]*\]\s*/, "")
+    .trim()
+    .toLowerCase();
+
+export const namesTeam = (word: string) => TEAM.has(word.trim().toLowerCase());
+
+/** The seats a seat may start a mail to: its Owner, then every seat under it. */
+export function reachable(directory: Directory, from: string): SeatRecord[] {
+  const owner = directory.parentOf(from);
+  const above = owner ? directory.seat(owner) : undefined;
+  return [
+    ...(above ? [above] : []),
+    ...directory.allSeats().filter((seat) => directory.isAncestor(from, seat.agentId)),
+  ];
+}
+
+/** What a refusal shows of the seats one may write to. */
+export function shown(directory: Directory, from: string, seats: readonly SeatRecord[]): string[] {
+  const owner = directory.parentOf(from);
+  return seats.map((seat) =>
+    seat.agentId === owner ? `owner (${seatLabel(seat)})` : `${seat.agentId} (${seatLabel(seat)})`,
+  );
+}
+
+/** The seat a word names for this sender: `owner`, an id, the start of one, or a title. */
+export function resolve(directory: Directory, from: string, word: string, open: (agentId: string) => boolean): string {
+  const name = word.trim().replace(ROLE_TAG, "");
+  if (OWNER.has(name.toLowerCase())) {
+    const owner = directory.parentOf(from);
+    if (!owner)
+      throw new MailError("NO_OWNER", "you have no Owner seat: the Owner reads your final message, no mail is needed");
+    return owner;
+  }
+  if (directory.seat(name)) return name;
+  const near = reachable(directory, from).filter((seat) => open(seat.agentId));
+  const lower = name.toLowerCase();
+  const matches = near.filter(
+    (seat) =>
+      (name.length >= 4 && seat.agentId.startsWith(name)) || (lower.length > 0 && bare(seat.title) === bare(name)),
+  );
+  if (matches.length === 1) return matches[0].agentId;
+  const fix = { to: shown(directory, from, matches.length > 1 ? matches : near) };
+  if (matches.length > 1)
+    throw new MailError("AMBIGUOUS_RECIPIENT", `\`${word}\` names ${matches.length} seats; give more of the id`, fix);
+  throw new MailError("UNKNOWN_RECIPIENT", `\`${word}\` names no seat you can write to`, fix);
+}
+
+/** Two gates: the role route table (`room.routes`), and the tree read over effective parents. */
+export function mayWrite(
+  directory: Directory,
+  routes: RoomPolicy["routes"],
+  from: string,
+  to: string,
+  viaReply = false,
+): { ok: true } | { ok: false; reason: string } {
+  const sender = directory.seat(from);
+  const recipient = directory.seat(to);
+  if (!sender) return { ok: false, reason: `sender ${from} is not a room seat` };
+  if (!recipient) return { ok: false, reason: `recipient ${to} is not a room seat (not in the registry log)` };
+  if (from === to) return { ok: false, reason: "a seat does not mail itself" };
+  const route = `${sender.role}>${recipient.role}`;
+  if (routes[route] !== true) {
+    if (route === "supervisor>hq")
+      return {
+        ok: false,
+        reason:
+          "nothing travels up from a Supervisor: the Owner reads your final message and .seatwork/status.md (WAITING ON YOU rows); write there",
+      };
+    return { ok: false, reason: `route ${route} is off in the room policy (room.routes)` };
+  }
+  if (directory.parentOf(from) === to || directory.parentOf(to) === from) return { ok: true };
+  if (directory.isAncestor(from, to)) return { ok: true };
+  if (viaReply && directory.isAncestor(to, from)) return { ok: true };
+  return {
+    ok: false,
+    reason: `${sender.role} ${from} may write to its parent, to seats it launched, or down its own chain; ${recipient.role} ${to} is none of these${viaReply ? "" : " (to answer a mail from above, pass reply_to: its id)"}`,
+  };
+}

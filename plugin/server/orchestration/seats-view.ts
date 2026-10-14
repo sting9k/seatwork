@@ -12,6 +12,7 @@ export interface SeatRow {
   updatedAt: string | null;
   turnStartedAt: string | null;
   heldMail: number;
+  owes?: { asks: number; oldestAt: string };
   retry: string | null;
   error: string | null;
   contextTokens: number | null;
@@ -51,6 +52,10 @@ export function describeSeats(rows: readonly SeatRow[], rotateAtTokens: number, 
     if (row.lastSignal) parts.push(`last turn ended with ${row.lastSignal}`);
     if (row.rejected > 0) parts.push(`${row.rejected} rejection${row.rejected === 1 ? "" : "s"} since its last ACCEPT`);
     if (row.heldMail > 0) parts.push(`${row.heldMail} mail${row.heldMail === 1 ? "" : "s"} held for it`);
+    if (row.owes)
+      parts.push(
+        `owes ${row.owes.asks === 1 ? "an answer" : `${row.owes.asks} answers`}, the oldest for ${minutesSince(row.owes.oldestAt, now)} min`,
+      );
     return `${"  ".repeat(row.depth)}- ${parts.join(" · ")}`;
   });
   return [`${rows.length} open seat${rows.length === 1 ? "" : "s"} under you, ${atWork} at work.`, ...lines].join("\n");

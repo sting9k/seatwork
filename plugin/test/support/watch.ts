@@ -108,15 +108,7 @@ export const mail = (subject: string, turnId?: string) =>
 
 /** A mail as the room delivers it to a seat. */
 export const letter = (id: string, subject: string, body: string, from = "owner") =>
-  [
-    `SEATWORK MAIL #${id} ACTION from ${from} re: ${subject}`,
-    "why now: owner is waiting for your answer to continue",
-    "needs: reply",
-    "--- body ---",
-    body,
-    "--- how to handle ---",
-    "ACTION — handle it in this turn.",
-  ].join("\n");
+  `<mail id="${id}" from="${from}" subject="${subject}" needs="reply" thread="m${id}">\n${body}\n</mail>`;
 
 export const BRIEF = [
   "Project: /work/echo",

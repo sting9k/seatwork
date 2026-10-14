@@ -14,7 +14,16 @@ import { ROOM_HOME } from "../../paths";
 import { isInside, realOrSelf } from "../registry";
 
 /** The names the room keeps in a project's `.seatwork/`; a name not listed here is not the room's. */
-const ROOM_FILES = new Set(["room.json", "mission.md", "law.md", "status.md", "notebook.md", "plans", "reviews"]);
+const ROOM_FILES = new Set([
+  "room.json",
+  "mission.md",
+  "law.md",
+  "status.md",
+  "notebook.md",
+  "plans",
+  "reviews",
+  ".mail",
+]);
 const isRoomFile = (name: string) => ROOM_FILES.has(name) || name.endsWith("-law.md");
 
 /** What leaving a project took out of its `.seatwork/`, and what else sat there and was left. */

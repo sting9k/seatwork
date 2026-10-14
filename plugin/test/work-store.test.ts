@@ -1,12 +1,15 @@
-import { ROOM_HOME } from "./support/room";
+import { ROOM_HOME, shipSql } from "./support/room";
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { existsSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
 import { join } from "node:path";
 import { test } from "node:test";
 import vocabulary from "../shared/work.json";
 import { DEPENDENCY_TYPES, ISSUE_TYPES, STATUSES, WorkError, WorkStore } from "../server/tasks/store";
+
+shipSql();
 
 const POLICY = { minReasonChars: 20, forbidSelfClose: true };
 const TIMING = { busyTimeoutMs: 5000, flushAfterMs: 60_000 };
@@ -297,4 +300,18 @@ test("a plan is written in one go: all of it or none, with issues naming each ot
     ),
   );
   assert.equal(store.count(), 3);
+});
+
+test("nothing of the store shows in the project's git: its folder keeps itself out", () => {
+  const repo = join(ROOM_HOME, "repo-with-store");
+  mkdirSync(repo, { recursive: true });
+  execFileSync("git", ["init", "-q", repo]);
+  const store = new WorkStore(join(repo, ".seatwork", ".work"), TIMING);
+  store.create({ title: "schema" }, "lead");
+  store.close();
+  assert.ok(existsSync(join(repo, ".seatwork", ".work", "issues.jsonl")));
+  assert.equal(
+    execFileSync("git", ["-C", repo, "status", "--porcelain", "--untracked-files=all"], { encoding: "utf8" }),
+    "",
+  );
 });

@@ -1,10 +1,12 @@
-import { installRoom, MAIL_POLICY } from "./support/room";
+import { installRoom, MAIL_POLICY, shipSql } from "./support/room";
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { chime } from "../client/chime";
 import contribute from "../index.server";
-import { MailEngine } from "../server/mail";
+import { MailEngine } from "../server/coordination/engine";
 import { fakeServer } from "./support/server";
+
+shipSql();
 
 test("mail that was held when the daemon stopped moves once the app is open, before any agent runs", async () => {
   installRoom(["claude-lead"]);
@@ -19,7 +21,6 @@ test("mail that was held when the daemon stopped moves once the app is open, bef
     subject: "ANSWER: seconds",
     body: "ANSWER\nseconds",
     needs: "nothing",
-    whyNow: "test",
   });
 
   // after it every seat is closed and no hook has fired: the app's question reaches the plugin first
@@ -47,7 +48,7 @@ test("mail that was held when the daemon stopped moves once the app is open, bef
   }
 
   assert.equal(inbox.length, 1);
-  assert.ok(inbox[0].includes(`#${held.id}`));
+  assert.ok(inbox[0].includes(`<mail id="${held.id}"`));
   assert.equal(
     listed,
     0,

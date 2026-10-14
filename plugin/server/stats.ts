@@ -8,8 +8,6 @@ import { COUNTED } from "./signals";
 
 /** Better-Seatwork input: what the mail log says happened, counted per project and per signal. */
 
-const MAIL_LOG = join(ROOM_HOME, "mail", "log.jsonl");
-
 interface LogLine {
   at: string;
   kind: string;
@@ -96,7 +94,7 @@ export function costLines(since: number, file: string = USAGE_LOG): string[] {
 }
 
 /** Signals mailed in the last `asked` days per project, then what the seats used. */
-export function roomStats(asked: number): string {
+export function roomStats(asked: number, posted: (since: string) => readonly LogLine[]): string {
   const days = Math.min(Math.max(1, asked), KEEP_LOG_DAYS);
   const since = Date.now() - days * 86_400_000;
   const cost = costLines(since);
@@ -104,7 +102,7 @@ export function roomStats(asked: number): string {
   const cwdOf = new Map<string, string>();
   for (const rec of readJsonl<{ agentId: string; cwd?: string }>(REGISTRY_LOG))
     if (rec.cwd) cwdOf.set(rec.agentId, rec.cwd);
-  const lines = readJsonl<LogLine>(MAIL_LOG).filter((l) => l.kind === "queued" && Date.parse(l.at) >= since);
+  const lines = posted(new Date(since).toISOString());
   if (lines.length === 0) return [`no mail in the last ${days} days`, ...used].join("\n");
 
   // a mail between hq and a project counts for the project, whichever side wrote it

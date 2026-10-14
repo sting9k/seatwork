@@ -22,10 +22,15 @@ test("a handoff is read by its headings, whatever marks the seat put on them; wi
 });
 
 test("the brief in force is the latest prompt written from the template; a seat that got none keeps its first prompt", () => {
-  const revised = `SEATWORK MAIL #a1 BLOCKING from owner re: REVISED BRIEF\n--- body ---\n${BRIEF.replace("Outcome:", "Outcome: (revised)")}`;
+  const revised = `<mail id="2" from="owner" subject="REVISED BRIEF" needs="nothing" thread="m1">\n${BRIEF.replace("Outcome:", "Outcome: (revised)")}\n</mail>`;
   assert.equal(
     briefInForce(
-      [BRIEF, "SEATWORK MAIL #a0 FYI from owner re: NOTED\n--- body ---\nfine", revised, "a later note"],
+      [
+        BRIEF,
+        '<mail id="1" from="owner" subject="NOTED" needs="nothing" thread="m1">\nfine\n</mail>',
+        revised,
+        "a later note",
+      ],
       PROJECT,
     ),
     revised,

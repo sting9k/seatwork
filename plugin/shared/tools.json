@@ -1,19 +1,25 @@
 {
-  "$comment": "The room's MCP tools, written once: the plugin serves them and the evals' stand-in shows the same text. Placeholders: {{signals}} (signals.json), {{keep_log_days}} (settings.json), {{rotate_k}} (policy room.params.rotateAtTokens). callers: \"any\" seat, \"spawners\" (roles the policy's spawn table lets create seats) or the roles listed; the plugin refuses the rest. Every seat is listed every tool, so a description names no role above a project.",
+  "$comment": "The room's MCP tools, written once: the plugin serves them and the evals' stand-in shows the same text. Placeholders: {{signals}} (signals.json), {{keep_log_days}} (settings.json), {{rotate_k}} and {{mail_chars}} (policy room.params). callers: \"any\" seat, \"spawners\" (roles the policy's spawn table lets create seats) or the roles listed; the plugin refuses the rest. Every seat is listed every tool, so a description names no role above a project.",
   "tools": {
     "seatwork_mail": {
       "callers": "any",
-      "description": "Mail another seat of your room; it is delivered between the recipient's turns. Answer a mail with `reply_to` and no `to`. Start a thread with `to`. A CANDIDATE, REVIEW or DONE to your owner is your turn's report: it is delivered when your turn ends, and your final message is not mailed again. `STOP`, to a seat you launched or one below it, ends its running turn and every running turn under it at once, and each reads your text next; use it when the work must not go on. Mail to an archived seat is refused.",
+      "description": "Mail seats of your room; it is delivered between a recipient's turns and kept in the project's mail store. Answer a mail with `reply_to`. Start a thread with `to`; a seat with no seat under it may leave `to` out and writes to its owner. A body past {{mail_chars}} characters is shown cut, with the path of the file that holds all of it. A CANDIDATE, REVIEW or DONE to your owner is your turn's report: it is delivered when your turn ends, and your final message is not mailed again. `STOP`, to one seat you launched or one below it, ends its running turn and every running turn under it at once, and each reads your text next; use it when the work must not go on. The answer is JSON; a refusal is {\"error\": {code, message, retryable, fix}}.",
       "inputSchema": {
         "type": "object",
         "properties": {
           "to": {
-            "type": "string",
-            "description": "New thread: `owner` (the seat that launched you) or the id of a seat you launched. Omit with reply_to."
+            "type": ["string", "array"],
+            "items": {"type": "string"},
+            "description": "`owner`, a seat you launched (its id, the start of its id, or its title), several of them, or `team`: every open seat under you, which reads it with its next mail. Omit with reply_to."
+          },
+          "cc": {
+            "type": "array",
+            "items": {"type": "string"},
+            "description": "Seats that get a copy to read; it starts no turn of theirs."
           },
           "reply_to": {
-            "type": "string",
-            "description": "The #id in the header of the mail you answer; the answer goes to its sender."
+            "type": ["string", "integer"],
+            "description": "The id of the mail you answer; the answer goes to its sender and joins its thread."
           },
           "subject": {
             "type": "string",
@@ -21,39 +27,46 @@
           },
           "body": {
             "type": "string",
-            "description": "Self-contained: the recipient may read it hours later. Long text (a log, a full review) goes into a file the body names."
+            "description": "Self-contained: the recipient may read it hours later."
           },
           "needs": {
             "type": "string",
-            "enum": [
-              "reply",
-              "decision",
-              "nothing"
-            ],
-            "description": "What you need back."
+            "enum": ["reply", "decision", "nothing"],
+            "description": "What you need back; `decision` says you are stopped until it comes."
           },
-          "priority": {
+          "thread": {
             "type": "string",
-            "enum": [
-              "blocking",
-              "action",
-              "fyi"
-            ],
-            "description": "Suggested; the plugin may raise or lower it."
+            "description": "The work-store issue this mail is about; a reply keeps the thread of the mail it answers."
+          },
+          "files": {
+            "type": "array",
+            "items": {"type": "string"},
+            "description": "Paths the mail points at; each must exist."
+          },
+          "key": {
+            "type": "string",
+            "description": "Your own name for this mail: sent again with the same key and text, it stays one mail."
           }
         },
-        "required": [
-          "subject",
-          "body"
-        ]
+        "required": ["subject", "body"]
       }
     },
     "seatwork_inbox": {
       "callers": "any",
-      "description": "Returns and clears the mail held for you: what arrived while you were busy, and what starts no turn of its own (the newest progress report of a seat you launched, acknowledgements).",
+      "description": "Your mailbox. With nothing given: the mail held for you (what arrived while you were busy, and what starts no turn of its own), marked read. `id`: one mail whole. `thread`: a thread's mails, a line each. `view`: all you received, what you sent and how each delivery stands, what is owed (asks waiting for your answer, and yours waiting for one), or a search with `q`. You read your own mail and that of the seats under you.",
       "inputSchema": {
         "type": "object",
-        "properties": {},
+        "properties": {
+          "view": {"type": "string", "enum": ["new", "all", "sent", "owed", "thread", "search"]},
+          "id": {"type": ["string", "integer"], "description": "One mail, with its whole body."},
+          "thread": {"type": "string", "description": "An issue id, or the thread a mail names."},
+          "q": {"type": "string", "description": "search: the words to look for."},
+          "signal": {"type": "string", "description": "all, search: only mail whose subject opens with this signal."},
+          "since": {"type": "string", "description": "all, sent, search: only mail after this ISO time."},
+          "limit": {"type": "integer", "description": "20 by default, 200 at most."},
+          "bodies": {"type": "boolean", "description": "thread: the mails whole, not a line each."},
+          "peek": {"type": "boolean", "description": "new: leave the mail unread."}
+        },
         "required": []
       }
     },

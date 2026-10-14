@@ -7,6 +7,8 @@ export const ROOM_HOME = process.env.SEATWORK_ROOM_HOME?.trim() || join(USER_HOM
 
 /** The room files copied here when the room is set up: models.json, roles/, specs/, harness/, skills/. */
 export const ROOM_DIR = join(ROOM_HOME, "room");
+/** The layout scripts of the room's SQLite stores, a folder per store. */
+export const SQL_DIR = join(ROOM_DIR, "sql");
 
 /** Isolated runtimes, one per harness and role: runtimes/<harness>/<role>. */
 export const RUNTIMES_DIR = join(ROOM_HOME, "runtimes");

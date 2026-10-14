@@ -13,7 +13,7 @@ import {
 import { basename, dirname, isAbsolute, join } from "node:path";
 import type { PaseoApi } from "./paseo";
 import { paseoCli as cli } from "./cli";
-import { waitsOnSomeone, type MailEngine } from "./mail";
+import { waitsOnSomeone, type MailEngine } from "./coordination/engine";
 import { PASEO_SCHEDULES, ROOM_HOME, RUNTIMES_DIR, SEAT_TMP_DIR } from "./paths";
 import type { GcPolicy, RuntimeLeftovers } from "./policy";
 import { KEEP_REMOVED_DAYS } from "./orchestration/setup/room-home";
@@ -97,9 +97,10 @@ export class Collector {
     private readonly policy: GcPolicy,
     private readonly log: (message: string) => void,
     private readonly forgetAgent: (agentId: string) => void,
+    private readonly keepMailDays: number = KEEP_LOG_DAYS,
   ) {}
 
-  /** One full pass: idle seats, then orphan heartbeats. Safe to call often. */
+  /** One full pass: idle seats, orphan heartbeats, seat leftovers, finished mail. */
   async run(): Promise<void> {
     if (this.running) return;
     this.running = true;
@@ -110,6 +111,10 @@ export class Collector {
       for (const dir of dropSeatTmp(SEAT_TMP_DIR, [...live.keys()])) this.log(`gc: deleted ${dir}, a closed seat's`);
       const open = new Set([...live.values()].flatMap((agent) => agent.provider ?? []));
       for (const line of sweepRuntimes(RUNTIMES_DIR, open, this.policy.runtimes ?? {})) this.log(`gc: ${line}`);
+      const cutoff = new Date(Date.now() - this.keepMailDays * 86_400_000).toISOString();
+      const mails = this.engine.prune(cutoff, isVerdict);
+      if (mails > 0)
+        this.log(`gc: ${mails} mails finished more than ${this.keepMailDays} days ago left the mail stores`);
     } catch (error) {
       this.log(`gc: pass failed: ${error instanceof Error ? error.message : String(error)}`);
     } finally {
@@ -176,13 +181,12 @@ export class Collector {
       if (this.policy.tellParent && parent && live.has(parent) && this.engine.seat(parent)?.role !== "hq") {
         await this.engine.post({
           from: { agentId: "room", role: "system" },
-          fromLabel: "room",
           to: parent,
           priority: "fyi",
           subject: `GC: archived ${seat.role} ${seat.title ?? seat.agentId} after ${idleHours}h idle`,
           body: `The room archived ${seat.role} ${seat.agentId} ("${seat.title ?? ""}"): idle for ${idleHours} hours with nothing alive below it. Nothing was waiting on it. If its work still matters, launch a new seat with the brief and what was tried.`,
           needs: "nothing",
-          whyNow: "a seat you launched was archived for inactivity",
+          why: "a seat you launched was archived for inactivity",
         });
       }
     }

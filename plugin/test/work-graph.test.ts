@@ -1,9 +1,11 @@
-import { ROOM_HOME } from "./support/room";
+import { ROOM_HOME, shipSql } from "./support/room";
 import assert from "node:assert/strict";
 import { join } from "node:path";
 import { test } from "node:test";
 import { alerts, blockerChain, next, plan, triage } from "../server/tasks/graph";
 import { WorkStore } from "../server/tasks/store";
+
+shipSql();
 
 let stores = 0;
 const NOW = new Date("2026-10-14T12:00:00Z");

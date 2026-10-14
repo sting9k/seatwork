@@ -324,12 +324,14 @@ function turnEnds(who: TestSeat, finalMessage: string, outcome: object = { kind:
 /** A writing Peer's hand-in as its Lead gets it: when the room returns it for a pass with fresh eyes, the Peer hands in again. */
 async function handsIn(who: TestSeat, message: string) {
   await turnEnds(who, message);
-  if (!/re: HAND-IN RETURNED/.test(who.inbox.at(-1) ?? "")) return;
+  if (!/subject="HAND-IN RETURNED/.test(who.inbox.at(-1) ?? "")) return;
   who.inbox.pop();
   await turnEnds(who, message);
 }
 
-const mailId = (envelope: string) => /SEATWORK MAIL #(\S+)/.exec(envelope)![1];
+const mailId = (envelope: string) => /<mail id="(\d+)"/.exec(envelope)![1];
+/** How many mails one prompt brought. */
+const mails = (prompt: string | undefined) => prompt?.match(/^<mail /gm)?.length ?? 0;
 
 test("a Peer's own REVIEW mail reaches its Lead once, and only when the Peer's turn has ended", async () => {
   const lead = await seat("lead-report", "claude-lead", null, "[Lead] stream");
@@ -345,8 +347,8 @@ test("a Peer's own REVIEW mail reaches its Lead once, and only when the Peer's t
 
   await turnEnds(peer, "REVIEW\nVerdict: ACCEPTABLE\nRECAP: reviewed abc123 → acceptable");
   assert.equal(lead.inbox.length, 1);
-  assert.match(lead.inbox[0], /re: REVIEW: abc123 PASS/);
-  assert.doesNotMatch(lead.inbox[0], /DIGEST/, "the Lead got the same report twice");
+  assert.match(lead.inbox[0], /subject="REVIEW: abc123 PASS/);
+  assert.equal(mails(lead.inbox[0]), 1, "the Lead got the same report twice");
 });
 
 test("a report a seat mailed itself still reaches its Owner when the turn is cut short", async () => {
@@ -357,7 +359,7 @@ test("a report a seat mailed itself still reaches its Owner when the turn is cut
   await turnEnds(peer, "", { kind: "canceled", reason: "archived" });
 
   assert.equal(lead.inbox.length, 1);
-  assert.match(lead.inbox[0], /re: CANDIDATE: hours unit/);
+  assert.match(lead.inbox[0], /subject="CANDIDATE: hours unit/);
 });
 
 test("a seat that mailed its signal to its Owner is not reported a second time when its turn ends", async () => {
@@ -430,9 +432,9 @@ test("what the watcher saw in a Peer's turn reaches its Lead in the same prompt 
   assert.equal(lead.inbox.length, 1, "the notice and the report each started a turn of the Lead");
   assert.match(
     lead.inbox[0],
-    /from room re: OBSERVATION: peer \[Peer\] hours changed src\/billing\.js; its write scope is src\/duration\.js, test\/\*\*/,
+    /from="room" subject="OBSERVATION: peer \[Peer\] hours changed src\/billing\.js; its write scope is src\/duration\.js, test\/\*\*/,
   );
-  assert.match(lead.inbox[0], /re: CANDIDATE from peer/);
+  assert.match(lead.inbox[0], /subject="CANDIDATE from peer/);
 });
 
 test("a notice about a turn that sends no report of its own still reaches the Lead", async () => {
@@ -458,7 +460,7 @@ test("a Lead is told at once when the Peer it created starts on a brief that lac
   assert.equal(lead.inbox.length, 1);
   assert.match(
     lead.inbox[0],
-    /from room re: OBSERVATION: peer \[Peer\] hours was briefed without these template lines: Reply with seatwork_mail to: owner/,
+    /from="room" subject="OBSERVATION: peer \[Peer\] hours was briefed without these template lines: Reply with seatwork_mail to: owner/,
   );
   assert.match(lead.inbox[0], /REVISED BRIEF/);
 });
@@ -486,7 +488,7 @@ test("a DONE repeated after a mail that asked nothing does not start the Owner's
     "DECISION_NEEDED\na caller outside the repository depends on the old behavior\nRECAP: found a caller → decision needed",
   );
   assert.equal(supervisor.inbox.length, 2);
-  assert.match(supervisor.inbox[1], /DIGEST — 2 messages/);
+  assert.equal(mails(supervisor.inbox[1]), 2);
 });
 
 test("a Peer's ACK does not start its Lead's turn; the Lead reads it with its next mail", async () => {
@@ -509,8 +511,8 @@ test("a Peer's ACK does not start its Lead's turn; the Lead reads it with its ne
 
   await turnEnds(peer, "BLOCKED\nthe tree changed under me\nRECAP: saw foreign edits → stopped");
   assert.equal(lead.inbox.length, 2);
-  assert.match(lead.inbox[1], /DIGEST — 2 messages/);
-  assert.match(lead.inbox[1], /re: ACK/);
+  assert.equal(mails(lead.inbox[1]), 2);
+  assert.match(lead.inbox[1], /subject="ACK/);
 });
 
 test("a Lead's first STATUS starts its Supervisor's turn; a later one waits, and a report that asks something takes its place", async () => {
@@ -529,7 +531,7 @@ test("a Lead's first STATUS starts its Supervisor's turn; a later one waits, and
     "DECISION_NEEDED\ncallers may run at the same time; the brief does not say\nRECAP: found a gap → decision needed",
   );
   assert.equal(supervisor.inbox.length, 2);
-  assert.match(supervisor.inbox[1], /re: DECISION_NEEDED from lead/);
+  assert.match(supervisor.inbox[1], /subject="DECISION_NEEDED from lead/);
   assert.doesNotMatch(
     supervisor.inbox[1],
     /lens reported|lenses reported/,
@@ -573,8 +575,8 @@ test("a HOLD that asks nothing of a Peer whose candidate is under review waits f
     needs: "reply",
   });
   assert.equal(waiting.inbox.length, 1);
-  assert.match(waiting.inbox[0], /DIGEST — 2 messages/);
-  assert.match(waiting.inbox[0], /re: HOLD abc123/);
+  assert.equal(mails(waiting.inbox[0]), 2);
+  assert.match(waiting.inbox[0], /subject="HOLD abc123/);
 
   await turnEnds(
     stopped,
@@ -587,7 +589,7 @@ test("a HOLD that asks nothing of a Peer whose candidate is under review waits f
     needs: "nothing",
   });
   assert.equal(stopped.inbox.length, 1, "a Peer stopped on its challenge did not get the answer");
-  assert.match(stopped.inbox[0], /BLOCKING from owner re: HOLD: candidate stands/);
+  assert.match(stopped.inbox[0], /from="owner" subject="HOLD: candidate stands/);
 });
 
 test("mail to a seat that is archived, or that the daemon no longer has, is refused and nothing is sent", async () => {
@@ -598,7 +600,7 @@ test("mail to a seat that is archived, or that the daemon no longer has, is refu
 
     await assert.rejects(
       lead.mail({ to: peer.agent.id, subject: "ANSWER: seconds", body: "ANSWER\nseconds", needs: "reply" }),
-      /refused: peer-\S+ is archived or gone; nothing was sent/,
+      /"code":"RECIPIENT_GONE","message":"peer-\S+ is archived or gone; nothing was sent"/,
       state,
     );
     assert.deepEqual(lead.inbox, [], `${state}: the mail was taken, then came back as undeliverable`);
@@ -642,7 +644,7 @@ test("a seat is handed over when its owner is gone or the new owner is in its ch
       needs: "decision",
     });
     assert.equal(successor.inbox.length, 1, name);
-    assert.match(successor.inbox[0], /re: QUESTION: which unit/, name);
+    assert.match(successor.inbox[0], /subject="QUESTION: which unit/, name);
     assert.deepEqual(old.inbox, [], name);
   }
 });
@@ -790,7 +792,7 @@ test("a project seat is told which of its own skills the project law names", () 
   assert.doesNotMatch(projectBlock("demo", PROJECT, null, "- Review lane: one lens", ["lens"]), /Skills of your seat/);
 });
 
-test("a mail whose subject opens with no signal of the room, or whose body is too long for a mail, is not sent", async () => {
+test("a mail whose subject opens with no signal of the room is not sent; one too long to show whole is cut where its file takes over", async () => {
   const lead = await seat("lead-form", "claude-lead", null, "[Lead] stream");
   const peer = await seat("peer-form", "claude-peer", lead.agent.id, "[Peer] task");
   await assert.rejects(
@@ -800,13 +802,11 @@ test("a mail whose subject opens with no signal of the room, or whose body is to
       body: "Run them last.",
       needs: "nothing",
     }),
-    /the subject opens with none of the room's signals \(CANDIDATE, .*a change to what a seat must do is a REVISED BRIEF/,
-  );
-  await assert.rejects(
-    peer.mail({ to: "owner", subject: "QUESTION: which unit", body: "x".repeat(6001), needs: "reply" }),
-    /the body is 6001 characters and a mail takes 6000\. Put the long part in a file/,
+    /"code":"NO_SIGNAL".*a change to what a seat must do is a REVISED BRIEF.*"subject_opens_with":\["CANDIDATE",/,
   );
   assert.deepEqual([lead.inbox.length, peer.inbox.length], [0, 0]);
+  await peer.mail({ subject: "QUESTION: which unit", body: "x".repeat(6001), needs: "reply" });
+  assert.match(lead.inbox[0], /x{6000}\n\[cut at 6000 of 6001 characters; the whole mail is in \S+\.md\]\n<\/mail>$/);
   await lead.mail({
     to: peer.agent.id,
     subject: "revised brief: run them last",
@@ -852,7 +852,7 @@ test("a task's rounds are counted by what happened: a revised brief that answers
   assert.match(lead.inbox.at(-1)!, /\[room\] Candidate 3 of this task: 2 rejections .* your Owner's call/);
   assert.match(
     await sendsBack("REVISED BRIEF (abc3 not accepted) round 4"),
-    /^sent #\S+ to peer .*This is rejection 3 of this Peer's task since its last ACCEPT: .*accept-candidate, step 5.*DECISION_NEEDED/,
+    /^\{"sent":\d+,"to":\["peer peer-rounds"\].*"note":"This is rejection 3 of this Peer's task since its last ACCEPT: .*accept-candidate, step 5.*DECISION_NEEDED/,
   );
   // an ACCEPT closes the task: the next one starts at no rejection
   await handsIn(peer, "CANDIDATE abc4\nfourth try");
@@ -906,32 +906,30 @@ test("a STOP from above ends the running turn of its seat and of every seat at w
     body: "Commit nothing more. Reply with the state of each task.",
     needs: "reply",
   });
-  assert.match(
-    answer,
-    /as a stop order; its running turn was ended .* Ended with it: the turns of peer \[Peer\] store\.$/,
-  );
+  assert.match(answer, /"state":"its running turn was ended".*"ended_with_it":\["peer \[Peer\] store"\]\}$/);
   assert.deepEqual(how[lead.agent.id], ["interrupt"]);
-  assert.match(lead.inbox[0], /BLOCKING from owner re: STOP: the Owner ended the run/);
+  assert.match(lead.inbox[0], /from="owner" subject="STOP: the Owner ended the run/);
   assert.deepEqual(how[writer.agent.id], ["interrupt"]);
   assert.match(
     writer.inbox[0],
-    /from room re: STOP: the work above you was stopped[\s\S]*"STOP: the Owner ended the run"/,
+    /from="room" subject="STOP: the work above you was stopped[\s\S]*"STOP: the Owner ended the run"/,
   );
   assert.equal(resting.inbox.length, 0);
 
   await assert.rejects(
     writer.mail({ to: "owner", subject: "STOP: this plan is wrong", body: "See the trace.", needs: "decision" }),
-    /STOP goes down, .* Nothing was sent\./,
+    /"code":"STOP_GOES_DOWN"/,
   );
 });
 
-test("seatwork_seats shows an orchestrating seat every open seat under it: its state, its context, its cost, its last signal and its rounds", async () => {
+test("seatwork_seats shows an orchestrating seat every open seat under it: its state, its context, its cost, its last signal, its rounds and what it owes", async () => {
   const lead = await seat("lead-view", "claude-lead", null, "[Lead] stream");
   const writer = await seat("peer-view-a", "claude-peer", lead.agent.id, "[Peer] store");
   const scout = await seat("peer-view-b", "claude-peer", lead.agent.id, "[Peer] scout-01");
   const gone = await seat("peer-view-c", "claude-peer", lead.agent.id, "[Peer] bench");
   await handsIn(writer, "CANDIDATE abc1\nfirst try");
   await lead.mail({ to: writer.agent.id, subject: "REJECT abc1: two repairs", body: "Repair.", needs: "nothing" });
+  await lead.mail({ to: writer.agent.id, subject: "QUESTION: which fixture?", body: "Name it.", needs: "reply" });
   Object.assign(agents[writer.agent.id], {
     current: () => ({ status: "running", lastUsage: { contextWindowUsedTokens: 267_241, totalCostUsd: 6.133 } }),
   });
@@ -943,7 +941,7 @@ test("seatwork_seats shows an orchestrating seat every open seat under it: its s
   assert.equal(head, "2 open seats under you, 1 at work.");
   assert.equal(
     lines[0],
-    "- peer [Peer] store · peer-view-a · at work · context 267K tokens, past the rotation line: its next task goes to a fresh seat · $6.13 · last turn ended with CANDIDATE · 1 rejection since its last ACCEPT",
+    "- peer [Peer] store · peer-view-a · at work · context 267K tokens, past the rotation line: its next task goes to a fresh seat · $6.13 · last turn ended with CANDIDATE · 1 rejection since its last ACCEPT · owes an answer, the oldest for 0 min",
   );
   assert.equal(lines[1], "- peer [Peer] scout-01 · peer-view-b · waiting for a permission");
   assert.equal(lines.length, 2);
@@ -961,14 +959,14 @@ test("the reviewers a Lead launched in one turn report together: the Lead is wok
   assert.equal(lead.inbox.length, 0);
   await turnEnds(scout, "REVIEW\ntwo findings");
   assert.equal(lead.inbox.length, 1);
-  assert.match(lead.inbox[0], /^SEATWORK MAIL DIGEST — 3 messages/);
+  assert.equal(mails(lead.inbox[0]), 3);
   assert.match(
     lead.inbox[0],
-    /re: REVIEW from lens [^\n]*\nwhy now: [^\n]*; held for the 2 others of its review round\n/,
+    /subject="REVIEW from lens [^"]*"[^>]*note="[^"]*; held for the 2 others of its review round">\n/,
   );
   assert.match(
     lead.inbox[0],
-    /re: REVIEW from peer \[Peer\] scout-01 closure\nwhy now: the seat ended its turn with REVIEW\n/,
+    /subject="REVIEW from peer \[Peer\] scout-01 closure"[^>]*note="the seat ended its turn with REVIEW">\n/,
   );
 
   // a writer is no reviewer: its candidate waits for nobody
@@ -984,7 +982,7 @@ test("a reviewer archived before its report holds its round back no longer", asy
   assert.equal(lead.inbox.length, 0);
   await call("on agent.archived", { agent: second.agent, archivedAt: new Date().toISOString() }, context);
   assert.equal(lead.inbox.length, 1);
-  assert.match(lead.inbox[0], /re: REVIEW from lens \[Lens\] abc1: correctness/);
+  assert.match(lead.inbox[0], /subject="REVIEW from lens \[Lens\] abc1: correctness/);
 });
 
 test("a turn that fails on the model service is not reported: the room resumes the seat, and tells the Owner when its tries are used or the account is refused", async () => {
@@ -1006,7 +1004,7 @@ test("a turn that fails on the model service is not reported: the room resumes t
   assert.equal(lead.inbox.length, 1);
   assert.match(
     lead.inbox[0],
-    /BLOCKING from peer:peer-recover re: FAILED: socket hang up\nwhy now: the seat's turn failed, and again after the room's 3 tries; its work is stopped\n/,
+    /from="peer peer-rec[^"]*" subject="FAILED: socket hang up"[^>]*note="the seat's turn failed, and again after the room's 3 tries; its work is stopped">\n/,
   );
 
   // a quota is waited out; an account the service refuses is the Owner's at once
@@ -1018,7 +1016,10 @@ test("a turn that fails on the model service is not reported: the room resumes t
   );
   await fails(other, "Invalid API key");
   assert.equal(lead.inbox.length, 2);
-  assert.match(lead.inbox[1], /re: FAILED: Invalid API key\nwhy now: the seat's turn failed; its work is stopped\n/);
+  assert.match(
+    lead.inbox[1],
+    /subject="FAILED: Invalid API key"[^>]*note="the seat's turn failed; its work is stopped">\n/,
+  );
 });
 
 test("seatwork_rotate replaces a seat with a fresh one: its handoff and brief start the successor, its seats and task go over, it is archived", async () => {
@@ -1052,7 +1053,7 @@ test("seatwork_rotate replaces a seat with a fresh one: its handoff and brief st
     await supervisor.call("seatwork_rotate", { agent_id: lead.agent.id, why: "346K tokens of context" }),
     /^asked lead lead-rot for its handoff\. When it answers, the room starts its successor/,
   );
-  assert.match(lead.inbox[0], /from room re: HANDOFF: [\s\S]*\(346K tokens of context\)[\s\S]*\nBLOCKERS: /);
+  assert.match(lead.inbox[0], /from="room" subject="HANDOFF: [\s\S]*\(346K tokens of context\)[\s\S]*\nBLOCKERS: /);
 
   await turnEnds(
     lead,
@@ -1080,7 +1081,7 @@ test("seatwork_rotate replaces a seat with a fresh one: its handoff and brief st
   // what was the old seat's is the successor's
   assert.match(peer.inbox[0], /OWNER CHANGED: your Owner continues in a fresh seat/);
   await peer.mail({ to: "owner", subject: "QUESTION: which unit", body: "seconds or minutes?", needs: "decision" });
-  assert.match(successor!.inbox.at(-1)!, /re: QUESTION: which unit/);
+  assert.match(successor!.inbox.at(-1)!, /subject="QUESTION: which unit/);
 });
 
 test("a seat that answers a handoff request with no handoff stays as it is, and whoever asked is told", async () => {
@@ -1099,9 +1100,9 @@ test("a seat that answers a handoff request with no handoff stays as it is, and 
   assert.equal(supervisor.inbox.length, 2);
   assert.match(
     supervisor.inbox[0],
-    /re: ROTATION FAILED: lead \[Lead\] stream stays as it is[\s\S]*its reply was no handoff/,
+    /subject="ROTATION FAILED: lead \[Lead\] stream stays as it is[\s\S]*its reply was no handoff/,
   );
-  assert.match(supervisor.inbox[1], /re: STATUS: lead \[Lead\] stream/);
+  assert.match(supervisor.inbox[1], /subject="STATUS: lead \[Lead\] stream/);
 });
 
 test("a writing Peer's candidate goes back to it once for a pass with fresh eyes; the next hand-in goes up, and each repair owes the pass again", async () => {
@@ -1113,11 +1114,11 @@ test("a writing Peer's candidate goes back to it once for a pass with fresh eyes
   assert.equal(lead.inbox.length, 0);
   assert.match(
     peer.inbox[0],
-    /from room re: HAND-IN RETURNED: [\s\S]*needs: reply[\s\S]*a check made weaker than it was[\s\S]*`Fresh eyes: /,
+    /from="room" subject="HAND-IN RETURNED: [^>]*needs="reply"[\s\S]*a check made weaker than it was[\s\S]*`Fresh eyes: /,
   );
   await turnEnds(peer, "CANDIDATE abc2\nFresh eyes: one off-by-one in the index, fixed");
   assert.equal(lead.inbox.length, 1);
-  assert.match(lead.inbox[0], /re: CANDIDATE from peer[\s\S]*Fresh eyes: one off-by-one/);
+  assert.match(lead.inbox[0], /subject="CANDIDATE from peer[\s\S]*Fresh eyes: one off-by-one/);
   assert.equal(peer.inbox.length, 1);
 
   // a rejection makes the repair a new candidate
@@ -1222,4 +1223,69 @@ test("the tools a seat is listed are the ones shared/tools.json defines, and a t
     const refused = /your seat does not keep the project registry/.test(refusal);
     assert.equal(refused, Array.isArray(callers) && !callers.includes("peer"), name);
   }
+});
+
+test("the mail tool finds its recipient by itself, by the start of an id, by a title, or as the team; a wrong name is answered with the right ones", async () => {
+  const lead = await seat("lead-address", "claude-lead", null, "[Lead] billing");
+  const peer = await seat("peer-address-one", "claude-peer", lead.agent.id, "[Peer] hours unit");
+  const other = await seat("peer-address-two", "claude-peer", lead.agent.id, "[Peer] days unit");
+  const note = { subject: "INSTRUCTION: start", body: "Go.", needs: "nothing" };
+
+  // a seat with no seat under it has one place to write to
+  assert.match(
+    await peer.mail({ subject: "QUESTION: which unit", body: "Seconds or minutes?", needs: "decision" }),
+    /^\{"sent":\d+,"to":\["owner"\],"thread":"m\d+","state":"delivered"\}$/,
+  );
+  assert.match(lead.inbox[0], /from="peer peer-add: hours unit" subject="QUESTION: which unit" needs="decision"/);
+  await assert.rejects(
+    lead.mail(note),
+    /"code":"NO_RECIPIENT".*"fix":\{"to":\["peer-address-one \(peer peer-add: hours unit\)","peer-address-two \(peer peer-add: days unit\)"\]\}/,
+  );
+  await lead.mail({ ...note, to: "days unit" });
+  await lead.mail({ ...note, to: "peer-address-o", subject: "INSTRUCTION: start too" });
+  assert.deepEqual([peer.inbox.length, other.inbox.length], [1, 1]);
+  await assert.rejects(lead.mail({ ...note, to: "peer-address" }), /"code":"AMBIGUOUS_RECIPIENT".*names 2 seats/);
+  await assert.rejects(
+    lead.mail({ ...note, to: "nobody" }),
+    /"code":"UNKNOWN_RECIPIENT".*"fix":\{"to":\["peer-address-one /,
+  );
+
+  // the team is told once, and no turn starts for it
+  assert.match(
+    await lead.mail({
+      to: "team",
+      subject: "FYI: main moved",
+      body: "Rebase before your next commit.",
+      needs: "nothing",
+    }),
+    /"to":\["peer peer-address-one","peer peer-address-two"\],"thread":"m\d+","state":"read with the recipient's next mail"/,
+  );
+  assert.deepEqual([peer.inbox.length, other.inbox.length], [1, 1]);
+  assert.match(await other.held(), /subject="FYI: main moved" needs="nothing" thread="m\d+" as="team">\nRebase before/);
+  await assert.rejects(
+    lead.mail({ to: "team", subject: "QUESTION: who is free?", body: "Say so.", needs: "reply" }),
+    /"code":"TEAM_ASKS_NOTHING"/,
+  );
+
+  // an answer joins the thread of its ask and settles it; the same text again is the same mail
+  const ask = mailId(lead.inbox[0]);
+  assert.match(await lead.call("seatwork_inbox", { view: "owed" }), new RegExp(`^you owe: #${ask} `));
+  const answer = { reply_to: `#${ask}`, subject: "ANSWER: seconds", body: "Seconds.", needs: "nothing" };
+  const sent = JSON.parse(await lead.mail(answer)) as { sent: number; thread: string };
+  assert.equal(sent.thread, `m${ask}`);
+  assert.deepEqual(JSON.parse(await lead.mail(answer)), {
+    sent: sent.sent,
+    thread: sent.thread,
+    replayed: true,
+    state: "delivered",
+  });
+  assert.equal(await lead.call("seatwork_inbox", { view: "owed" }), "nothing is owed");
+  assert.match(
+    await peer.call("seatwork_inbox", { thread: sent.thread }),
+    new RegExp(
+      `^#${ask} [^\\n]* QUESTION: which unit · needs decision, answered by #${sent.sent} [^\\n]*\\n#${sent.sent} [^\\n]* owner · ANSWER: seconds `,
+    ),
+  );
+  assert.match(await peer.call("seatwork_inbox", { q: "seconds", signal: "ANSWER" }), new RegExp(`^#${sent.sent} `));
+  await assert.rejects(peer.call("seatwork_inbox", { view: "everything" }), /"code":"INVALID_ARGUMENT"/);
 });

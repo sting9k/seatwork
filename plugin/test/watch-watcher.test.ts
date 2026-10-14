@@ -277,7 +277,7 @@ test("a turn whose end is read after the seat's next turn began is judged on its
     edit(src("src/other.js")),
     bash("npm test"),
     say("CANDIDATE: hours added"),
-    prompt("SEATWORK MAIL #3 ACTION from owner re: ANSWER: hours", "turn-2"),
+    prompt(letter("3", "ANSWER: hours", "hours"), "turn-2"),
     bash("git reset --hard origin/main", {}, "turn-2"),
   ]);
   await watcher.turnEnded(PEER, "turn-1", true);
@@ -301,21 +301,12 @@ test("a new turn is not silent because the last one ended long ago, and a file a
     say("CANDIDATE: hours added", "turn-0"),
   ];
   // the room's clock is ten minutes past these entries: the Lead took its time to answer
-  turn([
-    ...earlier,
-    prompt(
-      "SEATWORK MAIL #9 BLOCKING from owner re: REJECT: one repair\n--- body ---\n`src/other.js` needs the same guard.",
-      "turn-1",
-    ),
-  ]);
+  turn([...earlier, prompt(letter("9", "REJECT: one repair", "`src/other.js` needs the same guard."), "turn-1")]);
   watcher.turnStarted(PEER, "turn-1");
   await watcher.tick();
   turn([
     ...earlier,
-    prompt(
-      "SEATWORK MAIL #9 BLOCKING from owner re: REJECT: one repair\n--- body ---\n`src/other.js` needs the same guard.",
-      "turn-1",
-    ),
+    prompt(letter("9", "REJECT: one repair", "`src/other.js` needs the same guard."), "turn-1"),
     edit(src("src/other.js"), "turn-1"),
     bash("npm test", {}, "turn-1"),
     say("CANDIDATE: repaired", "turn-1"),
@@ -489,9 +480,7 @@ test("which prompts are held to the five lines: a Lead's brief to a Peer, create
   );
   assert.equal(
     await judged(PEER, [
-      prompt(
-        `SEATWORK MAIL DIGEST — 2 messages, highest first. Handle each by its own header.\n\n${letter("m3", "ANSWER: hours", "hours")}\n\n${letter("m4", "BRIEF: the days unit", CUT)}`,
-      ),
+      prompt(`${letter("m3", "ANSWER: hours", "hours")}\n\n${letter("m4", "BRIEF: the days unit", CUT)}`),
     ]),
     true,
   );

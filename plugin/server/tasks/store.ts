@@ -1,8 +1,9 @@
 import { createHash, randomBytes } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { DatabaseSync, type StatementSync } from "node:sqlite";
 import config from "../../shared/work.json";
+import { SQL_DIR } from "../paths";
+import { Sqlite, storeFolder, type Param, type Row } from "../sqlite";
 
 /** A project's work store in SQLite: issues, dependencies, comments, an audit trail. */
 
@@ -87,6 +88,7 @@ export type WorkErrorCode =
   | "POLICY_VIOLATION"
   | "UPDATE_PRECONDITION_FAILED"
   | "DATABASE_LOCKED"
+  | "MIGRATION_INVALID"
   | "SCHEMA_TOO_NEW";
 
 /** A refusal of the store; `retryable` says the same call may go through a moment later. */
@@ -102,66 +104,6 @@ export class WorkError extends Error {
 }
 
 const quoted = (words: readonly string[]) => words.map((word) => `'${word.replace(/[^a-z_-]/g, "")}'`).join(", ");
-
-/** Version 1 of the layout; every lookup the store makes has an index. */
-const SCHEMA_V1 = `
-CREATE TABLE issues (
-  id TEXT PRIMARY KEY,
-  title TEXT NOT NULL CHECK (length(title) BETWEEN 1 AND ${config.titleChars}),
-  description TEXT NOT NULL DEFAULT '',
-  design TEXT NOT NULL DEFAULT '',
-  acceptance_criteria TEXT NOT NULL DEFAULT '',
-  notes TEXT NOT NULL DEFAULT '',
-  write_scope TEXT NOT NULL DEFAULT '',
-  status TEXT NOT NULL CHECK (status IN (${quoted(STATUSES)})),
-  priority INTEGER NOT NULL CHECK (priority BETWEEN 0 AND 4),
-  issue_type TEXT NOT NULL CHECK (issue_type IN (${quoted(ISSUE_TYPES)})),
-  assignee TEXT,
-  labels TEXT NOT NULL DEFAULT '[]',
-  revision INTEGER NOT NULL DEFAULT 1,
-  created_at TEXT NOT NULL,
-  created_by TEXT NOT NULL,
-  updated_at TEXT NOT NULL,
-  closed_at TEXT,
-  close_reason TEXT,
-  closed_by TEXT,
-  defer_until TEXT,
-  CHECK ((status = 'closed') = (closed_at IS NOT NULL))
-) STRICT;
-CREATE INDEX issues_by_status ON issues (status, priority, created_at, id);
-CREATE INDEX issues_by_assignee ON issues (assignee, status) WHERE assignee IS NOT NULL;
-CREATE INDEX issues_by_update ON issues (status, updated_at);
-CREATE TABLE dependencies (
-  issue_id TEXT NOT NULL REFERENCES issues (id) ON DELETE CASCADE,
-  depends_on_id TEXT NOT NULL REFERENCES issues (id) ON DELETE CASCADE,
-  type TEXT NOT NULL CHECK (type IN (${quoted(DEPENDENCY_TYPES)})),
-  created_at TEXT NOT NULL,
-  created_by TEXT NOT NULL,
-  PRIMARY KEY (issue_id, depends_on_id, type),
-  CHECK (issue_id != depends_on_id)
-) STRICT, WITHOUT ROWID;
-CREATE INDEX dependencies_by_target ON dependencies (depends_on_id, type, issue_id);
-CREATE INDEX dependencies_by_type ON dependencies (type, issue_id, depends_on_id);
-CREATE TABLE comments (
-  id INTEGER PRIMARY KEY,
-  issue_id TEXT NOT NULL REFERENCES issues (id) ON DELETE CASCADE,
-  author TEXT NOT NULL,
-  text TEXT NOT NULL,
-  created_at TEXT NOT NULL
-) STRICT;
-CREATE INDEX comments_of ON comments (issue_id, id);
-CREATE TABLE events (
-  id INTEGER PRIMARY KEY,
-  issue_id TEXT NOT NULL REFERENCES issues (id) ON DELETE CASCADE,
-  event_type TEXT NOT NULL,
-  actor TEXT NOT NULL,
-  old_value TEXT,
-  new_value TEXT,
-  created_at TEXT NOT NULL
-) STRICT;
-CREATE INDEX events_of ON events (issue_id, id);
-`;
-const MIGRATIONS: readonly string[] = [SCHEMA_V1];
 
 const EDITABLE = [
   "title",
@@ -198,126 +140,41 @@ WITH RECURSIVE
   )`;
 const INSERT_ISSUE =
   "INSERT INTO issues (id, title, description, design, acceptance_criteria, notes, write_scope, status, priority, issue_type, assignee, labels, revision, created_at, created_by, updated_at, closed_at, close_reason, closed_by, defer_until) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
-const LOCKED = "another process is writing the work store; try again";
-
-type Row = Record<string, unknown>;
-type Param = string | number | null;
-
 const toIssue = (row: Row): Issue => ({
   ...(row as unknown as Issue),
   labels: JSON.parse(String(row.labels)) as string[],
 });
-const isBusy = (error: unknown) =>
-  (error as { errcode?: number })?.errcode === 5 || /database is locked/i.test((error as Error)?.message ?? "");
 
-export class WorkStore {
-  private readonly db: DatabaseSync;
-  private readonly file: string;
+/** The folder made, and the database file in it. */
+function databaseIn(dir: string): string {
+  return join(storeFolder(dir), "work.db");
+}
+
+export class WorkStore extends Sqlite {
   private readonly jsonl: string;
-  private readonly statements = new Map<string, StatementSync>();
   private pending: NodeJS.Timeout | undefined;
-  private depth = 0;
 
   constructor(
     dir: string,
     private readonly policy: Pick<WorkPolicy, "busyTimeoutMs" | "flushAfterMs">,
     private readonly now: () => Date = () => new Date(),
+    scripts: string = join(SQL_DIR, "work"),
   ) {
-    mkdirSync(dir, { recursive: true });
-    this.file = join(dir, "work.db");
+    super(databaseIn(dir), {
+      busyTimeoutMs: policy.busyTimeoutMs,
+      scripts,
+      fail: (code, message) => new WorkError(code, message),
+      name: "the work store",
+      now,
+    });
     this.jsonl = join(dir, "issues.jsonl");
-    this.db = this.open();
-    this.migrate();
     // a new database gets its issues back from the text copy
     if (this.count() === 0 && existsSync(this.jsonl)) this.restore();
   }
 
-  /** Opens the database; a damaged one is set aside and a new one started. */
-  private open(): DatabaseSync {
-    const attempt = () => {
-      const db = new DatabaseSync(this.file);
-      try {
-        db.exec(`PRAGMA busy_timeout = ${Math.trunc(this.policy.busyTimeoutMs)}; PRAGMA journal_mode = WAL;`);
-        db.exec("PRAGMA synchronous = FULL; PRAGMA foreign_keys = ON;");
-        const check = db.prepare("PRAGMA quick_check").get() as { quick_check?: string } | undefined;
-        if (check?.quick_check !== "ok") throw new Error(`quick_check: ${check?.quick_check ?? "no answer"}`);
-        return db;
-      } catch (error) {
-        db.close();
-        throw error;
-      }
-    };
-    try {
-      return attempt();
-    } catch (error) {
-      if (isBusy(error)) throw new WorkError("DATABASE_LOCKED", LOCKED);
-      const aside = `${this.file}.damaged-${this.now().toISOString().replace(/[:.]/g, "-")}`;
-      for (const suffix of ["", "-wal", "-shm"])
-        if (existsSync(this.file + suffix)) renameSync(this.file + suffix, aside + suffix);
-      return attempt();
-    }
-  }
-
-  /** Brings the layout up to this code's version, a step at a time. */
-  private migrate(): void {
-    const { user_version: at } = this.db.prepare("PRAGMA user_version").get() as { user_version: number };
-    if (at > MIGRATIONS.length)
-      throw new WorkError(
-        "SCHEMA_TOO_NEW",
-        `the work store is at layout ${at} and this plugin writes ${MIGRATIONS.length}: update the plugin`,
-      );
-    for (let version = at; version < MIGRATIONS.length; version += 1)
-      this.transaction("write", () => {
-        // of two processes on a new store, the one that waited finds the step done
-        const { user_version: now } = this.db.prepare("PRAGMA user_version").get() as { user_version: number };
-        if (now === version) this.db.exec(`${MIGRATIONS[version]}; PRAGMA user_version = ${version + 1};`);
-      });
-  }
-
-  close(): void {
+  override close(): void {
     this.flush();
-    this.statements.clear();
-    this.db.exec("PRAGMA optimize");
-    this.db.close();
-  }
-
-  private statement(sql: string): StatementSync {
-    let prepared = this.statements.get(sql);
-    if (!prepared) this.statements.set(sql, (prepared = this.db.prepare(sql)));
-    return prepared;
-  }
-
-  private run(sql: string, ...params: Param[]): void {
-    this.statement(sql).run(...params);
-  }
-
-  private rows<T = Row>(sql: string, ...params: Param[]): T[] {
-    return this.statement(sql).all(...params) as T[];
-  }
-
-  private row<T = Row>(sql: string, ...params: Param[]): T | undefined {
-    return this.statement(sql).get(...params) as T | undefined;
-  }
-
-  /** One unit of work; a write takes the write lock first, so nothing it read can change. */
-  private transaction<T>(mode: "read" | "write", work: () => T): T {
-    if (this.depth > 0) return work();
-    try {
-      this.db.exec(mode === "write" ? "BEGIN IMMEDIATE" : "BEGIN");
-    } catch (error) {
-      throw isBusy(error) ? new WorkError("DATABASE_LOCKED", LOCKED) : error;
-    }
-    this.depth += 1;
-    try {
-      const done = work();
-      this.db.exec("COMMIT");
-      return done;
-    } catch (error) {
-      this.db.exec("ROLLBACK");
-      throw isBusy(error) ? new WorkError("DATABASE_LOCKED", LOCKED) : error;
-    } finally {
-      this.depth -= 1;
-    }
+    super.close();
   }
 
   private write<T>(work: () => T): T {

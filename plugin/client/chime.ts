@@ -1,7 +1,6 @@
-/** The sound for "something waits on you": two short notes as a WAV, made here so no audio file ships. */
+/** The sound for "something waits on you": two short notes (A5, then E6 held longer) as a WAV, made here so no audio file ships. */
 
 const RATE = 16000;
-/** Frequency in Hz and length in seconds: A5, then E6 held a little longer. */
 const NOTES: readonly (readonly [number, number])[] = [
   [880, 0.11],
   [1318.5, 0.22],

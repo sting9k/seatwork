@@ -1,5 +1,5 @@
 {
-  "$comment": "The council that reads each turn of a briefed, writing or reviewing seat. Each member owns one concern; it is scoped by role traits, never by role names. level: 0 logs only, 1 adds a [council] line under the report, 2 also mails the seat above, 3 would send the hand-in back once a chair exists. version: raise it when a member's rule or question changes; its labels then start again. lo and hi: a juror's grey zone.",
+  "$comment": "The council that reads each turn of a briefed, writing or reviewing seat. Each member owns one concern; it is scoped by role traits, never by role names. level: 0 logs only, 1 adds a [council] line under the report, 2 also mails the seat above, 3 would send the hand-in back once a chair exists. version: raise it when a member's rule or question changes; its labels then start again. lo and hi: a juror's grey zone. checks: patterns of the commands that count as a check. stuck reads the last `window` steps for a loop (`sameResult`, `sameError` or `alternation` steps in a row) and a running turn for `silenceMinutes` without a step; repair speaks after `rejections` returns of one task.",
   "checks": [
     "\\b(npm|pnpm|yarn|bun)\\s+(run\\s+)?(test|check|verify|typecheck|lint)\\b",
     "\\b(npx|pnpm\\s+exec|bunx)\\s+(vitest|jest|mocha|tsc|playwright|eslint)\\b",

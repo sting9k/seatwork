@@ -1,7 +1,8 @@
-/** How labels move a council member: exact binomial bounds, the level they allow, a juror's threshold. */
-
 import { lowerBound, upperBound } from "../../bounds";
 
+/** How labels move a council member: exact binomial bounds, the level they allow, a juror's threshold. */
+
+/** One label with what calibration reads of the reading it is about. */
 export interface Label {
   reading: number;
   source: string;
@@ -11,6 +12,7 @@ export interface Label {
   tier: "fact" | "juror";
 }
 
+/** What a member needs to reach each level above 0: labels, tasks they span, and a lower bound on its right rate. */
 export const BARS: readonly { level: number; labels: number; tasks: number; lower: number }[] = [
   { level: 1, labels: 15, tasks: 3, lower: 0.5 },
   { level: 2, labels: 30, tasks: 5, lower: 0.7 },
@@ -18,7 +20,7 @@ export const BARS: readonly { level: number; labels: number; tasks: number; lowe
 const RECENT = 20;
 const AGREEMENT = { least: 10, rate: 0.8 };
 
-export const isExplicit = (source: string): boolean => source.startsWith("seat:");
+const isExplicit = (source: string): boolean => source.startsWith("seat:");
 
 /** The implied sources whose labels agree with the seats' own on the same readings, often enough to count. */
 export function trustedSources(labels: readonly Label[]): Set<string> {

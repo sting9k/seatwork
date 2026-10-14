@@ -1,5 +1,6 @@
 import { posix } from "node:path";
 import table from "../../../../shared/safety/protected.json";
+import { componentGlob, type GlobTest } from "../glob";
 import { absolute, within } from "../paths";
 import type { Scene, Value } from "../types";
 
@@ -7,6 +8,7 @@ import type { Scene, Value } from "../types";
 
 export type GuardRule = "credential-file-write" | "git-internals-write" | "room-file-write";
 
+/** A protected path a write reaches, with the pack and rule that judge it. */
 export interface Guarded {
   pack: "core.filesystem" | "room.guard";
   rule: GuardRule;
@@ -64,6 +66,7 @@ function guardOfPath(path: string, mode: WriteMode, scene: Pick<Scene, "place">)
   return null;
 }
 
+/** True for a path under home a write must not reach, bar the `free` ones and an append to the `append` ones. */
 function homeEntry(rel: string, mode: WriteMode): boolean {
   if (FREE.some((free) => free.test(rel))) return false;
   if (mode === "append" && APPEND.includes(rel)) return false;
@@ -106,7 +109,7 @@ export function guardOf(value: Value, mode: WriteMode, scene: Pick<Scene, "place
   return text.startsWith("/") ? anchored(text, mode, scene) : null;
 }
 
-/** For a pattern cut short by a run-time part: the first protected entry it could reach. */
+/** For a glob or a path cut short by a run-time part: the first protected entry it could reach. */
 function mayBe(pattern: string, mode: WriteMode, scene: Pick<Scene, "place" | "cwd">, open = false): Guarded | null {
   if (!pattern) return null;
   const base = pattern.startsWith("/") ? pattern : scene.cwd ? posix.join(scene.cwd, pattern) : null;
@@ -148,9 +151,8 @@ interface Entry {
   guard: Omit<Guarded, "path">;
 }
 
-const compiled = new Map<string, (name: string) => boolean>();
-const COMPILED_KEPT = 512;
-const PATTERN_CHARS = 1000;
+const tests = new Map<string, GlobTest>();
+const TESTS_KEPT = 512;
 
 /** True when a shell pattern can name the entry, or a path inside an entry folder. */
 function reaches(pattern: string, entry: string, dir: boolean): boolean {
@@ -160,58 +162,15 @@ function reaches(pattern: string, entry: string, dir: boolean): boolean {
   return have.every((name, i) => componentTest(want[i])(name));
 }
 
-/** A test for one path component against a shell pattern; one the room cannot compile is taken to match, the safe side. */
-function componentTest(pattern: string): (name: string) => boolean {
-  const kept = compiled.get(pattern);
+/** The test for one path component, kept for the next call; the oldest is dropped past the limit. */
+function componentTest(pattern: string): GlobTest {
+  const kept = tests.get(pattern);
   if (kept) return kept;
-  const test = compile(pattern);
-  if (compiled.size >= COMPILED_KEPT) compiled.delete(compiled.keys().next().value!);
-  compiled.set(pattern, test);
+  const test = componentGlob(pattern);
+  if (tests.size >= TESTS_KEPT) tests.delete(tests.keys().next().value!);
+  tests.set(pattern, test);
   return test;
 }
-
-function compile(pattern: string): (name: string) => boolean {
-  if (pattern.length > PATTERN_CHARS) return () => true;
-  let source = "";
-  for (let i = 0; i < pattern.length; i += 1) {
-    const c = pattern[i];
-    // a run of stars is one star: many in a row would make the match backtrack without end
-    if (c === "*") {
-      if (!source.endsWith(".*")) source += ".*";
-    } else if (c === "?") source += ".";
-    else if (c === "[") {
-      const close = pattern.indexOf("]", i + 1);
-      if (close < 0) source += "\\[";
-      else {
-        source += `[${pattern
-          .slice(i + 1, close)
-          .replace(/^!/, "^")
-          .replace(/\\/g, "\\\\")}]`;
-        i = close;
-      }
-    } else if (c === "{") {
-      const close = pattern.indexOf("}", i + 1);
-      if (close < 0) source += "\\{";
-      else {
-        const choices = pattern
-          .slice(i + 1, close)
-          .split(",")
-          .map(escape);
-        source += `(?:${choices.join("|")})`;
-        i = close;
-      }
-    } else source += escape(c);
-  }
-  try {
-    const test = new RegExp(`^${source}$`, "i");
-    return (name) => test.test(name);
-  } catch {
-    // a range out of order, or anything else bash may read its own way
-    return () => true;
-  }
-}
-
-const escape = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
 /** The protected file a non-recursive rm names, for DCG's rm-protected-file. */
 export function protectedTarget(value: Value, scene: Pick<Scene, "place" | "cwd">): string | null {

@@ -7,14 +7,14 @@ import { rolesWhere, tableNote, traits, VARS } from "../../shared/workflow";
 
 /** room/models.json: every model id the room uses; role prompts carry {{placeholders}} filled from it. */
 
-export interface SeatModel {
+interface SeatModel {
   provider: string;
   thinking: string;
   alternatives?: string[];
 }
 
 /** One of a role's models: what its Owner picks it for, and never for. */
-export interface Tier {
+interface Tier {
   providers: string[];
   thinking: string;
   use: string;
@@ -22,19 +22,20 @@ export interface Tier {
 }
 
 /** A role of several models: its tiers, beside the table's own words about them. */
-export interface TierGroup {
+interface TierGroup {
   tiers: Record<string, Tier>;
   [word: string]: unknown;
 }
 
-/** `seats` holds the roles of one model each; a role of several models has its own entry. */
+/** The table: `seats` holds the roles of one model each; a role of several models has its own entry of tiers. */
 export type Models = { seats: Record<string, SeatModel>; modes: Record<string, string | null> } & Record<
   string,
   unknown
 >;
 
-export const MODELS_FILE = join(ROOM_DIR, "models.json");
+const MODELS_FILE = join(ROOM_DIR, "models.json");
 
+/** The room's table, read from room/models.json. */
 export function loadModels(): Models {
   if (!existsSync(MODELS_FILE)) throw new Error(`seatwork: ${MODELS_FILE} not found; set the room up again`);
   return JSON.parse(readFileSync(MODELS_FILE, "utf8")) as Models;
@@ -109,7 +110,7 @@ export function promptVars(m: Models, params: RoomParams): Record<string, string
   return vars;
 }
 
-/** Replace {{name}} with vars[name]; an unknown name is left as-is and reported. */
+/** Replaces {{name}} with vars[name]; an unknown name is left as it is and reported. */
 export function render(text: string, vars: Record<string, string>, onMissing?: (name: string) => void): string {
   return text.replace(/\{\{\s*([a-z_]+)\s*\}\}/g, (whole, name: string) => {
     if (name in vars) return vars[name];
@@ -184,7 +185,8 @@ export function missingSeats(override: unknown, enabledProviders: string[], wher
 }
 
 const split = (entry: string): [provider: string, model: string] => {
-  const slash = entry.indexOf("/"); // the model id may hold slashes of its own
+  // the model id may hold slashes of its own
+  const slash = entry.indexOf("/");
   return [entry.slice(0, slash), entry.slice(slash + 1)];
 };
 
@@ -206,7 +208,7 @@ export function modelAllowed(
 /** What the table in force makes of a seat about to be created. */
 export type SeatFit = { ok: true; model?: string; thinking?: string } | { ok: false; listed: string[] };
 
-/** Holds a new seat to the table in force, not to its creator's older prompt. */
+/** Holds a new seat to the table in force, whatever model its creator's prompt names. */
 export function fitSeat(m: Models, role: string, provider: string, model: string | undefined): SeatFit {
   const listed = allowed(m)[role] ?? [];
   const mine = listed.filter((entry) => split(entry)[0] === provider);

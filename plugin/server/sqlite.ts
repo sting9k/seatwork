@@ -20,6 +20,8 @@ export interface Script {
 }
 
 const SCRIPT_NAME = /^V(\d+)__(.+)\.sql$/;
+const MAX_STATEMENTS = 512;
+const WAL_LIMIT_BYTES = 16 * 1024 * 1024;
 const HISTORY = `CREATE TABLE IF NOT EXISTS schema_history (
   version INTEGER PRIMARY KEY,
   description TEXT NOT NULL,
@@ -51,7 +53,7 @@ export function readScripts(dir: string): Script[] {
     .sort((a, b) => a.version - b.version);
 }
 
-/** `scripts`: the folder of `V<number>__<what>.sql` files; `fail`: the store's own error; `reclaims`: a new file gives freed pages back. */
+/** `busyTimeoutMs`: how long a write waits on another process; `scripts`: the folder of `V<number>__<what>.sql` files; `fail`: the store's own error; `name`: the store as messages call it; `reclaims`: a new file gives freed pages back; `now`: the clock. */
 export interface SqliteOptions {
   busyTimeoutMs: number;
   scripts: string;
@@ -66,10 +68,11 @@ const isDamaged = (error: unknown) =>
   [11, 26].includes(((error as { errcode?: number })?.errcode ?? 0) & 0xff) ||
   /malformed|not a database|quick_check/i.test((error as Error)?.message ?? "");
 
+/** Another process holds the write lock: SQLITE_BUSY. */
 const isBusy = (error: unknown) =>
   (error as { errcode?: number })?.errcode === 5 || /database is locked/i.test((error as Error)?.message ?? "");
 
-/** `startedOver` is true when a damaged file was set aside and this one started empty. */
+/** A SQLite file of the room: opened sound, brought to its layout by its scripts; `startedOver` says a damaged file was set aside for an empty one. */
 export class Sqlite {
   protected readonly db: DatabaseSync;
   readonly startedOver: boolean;
@@ -101,9 +104,12 @@ export class Sqlite {
       const db = new DatabaseSync(this.file);
       try {
         // only a file with no table yet takes the setting; an older file keeps its own
+        // the wait comes first: another process creating the same file holds it while it sets its layout
+        db.exec(`PRAGMA busy_timeout = ${Math.trunc(this.options.busyTimeoutMs)}`);
         if (this.options.reclaims) db.exec("PRAGMA auto_vacuum = INCREMENTAL");
-        db.exec(`PRAGMA busy_timeout = ${Math.trunc(this.options.busyTimeoutMs)}; PRAGMA journal_mode = WAL;`);
-        db.exec("PRAGMA synchronous = FULL; PRAGMA foreign_keys = ON;");
+        db.exec("PRAGMA journal_mode = WAL");
+        // after a checkpoint the write-ahead log is cut back to this size, so one large write does not keep its size on disk
+        db.exec(`PRAGMA synchronous = FULL; PRAGMA foreign_keys = ON; PRAGMA journal_size_limit = ${WAL_LIMIT_BYTES};`);
         const check = db.prepare("PRAGMA quick_check").get() as { quick_check?: string } | undefined;
         if (check?.quick_check !== "ok") throw new Error(`quick_check: ${check?.quick_check ?? "no answer"}`);
         return db;
@@ -152,7 +158,8 @@ export class Sqlite {
       );
 
     this.transaction("write", () => this.db.exec(HISTORY));
-    const latest = Math.max(version(), ...applied().keys());
+    const was = applied();
+    const latest = Math.max(version(), ...was.keys());
     const newest = scripts[scripts.length - 1].version;
     if (latest > newest)
       throw this.options.fail(
@@ -160,12 +167,12 @@ export class Sqlite {
         `${name} is at layout ${latest} and this plugin writes ${newest}: update the plugin`,
       );
     for (const script of scripts) {
-      const was = applied().get(script.version);
-      if (was !== undefined && was !== script.checksum)
+      const checksum = was.get(script.version);
+      if (checksum !== undefined && checksum !== script.checksum)
         throw invalid(`${script.name} changed after it was applied; a change to the layout is a new script`);
-      if (was === undefined && script.version < latest)
+      if (checksum === undefined && script.version < latest)
         throw invalid(`${script.name} is older than layout ${latest}, which is already applied`);
-      if (was !== undefined) continue;
+      if (checksum !== undefined) continue;
       this.transaction("write", () => {
         // of two processes on a new store, the one that waited finds the step done
         if (applied().has(script.version)) return;
@@ -191,27 +198,35 @@ export class Sqlite {
     this.db.exec(`PRAGMA incremental_vacuum(${Math.max(0, Math.trunc(pages))})`);
   }
 
+  /** Lets SQLite refresh its statistics, then closes the file. */
   close(): void {
     this.statements.clear();
     this.db.exec("PRAGMA optimize");
     this.db.close();
   }
 
+  /** A statement prepared once per text; past MAX_STATEMENTS the oldest is dropped, so SQL built per call cannot grow the cache without end. */
   protected statement(sql: string): StatementSync {
     let prepared = this.statements.get(sql);
-    if (!prepared) this.statements.set(sql, (prepared = this.db.prepare(sql)));
+    if (!prepared) {
+      if (this.statements.size >= MAX_STATEMENTS) this.statements.delete(this.statements.keys().next().value!);
+      this.statements.set(sql, (prepared = this.db.prepare(sql)));
+    }
     return prepared;
   }
 
+  /** Runs a write; how many rows it changed and the last row id. */
   protected run(sql: string, ...params: Param[]): { changes: number; lastInsertRowid: number } {
     const done = this.statement(sql).run(...params);
     return { changes: Number(done.changes), lastInsertRowid: Number(done.lastInsertRowid) };
   }
 
+  /** Every row a read returns. */
   protected rows<T = Row>(sql: string, ...params: Param[]): T[] {
     return this.statement(sql).all(...params) as T[];
   }
 
+  /** The first row a read returns, if any. */
   protected row<T = Row>(sql: string, ...params: Param[]): T | undefined {
     return this.statement(sql).get(...params) as T | undefined;
   }

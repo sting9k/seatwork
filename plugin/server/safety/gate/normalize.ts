@@ -1,24 +1,21 @@
-import { literal, type Assignment, type Simple, type Word } from "./shell";
+import { literal, type Assignment, type Script, type Simple, type Word } from "./shell";
 
-/** A simple command with its wrappers (sudo, env, timeout) read through to the program. */
+/** Reads the wrappers (sudo, env, timeout, npx) off a simple command to find the program it runs. */
 
+/** The program a simple command runs: its lower-case base name (null when known only at run time), and what a wrapper adds to it. */
 export interface Invocation {
-  /** the program's base name, lower case; null when the shell only knows it at run time */
   name: string | null;
   command: Word | null;
   args: Word[];
   wrappers: string[];
   assigns: Assignment[];
-  /** a shell string a wrapper runs (`env -S`, `mise exec -c`, `npx -c`) */
   inline: Word[];
-  /** the folder a wrapper moves to (`env -C`, `sudo -D`) */
   chdir: Word | null;
-  /** a wrapper option the room cannot read: what follows is not proven to be the program */
   unread: string | null;
-  /** the wrapper runs nothing (`command -v`, `sudo -l`) */
   query: boolean;
 }
 
+/** How a wrapper's options read: flags with and without a value, and those that query, run a string, change folder. */
 interface Spec {
   short?: string;
   shortValued?: string;
@@ -125,7 +122,6 @@ const WRAPPERS: Record<string, Spec> = {
   arch: { shortValued: "ed", short: "c", lone: /^-(arm64e?|x86_64h?|i386|ppc|32|64)$/ },
 };
 
-/** Package runners: `npx tool`, `uv run cmd`; the word after their options is the program. */
 const RUNNERS: Record<string, { sub?: string[]; spec: Spec }> = {
   npx: {
     spec: {
@@ -199,9 +195,10 @@ const RUNNERS: Record<string, { sub?: string[]; spec: Spec }> = {
 
 const MAX_WRAPPERS = 32;
 
+/** The last path component of a command word, lower case. */
 export const baseName = (text: string): string => text.slice(text.lastIndexOf("/") + 1).toLowerCase();
 
-/** The program a simple command runs, wrappers read through. */
+/** The program a simple command runs, with wrappers and package runners (`npx tool`, `uv run cmd`) read through. */
 export function invocationOf(simple: Simple): Invocation {
   const out: Invocation = {
     name: null,
@@ -251,6 +248,7 @@ export function invocationOf(simple: Simple): Invocation {
   return finish(out, words);
 }
 
+/** The program and arguments from the words left once the wrappers are read. */
 function finish(out: Invocation, words: Word[]): Invocation {
   if (out.query) return out;
   out.command = words[0] ?? null;
@@ -377,4 +375,14 @@ export function valueWord(word: Word, cut: number): Word {
     parts.push(part);
   }
   return { raw: word.raw.slice(Math.min(cut, word.raw.length)), start: word.start + cut, end: word.end, parts };
+}
+
+/** The program names that the simple commands of a script call, in order. */
+export function programNames(script: Script): string[] {
+  const out: string[] = [];
+  for (const sequence of script)
+    for (const pipeline of sequence.pipelines)
+      for (const command of pipeline.commands)
+        if (command.kind === "simple") out.push(invocationOf(command).name ?? "");
+  return out;
 }

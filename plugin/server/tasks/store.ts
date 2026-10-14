@@ -10,13 +10,14 @@ import { Sqlite, keptOutOfGit, type Param, type Row } from "../sqlite";
 export type Status = "open" | "in_progress" | "deferred" | "closed";
 export type IssueType = "task" | "bug" | "feature" | "epic" | "chore" | "docs" | "question";
 export type DependencyType = "blocks" | "parent-child" | "discovered-from" | "related";
-export const STATUSES = config.statuses as readonly Status[];
-export const ISSUE_TYPES = config.issueTypes as readonly IssueType[];
-export const DEPENDENCY_TYPES = Object.keys(config.dependencyTypes) as DependencyType[];
+const STATUSES = config.statuses as readonly Status[];
+const ISSUE_TYPES = config.issueTypes as readonly IssueType[];
+const DEPENDENCY_TYPES = Object.keys(config.dependencyTypes) as DependencyType[];
 const ORDERING = Object.entries(config.dependencyTypes as Record<string, { orders?: boolean }>)
   .filter(([, rule]) => rule.orders)
   .map(([type]) => type);
 
+/** One issue as the store keeps it. */
 export interface Issue {
   id: string;
   title: string;
@@ -40,18 +41,21 @@ export interface Issue {
   defer_until: string | null;
 }
 
+/** An edge: `issue_id` depends on `depends_on_id` in the way `type` says. */
 export interface Dependency {
   issue_id: string;
   depends_on_id: string;
   type: DependencyType;
 }
 
+/** One comment on an issue. */
 export interface Comment {
   author: string;
   text: string;
   created_at: string;
 }
 
+/** What a seat gives to make an issue; `parent` and `deps` name issues that exist. */
 export interface NewIssue {
   title: string;
   description?: string;
@@ -65,11 +69,13 @@ export interface NewIssue {
   deps?: { type?: DependencyType; id: string }[];
 }
 
+/** What a close needs: a reason of this length, and whether the holder of an issue may close it. */
 export interface ClosePolicy {
   minReasonChars: number;
   forbidSelfClose: boolean;
 }
 
+/** The work store's rules: how long a write waits on another process's, how soon the text copy follows a write, when a claim is stale, what a close needs. */
 export interface WorkPolicy {
   busyTimeoutMs: number;
   flushAfterMs: number;
@@ -121,13 +127,14 @@ const NAMED_EVENT: Partial<Record<Editable, string>> = {
   priority: "priority_changed",
   assignee: "assignee_changed",
 };
+const TEXT_FIELDS = ["description", "design", "acceptance_criteria", "write_scope"] as const;
 const ORDERED = "priority, created_at, id";
-/** Held: a blocker of the issue or of a parent is open, or it has open children. */
-/** A blocked parent holds its children back from `ready`, never from being started or closed (br #355, #357). */
+const EXPIRE_BATCH = 500;
+const ID_PREFIX = new RegExp(`^${config.idPrefix}-?`);
 export const PARENT_BLOCKED = ":parent-blocked";
-/** An open child keeps its parent from closing, never from being started (br #315). */
 export const CHILD_OPEN = ":child-open";
-/** The issue a blocker ref names. */
+
+/** The issue a blocker ref names, without the suffix that says it only holds back. */
 export const refIssue = (ref: string): string => ref.replace(/:(parent-blocked|child-open)$/, "");
 const HELD = `
 WITH RECURSIVE
@@ -142,7 +149,6 @@ WITH RECURSIVE
     SELECT d.depends_on_id FROM dependencies d JOIN issues c ON c.id = d.issue_id
     WHERE d.type = 'parent-child' AND c.status != 'closed'
   )`;
-/** What stands in each issue's way, as br writes it: a blocker of its own, its parent when that is blocked, an open child. */
 const IN_THE_WAY = `
 WITH RECURSIVE
   hard (id, ref) AS (
@@ -162,8 +168,36 @@ WITH RECURSIVE
     UNION SELECT d.depends_on_id, d.issue_id || '${CHILD_OPEN}' FROM dependencies d JOIN issues c ON c.id = d.issue_id
       WHERE d.type = 'parent-child' AND c.status != 'closed'
   )`;
+const BLOCKERS = `
+WITH RECURSIVE
+  walk (parent, up) AS (
+    SELECT d.depends_on_id, d.depends_on_id FROM dependencies d WHERE d.issue_id = ?1 AND d.type = 'parent-child'
+    UNION
+    SELECT walk.parent, d.depends_on_id FROM walk CROSS JOIN dependencies d
+      ON d.issue_id = walk.up AND d.type = 'parent-child'
+  )
+SELECT d.depends_on_id AS ref FROM dependencies d JOIN issues b ON b.id = d.depends_on_id
+  WHERE d.issue_id = ?1 AND d.type = 'blocks' AND b.status != 'closed'
+UNION
+SELECT parent || '${PARENT_BLOCKED}' FROM walk WHERE EXISTS (
+  SELECT 1 FROM dependencies d JOIN issues b ON b.id = d.depends_on_id
+  WHERE d.issue_id = walk.up AND d.type = 'blocks' AND b.status != 'closed')
+UNION
+SELECT d.issue_id || '${CHILD_OPEN}' FROM dependencies d JOIN issues c ON c.id = d.issue_id
+  WHERE d.depends_on_id = ?1 AND d.type = 'parent-child' AND c.status != 'closed'
+ORDER BY ref`;
 const INSERT_ISSUE =
   "INSERT INTO issues (id, title, description, design, acceptance_criteria, notes, write_scope, status, priority, issue_type, assignee, labels, revision, created_at, created_by, updated_at, closed_at, close_reason, closed_by, defer_until) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
+
+/** Throws when a text is longer than the vocabulary allows an issue to hold in a field. */
+function fit(field: string, text: string | undefined): void {
+  if (text !== undefined && text.length > config.textChars)
+    throw new WorkError(
+      "VALIDATION_FAILED",
+      `${field} is at most ${config.textChars} characters (this has ${text.length}): put the rest in a file and name it`,
+    );
+}
+
 const toIssue = (row: Row): Issue => ({
   ...(row as unknown as Issue),
   labels: JSON.parse(String(row.labels)) as string[],
@@ -173,6 +207,7 @@ function databaseIn(dir: string): string {
   return join(keptOutOfGit(dir), "work.db");
 }
 
+/** A project's work store: `dir` holds its database and `issues.jsonl`, the text copy it is read back from. */
 export class WorkStore extends Sqlite {
   private readonly jsonl: string;
   private pending: NodeJS.Timeout | undefined;
@@ -200,14 +235,24 @@ export class WorkStore extends Sqlite {
     }
   }
 
+  /** Writes the text copy if a write is waiting for it, then closes the file, whether or not the copy was written. */
   override close(): void {
-    this.flush();
-    super.close();
+    try {
+      if (this.pending) this.flush();
+    } finally {
+      super.close();
+    }
   }
 
+  /** One write of the store; the text copy follows. */
   private write<T>(work: () => T): T {
     const done = this.transaction("write", work);
-    // the text copy follows a moment later, once for a burst of writes
+    this.followed();
+    return done;
+  }
+
+  /** Has the text copy written a moment from now, once for a burst of writes. */
+  private followed(): void {
     this.pending ??= setTimeout(() => {
       try {
         this.flush();
@@ -216,7 +261,6 @@ export class WorkStore extends Sqlite {
         console.error(`seatwork: the text copy of the work store was not written: ${(error as Error).message}`);
       }
     }, this.policy.flushAfterMs).unref();
-    return done;
   }
 
   /** Writes the store as text, an issue a line: what a person reads and a restore needs. */
@@ -260,7 +304,7 @@ export class WorkStore extends Sqlite {
           continue;
         // a line the layout refuses is passed over, as a line that is no JSON is: the rest still comes back
         if (
-          !this.kept(() =>
+          !this.tried(() =>
             this.run(
               INSERT_ISSUE,
               one.id,
@@ -294,7 +338,7 @@ export class WorkStore extends Sqlite {
         console.error(`seatwork: ${read.length - kept.size} lines of ${this.jsonl} could not be read back`);
       for (const one of read.filter((line) => kept.has(line?.id))) {
         for (const dep of (one.dependencies ?? []).filter((dep) => kept.has(dep.depends_on_id)))
-          this.kept(() =>
+          this.tried(() =>
             this.run(
               "INSERT OR IGNORE INTO dependencies (issue_id, depends_on_id, type, created_at, created_by) VALUES (?, ?, ?, ?, 'room')",
               one.id,
@@ -304,7 +348,7 @@ export class WorkStore extends Sqlite {
             ),
           );
         for (const said of one.comments ?? [])
-          this.kept(() =>
+          this.tried(() =>
             this.run(
               "INSERT INTO comments (issue_id, author, text, created_at) VALUES (?, ?, ?, ?)",
               one.id,
@@ -318,7 +362,7 @@ export class WorkStore extends Sqlite {
   }
 
   /** One write of a restore: false when the layout refuses it, which leaves the rest of the restore standing. */
-  private kept(write: () => unknown): boolean {
+  private tried(write: () => unknown): boolean {
     try {
       write();
       return true;
@@ -372,8 +416,7 @@ export class WorkStore extends Sqlite {
   /** The issue an id names; a unique start of it after the prefix is enough. */
   get(id: string): Issue {
     const asked = id.trim();
-    if (asked.replace(new RegExp(`^${config.idPrefix}-?`), "") === "")
-      throw new WorkError("VALIDATION_FAILED", "give an issue id");
+    if (asked.replace(ID_PREFIX, "") === "") throw new WorkError("VALIDATION_FAILED", "give an issue id");
     const start = asked.startsWith(`${config.idPrefix}-`) ? asked : `${config.idPrefix}-${asked}`;
     const exact = this.find(asked) ?? this.find(start);
     if (exact) return exact;
@@ -385,14 +428,17 @@ export class WorkStore extends Sqlite {
     throw new WorkError("ISSUE_NOT_FOUND", `no issue ${id}`);
   }
 
+  /** How many issues the store holds. */
   count(): number {
     return this.row<{ n: number }>("SELECT COUNT(*) AS n FROM issues")!.n;
   }
 
+  /** Every issue, oldest first. */
   all(): Issue[] {
     return this.rows("SELECT * FROM issues ORDER BY created_at, id").map(toIssue);
   }
 
+  /** Every edge. */
   dependencies(): Dependency[] {
     return this.rows<Dependency>(
       "SELECT issue_id, depends_on_id, type FROM dependencies ORDER BY issue_id, depends_on_id",
@@ -413,6 +459,7 @@ export class WorkStore extends Sqlite {
     }));
   }
 
+  /** Makes an issue, with its parent and the edges it names. */
   create(input: NewIssue, actor: string): Issue {
     return this.write(() => this.insert(input, actor));
   }
@@ -436,6 +483,7 @@ export class WorkStore extends Sqlite {
     });
   }
 
+  /** Checks an issue and writes it with its edges; the caller holds the write. */
   private insert(input: NewIssue, actor: string): Issue {
     const title = input.title?.trim() ?? "";
     if (!title || title.length > config.titleChars)
@@ -446,6 +494,8 @@ export class WorkStore extends Sqlite {
     const type = input.issue_type ?? "task";
     if (!ISSUE_TYPES.includes(type))
       throw new WorkError("VALIDATION_FAILED", `issue_type is one of ${ISSUE_TYPES.join(", ")}`);
+    for (const field of TEXT_FIELDS) fit(field, input[field]);
+    fit("labels", JSON.stringify(input.labels ?? []));
     const parent = input.parent ? this.get(input.parent).id : null;
     const id = this.newId(title, parent);
     const at = this.stamp();
@@ -533,6 +583,7 @@ export class WorkStore extends Sqlite {
     );
   }
 
+  /** Makes `issue` depend on `on`; an edge that orders work may close no cycle. */
   addDependency(issue: string, on: string, type: DependencyType, actor: string): void {
     this.write(() => this.link(this.get(issue).id, this.get(on).id, type, actor));
   }
@@ -552,12 +603,9 @@ export class WorkStore extends Sqlite {
     });
   }
 
-  /** What stands in an issue's way, as br's refs: a bare id blocks it, a suffix says it only holds it back. */
+  /** What stands in an issue's way, as br's refs: a bare id blocks it; `:parent-blocked` (its parent is blocked) holds it back from ready only; `:child-open` (an open child) keeps it from closing only. Read from the issue's own corner of the graph. */
   blockers(id: string): string[] {
-    const issue = this.get(id).id;
-    return this.rows<{ ref: string }>(`${IN_THE_WAY} SELECT ref FROM way WHERE id = ? ORDER BY ref`, issue).map(
-      (row) => row.ref,
-    );
+    return this.rows<{ ref: string }>(BLOCKERS, this.get(id).id).map((row) => row.ref);
   }
 
   /** What keeps an issue from being started: its own blockers only. */
@@ -572,7 +620,7 @@ export class WorkStore extends Sqlite {
       .map(refIssue);
   }
 
-  /** What stands in the way of every issue that has anything in its way. */
+  /** What stands in the way of every issue that has anything in its way: `blockers` for the whole graph in one pass. */
   private inTheWay(): Map<string, string[]> {
     const out = new Map<string, string[]>();
     for (const row of this.rows<{ id: string; ref: string }>(`${IN_THE_WAY} SELECT id, ref FROM way ORDER BY id, ref`))
@@ -580,7 +628,7 @@ export class WorkStore extends Sqlite {
     return out;
   }
 
-  /** Open, not put off, and with nothing in its way: highest priority first, then oldest. */
+  /** Open, not put off, with nothing in its way, its parent's included, and no open child: highest priority first, then oldest. */
   ready(options: { limit?: number; parent?: string; unassigned?: boolean } = {}): Issue[] {
     const parent = options.parent ? this.get(options.parent).id : null;
     return this.rows(
@@ -603,6 +651,7 @@ export class WorkStore extends Sqlite {
     ).map(toIssue);
   }
 
+  /** The issues that match the filters given, best first, at most `limit`, and how many match in all. */
   list(filter: { status?: Status; assignee?: string; type?: IssueType; limit?: number } = {}): {
     issues: Issue[];
     total: number;
@@ -657,6 +706,7 @@ export class WorkStore extends Sqlite {
     });
   }
 
+  /** Changes the fields given, each checked; a stale `if_revision` is refused, and only an `owner` gives an issue to another seat. */
   update(
     id: string,
     patch: Partial<Pick<Issue, Exclude<Editable, "status"> | "labels">> & {
@@ -697,12 +747,18 @@ export class WorkStore extends Sqlite {
         throw new WorkError("VALIDATION_FAILED", `issue_type is one of ${ISSUE_TYPES.join(", ")}`);
       if (patch.title !== undefined && (!patch.title.trim() || patch.title.length > config.titleChars))
         throw new WorkError("VALIDATION_FAILED", `a title is 1 to ${config.titleChars} characters`);
+      for (const field of TEXT_FIELDS) fit(field, patch[field]);
       // only the fields an issue has: a name from outside never reaches the statement
       const set: Record<string, Param> = {};
       for (const field of EDITABLE) if (patch[field] !== undefined) set[field] = patch[field] as Param;
-      if (patch.labels) set.labels = JSON.stringify(patch.labels);
-      if (patch.append_notes?.trim())
+      if (patch.labels) {
+        set.labels = JSON.stringify(patch.labels);
+        fit("labels", set.labels);
+      }
+      if (patch.append_notes?.trim()) {
         set.notes = `${issue.notes}${issue.notes ? "\n" : ""}[${this.stamp()} ${actor}] ${patch.append_notes.trim()}`;
+        fit("notes", set.notes);
+      }
       this.touch(issue, set, patch.if_revision);
       for (const [field, value] of Object.entries(set)) {
         const before = field === "notes" ? null : String((issue as unknown as Row)[field] ?? "");
@@ -713,8 +769,10 @@ export class WorkStore extends Sqlite {
     });
   }
 
+  /** Adds a comment to an issue. */
   comment(id: string, author: string, text: string): void {
     if (!text.trim()) throw new WorkError("VALIDATION_FAILED", "a comment has text");
+    fit("a comment", text);
     this.write(() => {
       const issue = this.get(id);
       this.run(
@@ -772,6 +830,7 @@ export class WorkStore extends Sqlite {
     });
   }
 
+  /** Opens a closed issue again. */
   reopen(id: string, actor: string): Issue {
     return this.write(() => {
       const issue = this.get(id);
@@ -780,6 +839,34 @@ export class WorkStore extends Sqlite {
       this.event(issue.id, "reopened", actor, "closed", "open");
       return this.find(issue.id)!;
     });
+  }
+
+  /** Drops the issues closed before `before`, in slices, with their comments and trail; one in a live tree stays: a closed child of an open parent keeps its number, a closed parent its open child. Returns how many. */
+  expire(before: Date): number {
+    const at = before.toISOString();
+    let gone = 0;
+    for (;;) {
+      const slice = this.transaction(
+        "write",
+        () =>
+          this.run(
+            `DELETE FROM issues WHERE id IN (
+               SELECT i.id FROM issues i INDEXED BY issues_by_closing WHERE i.status = 'closed' AND i.closed_at < ?1
+                 AND NOT EXISTS (SELECT 1 FROM dependencies d JOIN issues o ON o.id = d.depends_on_id
+                                 WHERE d.issue_id = i.id AND d.type = 'parent-child' AND o.status != 'closed')
+                 AND NOT EXISTS (SELECT 1 FROM dependencies d JOIN issues o ON o.id = d.issue_id
+                                 WHERE d.depends_on_id = i.id AND d.type = 'parent-child' AND o.status != 'closed')
+               LIMIT ?2)`,
+            at,
+            EXPIRE_BATCH,
+          ).changes,
+      );
+      gone += slice;
+      if (slice < EXPIRE_BATCH) break;
+    }
+    // the text copy shrinks with the store
+    if (gone > 0) this.followed();
+    return gone;
   }
 
   /** A gone seat's issues in progress are open again, or go to its successor. */
@@ -797,6 +884,7 @@ export class WorkStore extends Sqlite {
     });
   }
 
+  /** The comments on an issue, oldest first. */
   comments(id: string): Comment[] {
     return this.rows<Comment>(
       "SELECT author, text, created_at FROM comments WHERE issue_id = ? ORDER BY id",
@@ -804,6 +892,7 @@ export class WorkStore extends Sqlite {
     );
   }
 
+  /** The latest events of an issue's trail, newest first. */
   events(
     id: string,
     limit = 20,

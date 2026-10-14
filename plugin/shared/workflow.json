@@ -2,7 +2,7 @@
   "$comment": "The orchestration in force: its roles, their traits, who may create and mail whom. Code reads traits, never role names; another way of working is another copy of this file.",
   "$comment_roomProject": "Where the seats at home in the room sit: a folder in the room home, a project in the app.",
   "roomProject": "hq-seatwork",
-  "$comment_roles": "home \"room\": above every project, reads all mail, keeps the registry. models: one, or named tiers. progress: a later STATUS starts no turn. briefs, briefed: whose briefs are checked. writes: changes the tree. reviews: one Owner turn's reviewers are one round. rotate: the line under its report past rotateAtTokens. tableNote: the line under its table in prompts.",
+  "$comment_roles": "label, profile, icon, count, job: how the setup screen names and describes the role. home \"room\": above every project, reads all mail, keeps the registry. models: one, or named tiers. progress: a later STATUS starts no turn. briefs: writes briefs and verdicts for the seats under it. briefed: works from a brief. writes: changes the tree. reviews: reads and reports; the reviewers an Owner launches in one turn are one round. rotate: the line under its report past rotateAtTokens. tableNote: the line under its table in prompts.",
   "roles": {
     "hq": {
       "label": "HQ",
@@ -57,17 +57,17 @@
       }
     }
   },
-  "$comment_vars": "Prompt placeholders beyond {{<role>_provider}}, {{<role>_thinking}}, {{<role>_alternatives}}, {{<role>_table}}: a role's tier providers but those named.",
+  "$comment_vars": "Prompt placeholders beyond {{<role>_provider}}, {{<role>_thinking}}, {{<role>_alternatives}}, {{<role>_table}}: the providers of a role's tiers except the tiers named.",
   "vars": {
     "research_providers": { "role": "peer", "except": ["cheap"] }
   },
-  "$comment_reviewers": "A seat of another role reviews too when its title names one of these specs or matches titles.",
+  "$comment_reviewers": "A seat of another role reviews too when its spec is one of `specs` or its title matches `titles`. stall: the params entry for how long a review round waits for its last reviewer.",
   "reviewers": {
     "specs": ["review", "research"],
     "titles": "\\bscout-\\d+",
     "stall": "reviewStallMinutes"
   },
-  "$comment_notes": "The room's own lines. {{rejected}}: rejections since the task's last ACCEPT; {{candidate}}: this candidate's number.",
+  "$comment_notes": "The room's own lines. {{rejected}}: rejections since the task's last ACCEPT; {{candidate}}: this candidate's number; {{role}}: the sender's role.",
   "notes": {
     "secondCandidate": "Second candidate of this task: one rejection since its last ACCEPT. Should this one fail too, the repair goes to a new Peer with a fresh context (its brief: the defects as failing tests, this candidate's sha, what was tried), and a defect of a kind the first review did not report puts the design in question: `lens` on the design, or DECISION_NEEDED, before a writer continues.",
     "lastCandidate": "Candidate {{candidate}} of this task: {{rejected}} rejections since its last ACCEPT. One more rejection is your Owner's call (accept-candidate, step 5): DECISION_NEEDED with what each round found and what one more costs.",

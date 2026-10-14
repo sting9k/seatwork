@@ -2,9 +2,7 @@ import { join } from "node:path";
 import config from "../../shared/mail.json";
 import { SQL_DIR } from "../paths";
 import { Sqlite, keptOutOfGit, type Row, type SqliteFailure } from "../sqlite";
-import { noteSettled, type Settled } from "./archive";
-
-type SettledLine = Parameters<typeof noteSettled>[1];
+import { noteSettled, type Settled, type SettledLine } from "./archive";
 
 /** A project's mail in SQLite: messages, how each recipient stands with them, what happened. */
 
@@ -88,14 +86,17 @@ export class MailStoreError extends Error {
   }
 }
 
+export const DRAFT = "draft";
+export const TAKEN = "taken";
+
 const MESSAGE = `m.id, m.at, m.thread, m.reply_to, m.sender, m.sender_role, m.signal, m.subject, m.body,
   m.file, m.files, m.needs, m.why, m.answered_at, m.answered_by`;
 const DELIVERY = `d.seat, d.kind, d.priority, d.state, d.quiet, d.progress, d.urgent, d.round, d.held_until,
   d.delivered_at, d.how`;
-/** A message some recipient still has or will have. */
 const RECLAIM_PAGES = 4000;
+const MAX_ID = Number.MAX_SAFE_INTEGER;
 const LIVE = `EXISTS (SELECT 1 FROM deliveries l WHERE l.message_id = m.id AND l.state NOT IN ('replaced', 'withdrawn', 'bounced'))`;
-/** The seats a reader may see mail of, handed over as one JSON list. */
+const HELD = `(h.state = 'kept' OR (h.state = 'withdrawn' AND h.how = '${TAKEN}'))`;
 const SEEN_BY = `(m.sender IN (SELECT value FROM json_each(?1))
   OR EXISTS (SELECT 1 FROM deliveries s WHERE s.message_id = m.id AND s.seat IN (SELECT value FROM json_each(?1))))`;
 
@@ -133,9 +134,9 @@ const toDelivery = (row: Row): Delivery => ({
 
 const toHeld = (row: Row): Held => ({ ...toMessage(row), ...toDelivery(row) });
 
-/** A phrase search safe to hand to FTS5: each word quoted, the last one open to a longer word. */
+/** A search safe to hand to FTS5: the first `searchWords` words, each quoted, the last open to a longer word; a query's cost grows with the square of its words. */
 function ftsQuery(text: string): string {
-  const words = text.match(/[\p{L}\p{N}_-]+/gu) ?? [];
+  const words = (text.match(/[\p{L}\p{N}_-]+/gu) ?? []).slice(0, config.searchWords);
   return words.map((word, index) => `"${word}"${index === words.length - 1 ? "*" : ""}`).join(" ");
 }
 
@@ -143,6 +144,7 @@ function databaseIn(dir: string): string {
   return join(keptOutOfGit(dir), "mail.db");
 }
 
+/** A project's mail store: `folder` holds its database, its mail files and its journal. */
 export class MailStore extends Sqlite {
   constructor(
     readonly folder: string,
@@ -181,12 +183,14 @@ export class MailStore extends Sqlite {
     this.transaction("write", () => this.event(kind, null, seat, detail));
   }
 
+  /** How many mails the store holds. */
   count(): number {
     return Number(this.row<{ n: number }>("SELECT count(*) AS n FROM messages")?.n ?? 0);
   }
 
   /** A message and its deliveries in one write; a thread of its own when it joins none. */
   insert(input: NewMessage, deliveries: readonly NewDelivery[], at: string = this.stamp()): Message {
+    const subject = input.subject.slice(0, config.subjectChars);
     return this.transaction("write", () => {
       const { lastInsertRowid: id } = this.run(
         `INSERT INTO messages (at, thread, reply_to, sender, sender_role, signal, subject, body, files,
@@ -197,7 +201,7 @@ export class MailStore extends Sqlite {
         input.sender,
         input.senderRole,
         input.signal,
-        input.subject.slice(0, config.subjectChars),
+        subject,
         input.body,
         JSON.stringify(input.files ?? []),
         input.needs,
@@ -206,8 +210,8 @@ export class MailStore extends Sqlite {
         input.key ?? null,
       );
       if (!input.thread) this.run("UPDATE messages SET thread = ? WHERE id = ?", `m${id}`, id);
-      this.run("INSERT INTO search (rowid, subject, body) VALUES (?, ?, ?)", id, input.subject, input.body);
-      for (const to of deliveries) this.deliver(id, to, input);
+      this.run("INSERT INTO search (rowid, subject, body) VALUES (?, ?, ?)", id, subject, input.body);
+      for (const to of deliveries) this.deliver(id, to, { sender: input.sender, subject });
       return this.get(id)!;
     });
   }
@@ -216,6 +220,7 @@ export class MailStore extends Sqlite {
   restore(entries: readonly { message: Message; deliveries: readonly NewDelivery[] }[], settled: Settled): number {
     return this.transaction("write", () => {
       for (const { message, deliveries } of entries) {
+        const subject = message.subject.slice(0, config.subjectChars);
         this.run(
           `INSERT INTO messages (id, at, thread, reply_to, sender, sender_role, signal, subject, body, file, files,
              needs, why, fingerprint, answered_at, answered_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '', ?, ?)`,
@@ -226,7 +231,7 @@ export class MailStore extends Sqlite {
           message.sender,
           message.senderRole,
           message.signal,
-          message.subject.slice(0, config.subjectChars),
+          subject,
           message.body,
           message.file,
           JSON.stringify(message.files ?? []),
@@ -235,12 +240,7 @@ export class MailStore extends Sqlite {
           settled.answers.get(message.id)?.at ?? message.answeredAt ?? null,
           settled.answers.get(message.id)?.by ?? message.answeredBy ?? null,
         );
-        this.run(
-          "INSERT INTO search (rowid, subject, body) VALUES (?, ?, ?)",
-          message.id,
-          message.subject,
-          message.body,
-        );
+        this.run("INSERT INTO search (rowid, subject, body) VALUES (?, ?, ?)", message.id, subject, message.body);
         for (const to of deliveries) {
           // settled in the journal stays settled; any other is sent again as a possible repeat
           const state = settled.states.get(`${message.id}|${to.seat}`) ?? "sending";
@@ -259,7 +259,7 @@ export class MailStore extends Sqlite {
             "posted",
             message.id,
             to.seat,
-            { from: message.sender, to: to.seat, subject: message.subject, priority: to.priority },
+            { from: message.sender, to: to.seat, subject, priority: to.priority },
             message.at,
           );
         }
@@ -292,19 +292,39 @@ export class MailStore extends Sqlite {
     });
   }
 
+  /** One message by id. */
   get(id: number): Message | null {
     const row = this.row(`SELECT ${MESSAGE} FROM messages m WHERE m.id = ?`, id);
     return row ? toMessage(row) : null;
   }
 
-  /** The mails after `id`, oldest first, at most `limit`, each with its recipients: a reader that keeps its place reads each once. */
+  /** The mail that went out after `id`, oldest first, at most `limit`, with its recipients; a report still kept or taken to go out holds back what follows it, so a reader that keeps its place reads each mail once, as sent. */
   after(id: number, limit: number): (Message & { to: string[] })[] {
-    return this.rows(`SELECT ${MESSAGE} FROM messages m WHERE m.id > ? ORDER BY m.id LIMIT ?`, id, limit).map((row) => {
-      const message = toMessage(row);
-      return { ...message, to: this.deliveries(message.id).map((delivery) => delivery.seat) };
-    });
+    const messages = this.rows(
+      `SELECT ${MESSAGE} FROM messages m
+       WHERE m.id > ?1
+         AND m.id < coalesce((SELECT min(h.message_id) FROM deliveries h INDEXED BY deliveries_held
+                              WHERE h.message_id > ?1 AND ${HELD}), ${MAX_ID})
+         AND EXISTS (SELECT 1 FROM deliveries d WHERE d.message_id = m.id AND NOT (d.state = 'replaced' AND d.how = '${DRAFT}'))
+       ORDER BY m.id LIMIT ?2`,
+      id,
+      limit,
+    ).map(toMessage);
+    if (messages.length === 0) return [];
+    const to = new Map<number, string[]>();
+    for (const row of this.rows<{ message_id: number; seat: string }>(
+      "SELECT message_id, seat FROM deliveries WHERE message_id BETWEEN ? AND ? ORDER BY message_id, seat",
+      messages[0].id,
+      messages[messages.length - 1].id,
+    )) {
+      const seats = to.get(row.message_id);
+      if (seats) seats.push(row.seat);
+      else to.set(row.message_id, [row.seat]);
+    }
+    return messages.map((message) => ({ ...message, to: to.get(message.id) ?? [] }));
   }
 
+  /** The deliveries of one message, a line per recipient. */
   deliveries(id: number): Delivery[] {
     return this.rows(`SELECT ${DELIVERY} FROM deliveries d WHERE d.message_id = ? ORDER BY d.seat`, id).map(toDelivery);
   }
@@ -357,7 +377,13 @@ export class MailStore extends Sqlite {
        WHERE d.state = 'queued' AND d.quiet = 1 AND m.needs = 'nothing' AND m.at < ?`,
       before,
     );
-    for (const { message_id, seat } of stale) this.mark(seat, [message_id], "withdrawn", "expired");
+    const bySeat = new Map<string, number[]>();
+    for (const { message_id, seat } of stale) {
+      const ids = bySeat.get(seat);
+      if (ids) ids.push(message_id);
+      else bySeat.set(seat, [message_id]);
+    }
+    for (const [seat, ids] of bySeat) this.mark(seat, ids, "withdrawn", "expired");
     return stale.length;
   }
 
@@ -415,7 +441,7 @@ export class MailStore extends Sqlite {
     ).map(toHeld);
   }
 
-  /** Moves deliveries of one seat on in their life; returns how many changed. */
+  /** Moves deliveries of one seat on in their life, `how` noting why (DRAFT: a replaced draft; TAKEN: a report taken to go out); returns how many changed. */
   mark(seat: string, ids: readonly number[], state: State, how?: string): number {
     if (ids.length === 0) return 0;
     const settled = (SETTLED_STATES as readonly string[]).includes(state);
@@ -448,17 +474,22 @@ export class MailStore extends Sqlite {
 
   /** The journal is told what the store settled once it is settled: a journal that fails never undoes it. */
   private journal(notes: readonly SettledLine[]): void {
-    for (const line of notes)
-      try {
-        noteSettled(this.folder, line);
-      } catch (error) {
-        console.error(`seatwork: the mail journal of ${this.folder} missed #${line.id}`, error);
-      }
+    if (notes.length === 0) return;
+    try {
+      noteSettled(this.folder, notes);
+    } catch (error) {
+      console.error(`seatwork: the mail journal of ${this.folder} missed ${notes.length} lines`, error);
+    }
   }
 
   /** A report taken to go out that did not: kept again, as it was before it was taken. */
   keepAgain(id: number): void {
     this.run("UPDATE deliveries SET state = 'kept' WHERE message_id = ? AND state = 'withdrawn'", id);
+  }
+
+  /** Puts back as kept every report taken to go out by a process that stopped before it did; returns how many. */
+  keepTaken(): number {
+    return this.run(`UPDATE deliveries SET state = 'kept' WHERE state = 'withdrawn' AND how = '${TAKEN}'`).changes;
   }
 
   /** A kept report goes out: it is queued, for `to` when its recipient changed meanwhile. */
@@ -692,7 +723,7 @@ export class MailStore extends Sqlite {
     });
   }
 
-  /** Drops what is finished and older than `before`; returns the files of those messages. */
+  /** Drops what is finished and older than `before`; returns how many mails, the files of those mails and the threads left empty. */
   prune(before: string): {
     messages: number;
     files: Pick<Message, "id" | "at" | "signal">[];

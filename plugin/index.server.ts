@@ -60,18 +60,22 @@ export default function contribute(server: PluginServerContext) {
   let room: Room | null = isSetUp(ROOM_HOME) ? start() : null;
   if (!room)
     console.log(`seatwork ${VERSION}: no room is set up on this daemon; its setup screen is Seatwork, in the sidebar`);
-  // GC's file sweep also runs when no room is set up
-  const sweepFiles = () => {
+  // the file sweep runs with no room set up too; it trims the seat records only once the daemon says which seats are open
+  const sweepFiles = async () => {
     try {
+      const open = await host.live().then(
+        (seats) => new Set(seats.keys()),
+        () => undefined,
+      );
       const backups = [{ dir: PASEO_HOME, prefixes: ["config.json.bak-"], spare: 1 }];
-      for (const line of collectFiles(ROOM_HOME, backups)) console.log(`seatwork: gc: ${line}`);
+      for (const line of collectFiles(ROOM_HOME, backups, new Date(), open)) console.log(`seatwork: gc: ${line}`);
     } catch (error) {
       console.error("seatwork: gc: the file sweep failed", error);
     }
   };
-  sweepFiles();
-  const fileSweep = setInterval(sweepFiles, 6 * 3_600_000);
-  // setting up, removing and re-keying the room happen one at a time
+  void sweepFiles();
+  const fileSweep = setInterval(() => void sweepFiles(), 6 * 3_600_000);
+  // setting up, removing and restarting the room happen one at a time
   let busy: Promise<unknown> = Promise.resolve();
   const oneAtATime = <T>(work: () => Promise<T>): Promise<T> => {
     const next = busy.then(work, work);
@@ -159,7 +163,6 @@ export default function contribute(server: PluginServerContext) {
     const pluginDir = await ownFolder(paseo);
     const setup = isSetUp(ROOM_HOME) ? readSetup(ROOM_HOME) : null;
     const seats = setup ? enabledSeats().map((seat) => seat.provider) : [];
-    // the provider list and the checks run side by side
     const [states, checks] = await Promise.all([
       harnessStates(paseo, HARNESSES),
       setupChecks(paseo, {
@@ -285,7 +288,7 @@ async function ownFolder(paseo: PaseoApi): Promise<string> {
   const found =
     typeof listed === "string" && existsSync(join(listed, "room", "models.json")) ? listed : sourceOf(ROOM_HOME);
   if (!found) throw new Error("seatwork: Paseo's plugin list does not say where this plugin's folder is");
-  // mid-update Paseo still lists the folder of the version before
+  // during an update Paseo may still list the folder of the earlier version
   const shipped = existsSync(join(found, "package.json"))
     ? (JSON.parse(readFileSync(join(found, "package.json"), "utf8")) as { version?: string }).version
     : undefined;

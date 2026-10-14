@@ -9,9 +9,12 @@ import { parseSeat } from "../orchestration/seats";
 import { handInLine, handInReturn, type HandIn } from "../safety/handin";
 import { asksOwner, DECIDES, signalOf, subjectSignal } from "../signals";
 import { noteUsage } from "../stats";
+import type { Finding } from "../safety/council/council";
 import { fromRoom, releaseWork, taskOf, type RoomContext } from "./context";
 import { councilLine, councilRead } from "./council";
 import { fitAt } from "./launch";
+
+/** The end of a seat's turn: its report goes up, a hand-in may be sent back, a review round is held, a rotation is answered. */
 
 /** A seat as an event of the app names it. */
 export interface SeatEvent {
@@ -31,6 +34,19 @@ export interface TurnEnd {
   events: TurnEvent[];
 }
 
+/** What the room gathered about a turn before it decides what goes up. */
+interface Gathered {
+  role: string;
+  reportsTo: string;
+  wake: readonly Mail[];
+  mailed: ReadonlySet<string>;
+  kept: NewMail | null;
+  failure: ReturnType<RoomContext["recovery"]["failed"]> | null;
+  nothingNew: boolean;
+}
+
+const errorText = (error: unknown) => (error instanceof Error ? error.message : String(error));
+
 /** True when a turn was started by mail and none of it asked the seat for anything. */
 function askedNothing(wake: readonly Mail[]): boolean {
   return (
@@ -47,17 +63,8 @@ function readerOf(room: RoomContext, seat: SeatEvent, role: string): string | nu
 }
 
 /** The report a turn's end sends up; null when the seat's own mail already carried it. */
-function reportOf(
-  room: RoomContext,
-  end: TurnEnd,
-  role: string,
-  to: string,
-  wake: readonly Mail[],
-  mailed: ReadonlySet<string>,
-  kept: NewMail | null,
-  failure: ReturnType<RoomContext["recovery"]["failed"]> | null,
-  nothingNew: boolean,
-): NewMail | null {
+function reportOf(room: RoomContext, end: TurnEnd, about: Gathered): NewMail | null {
+  const { role, reportsTo: to, wake, mailed, kept, failure, nothingNew } = about;
   const { seat, outcome, text } = end;
   const name = `${role} ${seat.title ?? seat.id}`;
   const signal = signalOf(text);
@@ -153,8 +160,9 @@ async function answerRotation(
   if (handoff) {
     room.rotations.starting(id);
     eng.pause(id);
+    let next: Awaited<ReturnType<typeof rotate>> | undefined;
     try {
-      const next = await rotate(
+      next = await rotate(
         {
           host: room.host,
           engine: eng,
@@ -170,10 +178,21 @@ async function answerRotation(
         record,
         handoff,
       );
-      room.rotations.done(id);
-      // mail that came in while the successor started is the successor's
-      await eng.move(id, next.id);
+    } catch (error) {
       eng.unpause(id);
+      await eng.deliver(id);
+      problem = `its successor could not be started (${errorText(error)})`;
+    }
+    if (next) {
+      room.rotations.done(id);
+      try {
+        // mail that came in while the successor started is the successor's
+        await eng.move(id, next.id);
+      } catch (error) {
+        room.log(`rotation: mail held for ${id} did not move to ${next.id}: ${errorText(error)}`);
+      } finally {
+        eng.unpause(id);
+      }
       if (kept && reportsTo) await eng.postReport({ ...kept, to: reportsTo });
       for (const told of new Set([asked.by, ...(reportsTo ? [reportsTo] : [])]))
         await eng.post({
@@ -187,10 +206,6 @@ async function answerRotation(
           quiet: true,
         });
       return true;
-    } catch (error) {
-      eng.unpause(id);
-      await eng.deliver(id);
-      problem = `its successor could not be started (${error instanceof Error ? error.message : String(error)})`;
     }
   }
   room.rotations.done(id);
@@ -212,19 +227,85 @@ export async function rotationFailed(room: RoomContext, by: string, seat: SeatRe
   });
 }
 
+/** The hand-in check of a candidate, null when it is off; a check that fails to run says so and leaves the candidate to its Owner. */
+async function checkHandIn(room: RoomContext, id: string): Promise<HandIn | null> {
+  try {
+    return await room.safety.handIn(id);
+  } catch (error) {
+    room.log(`the hand-in check of ${id} failed: ${errorText(error)}`);
+    return { state: "partial", files: 0, open: [], acknowledged: [], warnings: [], why: "the check failed" };
+  }
+}
+
+/** The council's reading of a turn; a council that cannot read it adds nothing. */
+async function findingsOf(room: RoomContext, end: TurnEnd, role: string, task: string): Promise<Finding[]> {
+  try {
+    return await councilRead(room, end, role, task);
+  } catch (error) {
+    room.log(`the council could not read the turn of ${end.seat.id}: ${errorText(error)}`);
+    return [];
+  }
+}
+
+/** Puts under what goes up the room's own lines: the guard's, the council's, the task's round, a context past the rotation line. A line that cannot be made is left out; the report goes up. */
+function addRoomLines(
+  room: RoomContext,
+  up: NewMail,
+  about: {
+    role: string;
+    id: string;
+    task: string;
+    contextTokens: number | null;
+    check: HandIn | null;
+    findings: readonly Finding[];
+  },
+): void {
+  const { role, id, task, contextTokens, check, findings } = about;
+  try {
+    const guarded = [check ? handInLine(check) : null, room.safety.blocksLine(id), councilLine(findings)].filter(
+      (line): line is string => !!line,
+    );
+    if (guarded.length) up.why = [up.why, ...guarded].filter(Boolean).join("; ");
+    const candidate = subjectSignal(up.subject) === "CANDIDATE";
+    const line = ownerNote({
+      role,
+      candidate,
+      rejected: candidate ? room.rounds.handedIn(task) : 0,
+      contextTokens,
+      rotateAtTokens: room.rotateAt,
+    });
+    if (line) up.why = [up.why, line.replace(/\s*\n\s*/g, " ")].filter(Boolean).join("; ");
+  } catch (error) {
+    room.log(`the room's own lines under the report of ${id} were not all added: ${errorText(error)}`);
+  }
+}
+
+/** A reviewer's report waits for the others of its round: the Owner reads the round in one turn. */
+function holdForRound(room: RoomContext, up: NewMail, id: string): void {
+  const round = room.gate.reported(id);
+  if (round) up.round = round.round;
+  if (round && round.awaited > 0) {
+    const minutes = Number(room.policy.room.params[REVIEW_STALL]) || 0;
+    up.heldUntil = new Date(Date.now() + minutes * 60_000).toISOString();
+    up.why = `${up.why}; held for the ${round.awaited} other${round.awaited === 1 ? "" : "s"} of its review round`;
+  }
+}
+
 /** What a turn's end sets going: the report up, a hand-in sent back once, a review round, a rotation. */
 export async function turnEnded(room: RoomContext, end: TurnEnd): Promise<void> {
   const eng = room.engine;
   const { seat, outcome } = end;
   const id = seat.id;
   const role = parseSeat(seat.provider)?.role;
+  // the task is read once, so every part of this turn's end speaks of the same one
+  const task = role ? taskOf(room, id) : id;
   // only the room's own seats are kept: the council's and the decision model's calls are no seats
   if (role)
     room.knowledge.turnEnded({
       agent: id,
       parentId: seat.parentId,
       role,
-      task: taskOf(room, id),
+      task,
       turnId: end.turnId,
       outcome: outcome.kind,
       events: end.events,
@@ -255,87 +336,35 @@ export async function turnEnded(room: RoomContext, end: TurnEnd): Promise<void> 
   }
   let report =
     role && reportsTo && !canceled
-      ? reportOf(
-          room,
-          end,
+      ? reportOf(room, end, {
           role,
           reportsTo,
           wake,
           mailed,
           kept,
           failure,
-          await nothingNew(room, end, wake, kept, mailed),
-        )
+          nothingNew: await nothingNew(room, end, wake, kept, mailed),
+        })
       : null;
   // a writing seat's candidate goes back to it once, for a pass with fresh eyes, before its Owner reads it
   const handIn = kept ?? report;
-  const rereads =
+  const candidate =
     traits(role).writes === true &&
     outcome.kind === "completed" &&
-    room.policy.room.handin?.freshEyes === true &&
     !!handIn &&
-    subjectSignal(handIn.subject) === "CANDIDATE" &&
-    room.rounds.owesFreshEyes(taskOf(room, id));
+    subjectSignal(handIn.subject) === "CANDIDATE";
+  const rereads = candidate && room.policy.room.handin?.freshEyes === true && room.rounds.owesFreshEyes(task);
   if (rereads) kept = report = null;
   // the room reads a writing seat's candidate first; a blocking finding sends it back
-  let check: HandIn | null = null;
-  if (
-    !rereads &&
-    traits(role).writes === true &&
-    outcome.kind === "completed" &&
-    handIn &&
-    subjectSignal(handIn.subject) === "CANDIDATE"
-  )
-    check = await room.safety.handIn(id).catch((error) => {
-      room.log(`the hand-in check of ${id} failed: ${error instanceof Error ? error.message : String(error)}`);
-      return {
-        state: "partial",
-        files: 0,
-        open: [],
-        acknowledged: [],
-        warnings: [],
-        why: "the check failed",
-      } as HandIn;
-    });
+  const check = candidate && !rereads ? await checkHandIn(room, id) : null;
   const sendBack = check?.state === "blocked" && room.safety.handInBlocks;
   // the council reads the turn; a member that has earned it speaks under the report, or to the seat above
-  const findings =
-    role && !canceled
-      ? await councilRead(room, end, role).catch((error) => {
-          room.log(
-            `the council could not read the turn of ${id}: ${error instanceof Error ? error.message : String(error)}`,
-          );
-          return [];
-        })
-      : [];
+  const findings = role && !canceled ? await findingsOf(room, end, role, task) : [];
   if (sendBack) kept = report = null;
-  // under what goes up, the room's own line: the task's round, and a context past the rotation line
   const up = kept ?? report;
-  if (role && up) {
-    const guarded = [check ? handInLine(check) : null, room.safety.blocksLine(id), councilLine(findings)].filter(
-      (l): l is string => !!l,
-    );
-    if (guarded.length) up.why = [up.why, ...guarded].filter(Boolean).join("; ");
-    const candidate = subjectSignal(up.subject) === "CANDIDATE";
-    const line = ownerNote({
-      role,
-      candidate,
-      rejected: candidate ? room.rounds.handedIn(taskOf(room, id)) : 0,
-      contextTokens: usage?.contextWindowUsedTokens ?? null,
-      rotateAtTokens: room.rotateAt,
-    });
-    if (line) up.why = [up.why, line.replace(/\s*\n\s*/g, " ")].filter(Boolean).join("; ");
-  }
-  // a reviewer's report waits for the others of its round: the Owner reads the round in one turn
-  if (up && subjectSignal(up.subject) === "REVIEW") {
-    const round = room.gate.reported(id);
-    if (round) up.round = round.round;
-    if (round && round.awaited > 0) {
-      const minutes = Number(room.policy.room.params[REVIEW_STALL]) || 0;
-      up.heldUntil = new Date(Date.now() + minutes * 60_000).toISOString();
-      up.why = `${up.why}; held for the ${round.awaited} other${round.awaited === 1 ? "" : "s"} of its review round`;
-    }
-  }
+  if (role && up)
+    addRoomLines(room, up, { role, id, task, contextTokens: usage?.contextWindowUsedTokens ?? null, check, findings });
+  if (up && subjectSignal(up.subject) === "REVIEW") holdForRound(room, up, id);
   const asked = room.rotations.get(id);
   const record = eng.seat(id);
   if (asked && record && wake.some((mail) => mail.id === asked.mailId)) {

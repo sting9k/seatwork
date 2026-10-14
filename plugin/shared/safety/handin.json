@@ -1,5 +1,5 @@
 {
-  "$comment": "Hand-in rules on added lines. block returns the candidate; warn rides up. in: code, comment, string or line.",
+  "$comment": "Hand-in rules on added lines. level: block sends the candidate back, warn rides up with it. in: the part of the line a pattern reads (code, comment, string, or the whole line). files: test, source or any. languages: ids from `languages`, or `*`. skip: paths never read. tests: paths of test files.",
   "languages": {
     "javascript": [".js", ".jsx", ".mjs", ".cjs", ".ts", ".tsx", ".mts", ".cts", ".vue", ".svelte"],
     "python": [".py"],

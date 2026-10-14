@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import assert from "node:assert/strict";
 import test from "node:test";
-import { Sqlite, readScripts, type SqliteFailure } from "../server/sqlite";
+import { Sqlite, readScripts, type Row, type SqliteFailure } from "../server/sqlite";
 
 const base = mkdtempSync(join(tmpdir(), "seatwork-sqlite-"));
 process.on("exit", () => rmSync(base, { recursive: true, force: true }));
@@ -39,6 +39,9 @@ class Probe extends Sqlite {
   }
   raw(sql: string): void {
     this.db.exec(sql);
+  }
+  ask(sql: string): Row[] {
+    return this.rows(sql);
   }
 }
 
@@ -134,4 +137,23 @@ test("the scripts that ship are well formed: one per version, named for what the
       `${store}: versions run from 1 with no gap`,
     );
   }
+});
+
+test("a store keeps a bounded number of prepared statements, however many different ones it is asked for", () => {
+  const { file, dir } = fresh({ "V1__layout.sql": "CREATE TABLE things (id INTEGER PRIMARY KEY);" });
+  const store = new Probe(file, dir);
+  for (let i = 0; i < 1000; i += 1) assert.equal(store.ask(`SELECT ${i} AS n`)[0].n, i);
+  assert.ok(store.plans().length <= 512, `${store.plans().length} statements kept`);
+  assert.equal(store.ask("SELECT 999 AS n")[0].n, 999, "the newest statement still runs");
+  store.close();
+});
+
+test("a store hands the disk back after a large write: its write-ahead log is cut to a limit once it is checkpointed", () => {
+  const { file, dir } = fresh({ "V1__layout.sql": "CREATE TABLE things (id INTEGER PRIMARY KEY);" });
+  const store = new Probe(file, dir);
+  const limit = Number(
+    (store.ask("PRAGMA journal_size_limit")[0] as { journal_size_limit: number }).journal_size_limit,
+  );
+  assert.ok(limit > 0 && limit <= 64 * 1024 * 1024, `journal_size_limit is ${limit}`);
+  store.close();
 });

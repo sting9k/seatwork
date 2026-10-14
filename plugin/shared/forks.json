@@ -1,5 +1,5 @@
 {
-  "$comment": "The room's forks: small choices about mail and work put to the decision model. A label at sharpAt or more is acted on; anything less keeps the room's own rule. Each is asked only where its condition in the code holds; policy.jev.forks lists those that are on.",
+  "$comment": "The room's forks: small choices about mail and work put to the decision model. A label at sharpAt or more is acted on; anything less keeps the room's own rule. deadlineMs: how long a call may take. Each is asked only where its condition in the code holds; policy.jev.forks lists those that are on.",
   "forks": {
     "report": {
       "version": 1,

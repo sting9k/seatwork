@@ -10,9 +10,10 @@ import { changedSince, type Snapshot } from "./git";
 
 /** The council: each member reads a turn for one concern, and speaks at the level it has earned. */
 
-export type MemberName = keyof typeof council.members;
+type MemberName = keyof typeof council.members;
 const MEMBERS = Object.keys(council.members) as MemberName[];
 
+/** The council's settings in the policy: `levels` pins a member's level, readings no label holds are kept `keepDays`. */
 export interface CouncilPolicy {
   mode: "on" | "off";
   keepDays: number;
@@ -31,7 +32,8 @@ export interface Decider {
   ): Promise<{ answers: Record<string, { type: string; noul?: number }>; asks: Record<string, number> }>;
 }
 
-export interface CouncilSeat {
+/** The seat a turn belongs to: its traits say which members read it, `root` is its work tree, `task` its task. */
+interface CouncilSeat {
   id: string;
   role: string | null;
   traits: RoleTraits;
@@ -50,6 +52,7 @@ export interface Verdict {
   costUsd: number | null;
 }
 
+/** A turn that ended, as the room gathers it; `changed` is the files git saw change, when it was asked. */
 export interface TurnInput {
   seat: CouncilSeat;
   turn: string | null;
@@ -60,6 +63,7 @@ export interface TurnInput {
   changed?: readonly string[] | null;
 }
 
+/** What a member says with the report of a turn: its level and one line. */
 export interface Finding {
   member: MemberName;
   level: number;
@@ -76,6 +80,11 @@ interface Reading {
   score?: number;
   askId?: number;
 }
+
+type BriefFields = ReturnType<typeof briefFields>;
+
+/** A reading made at once, or a juror's question to ask when its caller says so. */
+type Pending = Reading | (() => Promise<Reading>);
 
 const JUROR_DEADLINE_MS = 8000;
 const MAX_JURORS_IN_FLIGHT = 8;
@@ -98,12 +107,11 @@ function loopReading(events: readonly TurnEvent[]): Reading | null {
     : null;
 }
 
-/** Labels read per member when it is weighed again; the newest decide. */
 const LABELS_READ = 500;
-/** A juror's threshold moves only after this many new labels. */
 const MOVE_EVERY = 20;
 const IMPLIED = { acceptanceRun: "implied:acceptance-run", nextVerdict: "implied:next-verdict" } as const;
 
+/** The council over the store: it reads turns, logs every reading, and weighs each member by the labels it gets. */
 export class Council {
   private readonly started = new Map<string, { at: number; snapshot: Promise<Snapshot | null> }>();
   private inFlight = 0;
@@ -138,10 +146,12 @@ export class Council {
     return this.deps.policy()?.levels?.[member] ?? this.state(member)?.level ?? council.members[member].level;
   }
 
+  /** A juror's threshold: where its labels moved it, else the shipped one. */
   private hi(member: "claims" | "scope"): number {
     return this.state(member)?.hi ?? council.members[member].hi;
   }
 
+  /** Whether a member reads seats with these traits. */
   private watches(member: MemberName, traits: RoleTraits): boolean {
     return council.members[member].traits.some((trait) => traits[trait as keyof RoleTraits] === true);
   }
@@ -164,6 +174,7 @@ export class Council {
     return found && files ? { root: found.root, files } : null;
   }
 
+  /** A seat that is gone: its running turn is no longer kept. */
   forget(seat: string): void {
     this.started.delete(seat);
   }
@@ -232,7 +243,7 @@ export class Council {
     return member;
   }
 
-  /** What a Lead's verdict this turn says of earlier findings: a check run on the work, a task sent back again. */
+  /** What a seat's verdicts this turn say of earlier findings: a check run on the work, a task sent back again. */
   private implied(input: TurnInput): void {
     const store = this.deps.store();
     const touched = new Set<MemberName>();
@@ -264,7 +275,7 @@ export class Council {
     for (const member of touched) this.weigh(member);
   }
 
-  /** Weighs a member again from its labels: the level they earn, and a juror's threshold. */
+  /** Weighs a member again from its newest labels: the level they earn, and a juror's threshold, moved every 20 labels. */
   private weigh(member: MemberName): void {
     const store = this.deps.store();
     const shipped = council.members[member];
@@ -288,6 +299,7 @@ export class Council {
     return this.deps.store().expireCouncil(new Date(this.now() - keepDays * 86_400_000));
   }
 
+  /** A juror that could not be asked is logged as skipped. */
   private failed(member: MemberName, error: unknown): Reading {
     this.deps.log(`council: the ${member} juror could not be asked: ${error instanceof Error ? error.message : error}`);
     return { tier: "juror", zone: "skipped", evidence: { error: String(error).slice(0, 200) } };
@@ -343,117 +355,131 @@ export class Council {
     return { tier: "juror", zone, score, askId: decided.asks[member], line: line(score), evidence };
   }
 
+  /** Whether a decision provider is there and ready to be asked. */
   private jurorReady(): boolean {
     return !!this.deps.decider && this.deps.decider.why() === null;
   }
 
-  /** A member's readings of a turn: a fact at once, or a juror's question to ask, started only when its caller says so. */
-  private read(member: MemberName, input: TurnInput): (Reading | (() => Promise<Reading>))[] {
+  /** A member's readings of a turn. */
+  private read(member: MemberName, input: TurnInput): Pending[] {
     const fields = input.brief ? briefFields(input.brief) : {};
     switch (member) {
-      case "claims": {
-        const named = quotedCommands([fields.acceptance, fields.contract].filter(Boolean).join("\n"));
-        const facts = turnFacts(input.events, named);
-        const writes = input.seat.traits.writes === true;
-        // a writer's checks count after its last change; a reviewer changes nothing, so any check counts
-        const after = writes ? facts.checksAfterChange : facts.checks;
-        if (writes && facts.lastChange < 0) return [{ tier: "fact", zone: "skipped" }];
-        if (after.some((run) => run.exitCode === 0))
-          return [{ tier: "fact", zone: "clear", evidence: { checks: after } }];
-        const claims = claimsIn(input.text);
-        const where = writes ? "after the last change" : "in the turn";
-        if (claims.length)
-          return [
-            {
-              tier: "fact",
-              zone: "found",
-              line: `claims: the report says ${quoted(claims[0])}, and no check passed ${where}`,
-              evidence: { claim: claims[0], checks: after },
-            },
-          ];
-        const signal = signalOf(input.text);
-        if (!signal || !CLOSES_WORK.has(signal) || !this.jurorReady()) return [{ tier: "fact", zone: "clear" }];
-        return [
-          () =>
-            this.ask(
-              "claims",
-              { report: clip(input.text, REPORT_CHARS) },
-              (score) => `claims: the report reads as tested (${score.toFixed(2)}), and no check passed ${where}`,
-              { signal, checks: after },
-            ),
-        ];
-      }
-      case "scope": {
-        // git sees every change, a shell's included; the tool calls are what is left without it
-        const changed = input.changed ?? turnFacts(input.events, []).changed;
-        if (changed.length === 0) return [{ tier: "fact", zone: "skipped" }];
-        const out: (Reading | (() => Promise<Reading>))[] = [];
-        const globs = fields.writeScope ? scopeGlobs(fields.writeScope) : [];
-        if (globs.length) {
-          const outside = outsideScope(changed, globs, input.seat.root);
-          out.push(
-            outside.length
-              ? {
-                  tier: "fact",
-                  zone: "found",
-                  fingerprint: [...outside].sort().join("|"),
-                  line: `scope: changed ${outside.slice(0, 3).join(", ")}${outside.length > 3 ? ` and ${outside.length - 3} more` : ""}, outside the write scope ${clip(fields.writeScope!, 80)}`,
-                  evidence: { outside, globs },
-                }
-              : { tier: "fact", zone: "clear" },
-          );
-        }
-        if (fields.nonGoals && this.jurorReady())
-          out.push(() =>
-            this.ask(
-              "scope",
-              {
-                nonGoals: fields.nonGoals,
-                changed: changed.slice(0, 50),
-                report: clip(input.text, REPORT_CHARS),
-              },
-              (score) =>
-                `scope: the work reads as touching a non-goal (${score.toFixed(2)}): ${clip(fields.nonGoals!, 80)}`,
-              { nonGoals: fields.nonGoals },
-            ),
-          );
-        return out.length ? out : [{ tier: "fact", zone: "skipped" }];
-      }
+      case "claims":
+        return this.readClaims(input, fields);
+      case "scope":
+        return this.readScope(input, fields);
       case "stuck":
         return [loopReading(input.events) ?? { tier: "fact", zone: "clear" }];
       case "repair":
-        return input.verdicts
-          .filter((verdict) => !verdict.accepted)
-          .map((verdict) =>
-            verdict.rejected >= council.members.repair.rejections
-              ? {
-                  tier: "fact",
-                  zone: "found",
-                  fingerprint: `${verdict.task ?? verdict.to}:${verdict.rejected}`,
-                  line: `repair: ${verdict.to}'s work was sent back ${verdict.rejected} times${verdict.contextTokens ? `; its context holds ${Math.round(verdict.contextTokens / 1000)}K tokens` : ""}${verdict.costUsd ? `, it cost ${verdict.costUsd.toFixed(2)} USD` : ""}: a fresh seat, given a failing test for what is wrong, may do better`,
-                  evidence: verdict,
-                }
-              : { tier: "fact", zone: "clear", evidence: { rejected: verdict.rejected } },
-          );
+        return readRepair(input);
       case "verdict":
-        return input.verdicts
-          .filter((verdict) => verdict.accepted)
-          .map((verdict) => {
-            const wanted = verdict.brief ? quotedCommands(briefFields(verdict.brief).acceptance ?? "") : [];
-            if (wanted.length === 0) return { tier: "fact", zone: "skipped" } as Reading;
-            const ran = input.events.some(
-              (event) => event.kind === "shell" && event.exitCode === 0 && runsOneOf(event.command, wanted),
-            );
-            return ran
-              ? { tier: "fact", zone: "clear" }
-              : {
-                  tier: "fact",
-                  zone: "found",
-                  fingerprint: `${verdict.to}:${input.turn}`,
-                  line: `verdict: accepted ${verdict.to}'s work without running its acceptance check ${quoted(wanted[0])}`,
-                  evidence: { wanted },
-                };
-          });
+        return readVerdicts(input);
     }
   }
+
+  /** Holds a report that says the work was checked to the checks the turn ran; a juror is asked only where facts cannot tell. */
+  private readClaims(input: TurnInput, fields: BriefFields): Pending[] {
+    const named = quotedCommands([fields.acceptance, fields.contract].filter(Boolean).join("\n"));
+    const facts = turnFacts(input.events, named);
+    const writes = input.seat.traits.writes === true;
+    // a writer's checks count after its last change; a reviewer changes nothing, so any check counts
+    const after = writes ? facts.checksAfterChange : facts.checks;
+    if (writes && facts.lastChange < 0) return [{ tier: "fact", zone: "skipped" }];
+    if (after.some((run) => run.exitCode === 0)) return [{ tier: "fact", zone: "clear", evidence: { checks: after } }];
+    const claims = claimsIn(input.text);
+    const where = writes ? "after the last change" : "in the turn";
+    if (claims.length)
+      return [
+        {
+          tier: "fact",
+          zone: "found",
+          line: `claims: the report says ${quoted(claims[0])}, and no check passed ${where}`,
+          evidence: { claim: claims[0], checks: after },
+        },
+      ];
+    const signal = signalOf(input.text);
+    if (!signal || !CLOSES_WORK.has(signal) || !this.jurorReady()) return [{ tier: "fact", zone: "clear" }];
+    return [
+      () =>
+        this.ask(
+          "claims",
+          { report: clip(input.text, REPORT_CHARS) },
+          (score) => `claims: the report reads as tested (${score.toFixed(2)}), and no check passed ${where}`,
+          { signal, checks: after },
+        ),
+    ];
+  }
+
+  /** The files a turn changed are held to its write scope; a juror is asked whether the work touched a non-goal. */
+  private readScope(input: TurnInput, fields: BriefFields): Pending[] {
+    // git sees every change, a shell's included; the tool calls are what is left without it
+    const changed = input.changed ?? turnFacts(input.events, []).changed;
+    if (changed.length === 0) return [{ tier: "fact", zone: "skipped" }];
+    const out: Pending[] = [];
+    const globs = fields.writeScope ? scopeGlobs(fields.writeScope) : [];
+    if (globs.length) {
+      const outside = outsideScope(changed, globs, input.seat.root);
+      out.push(
+        outside.length
+          ? {
+              tier: "fact",
+              zone: "found",
+              fingerprint: [...outside].sort().join("|"),
+              line: `scope: changed ${outside.slice(0, 3).join(", ")}${outside.length > 3 ? ` and ${outside.length - 3} more` : ""}, outside the write scope ${clip(fields.writeScope!, 80)}`,
+              evidence: { outside, globs },
+            }
+          : { tier: "fact", zone: "clear" },
+      );
+    }
+    if (fields.nonGoals && this.jurorReady())
+      out.push(() =>
+        this.ask(
+          "scope",
+          { nonGoals: fields.nonGoals, changed: changed.slice(0, 50), report: clip(input.text, REPORT_CHARS) },
+          (score) =>
+            `scope: the work reads as touching a non-goal (${score.toFixed(2)}): ${clip(fields.nonGoals!, 80)}`,
+          { nonGoals: fields.nonGoals },
+        ),
+      );
+    return out.length ? out : [{ tier: "fact", zone: "skipped" }];
+  }
+}
+
+/** A task sent back as often as the member allows is a finding: a fresh seat may do better. */
+function readRepair(input: TurnInput): Reading[] {
+  return input.verdicts
+    .filter((verdict) => !verdict.accepted)
+    .map((verdict) =>
+      verdict.rejected >= council.members.repair.rejections
+        ? {
+            tier: "fact",
+            zone: "found",
+            fingerprint: `${verdict.task ?? verdict.to}:${verdict.rejected}`,
+            line: `repair: ${verdict.to}'s work was sent back ${verdict.rejected} times${verdict.contextTokens ? `; its context holds ${Math.round(verdict.contextTokens / 1000)}K tokens` : ""}${verdict.costUsd ? `, it cost ${verdict.costUsd.toFixed(2)} USD` : ""}: a fresh seat, given a failing test for what is wrong, may do better`,
+            evidence: verdict,
+          }
+        : { tier: "fact", zone: "clear", evidence: { rejected: verdict.rejected } },
+    );
+}
+
+/** Work accepted without a run of its own acceptance check is a finding. */
+function readVerdicts(input: TurnInput): Reading[] {
+  return input.verdicts
+    .filter((verdict) => verdict.accepted)
+    .map((verdict): Reading => {
+      const wanted = verdict.brief ? quotedCommands(briefFields(verdict.brief).acceptance ?? "") : [];
+      if (wanted.length === 0) return { tier: "fact", zone: "skipped" };
+      const ran = input.events.some(
+        (event) => event.kind === "shell" && event.exitCode === 0 && runsOneOf(event.command, wanted),
+      );
+      return ran
+        ? { tier: "fact", zone: "clear" }
+        : {
+            tier: "fact",
+            zone: "found",
+            fingerprint: `${verdict.to}:${input.turn}`,
+            line: `verdict: accepted ${verdict.to}'s work without running its acceptance check ${quoted(wanted[0])}`,
+            evidence: { wanted },
+          };
+    });
 }

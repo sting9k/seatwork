@@ -1,11 +1,15 @@
 import { ROOM_HOME, shipSql } from "./support/room";
 import assert from "node:assert/strict";
-import { mkdirSync, writeFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { mkdirSync, utimesSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { test } from "node:test";
 import { Safety, type SafetyDeps } from "../server/safety/index";
 import type { SafetyPolicy } from "../server/safety/guard";
 import { GATE_ENV } from "../server/safety/hooks";
+import { machineTools } from "../server/safety/system";
+
+const gitModule = require("../server/git") as typeof import("../server/git");
 
 shipSql();
 
@@ -199,4 +203,113 @@ test("every statement the safety store runs uses an index", async () => {
     .plans()
     .filter(({ plan }) => /\bSCAN (decisions|codes|escalations|seats|findings)\b(?! USING)/.test(plan));
   assert.deepEqual(scans, []);
+  const plans = store.plans().map(({ plan }) => plan);
+  const indexes = (store as unknown as { db: import("node:sqlite").DatabaseSync }).db
+    .prepare(
+      "SELECT name FROM sqlite_master WHERE type = 'index' AND name NOT LIKE 'sqlite_%' AND tbl_name NOT LIKE 'council_%'",
+    )
+    .all() as { name: string }[];
+  assert.deepEqual(
+    indexes.map(({ name }) => name).filter((name) => !plans.some((plan) => plan.includes(name))),
+    [],
+    "an index no statement uses costs a write for nothing",
+  );
+});
+
+const writeOf = (safety: Safety, path: string, cwd = "/Users/u/proj") =>
+  safety.guard.checkWrite({ id: "peer", role: "peer", project: null, tmp: null, start: null }, "claude", path, cwd);
+
+test("a code granted for a blocked file write lets that write through once, as for a command", async () => {
+  const { safety } = fresh();
+  const blocked = await writeOf(safety, `${HOME}/.zshrc`);
+  assert.equal(blocked.allow, false);
+  assert.match(safety.grant(blocked.code!, "lead"), /Granted/);
+  assert.equal((await writeOf(safety, `${HOME}/.zshrc`)).allow, true);
+  assert.equal((await writeOf(safety, `${HOME}/.zshrc`)).allow, false, "it is used once");
+});
+
+test("the owner's allow entries lift a rule for a file write as they do for a command", async () => {
+  const { safety } = fresh({
+    allow: [{ rule: "core.filesystem:credential-file-write", paths: ["/Users/u/proj"] }],
+  });
+  assert.equal((await writeOf(safety, `${HOME}/.zshrc`)).allow, true);
+  assert.equal((await writeOf(safety, `${HOME}/.zshrc`, "/Users/u/other")).allow, false, "only in the folders named");
+});
+
+test("a script the seat wrote after it started is read before it runs, in a repository or not", async () => {
+  const { safety } = fresh();
+  const dir = join(ROOM_HOME, "script-room");
+  mkdirSync(dir, { recursive: true });
+  await safety.started("peer", dir);
+  writeFileSync(join(dir, "wipe.sh"), "rm -rf ~\n");
+  writeFileSync(join(dir, "clean.sh"), "echo hi\n");
+  const check = (command: string) =>
+    safety.guard.check({ id: "peer", role: "peer", project: null, tmp: null, start: null }, "claude", command, dir);
+  const wipe = await check(`bash ${dir}/wipe.sh`);
+  assert.equal(wipe.allow, false);
+  assert.match(wipe.message ?? "", /rm-rf/);
+  assert.equal((await check(`bash ${dir}/clean.sh`)).allow, true);
+});
+
+test("the guard's gate settings are the policy's, with the packs the project adds", () => {
+  const project = join(ROOM_HOME, "config-project");
+  mkdirSync(join(project, ".seatwork"), { recursive: true });
+  writeFileSync(join(project, ".seatwork", "safety.json"), JSON.stringify({ packs: { add: ["strict_git"] } }));
+  const place = { home: HOME, project, tmp: null, start: null, guard: null, roomFolder: ".seatwork" };
+  const plain = fresh({ packs: { add: ["containers"] } }).safety.guard.gateConfig({ ...place, project: null });
+  assert.deepEqual([plain.packs.has("strict_git"), plain.packs.has("containers")], [false, true]);
+  assert.deepEqual([plain.budgetMs, plain.maxBytes], [1000, 65536]);
+  const set = fresh({ packs: { add: ["containers"] }, budgetMs: 300, maxBytes: 4096 }).safety.guard.gateConfig(place);
+  assert.deepEqual([set.packs.has("strict_git"), set.packs.has("containers")], [true, true]);
+  assert.deepEqual([set.budgetMs, set.maxBytes], [300, 4096]);
+});
+
+test("a script git says is unchanged is asked about once in a while, not at every run", async () => {
+  const dir = join(ROOM_HOME, "unchanged-room");
+  mkdirSync(dir, { recursive: true });
+  const git = (...args: string[]) =>
+    execFileSync("git", args, {
+      cwd: dir,
+      env: {
+        ...process.env,
+        GIT_CONFIG_GLOBAL: "/dev/null",
+        GIT_AUTHOR_NAME: "t",
+        GIT_AUTHOR_EMAIL: "t@t",
+        GIT_COMMITTER_NAME: "t",
+        GIT_COMMITTER_EMAIL: "t@t",
+      },
+    });
+  git("init", "-q");
+  writeFileSync(join(dir, "ok.sh"), "echo ok\n");
+  git("add", "-A");
+  git("commit", "-qm", "base");
+  const tools = machineTools(() => null);
+  const real = gitModule.runGit;
+  let asked = 0;
+  gitModule.runGit = (...args: Parameters<typeof real>) => ((asked += 1), real(...args));
+  try {
+    for (let i = 0; i < 5; i += 1) assert.equal(await tools.changed(join(dir, "ok.sh")), null);
+    assert.equal(asked, 1);
+    writeFileSync(join(dir, "ok.sh"), "echo changed\n");
+    utimesSync(join(dir, "ok.sh"), new Date(), new Date(Date.now() + 5000));
+    assert.equal(
+      await tools.changed(join(dir, "ok.sh")),
+      "echo changed\n",
+      "a file that was touched is looked at again",
+    );
+  } finally {
+    gitModule.runGit = real;
+  }
+});
+
+test("a patch that touches several files carries the note of any file the guard let through with one", async () => {
+  const { safety } = fresh({ rules: { "core.filesystem:credential-file-write": "warn" } });
+  const patch = {
+    tool_name: "apply_patch",
+    tool_input: {
+      command: "*** Begin Patch\n*** Update File: src/a.ts\n*** Update File: /Users/u/.zshrc\n*** End Patch",
+    },
+    cwd: "/Users/u/proj",
+  };
+  assert.match((await safety.answer("codex", patch, "peer")).text, /let this run with a note.*credential-file-write/);
 });

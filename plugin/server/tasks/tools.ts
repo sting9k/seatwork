@@ -50,11 +50,13 @@ export interface Caller {
 type Args = Record<string, unknown>;
 
 const text = (value: unknown) => (typeof value === "string" ? value : undefined);
+/** A text argument that must be given. */
 const need = (args: Args, field: string): string => {
   const value = text(args[field])?.trim();
   if (!value) throw new WorkError("VALIDATION_FAILED", `give \`${field}\``);
   return value;
 };
+/** The `limit` argument, from 1 to 1000, else the fallback. */
 const limitOf = (args: Args, fallback: number) =>
   Number(args.limit) >= 1 ? Math.min(Math.trunc(Number(args.limit)), 1000) : fallback;
 /** A whole number from a number or its text; refused when it is anything else. */
@@ -74,6 +76,7 @@ function when(value: unknown): string | null | undefined {
   return new Date(at).toISOString();
 }
 
+/** An issue to make, read from a tool's arguments and checked. */
 function newIssue(from: Args): NewIssue & { key?: string } {
   if (!from || typeof from !== "object" || Array.isArray(from))
     throw new WorkError("VALIDATION_FAILED", "each of `issues` is an object with a title");
@@ -171,20 +174,22 @@ export function work(store: WorkStore, policy: WorkPolicy, caller: Caller, args:
       );
     case "note":
       return brief(store.update(need(args, "id"), { append_notes: need(args, "text") }, actor));
-    case "comment":
-      store.comment(need(args, "id"), actor, need(args, "text"));
-      return { commented: store.get(need(args, "id")).id };
-    case "depend":
-      store.addDependency(
-        need(args, "id"),
-        need(args, "on"),
-        (text(args.type) as DependencyType | undefined) ?? "blocks",
-        actor,
-      );
-      return { id: store.get(need(args, "id")).id, blocked_by: store.blockers(need(args, "id")) };
-    case "undepend":
-      store.removeDependency(need(args, "id"), need(args, "on"), actor, text(args.type) as DependencyType | undefined);
-      return { id: store.get(need(args, "id")).id, blocked_by: store.blockers(need(args, "id")) };
+    case "comment": {
+      const issue = store.get(need(args, "id"));
+      store.comment(issue.id, actor, need(args, "text"));
+      return { commented: issue.id };
+    }
+    case "depend": {
+      const issue = store.get(need(args, "id"));
+      const type = (text(args.type) as DependencyType | undefined) ?? "blocks";
+      store.addDependency(issue.id, need(args, "on"), type, actor);
+      return { id: issue.id, blocked_by: store.blockers(issue.id) };
+    }
+    case "undepend": {
+      const issue = store.get(need(args, "id"));
+      store.removeDependency(issue.id, need(args, "on"), actor, text(args.type) as DependencyType | undefined);
+      return { id: issue.id, blocked_by: store.blockers(issue.id) };
+    }
     case "close": {
       if (!caller.owner)
         throw new WorkError(
@@ -219,8 +224,10 @@ export function graph(store: WorkStore, policy: WorkPolicy, args: Args, now: Dat
       return next(open, now) ?? { claimable: false, message: "nothing is ready and unassigned" };
     case "plan":
       return plan(open, now);
-    case "blockers":
-      return { id: store.get(need(args, "id")).id, chain: blockerChain(open, store.get(need(args, "id")).id) };
+    case "blockers": {
+      const id = store.get(need(args, "id")).id;
+      return { id, chain: blockerChain(open, id) };
+    }
     case "alerts":
       return alerts(open, now, policy.staleClaimMinutes);
     default:

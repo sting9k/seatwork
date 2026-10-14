@@ -4,6 +4,7 @@ export class ReviewGate {
   private readonly roundOf = new Map<string, string>();
   private readonly awaited = new Map<string, Set<string>>();
 
+  /** An Owner's turn began: reviewers launched from now on are a new round. */
   turnStarted(owner: string): void {
     this.turns.set(owner, (this.turns.get(owner) ?? 0) + 1);
   }
@@ -13,6 +14,7 @@ export class ReviewGate {
     this.turns.delete(owner);
   }
 
+  /** A reviewer the Owner launched in its current turn joins that turn's round. */
   launched(owner: string, reviewer: string): void {
     const round = `${owner}:${this.turns.get(owner) ?? 0}`;
     this.roundOf.set(reviewer, round);

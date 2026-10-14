@@ -1,11 +1,12 @@
 import { ROOM_HOME, shipSql } from "./support/room";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { test } from "node:test";
 import { packsInForce } from "../server/safety/gate/packs";
 import { handInLine, handInReturn, inspectHandIn } from "../server/safety/handin";
+import { Safety } from "../server/safety/index";
 import { SafetyStore } from "../server/safety/store";
 import { machineTools } from "../server/safety/system";
 
@@ -132,4 +133,95 @@ test("vendored, generated and lock files are not read", async () => {
     "web/app.min.js": "debugger;\n",
   });
   assert.equal((await check()).state, "empty");
+});
+
+test("a file with a name git would quote is read under its own name, and costs the file before it nothing", async () => {
+  const { dir, check } = project({
+    "a.ts": "export const a = 0;\n",
+    "tést.ts": "export const t = 0;\n",
+    "z.ts": "export const z = 0;\n",
+  });
+  write(dir, { "a.ts": "export const a = 1;\n", "tést.ts": "debugger;\n", "z.ts": "export const z = 1;\n" });
+  const result = await check();
+  assert.deepEqual(
+    result.open.map((r) => `${r.rule} ${r.path}:${r.line}`),
+    ["debugger tést.ts:1"],
+  );
+});
+
+test("a link in the work tree is not followed to a file outside it", async () => {
+  const { dir, check } = project(START);
+  const outside = join(ROOM_HOME, `handin-outside-${repos}.ts`);
+  writeFileSync(outside, "debugger;\n");
+  symlinkSync(outside, join(dir, "link.ts"));
+  assert.equal((await check()).state, "empty");
+});
+
+test("the check reads scripts with the packs the project adds", async () => {
+  const { dir } = project({ "package.json": '{"name":"x","scripts":{"test":"jest"}}\n' });
+  mkdirSync(join(dir, ".seatwork"), { recursive: true });
+  writeFileSync(join(dir, ".seatwork", "safety.json"), JSON.stringify({ packs: { add: ["strict_git"] } }));
+  write(dir, { "package.json": '{"name":"x","scripts":{"test":"jest","ship":"git push origin --delete old"}}\n' });
+  const safety = new Safety({
+    dir: join(dir, ".store"),
+    userHome: "/Users/u",
+    policy: () => ({}),
+    seat: () => ({ role: "peer", cwd: dir }),
+    projectOf: () => dir,
+    isAncestor: () => false,
+    tmpOf: () => join(dir, "tmp"),
+    guard: { paths: [], except: [] },
+    roomFolder: ".seatwork",
+    repeated: () => {},
+    decider: null,
+    log: () => {},
+  });
+  const found = await safety.handIn("seat");
+  assert.deepEqual(
+    found?.open.map((r) => r.rule),
+    ["destructive-script"],
+  );
+  safety.close();
+});
+
+test("an added line that begins with ++ is a line like any other, and the lines after it keep their numbers", async () => {
+  const { dir, check } = project({ "a.ts": "const i = 0;\n" });
+  write(dir, { "a.ts": "const i = 0;\n++i;\ndebugger;\n" });
+  assert.deepEqual(
+    (await check()).open.map((r) => `${r.rule}:${r.line}`),
+    ["debugger:3"],
+  );
+});
+
+test("a rule reads the part of a line its language says it is: code, comment or string", async () => {
+  const { dir, check } = project({});
+  write(dir, {
+    "a.py": 's = "breakpoint()"  # breakpoint()\n"""\nbreakpoint()\n"""\nbreakpoint()  # TODO real\n',
+    "b.ts": "const t = `\ndebugger;\n`;\n// debugger;\ndebugger; // TODO real\n",
+    "c.rs": "fn f<'a>(x: &'a str) { todo!() }\nlet s = \"todo!()\";\n",
+    "d.sh": "echo '#' # TODO real\n",
+  });
+  const found = (await check()).open.concat((await check()).warnings).map((r) => `${r.rule} ${r.path}:${r.line}`);
+  assert.deepEqual(found.sort(), [
+    "debugger a.py:5",
+    "debugger b.ts:5",
+    "new-todo a.py:5",
+    "new-todo b.ts:5",
+    "new-todo d.sh:1",
+    "placeholder-body c.rs:1",
+  ]);
+});
+
+test("what a seat reads when its candidate comes back lists some of the problems and counts the rest", () => {
+  const row = (n: number) =>
+    ({ fingerprint: `f${n}`, rule: "debugger", path: "a.ts", line: n, text: "debugger;" }) as never;
+  const open = Array.from({ length: 300 }, (_, n) => row(n + 1));
+  const text = handInReturn({ state: "blocked", files: 1, open, acknowledged: open, warnings: [], why: null });
+  assert.ok(text.split("\n").length <= 25, "a long list is cut");
+  assert.match(text, /found 300 problem\(s\)/);
+  assert.match(text, /and 280 more/);
+  assert.ok(
+    (handInLine({ state: "clean", files: 1, open: [], acknowledged: open, warnings: [], why: null }) ?? "").length <
+      4000,
+  );
 });

@@ -5,7 +5,7 @@ import { parseSeat } from "../../orchestration/seats";
 import type { RoomPlan } from "./plan";
 import { stamp } from "./room-home";
 
-/** The id prefixes of every profile the room ever wrote (the second until 0.19.0). */
+/** Whether a profile is the room's own, by the id prefixes the room has written. */
 const isOwnProfile = (id: string) => id.startsWith("agent_profile_seatwork_") || id.startsWith("agent_profile_slp_");
 const isRoomSeat = (id: string) => parseSeat(id) !== null;
 const NO_BUNDLED_SKILLS = { mode: "custom", skills: [] as string[] };
@@ -21,6 +21,7 @@ function dropsKeys(before: unknown, after: unknown): boolean {
   return Object.keys(before).some((key) => !(key in after) || dropsKeys(before[key], after[key]));
 }
 
+/** Whether two paths are one folder, links resolved. */
 const sameDir = (a: string, b: string) => {
   const real = (dir: string) => (existsSync(dir) ? realpathSync(dir) : dir);
   return real(a) === real(b);
@@ -137,6 +138,7 @@ function ownConfig(paseoHome: string, pluginDir: string): { file: string; config
   }
 }
 
+/** The daemon switches as this daemon's config.json has them; null for each where the file does not say. */
 export function readSwitches(paseoHome: string, pluginDir: string): DaemonSwitches {
   const own = ownConfig(paseoHome, pluginDir);
   if (!own) return { paseoTools: null, dictation: null, voiceMode: null, bundledSkillsOff: null };

@@ -194,6 +194,15 @@ const cases: [string, string[]][] = [
   ["cat key.pub > ~/.ssh/id_new.pub", []],
   ["cp creds ~/.aws/credentials", ["core.filesystem:credential-file-write"]],
   ["tee -a ~/.zshrc < snippet", ["core.filesystem:credential-file-write"]],
+  ["tar --to-command='rm -rf /' -xf a.tar", ["core.filesystem:rm-rf-root-home"]],
+  ["tar --to-command $X -xf a.tar", ["core.filesystem:tar-exec-unverified"]],
+  ["tar --to-command=$X -xf a.tar", ["core.filesystem:tar-exec-unverified"]],
+  ["tar --checkpoint=1 --checkpoint-action=exec=$X -cf a.tar x", ["core.filesystem:tar-exec-unverified"]],
+  ["X='git reset --hard'; tar --to-command=\"$X\" -xf a.tar", ["core.git:reset-hard"]],
+  ["tar -xzf a.tar", []],
+  ["sed -e 'e rm -rf /' f", ["core.filesystem:rm-rf-root-home"]],
+  ["sed 's/a/b/e' f", ["core.filesystem:sed-exec-unverified"]],
+  ["sed 's/a/b/g' f", []],
   ["sed -i '' 's/a/b/' ~/.bashrc", ["core.filesystem:credential-file-write"]],
   ["curl -o ~/.netrc https://x", ["core.filesystem:credential-file-write"]],
   ["echo x > ~/.ss*/config", ["core.filesystem:credential-file-write"]],
@@ -332,4 +341,58 @@ test("an ordinary command is read in a few milliseconds at most, on average", as
   for (let i = 0; i < 200; i += 1) for (const c of commands) await evaluate(c, PROJECT, place, config(), tools());
   const each = (performance.now() - started) / (200 * commands.length);
   assert.ok(each < 5, `${each.toFixed(3)} ms per command`);
+});
+
+test("a pattern with many stars in a protected folder is read in time proportional to its length", async () => {
+  const folder = "~/.config/gcloud";
+  for (const [command, expected] of [
+    [`echo x > ${folder}/${"*?".repeat(14)}z`, ["core.filesystem:redirect-truncate-dynamic-path"]],
+    [`echo x > ${folder}/${"*?".repeat(14)}s`, ["core.filesystem:credential-file-write"]],
+    [`rm ${folder}/${"*?".repeat(14)}z`, ["core.filesystem:rm-glob-home"]],
+    [`rm ${folder}/${"*?".repeat(14)}s`, ["core.filesystem:rm-protected-file"]],
+  ] as const) {
+    const started = performance.now();
+    assert.deepEqual(await hits(command), [...expected], command);
+    // the glob test reads each name once; this bound only catches a pattern that backtracks without end
+    assert.ok(performance.now() - started < 5_000, command);
+  }
+});
+
+test("an owner's glob with several ** stands down no rule for a long path it does not match, and takes little time", async () => {
+  const exempt = { "core.filesystem:rm-rf-general": [`${PROJECT}/**/a/**/a/**/a/**/b`] };
+  const run = async (path: string) => {
+    const started = performance.now();
+    const read = await evaluate(`rm -rf ${path}`, PROJECT, place, { ...config(), exempt }, tools());
+    return { rules: read.findings.map((f) => f.rule), ms: performance.now() - started };
+  };
+  const long = await run(`${PROJECT}${"/a".repeat(400)}`);
+  assert.deepEqual(long.rules, ["rm-rf-general"]);
+  assert.ok(long.ms < 2_000, `${long.ms.toFixed(0)} ms`);
+  assert.deepEqual((await run(`${PROJECT}/x/a/y/a/z/a/w/b`)).rules, []);
+  assert.deepEqual((await run(`${PROJECT}/x/a/y/a/z/a/w/b/deeper`)).rules, []);
+  assert.deepEqual((await run(`${PROJECT}/x/a/y/a/z/a/w/bb`)).rules, ["rm-rf-general"]);
+});
+
+test("a rule found twice in one command text is reported once; different texts are reported each", async () => {
+  assert.deepEqual(await hits("rm -rf ./a; rm -rf ./a"), ["core.filesystem:rm-rf-general"]);
+  assert.deepEqual(await hits("rm -rf ./a; rm -rf ./b"), [
+    "core.filesystem:rm-rf-general",
+    "core.filesystem:rm-rf-general",
+  ]);
+});
+
+test("git is asked once about an rm whose two readings agree, and twice when they differ", async () => {
+  const asked: string[][] = [];
+  const counting = {
+    ignored: async (paths: string[]) => {
+      asked.push(paths);
+      return new Set(paths);
+    },
+  };
+  assert.deepEqual(await hits("rm -rf dist node_modules", [], counting), ["core.filesystem:rm-generated"]);
+  assert.equal(asked.length, 1);
+  asked.length = 0;
+  // GNU rm takes `-f` after an operand as an option, BSD rm as a file name: the two readings differ
+  await hits("rm -r dist -f", [], counting);
+  assert.equal(asked.length, 2);
 });

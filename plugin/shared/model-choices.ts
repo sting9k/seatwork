@@ -1,5 +1,7 @@
 import { rolesWhere } from "./workflow";
 
+/** The room's model table as the setup screen edits it: choices are differences laid over it, in its own shape. */
+
 /** One of a role's models in the table: what its Owner picks it for. */
 export interface TableTier {
   providers: string[];
@@ -30,7 +32,6 @@ export function merge(base: unknown, over: unknown): unknown {
   return out;
 }
 
-/** The roles with one seat and one model each, and the roles that are one seat with several models. */
 export const SEAT_ROLES: readonly string[] = rolesWhere((role) => role.models === "one");
 export const TIER_ROLES: readonly string[] = rolesWhere((role) => role.models === "tiers");
 

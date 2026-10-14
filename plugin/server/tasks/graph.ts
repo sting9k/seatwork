@@ -24,6 +24,7 @@ interface Graph {
   parent: Int32Array;
 }
 
+/** The open issues numbered, with the edges that block among them in both directions and each issue's parent. */
 function build({ issues, dependencies }: Work): Graph {
   const open = issues.filter((issue) => issue.status !== "closed");
   const n = open.length;
@@ -176,12 +177,14 @@ function freedByEach(work: Work, graph: Graph): number[][] {
   return freed;
 }
 
+/** The largest of the values, 0 when none is above it. */
 const peak = (values: ArrayLike<number>) => {
   let top = 0;
   for (let i = 0; i < values.length; i += 1) if (values[i] > top) top = values[i];
   return top;
 };
 
+/** An open issue with its score, the reasons for it and what it frees. */
 export interface Scored {
   id: string;
   title: string;
@@ -196,6 +199,7 @@ export interface Scored {
   claimable: boolean;
 }
 
+/** Every open issue scored: its weight in the work, what closing it frees, whether it is ready. */
 function scoreAll(work: Work, now: Date): { graph: Graph; scored: Scored[] } {
   const graph = build(work);
   const n = graph.issues.length;
@@ -245,9 +249,11 @@ function scoreAll(work: Work, now: Date): { graph: Graph; scored: Scored[] } {
   return { graph, scored };
 }
 
+/** The issues to act on: those ready, and those in progress that nothing but a parent or a child holds back. */
 const actionable = (scored: readonly Scored[]) =>
   scored.filter((one) => one.ready || (one.status === "in_progress" && one.blocked_by.every(holdsOnly)));
 
+/** What triage answers: the counts, the issues to do first and the blockers to clear first. */
 export interface Triage {
   counts: { open: number; ready: number; blocked: number; in_progress: number };
   recommendations: Scored[];
@@ -285,10 +291,9 @@ export function next(work: Work, now: Date): Scored | null {
   return scoreAll(work, now).scored.find((one) => one.claimable) ?? null;
 }
 
-/** A word that names a file without a folder: a name, a dot, a lettered extension. */
 const FILE_NAME = /^[\w-]{2,}(?:\.[\w-]+)*\.[A-Za-z][A-Za-z0-9]*$/;
 
-/** The paths a write scope names, `./` and line numbers dropped; a glob counts from its folder. */
+/** The paths a write scope names, `./` and line numbers dropped; a glob counts from its folder; a word with no folder is a path when it reads as a file name. */
 const scopeOf = (issue: Issue) =>
   issue.write_scope
     .split(/[\s,;]+/)
@@ -321,6 +326,7 @@ function collisions(issues: readonly Issue[]): { a: string; b: string; paths: st
   return [...pairs].map(([key, paths]) => ({ a: key.split("|")[0], b: key.split("|")[1], paths: [...paths].sort() }));
 }
 
+/** What a plan answers: the tracks that can run side by side, the counts and the scopes that collide. */
 export interface Plan {
   tracks: {
     track: string;
@@ -341,15 +347,22 @@ export function unreadScopes(
   const planned = plan.tracks
     .flatMap((track) => track.items.map((item) => byId.get(item.id)!))
     .filter((issue) => issue.write_scope.trim());
-  const prose = new Set(planned.filter((issue) => scopeOf(issue).length === 0).map((issue) => issue.id));
+  const prose = planned.flatMap((issue, index) => (scopeOf(issue).length === 0 ? [index] : []));
+  const isProse = new Set(prose);
   const pairs: { a: string; b: string; scopes: [string, string] }[] = [];
-  for (let i = 0; i < planned.length; i += 1)
-    for (let j = i + 1; j < planned.length; j += 1) {
-      const [a, b] = [planned[i], planned[j]];
-      if (!prose.has(a.id) && !prose.has(b.id)) continue;
-      if (pairs.length === most) return [];
-      pairs.push({ a: a.id, b: b.id, scopes: [a.write_scope, b.write_scope] });
-    }
+  const pair = (i: number, j: number): boolean => {
+    if (pairs.length === most) return false;
+    pairs.push({ a: planned[i].id, b: planned[j].id, scopes: [planned[i].write_scope, planned[j].write_scope] });
+    return true;
+  };
+  // an issue pairs with each later one when its own scope is prose, else with the later prose ones only
+  let later = 0;
+  for (let i = 0; i < planned.length; i += 1) {
+    while (later < prose.length && prose[later] <= i) later += 1;
+    if (isProse.has(i)) {
+      for (let j = i + 1; j < planned.length; j += 1) if (!pair(i, j)) return [];
+    } else for (let k = later; k < prose.length; k += 1) if (!pair(i, prose[k])) return [];
+  }
   return pairs;
 }
 
@@ -423,6 +436,7 @@ export function blockerChain(
   );
 }
 
+/** Something that needs a look. */
 export interface Alert {
   type: "stale_claim" | "blocking_cascade" | "cycle";
   id: string;

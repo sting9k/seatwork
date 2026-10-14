@@ -21,6 +21,7 @@ export interface ScoreQuestion {
   criteria: string[];
 }
 
+/** A question about a state: a `noul` (the probability of yes), a `choice` among labels, or a `score` on a scale. */
 export type Question = NoulQuestion | ChoiceQuestion | ScoreQuestion;
 export type Questions = Record<string, Question>;
 
@@ -44,6 +45,7 @@ export interface ScoreAnswer {
   confidence: number;
 }
 
+/** The answer to a question, of the same type, with the probabilities the provider gave. */
 export type Answer = NoulAnswer | ChoiceAnswer | ScoreAnswer;
 
 /** A provider's reply read into the room's shape; `costUsd` is null when the provider names no cost. */
@@ -55,6 +57,7 @@ export interface Reply {
   costUsd: number | null;
 }
 
+/** Why a decision was not made. */
 export type DecisionFailure =
   | "OFF"
   | "NO_KEY"
@@ -70,6 +73,7 @@ export type DecisionFailure =
   | "DOWN"
   | "BUSY";
 
+/** A decision that was not made: `code` says why, `attempts` how many tries were made, `status` the HTTP status if any. */
 export class DecisionError extends Error {
   attempts = 0;
 
@@ -82,7 +86,7 @@ export class DecisionError extends Error {
   }
 }
 
-export const LIMITS = { questions: 64, idChars: 100, labels: 255, levels: [2, 10], tokens: 32_000 } as const;
+const LIMITS = { questions: 64, idChars: 100, labels: 255, levels: [2, 10], tokens: 32_000 } as const;
 const SUM_TOLERANCE = 0.025;
 
 /** A rough count, four characters a token, of what a request puts before the model. */

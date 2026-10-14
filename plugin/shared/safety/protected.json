@@ -1,5 +1,5 @@
 {
-  "$comment": "Files whose writing gives a foothold. Paths under home are relative to it; names compare without case.",
+  "$comment": "Files whose writing gives a foothold; paths under home are relative to it, names compare without case. append and free: still writable (appended to, or by glob); envRoots: the folder under home a variable names; anchors and anchorFiles: names read as under home; roomHomeFiles: the room's own.",
   "homeDirs": [".ssh", ".gnupg", ".bashrc.d", ".zshrc.d", ".password-store", ".config/gcloud/legacy_credentials"],
   "homeFiles": [
     ".aws/credentials",

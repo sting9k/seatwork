@@ -1,10 +1,12 @@
 import { hostOf, MAIL_POLICY, ROOM_HOME, shipSql } from "./support/room";
 import assert from "node:assert/strict";
 import {
+  chmodSync,
   existsSync,
   mkdirSync,
   readdirSync,
   readFileSync,
+  rmSync,
   statSync,
   symlinkSync,
   utimesSync,
@@ -310,4 +312,179 @@ test("GC deletes a project's handoffs once older than the logs are kept, and lea
     () => {},
   ).run();
   assert.deepEqual(readdirSync(handoffs).sort(), [".gitignore", "2026-10-14-10-00_bbbbbbbb.md"]);
+});
+
+test("one step of a GC pass that fails is logged and the others still run", async () => {
+  const project = join(ROOM_HOME, "isolated-project");
+  const handoffs = join(project, ".seatwork", "handoffs");
+  mkdirSync(handoffs, { recursive: true });
+  const old = new Date(Date.now() - (KEEP_LOG_DAYS + 1) * 86_400_000);
+  writeFileSync(join(handoffs, "2026-10-01-10-00_aaaaaaaa.md"), "old");
+  utimesSync(join(handoffs, "2026-10-01-10-00_aaaaaaaa.md"), old, old);
+  const policy = { idleHoursBeforeArchive: {}, deleteOrphanHeartbeats: false, tellParent: false };
+  const rooted = { rootOf: (cwd: string) => (cwd.startsWith(project) ? project : null) };
+  const seat = {
+    agentId: "lead-i",
+    parentAgentId: null,
+    role: "lead",
+    provider: "claude-lead",
+    title: null,
+    cwd: project,
+  };
+
+  for (const list of [
+    async () => ({ entries: [] }),
+    async () => {
+      throw new Error("the daemon does not answer");
+    },
+  ]) {
+    writeFileSync(join(handoffs, "2026-10-01-10-00_aaaaaaaa.md"), "old");
+    utimesSync(join(handoffs, "2026-10-01-10-00_aaaaaaaa.md"), old, old);
+    const paseo = { agents: { list } };
+    const engine = new MailEngine(hostOf(paseo), MAIL_POLICY, () => {}, rooted);
+    engine.rememberSeat(seat);
+    const log: string[] = [];
+    const ran: string[] = [];
+    await new Collector(
+      hostOf(paseo),
+      engine,
+      policy as never,
+      (message) => void log.push(message),
+      () => {},
+      undefined,
+      undefined,
+      [
+        {
+          what: "guard records",
+          expire: () => {
+            throw new Error("disk full");
+          },
+        },
+        { what: "decision states", expire: () => (ran.push("ran"), 0) },
+      ],
+    ).run();
+
+    assert.deepEqual(ran, ["ran"], "a district after the failing one was skipped");
+    assert.deepEqual(readdirSync(handoffs), [], "the step after the failing ones did not run");
+    assert.ok(
+      log.some((line) => /guard records.*failed.*disk full/.test(line)),
+      log.join("\n"),
+    );
+  }
+});
+
+test("GC trims the seat records to what the room can still need: recent seats, open seats and the seats above them, the newest seat of each folder", () => {
+  const file = join(ROOM_HOME, "registry-log.jsonl");
+  const seat = (agentId: string, cwd: string | undefined, days: number, parentAgentId: string | null = null) =>
+    JSON.stringify({
+      at: daysAgo(days),
+      agentId,
+      parentAgentId,
+      role: "peer",
+      provider: "claude-peer",
+      title: null,
+      cwd,
+    });
+  writeFileSync(
+    file,
+    [
+      seat("a-old", "/p/a", 20),
+      seat("a-newer", "/p/a", 10),
+      seat("b-only", "/p/b", 15),
+      seat("c-boss", "/p/c", 14),
+      seat("c-dead", "/p/c", 13),
+      seat("c-open", "/p/c", 12, "c-boss"),
+      seat("nowhere", undefined, 11),
+      "a torn li",
+      seat("d-recent", "/p/d", 1),
+      JSON.stringify({ agentId: "undated", cwd: "/p/e" }),
+      seat("e-newest", "/p/e", 9),
+    ].join("\n") + "\n",
+  );
+  const ids = () => lines(file).map((line) => (line as unknown as { agentId: string }).agentId);
+  try {
+    // without a daemon there is no telling which seats are open: the records stay
+    const before = readFileSync(file, "utf8");
+    collectFiles(ROOM_HOME, [], NOW);
+    assert.equal(readFileSync(file, "utf8"), before);
+
+    const done = collectFiles(ROOM_HOME, [], NOW, new Set(["c-open"]));
+
+    assert.deepEqual(ids(), ["a-newer", "b-only", "c-boss", "c-open", "d-recent", "undated", "e-newest"]);
+    assert.ok(
+      done.some((line) => /^4 seat records .* left registry-log\.jsonl$/.test(line)),
+      done.join("\n"),
+    );
+    assert.deepEqual(collectFiles(ROOM_HOME, [], NOW, new Set(["c-open"])), [], "a second sweep found something");
+  } finally {
+    rmSync(file, { force: true });
+  }
+});
+
+test(
+  "a seat home GC cannot clear is named, and the homes after it are still cleared",
+  { skip: process.getuid?.() === 0 },
+  () => {
+    const runtimes = join(ROOM_HOME, "runtimes-locked");
+    const scratch = (role: string) => join(runtimes, "codex", role, ".tmp");
+    for (const role of ["lens", "peer"]) {
+      mkdirSync(scratch(role), { recursive: true });
+      writeFileSync(join(scratch(role), "scratch"), "x");
+    }
+    chmodSync(scratch("lens"), 0o500);
+    try {
+      const done = sweepRuntimes(runtimes, new Set(), { codex: { rebuilt: [".tmp"], sessions: [] } });
+
+      assert.ok(!existsSync(scratch("peer")), "the home after the locked one was not cleared");
+      assert.ok(
+        done.some((line) => line.startsWith("could not clear") && line.includes("lens")),
+        done.join("\n"),
+      );
+    } finally {
+      chmodSync(scratch("lens"), 0o700);
+    }
+  },
+);
+
+test("an archived seat whose parent could not be told does not keep the other idle seats from being archived", async () => {
+  const longAgo = new Date(Date.now() - 72 * 3_600_000).toISOString();
+  const archived: string[] = [];
+  const seats: Record<string, { status: string; updatedAt: string }> = {
+    "lead-t": { status: "running", updatedAt: new Date().toISOString() },
+    "peer-t1": { status: "idle", updatedAt: longAgo },
+    "peer-t2": { status: "idle", updatedAt: longAgo },
+  };
+  const paseo = {
+    agents: {
+      list: async () => ({ entries: Object.entries(seats).map(([id, seat]) => ({ agent: { id, ...seat } })) }),
+      ref: (id: string) => ({
+        refresh: async () => {},
+        current: () => ({ id, ...seats[id] }),
+        archive: async () => void archived.push(id),
+      }),
+    },
+  };
+  const engine = new MailEngine(hostOf(paseo), MAIL_POLICY, () => {});
+  engine.rememberSeat({ agentId: "lead-t", parentAgentId: null, role: "lead", provider: "claude-lead", title: null });
+  for (const agentId of ["peer-t1", "peer-t2"])
+    engine.rememberSeat({ agentId, parentAgentId: "lead-t", role: "peer", provider: "claude-peer", title: null });
+  engine.post = async () => {
+    throw new Error("the mail store is locked");
+  };
+  const log: string[] = [];
+  const policy = { idleHoursBeforeArchive: { peer: 48 }, deleteOrphanHeartbeats: false, tellParent: true };
+
+  await new Collector(
+    hostOf(paseo),
+    engine,
+    policy as never,
+    (line) => void log.push(line),
+    () => {},
+  ).run();
+
+  assert.deepEqual(archived.sort(), ["peer-t1", "peer-t2"]);
+  assert.ok(
+    log.some((line) => /lead-t.*mail store is locked/.test(line)),
+    log.join("\n"),
+  );
 });

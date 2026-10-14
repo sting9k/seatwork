@@ -2,60 +2,78 @@ import { readJson, writeJson } from "../persisted";
 import { note, rotateNote } from "../../shared/workflow";
 import { onlyAfterCandidate, verdictOf } from "../signals";
 
-type Task = { pending: boolean; rejected: number; reread?: boolean };
+/** The rounds of a task: its candidates and the rejections they met, and the room's lines about them. */
 
-/** Where a task stands: its candidates and the rejections they met since its last ACCEPT. */
+interface Task {
+  pending: boolean;
+  rejected: number;
+  reread?: boolean;
+  at: number;
+}
+
+type Stored = Omit<Task, "at"> & { at?: number };
+
+/** Where each task stands since its last ACCEPT, kept on disk; a task is the issue a seat holds, else the seat itself. */
 export class Rounds {
   private readonly tasks = new Map<string, Task>();
 
   constructor(private readonly file: string) {
-    for (const [key, task] of Object.entries(readJson<Record<string, Task>>(file, {}))) this.tasks.set(key, task);
+    let undated = false;
+    for (const [key, task] of Object.entries(readJson<Record<string, Stored>>(file, {}))) {
+      undated ||= task.at === undefined;
+      this.tasks.set(key, { ...task, at: task.at ?? Date.now() });
+    }
+    // rounds an older file kept have no date: their keep starts now, and stays started across restarts
+    if (undated) this.save();
   }
 
   private save(): void {
     writeJson(this.file, Object.fromEntries(this.tasks));
   }
 
+  private stateOf(key: string): Task {
+    return this.tasks.get(key) ?? { pending: false, rejected: 0, at: Date.now() };
+  }
+
+  private keep(key: string, task: Task): void {
+    this.tasks.set(key, { ...task, at: Date.now() });
+    this.save();
+  }
+
   /** Whether this candidate still owes its fresh-eyes pass; yes is said once per candidate. */
   owesFreshEyes(key: string): boolean {
-    const task = this.tasks.get(key) ?? { pending: false, rejected: 0 };
+    const task = this.stateOf(key);
     if (task.reread) return false;
-    task.reread = true;
-    this.tasks.set(key, task);
-    this.save();
+    this.keep(key, { ...task, reread: true });
     return true;
   }
 
   /** A candidate of this task went up; returns the rejections its task has met so far. */
   handedIn(key: string): number {
-    const task = this.tasks.get(key) ?? { pending: false, rejected: 0 };
-    task.pending = true;
-    this.tasks.set(key, task);
-    this.save();
+    const task = this.stateOf(key);
+    this.keep(key, { ...task, pending: true });
     return task.rejected;
   }
 
-  /** The Owner's mail on this task; returns the rejections so far, counting this mail when it is one. */
-  answered(key: string, opening: string): number {
+  /** The Owner's mail on this task; returns the rejections so far, counting this mail when it is one. `seat` is the key the task may also have been counted under. */
+  answered(key: string, opening: string, seat?: string): number {
     const verdict = verdictOf(opening);
     if (verdict === "accepted" || verdict === "deferred") {
-      if (this.tasks.delete(key)) this.save();
+      const ended = [key, ...(seat ? [seat] : [])].filter((one) => this.tasks.delete(one));
+      if (ended.length > 0) this.save();
       return 0;
     }
-    const task = this.tasks.get(key) ?? { pending: false, rejected: 0 };
+    const task = this.stateOf(key);
     // a revised brief that answers a candidate sends it back, whatever its subject calls itself
-    const rejects = verdict === "returned" && (task.pending || !onlyAfterCandidate(opening));
-    if (rejects) {
-      task.rejected += 1;
-      task.pending = false;
+    if (verdict === "returned" && (task.pending || !onlyAfterCandidate(opening))) {
       // the repair is a new candidate: it owes its own pass
-      task.reread = false;
-      this.tasks.set(key, task);
-      this.save();
+      this.keep(key, { ...task, rejected: task.rejected + 1, pending: false, reread: false });
+      return task.rejected + 1;
     }
     return task.rejected;
   }
 
+  /** The rejections a task has met since its last ACCEPT. */
   rejected(key: string): number {
     return this.tasks.get(key)?.rejected ?? 0;
   }
@@ -72,9 +90,17 @@ export class Rounds {
     this.tasks.set(to, task);
     this.save();
   }
+
+  /** Drops the tasks untouched since `before`: a task nobody finished leaves its rounds behind. */
+  expire(before: Date): number {
+    const stale = [...this.tasks].filter(([, task]) => task.at < before.getTime());
+    for (const [key] of stale) this.tasks.delete(key);
+    if (stale.length > 0) this.save();
+    return stale.length;
+  }
 }
 
-export interface Standing {
+interface Standing {
   role: string;
   candidate: boolean;
   rejected: number;
@@ -96,7 +122,6 @@ export function ownerNote(standing: Standing): string | null {
   return lines.length > 0 ? lines.map((line) => `[room] ${line}`).join("\n") : null;
 }
 
-/** What a writing seat reads when its first hand-in comes back for a fresh-eyes pass. */
 export const FRESH_EYES = [
   "Your candidate has not gone to your Owner yet: first one pass over it with fresh eyes.",
   "Read again everything you wrote or changed for this task as if another seat had written it and you were hunting its defects:",

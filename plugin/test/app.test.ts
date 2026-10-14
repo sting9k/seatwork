@@ -1,7 +1,8 @@
 import { installRoom, hostOf, MAIL_POLICY, shipSql } from "./support/room";
 import assert from "node:assert/strict";
-import { test } from "node:test";
+import { mock, test } from "node:test";
 import { chime } from "../client/chime";
+import { onWaitingCount, waitingCount, watchWaiting } from "../client/waiting";
 import contribute from "../index.server";
 import { MailEngine } from "../server/coordination/engine";
 import { fakeServer } from "./support/server";
@@ -84,4 +85,117 @@ test("the chime is a WAV file whose header agrees with its samples, and it ends 
   const loudest = Math.max(...Array.from({ length: samples }, (_, n) => Math.abs(file.readInt16LE(44 + n * 2))));
   assert.ok(loudest > 6000 && loudest < 16000, `peak ${loudest}`);
   assert.ok(Math.abs(file.readInt16LE(file.length - 2)) < 100, "the file ends on a click");
+});
+
+test("the app asks the room once per interval: a chime for a turn that newly waits, none for what waited when it opened, and the count for the sidebar", async () => {
+  mock.timers.enable({ apis: ["setInterval"] });
+  const answers = [
+    { chime: true, waiting: [{ key: "a" }] },
+    { chime: true, waiting: [{ key: "a" }, { key: "b" }] },
+    { chime: true, waiting: [{ key: "b" }] },
+    { chime: false, waiting: [{ key: "b" }, { key: "c" }] },
+    { chime: true, waiting: [] },
+  ];
+  let asked = 0;
+  let sounds = 0;
+  const counts: number[] = [];
+  const settle = () => new Promise((resolve) => setImmediate(resolve));
+  const off = onWaitingCount((count) => void counts.push(count));
+  const stop = watchWaiting(
+    async () => answers[asked++],
+    async () => void (sounds += 1),
+    15_000,
+  );
+  try {
+    await settle();
+    assert.deepEqual([asked, sounds, waitingCount()], [1, 0, 1], "what waited when the app opened is not news");
+    for (const [chimed, count] of [
+      [1, 2],
+      [1, 1],
+      [1, 2],
+      [1, 0],
+    ]) {
+      mock.timers.tick(15_000);
+      await settle();
+      assert.deepEqual([sounds, waitingCount()], [chimed, count]);
+    }
+    assert.equal(asked, 5, "one question to the room for each interval");
+    assert.deepEqual(counts, [1, 2, 1, 2, 0]);
+  } finally {
+    stop();
+    off();
+    mock.timers.reset();
+  }
+  assert.equal(waitingCount(), 0, "a stopped watch leaves no count behind");
+});
+
+test("a question to the room that is still unanswered is not asked again at the next interval", async () => {
+  mock.timers.enable({ apis: ["setInterval"] });
+  let asked = 0;
+  const stop = watchWaiting(
+    () => new Promise(() => void (asked += 1)),
+    async () => {},
+    15_000,
+  );
+  try {
+    for (let beat = 0; beat < 4; beat += 1) mock.timers.tick(15_000);
+    assert.equal(asked, 1);
+  } finally {
+    stop();
+    mock.timers.reset();
+  }
+});
+
+test("a room that answers nothing for a moment, as it restarts, does not make the app chime again for what it already told", async () => {
+  mock.timers.enable({ apis: ["setInterval"] });
+  const answers = [
+    { chime: true, waiting: [{ key: "a" }] },
+    { chime: true, waiting: [{ key: "a" }, { key: "b" }] },
+    { chime: false, waiting: [] },
+    { chime: true, waiting: [{ key: "a" }, { key: "b" }] },
+  ];
+  let asked = 0;
+  let sounds = 0;
+  const stop = watchWaiting(
+    async () => answers[asked++],
+    async () => void (sounds += 1),
+    15_000,
+  );
+  try {
+    await new Promise((resolve) => setImmediate(resolve));
+    for (let beat = 0; beat < 3; beat += 1) {
+      mock.timers.tick(15_000);
+      await new Promise((resolve) => setImmediate(resolve));
+    }
+    assert.deepEqual([asked, sounds], [4, 1]);
+  } finally {
+    stop();
+    mock.timers.reset();
+  }
+});
+
+test("the app does not remember every turn that ever waited: a key long gone is news again", async () => {
+  mock.timers.enable({ apis: ["setInterval"] });
+  const answers = [
+    ...Array.from({ length: 1000 }, (_, n) => ({ chime: true, waiting: [{ key: `k${n}` }] })),
+    { chime: true, waiting: [{ key: "k1" }] },
+  ];
+  let asked = 0;
+  let sounds = 0;
+  const stop = watchWaiting(
+    async () => answers[asked++],
+    async () => void (sounds += 1),
+    15_000,
+  );
+  try {
+    await new Promise((resolve) => setImmediate(resolve));
+    for (let beat = 1; beat < answers.length; beat += 1) {
+      mock.timers.tick(15_000);
+      await new Promise((resolve) => setImmediate(resolve));
+    }
+    assert.deepEqual([asked, sounds], [1001, 1000]);
+  } finally {
+    stop();
+    mock.timers.reset();
+  }
 });

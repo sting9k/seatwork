@@ -2,6 +2,7 @@
 -- A source is one turn of a seat or one mail; its entries are what was typed, said, run, changed or read,
 -- with secrets hidden. The full-text index reads the entries; every lookup the store makes has an index.
 
+-- audience: the seats a source was for, comma-separated; outcome: how a turn ended, or a mail's signal
 CREATE TABLE sources (
   id INTEGER PRIMARY KEY,
   kind TEXT NOT NULL CHECK (kind IN ('turn', 'mail')),
@@ -9,9 +10,7 @@ CREATE TABLE sources (
   agent TEXT NOT NULL,
   role TEXT NOT NULL,
   task TEXT NOT NULL,
-  thread TEXT NOT NULL,
   started_at TEXT NOT NULL,
-  ended_at TEXT NOT NULL,
   outcome TEXT NOT NULL,
   audience TEXT NOT NULL
 ) STRICT;
@@ -21,7 +20,7 @@ CREATE INDEX sources_by_task ON sources (task, started_at);
 CREATE INDEX sources_by_at ON sources (started_at);
 
 -- kind: owner (typed to the seat by a person), prompt (a brief the seat was started with), say, shell, change,
--- read, tool, mail; a seat's reasoning is not kept. audience: the seats a source was for, comma-separated
+-- read, tool, mail; a seat's reasoning is not kept.
 CREATE TABLE entries (
   id INTEGER PRIMARY KEY,
   source_id INTEGER NOT NULL REFERENCES sources (id) ON DELETE CASCADE,
@@ -44,20 +43,9 @@ END;
 CREATE TRIGGER entries_ad AFTER DELETE ON entries BEGIN
   INSERT INTO entries_fts (entries_fts, rowid, text) VALUES ('delete', old.id, old.text);
 END;
-CREATE TRIGGER entries_au AFTER UPDATE OF text ON entries BEGIN
-  INSERT INTO entries_fts (entries_fts, rowid, text) VALUES ('delete', old.id, old.text);
-  INSERT INTO entries_fts (rowid, text) VALUES (new.id, new.text);
-END;
 
 -- where a reader of another store stopped: the id of the last mail read
 CREATE TABLE cursors (
   name TEXT PRIMARY KEY,
   last INTEGER NOT NULL
-) STRICT;
-
-CREATE TABLE ingest_errors (
-  id INTEGER PRIMARY KEY,
-  at TEXT NOT NULL,
-  ref TEXT NOT NULL,
-  error TEXT NOT NULL
 ) STRICT;

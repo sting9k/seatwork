@@ -1,5 +1,7 @@
-import { ROLES } from "../../shared/workflow";
+import { owns, ROLES } from "../../shared/workflow";
+import type { SeatRecord } from "../coordination/engine";
 import { KEEP_LOG_DAYS } from "../gc";
+import type { LiveSeat } from "../host";
 import type { McpHttpServer, McpToolHandler } from "../mcp-http";
 import { clip } from "../orchestration/forks";
 import { describeProjects, registerProject, unregisterProject } from "../orchestration/onboard";
@@ -16,14 +18,18 @@ import { refusal } from "../refusal";
 import { WorkError } from "../tasks/store";
 import { KnowledgeRefused } from "../knowledge/refused";
 import { KnowledgeError } from "../knowledge/store";
-import { owns } from "../../shared/workflow";
 import { fromRoom, taskOf, type RoomContext } from "./context";
 import { readInbox, refused, sendMail } from "./mail-tools";
 
 /** The room's MCP tools, each answering for the seat whose nonce called it. */
 
-/** `role:id` and a bare id name the same seat. */
 const ROLE_PREFIX = new RegExp(`^(?:${ROLES.join("|")}):`, "i");
+const OVERLAPS_ASKED = 64;
+const MOST_DEPTH = 16;
+const MOST_WHY_CHARS = 300;
+const MOST_REASON_CHARS = 500;
+
+/** A seat id as a tool argument: `role:id` and a bare id name the same seat. */
 const seatArg = (value: unknown) =>
   String(value ?? "")
     .trim()
@@ -51,9 +57,6 @@ function mailHealth(room: RoomContext, since: string): string[] {
     );
   return lines;
 }
-
-/** Runs one call on a work store; a refusal reaches the seat as JSON. */
-const OVERLAPS_ASKED = 64;
 
 /** A Task district call's answer; its refusal is said as JSON a seat can act on. */
 function answered<T>(run: () => T): T {
@@ -89,6 +92,103 @@ async function readOverlaps(room: RoomContext, work: () => Work, plan: Plan): Pr
   return read.length ? { ...plan, overlaps: [...plan.overlaps, ...read] } : plan;
 }
 
+/** seatwork_safety: one action of the room's guard for the seat `me`. */
+async function safetyTool(room: RoomContext, me: string, args: Record<string, unknown>): Promise<string> {
+  const action = String(args.action ?? "");
+  if (action === "check") {
+    const command = String(args.command ?? "").trim();
+    if (!command) throw new Error("seatwork_safety check: give the `command`");
+    return room.safety.explain(me, command, room.engine.seat(me)?.cwd ?? null);
+  }
+  if (action === "grant") {
+    const code = String(args.code ?? "").trim();
+    if (!/^\d{6}$/.test(code)) throw new Error("seatwork_safety grant: give the six-digit `code`");
+    return room.safety.grant(code, me);
+  }
+  if (action === "waiting") {
+    const rows = room.safety.waitingUnder(
+      me,
+      room.engine.allSeats().map((s) => s.agentId),
+    );
+    if (!rows.length) return "No code waits for your grant.";
+    return rows
+      .map(
+        (r) =>
+          `${r.code} ${r.pack}:${r.rule} seat ${r.seat} in ${r.cwd ?? "?"}: ${r.shown}${r.grantor === "human" ? " (the person's to grant)" : ""}`,
+      )
+      .join("\n");
+  }
+  if (action === "ack") {
+    const id = String(args.id ?? "").trim();
+    const reason = String(args.reason ?? "")
+      .trim()
+      .slice(0, MOST_REASON_CHARS);
+    if (!id || reason.length < 10)
+      throw new Error("seatwork_safety ack: give the finding's `id` and a `reason` of a sentence");
+    return room.safety.acknowledge(me, id, reason)
+      ? `Acknowledged ${id}: it rides up with your next candidate, with your reason.`
+      : `No finding ${id} of yours: copy the id from the returned candidate.`;
+  }
+  if (action === "council") return room.safety.councilLines(Number(args.days) > 0 ? Number(args.days) : 30);
+  if (action === "label") {
+    const id = Number(String(args.id ?? "").replace(/^#/, ""));
+    const value = String(args.value ?? "");
+    const reason = String(args.reason ?? "")
+      .trim()
+      .slice(0, MOST_REASON_CHARS);
+    if (!Number.isInteger(id) || (value !== "right" && value !== "wrong") || reason.length < 10)
+      throw new Error(
+        "seatwork_safety label: give the finding's `id`, `value` right or wrong, and a `reason` of a sentence",
+      );
+    return room.safety.label(me, id, value, reason);
+  }
+  throw new Error("seatwork_safety: `action` is check, grant, waiting, ack, council or label");
+}
+
+/** The open seats under `me`, each below its Owner, in the order the room registered them. */
+function seatRows(room: RoomContext, me: string, live: ReadonlyMap<string, LiveSeat>): SeatRow[] {
+  const { engine } = room;
+  const below = new Map<string | null, SeatRecord[]>();
+  for (const seat of engine.allSeats()) {
+    if (!live.has(seat.agentId)) continue;
+    const owner = engine.parentOf(seat.agentId);
+    below.set(owner, [...(below.get(owner) ?? []), seat]);
+  }
+  const rows: SeatRow[] = [];
+  const walk = (owner: string, depth: number) => {
+    if (depth > MOST_DEPTH) return;
+    for (const seat of below.get(owner) ?? []) {
+      const now = live.get(seat.agentId)!;
+      const usage = now.usage ?? room.lastUsage.get(seat.agentId);
+      const retry = room.recovery.pending(seat.agentId);
+      const mails = engine.held(seat.agentId);
+      rows.push({
+        agentId: seat.agentId,
+        role: seat.role,
+        title: seat.title,
+        depth,
+        status: now.status,
+        waiting: now.waiting,
+        updatedAt: now.updatedAt || null,
+        turnStartedAt: now.turnStartedAt,
+        heldMail: mails.length,
+        ...(mails.length > 0 ? { heldSince: mails[0].at } : {}),
+        owes: engine.owes(seat.agentId),
+        retry: retry ? retryNote(retry) : null,
+        error: now.status === "error" ? (now.error ?? "").slice(0, 160) || null : null,
+        contextTokens: usage?.contextWindowUsedTokens ?? null,
+        costUsd: usage?.totalCostUsd ?? null,
+        lastSignal: room.lastSignal.get(seat.agentId) ?? null,
+        rejected: room.rounds.rejected(taskOf(room, seat.agentId)),
+      });
+      walk(seat.agentId, depth + 1);
+    }
+  };
+  walk(me, 0);
+  return rows;
+}
+
+/** Serves the room's tools on `mcp`, in the order shared/tools.json lists them. */
 export function registerTools(room: RoomContext, mcp: McpHttpServer): void {
   const { engine } = room;
   const vars = {
@@ -159,94 +259,11 @@ export function registerTools(room: RoomContext, mcp: McpHttpServer): void {
     }
   });
 
-  add("seatwork_safety", async (args, me) => {
-    const action = String(args.action ?? "");
-    const cwd = engine.seat(me)?.cwd ?? null;
-    if (action === "check") {
-      const command = String(args.command ?? "").trim();
-      if (!command) throw new Error("seatwork_safety check: give the `command`");
-      return room.safety.explain(me, command, cwd);
-    }
-    if (action === "grant") {
-      const code = String(args.code ?? "").trim();
-      if (!/^\d{6}$/.test(code)) throw new Error("seatwork_safety grant: give the six-digit `code`");
-      return room.safety.grant(code, me);
-    }
-    if (action === "waiting") {
-      const rows = room.safety.waitingUnder(
-        me,
-        engine.allSeats().map((s) => s.agentId),
-      );
-      if (!rows.length) return "No code waits for your grant.";
-      return rows
-        .map(
-          (r) =>
-            `${r.code} ${r.pack}:${r.rule} seat ${r.seat} in ${r.cwd ?? "?"}: ${r.shown}${r.grantor === "human" ? " (the person's to grant)" : ""}`,
-        )
-        .join("\n");
-    }
-    if (action === "ack") {
-      const id = String(args.id ?? "").trim();
-      const reason = String(args.reason ?? "").trim();
-      if (!id || reason.length < 10)
-        throw new Error("seatwork_safety ack: give the finding's `id` and a `reason` of a sentence");
-      return room.safety.acknowledge(me, id, reason)
-        ? `Acknowledged ${id}: it rides up with your next candidate, with your reason.`
-        : `No finding ${id} of yours: copy the id from the returned candidate.`;
-    }
-    if (action === "council") return room.safety.councilLines(Number(args.days) > 0 ? Number(args.days) : 30);
-    if (action === "label") {
-      const id = Number(String(args.id ?? "").replace(/^#/, ""));
-      const value = String(args.value ?? "");
-      const reason = String(args.reason ?? "").trim();
-      if (!Number.isInteger(id) || (value !== "right" && value !== "wrong") || reason.length < 10)
-        throw new Error(
-          "seatwork_safety label: give the finding's `id`, `value` right or wrong, and a `reason` of a sentence",
-        );
-      return room.safety.label(me, id, value, reason);
-    }
-    throw new Error("seatwork_safety: `action` is check, grant, waiting, ack, council or label");
-  });
+  add("seatwork_safety", (args, me) => safetyTool(room, me, args));
 
-  add("seatwork_seats", async (_args, me) => {
-    const live = await room.host.live();
-    const open = engine.allSeats().filter((seat) => live.has(seat.agentId));
-    const rows: SeatRow[] = [];
-    const held = (id: string) => {
-      const mails = engine.held(id);
-      return { heldMail: mails.length, ...(mails.length > 0 ? { heldSince: mails[0].at } : {}) };
-    };
-    // each seat under its Owner, the Owner first
-    const under = (owner: string, depth: number) => {
-      for (const seat of open) {
-        if (engine.parentOf(seat.agentId) !== owner || depth > 16) continue;
-        const now = live.get(seat.agentId)!;
-        const usage = now.usage ?? room.lastUsage.get(seat.agentId);
-        const retry = room.recovery.pending(seat.agentId);
-        rows.push({
-          agentId: seat.agentId,
-          role: seat.role,
-          title: seat.title,
-          depth,
-          status: now.status,
-          waiting: now.waiting,
-          updatedAt: now.updatedAt || null,
-          turnStartedAt: now.turnStartedAt,
-          ...held(seat.agentId),
-          owes: engine.owes(seat.agentId),
-          retry: retry ? retryNote(retry) : null,
-          error: now.status === "error" ? (now.error ?? "").slice(0, 160) || null : null,
-          contextTokens: usage?.contextWindowUsedTokens ?? null,
-          costUsd: usage?.totalCostUsd ?? null,
-          lastSignal: room.lastSignal.get(seat.agentId) ?? null,
-          rejected: room.rounds.rejected(taskOf(room, seat.agentId)),
-        });
-        under(seat.agentId, depth + 1);
-      }
-    };
-    under(me, 0);
-    return describeSeats(rows, room.rotateAt, Date.now());
-  });
+  add("seatwork_seats", async (_args, me) =>
+    describeSeats(seatRows(room, me, await room.host.live()), room.rotateAt, Date.now()),
+  );
 
   add("seatwork_rotate", async (args, me) => {
     const target = seatArg(args.agent_id);
@@ -263,7 +280,7 @@ export function registerTools(room: RoomContext, mcp: McpHttpServer): void {
       to: target,
       priority: "action",
       subject: "HANDOFF: write your handoff; a fresh seat continues your work",
-      body: handoffRequest(String(args.why ?? "").trim()),
+      body: handoffRequest(clip(String(args.why ?? "").trim(), MOST_WHY_CHARS)),
       needs: "reply",
       why: "the seat above you is replacing this seat with a fresh one, for the size of its context",
     });
@@ -319,7 +336,6 @@ export function registerTools(room: RoomContext, mcp: McpHttpServer): void {
     ),
   );
 
-  // a seat is shown the tools in the table's order
   for (const name of TOOL_NAMES) {
     const run = handlers.get(name);
     if (!run) throw new Error(`seatwork: shared/tools.json defines ${name}, which the room does not serve`);

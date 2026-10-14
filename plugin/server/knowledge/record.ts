@@ -7,6 +7,7 @@ import { redact } from "../redact";
 
 export type EntryKind = "owner" | "prompt" | "say" | "shell" | "change" | "read" | "tool" | "mail";
 
+/** One thing in a turn; `owner` is what a person typed to the seat, `prompt` a brief the seat was started with. */
 export interface Entry {
   ordinal: number;
   kind: EntryKind;
@@ -20,7 +21,7 @@ const SECRET_DUMP =
   /^\s*(?:env|set|export\s+-p)\s*(?:$|[|;&>])|^\s*printenv\b|\bkubectl\s+get\s+secrets?\b|\b(?:cat|less|more|head|tail|bat|grep|rg|sed|awk)\s+[^|;&\n]*(?:\.env\b|\.npmrc|\.netrc|\.pgpass|credentials|id_rsa|id_ed25519|\.pem\b|\.key\b)/i;
 
 /** Whether a command prints variables or files where secrets live, so its output is not kept. */
-export function dumpsSecrets(command: string): boolean {
+function dumpsSecrets(command: string): boolean {
   return SECRET_DUMP.test(command);
 }
 
@@ -50,7 +51,7 @@ function textOf(event: TurnEvent): string {
   }
 }
 
-/** A turn's entries, numbered by place so a turn always gives the same numbers; `briefed`: its first prompt is a start brief. */
+/** A turn's entries, numbered by place so a turn always numbers alike; `briefed`: its first prompt is a start brief. */
 export function entriesOf(events: readonly TurnEvent[], briefed: boolean): Entry[] {
   const entries: Entry[] = [];
   let firstPrompt = true;

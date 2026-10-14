@@ -3,7 +3,7 @@ import type { KnowledgeStore, PairChoice } from "./store";
 
 /** The keep gate: the decision model reads a decision before it is kept, and turns away noise and repeats. */
 
-/** The decision model as this district uses it; the Jev district gives it. */
+/** The decision model, from the Jev district: `why` says why it cannot be asked, `decide` asks, `label` adds a later word. */
 export interface Judge {
   why(): string | null;
   decide(
@@ -25,7 +25,7 @@ export interface Older {
   choice: PairChoice | null;
 }
 
-/** The model's reading of a new decision: how sure it is the decision is worth keeping, and how it stands to each older one. */
+/** The model's reading of a new decision: how sure it is worth keeping, and how it stands to each older one. */
 export interface Reading {
   label: string;
   keep: number;
@@ -38,6 +38,7 @@ export type Verdict =
   | { kept: false; noise: { label: string; meaning: string } }
   | { kept: false; repeats: number[] };
 
+/** What the gate takes: the decision model, whether the district's gate is on, and a log. */
 export interface GateDeps {
   judge: Judge | null;
   on(): boolean;
@@ -49,6 +50,7 @@ const CALLER = `knowledge.gate@${GATE.version}`;
 const CHOICES = Object.keys(GATE.same.criteria) as PairChoice[];
 const REPEATS: readonly PairChoice[] = ["duplicate", "replaces"];
 
+/** The keep gate itself: one reading of a new decision beside older ones. */
 export class Gate {
   constructor(private readonly deps: GateDeps) {}
 

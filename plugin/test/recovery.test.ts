@@ -1,7 +1,8 @@
 import { ROOM_HOME } from "./support/room";
 import assert from "node:assert/strict";
+import { writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { test } from "node:test";
+import { mock, test } from "node:test";
 import { classify, Recovery, resumeDue, type Resumes } from "../server/orchestration/recovery";
 import { Rounds } from "../server/orchestration/rounds";
 
@@ -137,4 +138,79 @@ test("the rounds ledger is kept on disk: a plugin that starts again knows the co
   rounds.handedIn("sw-k3f");
   rounds.answered("sw-k3f", "REJECT");
   assert.equal(new Rounds(file).rejected("sw-k3f"), 1);
+});
+
+test("a retry that cannot be carried out waits twice as long each time, up to a ceiling, and is logged each time", async () => {
+  const recovery = new Recovery(fresh(), POLICY);
+  recovery.failed("p1", "socket hang up", T0);
+  const mail: Resumes = {
+    recipientStatus: async () => "idle",
+    post: async () => {
+      throw new Error("store busy");
+    },
+  };
+  const lines: string[] = [];
+  let now = T0 + 30_000;
+  const waits: number[] = [];
+  for (let miss = 0; miss < 8; miss += 1) {
+    await resumeDue(recovery, mail, now, (line) => lines.push(line));
+    const at = recovery.pending("p1")!.at;
+    waits.push((at - now) / 1000);
+    now = at;
+  }
+  assert.deepEqual(waits, [60, 120, 240, 480, 960, 1800, 1800, 1800]);
+  assert.equal(lines.length, 8);
+  assert.match(lines[0], /p1.*store busy/);
+});
+
+test("a seat the daemon cannot place is asked about again at growing intervals", async () => {
+  const recovery = new Recovery(fresh(), POLICY);
+  recovery.failed("p1", "socket hang up", T0);
+  const mail: Resumes = { recipientStatus: async () => "unknown", post: async () => {} };
+  let now = T0 + 30_000;
+  const waits: number[] = [];
+  for (let miss = 0; miss < 3; miss += 1) {
+    await resumeDue(recovery, mail, now);
+    const at = recovery.pending("p1")!.at;
+    waits.push((at - now) / 1000);
+    now = at;
+  }
+  assert.deepEqual(waits, [60, 120, 240]);
+});
+
+test("the rounds of a task nobody finished age out with the other records; a task touched since stays", () => {
+  const file = join(ROOM_HOME, "rounds-expire.json");
+  mock.timers.enable({ apis: ["Date"], now: T0 });
+  try {
+    const rounds = new Rounds(file);
+    rounds.handedIn("old-task");
+    mock.timers.tick(4 * 86_400_000);
+    rounds.handedIn("recent-task");
+    mock.timers.tick(86_400_000);
+    assert.equal(rounds.expire(new Date(Date.now() - 3 * 86_400_000)), 1);
+    assert.equal(rounds.rejected("old-task"), 0);
+    assert.equal(new Rounds(file).expire(new Date(Date.now() - 3 * 86_400_000)), 0, "the file was rewritten");
+    // a rejection counts as touching the task
+    rounds.answered("recent-task", "REJECT");
+    mock.timers.tick(2 * 86_400_000);
+    assert.equal(rounds.expire(new Date(Date.now() - 3 * 86_400_000)), 0);
+    assert.equal(rounds.rejected("recent-task"), 1);
+    // rounds an older version kept have no date: they start their keep when the file is read
+    writeFileSync(join(ROOM_HOME, "rounds-legacy.json"), JSON.stringify({ "sw-old": { pending: true, rejected: 2 } }));
+    const legacy = new Rounds(join(ROOM_HOME, "rounds-legacy.json"));
+    assert.equal(legacy.expire(new Date(Date.now() - 1000)), 0);
+    mock.timers.tick(4 * 86_400_000);
+    assert.equal(new Rounds(join(ROOM_HOME, "rounds-legacy.json")).expire(new Date(Date.now() - 3 * 86_400_000)), 1);
+  } finally {
+    mock.timers.reset();
+  }
+});
+
+test("an ACCEPT ends the rounds of the task and of the seat that held it, whichever key they were counted under", () => {
+  const rounds = new Rounds(join(ROOM_HOME, "rounds-accept.json"));
+  // the seat handed in before it claimed its issue, then again as the holder of the issue
+  rounds.handedIn("seat-1");
+  rounds.handedIn("sw-k3f");
+  rounds.answered("sw-k3f", "ACCEPT", "seat-1");
+  assert.equal(new Rounds(join(ROOM_HOME, "rounds-accept.json")).expire(new Date(Date.now() + 1000)), 0);
 });

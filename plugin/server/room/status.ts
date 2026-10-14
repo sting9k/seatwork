@@ -3,17 +3,19 @@ import { basename } from "node:path";
 import type { LiveSeat } from "../host";
 import type { MailEngine, SeatRecord } from "../coordination/engine";
 import {
-  findRoomMarker,
   isInside,
   loadRegistry,
+  markerRoot,
   realOrSelf,
-  roomProjectDir,
+  roomProjectIn,
   type Registry,
 } from "../orchestration/registry";
 import { rolesWhere, traits } from "../../shared/workflow";
 
+/** What the app shows of the room: what waits on its Owner, and its seats by project. */
+
 /** What a turn left for the Owner to answer, kept by the plugin until that seat works again. */
-export interface Owed {
+interface Owed {
   key: string;
   agentId: string;
   title: string | null;
@@ -29,6 +31,7 @@ export class OwedList {
     for (const item of readJson<Owed[]>(file, [])) this.items.set(item.agentId, item);
   }
 
+  /** A seat's turn left something for the Owner. */
   set(item: Owed): void {
     this.items.set(item.agentId, item);
     this.save();
@@ -57,8 +60,12 @@ export class OwedList {
   }
 }
 
-/** The room's own group: named after the roles at home in it. */
-const ROOM_GROUP = {
+interface Place {
+  key: string;
+  name: string;
+}
+
+const ROOM_GROUP: Place = {
   key: "",
   name:
     rolesWhere((role) => role.home === "room")
@@ -66,23 +73,60 @@ const ROOM_GROUP = {
       .join(", ") || "Room",
 };
 
-/** The group a seat's folder puts it in: the room's project, a registered one, or its folder. */
-function placeOf(cwd: string, registry: Registry | null, own: string): { key: string; name: string } {
+/** The group a seat's folder puts it in: the room's own (named after the roles at home in it), a registered project, or its folder. */
+function placeOf(cwd: string, registry: Registry | null, own: string): Place {
   const real = realOrSelf(cwd);
   if (isInside(real, own)) return ROOM_GROUP;
   const entry = registry?.projects.find((project) => isInside(real, project.cwd));
   if (entry) return { key: entry.name, name: entry.name };
-  const root = findRoomMarker(real)?.root ?? real;
+  const root = markerRoot(real) ?? real;
   return { key: root, name: basename(root) };
+}
+
+interface StatusSeat {
+  agentId: string;
+  role: string;
+  title: string | null;
+  status: string;
+  held: number;
+  depth: number;
+}
+
+/** A group's seats as a tree, its top seats first, whoever opened it. */
+function treeOf(members: readonly SeatRecord[], live: ReadonlyMap<string, LiveSeat>, engine: MailEngine) {
+  const inGroup = new Set(members.map((seat) => seat.agentId));
+  const below = new Map<string | null, SeatRecord[]>();
+  for (const seat of members) {
+    const parent = engine.parentOf(seat.agentId);
+    const owner = parent && inGroup.has(parent) ? parent : null;
+    below.set(owner, [...(below.get(owner) ?? []), seat]);
+  }
+  const seats: StatusSeat[] = [];
+  const walk = (parent: string | null, depth: number) => {
+    for (const seat of below.get(parent) ?? []) {
+      const agent = live.get(seat.agentId)!;
+      seats.push({
+        agentId: seat.agentId,
+        role: seat.role,
+        title: seat.title,
+        status: agent.waiting ? "waiting" : agent.status,
+        held: engine.held(seat.agentId).length,
+        depth,
+      });
+      walk(seat.agentId, depth + 1);
+    }
+  };
+  walk(null, 0);
+  return seats;
 }
 
 /** The room as the app shows it: what waits on the Owner, and the seats by project. */
 export async function roomStatus(live: ReadonlyMap<string, LiveSeat>, engine: MailEngine, owed: OwedList) {
   const registry = loadRegistry();
-  const own = roomProjectDir();
+  const own = roomProjectIn(registry);
   const records = engine.allSeats().filter((seat) => live.has(seat.agentId));
-  const place = new Map<string, { key: string; name: string }>();
-  const placed = new Map<string, { key: string; name: string }>();
+  const place = new Map<string, Place>();
+  const placed = new Map<string, Place>();
   for (const seat of records) {
     const cwd = seat.cwd ?? live.get(seat.agentId)!.cwd;
     if (cwd && !placed.has(cwd)) placed.set(cwd, placeOf(cwd, registry, own));
@@ -102,39 +146,7 @@ export async function roomStatus(live: ReadonlyMap<string, LiveSeat>, engine: Ma
       ([key, group]) =>
         group.members.length > 0 || (registry?.projects.some((project) => project.name === key) ?? false),
     )
-    .map(([, group]) => {
-      const inGroup = new Set(group.members.map((seat) => seat.agentId));
-      // a project's own tree: its top seat first, whoever opened it
-      const above = (id: string) => {
-        const parent = engine.parentOf(id);
-        return parent && inGroup.has(parent) ? parent : null;
-      };
-      const seats: {
-        agentId: string;
-        role: string;
-        title: string | null;
-        status: string;
-        held: number;
-        depth: number;
-      }[] = [];
-      const walk = (parent: string | null, depth: number) => {
-        for (const seat of group.members) {
-          if (above(seat.agentId) !== parent) continue;
-          const agent = live.get(seat.agentId)!;
-          seats.push({
-            agentId: seat.agentId,
-            role: seat.role,
-            title: seat.title,
-            status: agent.waiting ? "waiting" : agent.status,
-            held: engine.held(seat.agentId).length,
-            depth,
-          });
-          walk(seat.agentId, depth + 1);
-        }
-      };
-      walk(null, 0);
-      return { name: group.name, seats };
-    });
+    .map(([, group]) => ({ name: group.name, seats: treeOf(group.members, live, engine) }));
   return {
     waiting: owed.among(live).map((item) => ({ ...item, project: place.get(item.agentId)?.name ?? "" })),
     projects,

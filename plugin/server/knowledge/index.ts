@@ -9,11 +9,12 @@ import { Gate, type Judge } from "./gate";
 import { PairBook } from "./pairs";
 import { KnowledgeRefused } from "./refused";
 import { isoTime } from "./lint";
-import { ftsQueries, fuse, pack } from "./search";
+import { ftsQueries, fuse, pack, QUERY_CHARS } from "./search";
 import { KnowledgeStore, type Filters, type Found, type Source, type SourceWords } from "./store";
 
 /** The Knowledge district: the room's record of turns and mail, and its decisions, for seats to search and be told. */
 
+/** The policy's knowledge section: `mode`, the record's `keepDays` and `maxEntries`, and `gate` for the keep gate. */
 export interface KnowledgePolicy {
   mode: "on" | "off";
   keepDays: number;
@@ -21,6 +22,7 @@ export interface KnowledgePolicy {
   gate?: boolean;
 }
 
+/** What the district takes from the room: its seats, projects, mail and tasks, and the decision model. */
 export interface KnowledgeDeps {
   roomDir: string;
   policy(): KnowledgePolicy | undefined;
@@ -40,6 +42,7 @@ export interface KnowledgeDeps {
   log(line: string): void;
 }
 
+/** A seat's turn as it ends: whose, how it ended, and what it did. */
 export interface EndedTurn {
   agent: string;
   parentId: string | null;
@@ -50,7 +53,7 @@ export interface EndedTurn {
   events: readonly TurnEvent[];
 }
 
-export const PROJECT_DIR = join(".seatwork", ".knowledge");
+const PROJECT_DIR = join(".seatwork", ".knowledge");
 
 const MAIL = { batch: 500, batches: 5, chars: 20_000 } as const;
 const SEARCH = { pool: 50, limit: 10, most: 50, phrases: 4 } as const;
@@ -60,6 +63,7 @@ const MAX_ENTRIES = 300_000;
 const DECISIONS_KEPT_DAYS = 365;
 const NOTES_HELD = 5;
 const FOLLOWED_CALLS = 3;
+const ADDRESS_CHARS = 500;
 const COMMAND = /^\/[\w:-]+(\s|$)/;
 const TELLING_MS = 30_000;
 const KINDS: readonly EntryKind[] = ["owner", "prompt", "say", "shell", "change", "read", "tool", "mail"];
@@ -93,11 +97,41 @@ const bounded = (value: unknown, fallback: number, most: number): number => {
   return Number.isInteger(n) && n > 0 ? Math.min(n, most) : fallback;
 };
 
+/** What a seat asked in a search, checked: its phrasings, what narrows them, and how many hits it wants. */
+function searchAsked(
+  args: Record<string, unknown>,
+  seen: readonly string[] | null,
+): { phrases: string[]; filters: Filters; limit: number } {
+  const phrases = [args.q, ...(Array.isArray(args.also) ? args.also.slice(0, SEARCH.phrases) : [])]
+    .map((one) =>
+      String(one ?? "")
+        .slice(0, QUERY_CHARS)
+        .normalize("NFC")
+        .trim(),
+    )
+    .filter(Boolean);
+  if (phrases.length === 0) throw new KnowledgeRefused("search: give the words to look for in `q`");
+  const kinds = (Array.isArray(args.kinds) ? args.kinds : args.kind ? [args.kind] : []).map(String);
+  const unknown = kinds.find((kind) => !KINDS.includes(kind as EntryKind));
+  if (unknown) throw new KnowledgeRefused(`search: no entry kind ${unknown}; kinds are ${KINDS.join(", ")}`);
+  const since = typeof args.since === "string" && args.since ? isoTime(args.since) : undefined;
+  if (since === null)
+    throw new KnowledgeRefused("search: `since` is an ISO date like 2026-10-01, or a time with its zone");
+  const filters: Filters = {
+    seen,
+    ...(typeof args.task === "string" && args.task ? { task: args.task } : {}),
+    ...(typeof args.agent === "string" && args.agent ? { agent: args.agent } : {}),
+    ...(kinds.length ? { kinds: kinds as EntryKind[] } : {}),
+    ...(since ? { since: since.toISOString() } : {}),
+  };
+  return { phrases, filters, limit: bounded(args.limit, SEARCH.limit, SEARCH.most) };
+}
+
+/** The district: turns and mail kept as a record seats search, decisions kept and told to the seats they bind. */
 export class Knowledge {
   private readonly stores = new Map<string, KnowledgeStore>();
   private readonly started = new Map<string, string>();
   private readonly briefedSeats = new Set<string>();
-  private reading = false;
   private refused: string | null = null;
   private readonly notes = new Map<string, { key: string; line: string }[]>();
   private readonly telling = new Map<string, number>();
@@ -126,6 +160,7 @@ export class Knowledge {
     });
   }
 
+  /** Whether the district runs: the policy turns it on and its numbers are in range. */
   get on(): boolean {
     const policy = this.deps.policy();
     if (policy?.mode !== "on") return false;
@@ -169,8 +204,7 @@ export class Knowledge {
 
   /** Keeps an ended turn once; a turn that cannot be kept is logged and passed over. */
   turnEnded(turn: EndedTurn): boolean {
-    const endedAt = this.now().toISOString();
-    const startedAt = this.started.get(turn.agent) ?? endedAt;
+    const startedAt = this.started.get(turn.agent) ?? this.now().toISOString();
     this.started.delete(turn.agent);
     const roomBriefed = this.briefedSeats.delete(turn.agent);
     if (!this.on) return false;
@@ -192,20 +226,13 @@ export class Knowledge {
         agent: turn.agent,
         role: turn.role,
         task: turn.task,
-        thread: "",
         startedAt,
-        endedAt,
         outcome: turn.outcome,
         audience: [turn.agent],
       };
       return store.add(source, entries);
     } catch (error) {
       this.deps.log(`knowledge: the turn ${ref} was not kept: ${(error as Error).message}`);
-      try {
-        store?.failed(ref, (error as Error).message);
-      } catch {
-        // a store that cannot take the error cannot take the turn either; the log has both
-      }
       return false;
     } finally {
       // the decisions recorded in the turn settle on its person's words, kept or not
@@ -316,7 +343,7 @@ export class Knowledge {
     }
   }
 
-  /** One call of the knowledge tool; a decision waits on the gate before it is kept. */
+  /** One call of the knowledge tool; `decide` and `withdraw` wait on the gate before they are kept, the rest are answered at once. */
   async act(agent: string, args: Record<string, unknown>): Promise<unknown> {
     if (args.do !== "decide" && args.do !== "withdraw") return this.recall(agent, args);
     if (!this.on) throw new KnowledgeRefused("the knowledge district is off in this room's policy");
@@ -331,7 +358,7 @@ export class Knowledge {
     if ((last.left -= 1) <= 0) this.searched.delete(agent);
     if (args.do !== "view" && args.do !== "expand") return;
     const address = String(args.address ?? "");
-    if (!address) return;
+    if (!address || address.length > ADDRESS_CHARS) return;
     try {
       const rank = last.hits.indexOf(address);
       last.store.opened(last.id, address, rank < 0 ? null : rank, args.do);
@@ -340,24 +367,20 @@ export class Knowledge {
     }
   }
 
-  /** Reads the mail posted since the last read into each store; one read at a time, a few batches per store. */
+  /** Reads the mail posted since the last read into each store, a few batches per store. */
   readMail(): number {
-    if (!this.on || this.reading) return 0;
-    this.reading = true;
+    if (!this.on) return 0;
     let added = 0;
-    try {
-      for (const root of [null, ...this.deps.projects()])
-        try {
-          added += this.readMailOf(root);
-        } catch (error) {
-          this.deps.log(`knowledge: the mail of ${root ?? "the room"} was not read: ${(error as Error).message}`);
-        }
-    } finally {
-      this.reading = false;
-    }
+    for (const root of [null, ...this.deps.projects()])
+      try {
+        added += this.readMailOf(root);
+      } catch (error) {
+        this.deps.log(`knowledge: the mail of ${root ?? "the room"} was not read: ${(error as Error).message}`);
+      }
     return added;
   }
 
+  /** Reads the mail of one store from where its reader stopped, a few batches at most. */
   private readMailOf(root: string | null): number {
     let store = this.existing(root);
     let added = 0;
@@ -376,9 +399,7 @@ export class Knowledge {
             agent: mail.sender,
             role: mail.senderRole,
             task: mail.thread,
-            thread: mail.thread,
             startedAt: mail.at,
-            endedAt: mail.at,
             outcome: mail.signal,
             audience: [mail.sender, ...mail.to],
           },
@@ -408,7 +429,7 @@ export class Knowledge {
     return this.existing(roots[0]);
   }
 
-  /** One call of the knowledge tool, with what the seat should be told added to its answer. */
+  /** One read call of the knowledge tool, with what the seat should be told added to its answer. */
   recall(agent: string, args: Record<string, unknown>): unknown {
     if (!this.on) throw new KnowledgeRefused("the knowledge district is off in this room's policy");
     this.followed(agent, args);
@@ -423,6 +444,7 @@ export class Knowledge {
     return { ...answer, notices: notices.text.split("\n") };
   }
 
+  /** The answer to one read call: `list`, `search`, `view`, `expand` or `pack`. */
   private answer(agent: string, args: Record<string, unknown>): unknown {
     const action = String(args.do ?? "");
     if (action === "list") return this.decisions.list(agent, args);
@@ -446,34 +468,14 @@ export class Knowledge {
     }
   }
 
+  /** A search by one or more phrasings, each tried for all its words and then for any, fused into one ranking. */
   private search(
     agent: string,
     store: KnowledgeStore | null,
     args: Record<string, unknown>,
     seen: readonly string[] | null,
   ) {
-    const phrases = [args.q, ...(Array.isArray(args.also) ? args.also.slice(0, SEARCH.phrases) : [])]
-      .map((one) =>
-        String(one ?? "")
-          .normalize("NFC")
-          .trim(),
-      )
-      .filter(Boolean);
-    if (phrases.length === 0) throw new KnowledgeRefused("search: give the words to look for in `q`");
-    const kinds = (Array.isArray(args.kinds) ? args.kinds : args.kind ? [args.kind] : []).map(String);
-    const unknown = kinds.find((kind) => !KINDS.includes(kind as EntryKind));
-    if (unknown) throw new KnowledgeRefused(`search: no entry kind ${unknown}; kinds are ${KINDS.join(", ")}`);
-    const since = typeof args.since === "string" && args.since ? isoTime(args.since) : undefined;
-    if (since === null)
-      throw new KnowledgeRefused("search: `since` is an ISO date like 2026-10-01, or a time with its zone");
-    const filters: Filters = {
-      seen,
-      ...(typeof args.task === "string" && args.task ? { task: args.task } : {}),
-      ...(typeof args.agent === "string" && args.agent ? { agent: args.agent } : {}),
-      ...(kinds.length ? { kinds: kinds as EntryKind[] } : {}),
-      ...(since ? { since: since.toISOString() } : {}),
-    };
-    const limit = bounded(args.limit, SEARCH.limit, SEARCH.most);
+    const { phrases, filters, limit } = searchAsked(args, seen);
     const understood: { phrase: string; query: string | null; matched: "all" | "any" | "none"; newest?: true }[] = [];
     const lists: (Found & { snippet: string })[][] = [];
     for (const phrase of phrases) {
@@ -532,6 +534,7 @@ export class Knowledge {
     }
   }
 
+  /** The entries at an address and around it, or that they are gone. */
   private read(
     store: KnowledgeStore | null,
     action: "view" | "expand",
@@ -554,7 +557,7 @@ export class Knowledge {
     return { address, entries: entries.map((found) => shown(found, found.text)) };
   }
 
-  /** Drops what is past the policy's days from every store of the room; the GC calls it. */
+  /** Drops what is past the policy's days or size from every store of the room, a bounded part a pass; the GC calls it. */
   expire(): number {
     const policy = this.deps.policy();
     if (!policy || !this.on) return 0;
@@ -596,6 +599,7 @@ export class Knowledge {
     }
   }
 
+  /** Closes every store. */
   close(): void {
     this.searched.clear();
     for (const store of this.stores.values()) store.close();

@@ -11,6 +11,7 @@ export interface RecoveryPolicy {
   limitedMaxHours: number;
 }
 
+/** A resume planned for a seat: when, which try of how many, and the failure it answers. */
 export interface Retry {
   agentId: string;
   at: number;
@@ -18,22 +19,25 @@ export interface Retry {
   of: number;
   kind: FailureKind;
   message: string;
+  misses?: number;
 }
 
-export type Outcome = { retry: Retry } | { gaveUpAfter: number; kind: FailureKind };
+type Outcome = { retry: Retry } | { gaveUpAfter: number; kind: FailureKind };
 
 const LIMITED =
   /rate[\s._-]?limit|too many requests|quota exceeded|insufficient_quota|usage limit|plan limit|limit (?:reached|will reset)|RESOURCE_EXHAUSTED|throttl|requests? per min|(?:status|error|code|http)\D{0,12}429\b/i;
 const FATAL =
   /unauthori[sz]ed|(?:status|error|code|http)\D{0,12}40[13]\b|invalid (?:api )?key|not logged in|log ?in again|authenticat|credit balance|billing|prompt is too long|context (?:length|window)|too many tokens/i;
 const UNITS: Record<string, number> = { s: 1, m: 60, h: 3600 };
+const MISS_WAIT_MS = 60_000;
+const MISS_WAIT_MAX_MS = 30 * 60_000;
 
 /** When a quota message says it lifts, as a time; undefined when it names none the room can read. */
 function liftsAt(message: string, now: number): number | undefined {
   const after = /retry[- ]after:?\s*(\d+)/i.exec(message);
   if (after) {
     const value = Number(after[1]);
-    // more than a day of seconds is a time, not a wait: kept when it is one in the next two days
+    // more than a day of seconds is a time, not a wait: kept when it falls in the next two days
     if (value <= 86_400) return now + value * 1000;
     const at = value < 1e12 ? value * 1000 : value;
     return at > now && at < now + 2 * 86_400_000 ? at : undefined;
@@ -50,7 +54,7 @@ function liftsAt(message: string, now: number): number | undefined {
   return at.getTime() > now ? at.getTime() : at.getTime() + 24 * 3_600_000;
 }
 
-/** A quota is waited out, a refused account or prompt goes to the Owner, the rest is tried again. */
+/** What a failure message says of itself: a quota (with the time it lifts), a refused account or prompt, or a passing fault. */
 export function classify(message: string, now: number): { kind: FailureKind; liftsAt?: number } {
   if (LIMITED.test(message)) return { kind: "limited", liftsAt: liftsAt(message, now) };
   return { kind: FATAL.test(message) ? "fatal" : "service" };
@@ -62,6 +66,7 @@ interface SeatState {
   retry?: Retry;
 }
 
+/** The resumes the room plans for seats whose turn failed, kept on disk across restarts. */
 export class Recovery {
   private readonly seats = new Map<string, SeatState>();
 
@@ -80,7 +85,7 @@ export class Recovery {
     const found = classify(message, now);
     const kind = read ?? found.kind;
     const lifts = found.liftsAt;
-    // a home an earlier version wrote names no recovery: every failure goes to the Owner, as it did
+    // a room home without a recovery policy sends every failure to the Owner
     if (!this.policy) return { gaveUpAfter: 0, kind };
     const of = this.policy.delaysSeconds.length;
     let at: number | null = null;
@@ -109,6 +114,7 @@ export class Recovery {
     if (this.seats.delete(agentId)) this.save();
   }
 
+  /** The retry waiting for a seat, if any. */
   pending(agentId: string): Retry | undefined {
     return this.seats.get(agentId)?.retry;
   }
@@ -125,11 +131,12 @@ export class Recovery {
     return out;
   }
 
-  /** The daemon could not say how the seat is: the same retry, a little later. */
-  postpone(retry: Retry, at: number): void {
+  /** A retry that could not be carried out, kept for later: each miss in a row doubles the wait, up to a ceiling. */
+  postpone(retry: Retry, now: number): void {
     const state = this.seats.get(retry.agentId);
     if (!state) return;
-    state.retry = { ...retry, at };
+    const misses = (retry.misses ?? 0) + 1;
+    state.retry = { ...retry, misses, at: now + Math.min(MISS_WAIT_MS * 2 ** (misses - 1), MISS_WAIT_MAX_MS) };
     this.save();
   }
 
@@ -152,22 +159,29 @@ export interface Resumes {
   }): Promise<unknown>;
 }
 
+const errorText = (error: unknown) => (error instanceof Error ? error.message : String(error));
+
 /** Starts again the seats whose retry has come due, when they still are as the failure left them. */
-export async function resumeDue(recovery: Recovery, mail: Resumes, now: number): Promise<void> {
+export async function resumeDue(
+  recovery: Recovery,
+  mail: Resumes,
+  now: number,
+  log: (line: string) => void = () => {},
+): Promise<void> {
   for (const retry of recovery.due(now)) {
     try {
       await resumeOne(recovery, mail, retry, now);
-    } catch {
-      // the store or the daemon failed this time: the same retry, a little later
-      recovery.postpone(retry, now + 60_000);
+    } catch (error) {
+      log(`resuming ${retry.agentId} did not work, it is tried again later: ${errorText(error)}`);
+      recovery.postpone(retry, now);
     }
   }
 }
 
+/** Posts the resume to one seat that is at rest; a seat that is gone or at work again needs none. */
 async function resumeOne(recovery: Recovery, mail: Resumes, retry: Retry, now: number): Promise<void> {
   const status = await mail.recipientStatus(retry.agentId);
-  if (status === "unknown") recovery.postpone(retry, now + 60_000);
-  // gone, or at work again on someone's word: the retry has nothing left to do
+  if (status === "unknown") recovery.postpone(retry, now);
   if (status !== "idle") return;
   await mail.post({
     from: { agentId: "room", role: "system" },
@@ -183,7 +197,7 @@ async function resumeOne(recovery: Recovery, mail: Resumes, retry: Retry, now: n
 const clock = (at: number) => new Date(at).toTimeString().slice(0, 5);
 
 /** What the seat reads when the room starts it again. */
-export function resumeText(retry: Retry): string {
+function resumeText(retry: Retry): string {
   const cause =
     retry.kind === "limited"
       ? "Your last turn stopped because the model service was out of quota for this seat"

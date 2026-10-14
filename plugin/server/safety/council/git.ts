@@ -25,9 +25,9 @@ export async function snapshot(cwd: string): Promise<Snapshot | null> {
 /** Every file that differs from `head` now, committed or not, and every new file git does not ignore. */
 export async function changedSince(found: Snapshot): Promise<string[] | null> {
   const [diff, untracked] = await Promise.all([
-    git(found.root, ["diff", "--name-only", "--no-renames", found.head]),
-    git(found.root, ["ls-files", "--others", "--exclude-standard"]),
+    git(found.root, ["diff", "--name-only", "-z", "--no-renames", found.head]),
+    git(found.root, ["ls-files", "--others", "--exclude-standard", "-z"]),
   ]);
   if (diff === null || untracked === null) return null;
-  return [...new Set([...diff.split("\n"), ...untracked.split("\n")].filter(Boolean))].slice(0, MOST_FILES);
+  return [...new Set([...diff.split("\0"), ...untracked.split("\0")].filter(Boolean))].slice(0, MOST_FILES);
 }

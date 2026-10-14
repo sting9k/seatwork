@@ -788,7 +788,7 @@ test("a task's rounds are counted by what happened: a revised brief that answers
     lead.mail({ to: peer.agent.id, subject, body: "Repair it.", needs: "nothing" });
   await handsIn(peer, "CANDIDATE abc1\nfirst try");
   assert.doesNotMatch(lead.inbox.at(-1)!, /\[room\]/);
-  // the first rejection, written as the Lead of the 2026-10-13 run wrote it
+  // the first rejection, written as a revised brief that names the REJECT in brackets
   assert.doesNotMatch(await sendsBack("REVISED BRIEF (REJECT abc1: six repairs) round 2"), /rejection/);
   // a second revised brief with no candidate in between changes the task and sends nothing back
   await sendsBack("REVISED BRIEF: one line decided by the Owner");

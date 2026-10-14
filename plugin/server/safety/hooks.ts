@@ -1,11 +1,10 @@
 import { createHash } from "node:crypto";
-import type { Guard, SeatRef, Verdict } from "./guard";
+import type { Guard, Ruling, SeatRef } from "./guard";
 
-/** The thin hooks each agent CLI runs before a tool call, and the answer each reads. */
+/** The thin hooks each agent CLI runs before a tool call, and the answer each reads; a hook finds the guard by GATE_ENV. */
 
 export type Cli = "claude" | "codex" | "pi" | "opencode";
 
-/** The env names of a seat's session: where the guard listens and which seat asks. */
 export const GATE_ENV = {
   url: "SEATWORK_GATE_URL",
   seat: "SEATWORK_GATE_SEAT",
@@ -54,38 +53,39 @@ export async function answerHook(
   note?: string,
 ): Promise<{ type: string; text: string; noted: boolean }> {
   const call = callOf(body);
-  let verdict: Verdict | null = null;
-  if (call.shell !== null) verdict = await guard.check(seat, cli, call.shell, call.cwd);
+  let ruling: Ruling | null = null;
+  if (call.shell !== null) ruling = await guard.check(seat, cli, call.shell, call.cwd);
   for (const path of call.writes) {
-    if (verdict && !verdict.allow) break;
+    if (ruling && !ruling.allow) break;
     const abs = path.startsWith("/") || !call.cwd ? path : `${call.cwd}/${path}`;
     const found = await guard.checkWrite(seat, cli, abs, call.cwd);
-    if (!found.allow || !verdict) verdict = found;
+    // the first denial answers; failing that, the first file the guard let through with a note
+    if (!found.allow || !ruling || (!ruling.message && found.message)) ruling = found;
   }
-  if (!note || (verdict && !verdict.allow)) return { ...render(cli, verdict), noted: false };
-  const message = [verdict?.message, note].filter(Boolean).join("\n\n");
-  verdict = verdict ? { ...verdict, message } : { allow: true, message, finding: null, code: null, grantor: null };
-  return { ...render(cli, verdict), noted: true };
+  if (!note || (ruling && !ruling.allow)) return { ...render(cli, ruling), noted: false };
+  const message = [ruling?.message, note].filter(Boolean).join("\n\n");
+  ruling = ruling ? { ...ruling, message } : { allow: true, message, finding: null, code: null, grantor: null };
+  return { ...render(cli, ruling), noted: true };
 }
 
-export function render(cli: Cli, verdict: Verdict | null): { type: string; text: string } {
+/** A ruling in the shape its CLI reads: hook JSON for Claude and Codex, a block flag for Pi and OpenCode. */
+export function render(cli: Cli, ruling: Ruling | null): { type: string; text: string } {
   if (cli === "pi" || cli === "opencode")
     return {
       type: "application/json",
       text: JSON.stringify(
-        verdict && !verdict.allow
-          ? { block: true, reason: verdict.message }
-          : { block: false, note: verdict?.message ?? null },
+        ruling && !ruling.allow
+          ? { block: true, reason: ruling.message }
+          : { block: false, note: ruling?.message ?? null },
       ),
     };
-  if (!verdict || (verdict.allow && !verdict.message)) return { type: "text/plain", text: "" };
-  const output = verdict.allow
-    ? { hookEventName: "PreToolUse", additionalContext: verdict.message }
-    : { hookEventName: "PreToolUse", permissionDecision: "deny", permissionDecisionReason: verdict.message };
+  if (!ruling || (ruling.allow && !ruling.message)) return { type: "text/plain", text: "" };
+  const output = ruling.allow
+    ? { hookEventName: "PreToolUse", additionalContext: ruling.message }
+    : { hookEventName: "PreToolUse", permissionDecision: "deny", permissionDecisionReason: ruling.message };
   return { type: "application/json", text: JSON.stringify({ hookSpecificOutput: output }) };
 }
 
-/** Why a call does not run when the guard gives no answer: an undone check is never an allow. */
 const UNCHECKED = {
   unwired: "This session has no way to reach the room's guard, so this call does not run. Tell your Owner.",
   down: "The room's guard is not answering, so this call does not run. Try again in a minute; if it keeps failing, tell your Owner.",
@@ -96,8 +96,8 @@ const UNCHECKED = {
 const ASK_SECONDS = 4;
 const RETRY_SECONDS = 3;
 
-/** The script Claude and Codex run inline: it carries the payload to the room and prints the answer. */
-export function gateScript(): string {
+/** The script Claude and Codex run inline: it carries the payload to the room and prints the answer; no answer is a deny. */
+function gateScript(): string {
   const deny = (why: string) => `deny "${why}"`;
   return `# The room's guard: hands this tool call to the room and prints its answer. The room decides.
 deny() { printf '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"%s"}}' "$1"; exit 0; }

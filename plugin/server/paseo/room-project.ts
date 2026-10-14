@@ -6,10 +6,9 @@ import { ROOM_PROJECT } from "../../shared/workflow";
 
 const dirOf = (workspace: { workspaceDirectory?: string; projectRootPath: string }) =>
   realOrSelf(workspace.workspaceDirectory ?? workspace.projectRootPath);
-/** One opening at a time: two that both find no workspace would both make one. */
 let opening: Promise<void> = Promise.resolve();
 
-/** The room's own project in Paseo: its directory, project and workspace. Safe to repeat. */
+/** Makes the room's own project in Paseo (its directory, project and workspace); safe to repeat. */
 export function ensureRoomProject(paseo: PaseoApi, log: (message: string) => void): Promise<void> {
   const open = async () => {
     mkdirSync(roomProjectDir(), { recursive: true });
@@ -19,6 +18,7 @@ export function ensureRoomProject(paseo: PaseoApi, log: (message: string) => voi
     await paseo.workspaces.open({ cwd: dir });
     log(`opened the ${ROOM_PROJECT} project at ${dir}`);
   };
+  // one at a time: two calls that both find no workspace would both make one
   opening = opening.then(open, open);
   return opening;
 }

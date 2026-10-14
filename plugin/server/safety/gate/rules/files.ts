@@ -1,6 +1,6 @@
 import { posix } from "node:path";
 import { valueWord } from "../normalize";
-import { absolute, isTemp, sensitive, tempPath, valueOf, within } from "../paths";
+import { absolute, isTemp, sensitive, SYSTEM_ROOTS, tempPath, valueOf, within } from "../paths";
 import { literal, type Redirect, type Word } from "../shell";
 import type { Scene, Value } from "../types";
 import { guardOf, type Guarded, type WriteMode } from "./protected";
@@ -13,8 +13,8 @@ export interface FileHit {
   detail: string;
 }
 
+/** What the file rules ask of the disk: whether a path exists (lstat), is a symlink, is a folder. */
 export interface FileTools {
-  /** a path exists on disk (lstat), and whether it is a symlink */
   stat(path: string): { exists: boolean; link: boolean; dir: boolean };
 }
 
@@ -126,6 +126,7 @@ export function fileRules(scene: Scene, tools: FileTools): FileHit[] {
   return hits;
 }
 
+/** True when a `find` runs `rm` on its matches. */
 function findsExecRm(args: Word[]): boolean {
   for (let i = 0; i < args.length; i += 1) {
     const text = literal(args[i]);
@@ -151,6 +152,7 @@ function startingPoints(args: Word[]): Word[] {
   return out;
 }
 
+/** The size `truncate` is given, null when there is none or a reference file gives it. */
 function sizeOf(texts: (string | null)[]): string | null {
   for (let i = 0; i < texts.length; i += 1) {
     const t = texts[i];
@@ -164,6 +166,7 @@ function sizeOf(texts: (string | null)[]): string | null {
   return null;
 }
 
+/** The files `truncate` acts on: its operands without the size and reference options. */
 function fileOperandsOfTruncate(args: Word[]): Word[] {
   const out: Word[] = [];
   for (let i = 0; i < args.length; i += 1) {
@@ -208,28 +211,13 @@ function mvSafe(files: Value[], scene: Scene): boolean {
   );
 }
 
+/** True when the destination of an `rsync --delete` is `/`, a home or a system folder; a remote one is not. */
 function rsyncRootDest(dest: Value, scene: Scene): boolean {
   const text = dest.text;
   if (text === null || /^[^/]*:/.test(text)) return false;
   const path = posix.normalize(text.startsWith("/") ? text : scene.cwd ? posix.join(scene.cwd, text) : text);
   if (path === "/" || path === scene.place.home || /^\/(home|Users)(\/[^/]+)?\/?$/.test(path)) return true;
-  return [
-    "/etc",
-    "/usr",
-    "/bin",
-    "/sbin",
-    "/root",
-    "/boot",
-    "/lib",
-    "/lib64",
-    "/var",
-    "/sys",
-    "/proc",
-    "/dev",
-    "/opt",
-    "/System",
-    "/Library",
-  ].some((r) => within(path, r));
+  return SYSTEM_ROOTS.some((r) => within(path, r));
 }
 
 /** DCG's redirect rules: truncating the system or a home, git internals, run-time targets. */
@@ -272,7 +260,7 @@ function newFileUnderHome(path: string, tools: FileTools): boolean {
 }
 
 /** Every file a command writes, with how: redirects, tee, cp, mv, dd, sed -i, downloads. */
-export function writesOf(scene: Scene): { value: Value; mode: WriteMode; how: string }[] {
+function writesOf(scene: Scene): { value: Value; mode: WriteMode; how: string }[] {
   const out: { value: Value; mode: WriteMode; how: string }[] = [];
   const add = (word: Word, mode: WriteMode, how: string) => out.push({ value: valueOf(word, scene), mode, how });
   for (const r of scene.simple.redirects) {

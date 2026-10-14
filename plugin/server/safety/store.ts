@@ -5,19 +5,22 @@ import { SQL_DIR } from "../paths";
 import { Sqlite, type SqliteFailure } from "../sqlite";
 import type { Label } from "./council/calibration";
 
-/** The safety store in the room home: decisions, codes, start commits, hand-in findings. */
+/** The safety store in the room home: decisions, codes, start commits, hand-in findings and the council's log. */
 
+/** A failure of the store itself: the file is held by another process, or its layout does not fit this plugin. */
 export class SafetyError extends Error {
   constructor(
-    readonly code: SqliteFailure | "NO_CODE" | "NOT_YOURS",
+    readonly code: SqliteFailure,
     message: string,
   ) {
     super(message);
   }
 }
 
+/** Who may grant a code: the Owner of the blocked seat, or only the person. */
 export type Grantor = "owner" | "human";
 
+/** One decision of the guard about a call. */
 export interface DecisionRow {
   seat: string | null;
   role: string | null;
@@ -32,6 +35,7 @@ export interface DecisionRow {
   elapsedUs: number;
 }
 
+/** A one-time code for one call: `hash` binds it to a seat, a folder and a command; one grant and one use. */
 export interface CodeRow {
   hash: string;
   code: string;
@@ -48,6 +52,7 @@ export interface CodeRow {
   used_at: string | null;
 }
 
+/** A hand-in finding of a seat, told apart by its fingerprint; `ack` is the seat's reason to keep it. */
 export interface FindingRow {
   seat: string;
   fingerprint: string;
@@ -68,9 +73,12 @@ export const codeHash = (seat: string | null, cwd: string | null, command: strin
     .update(JSON.stringify([seat, cwd, command]))
     .digest("hex");
 
-function databaseIn(dir: string): string {
+/** The store's file in a folder. */
+export const databaseIn = (dir: string): string => join(dir, "safety.db");
+
+function madeDatabaseIn(dir: string): string {
   mkdirSync(dir, { recursive: true, mode: 0o700 });
-  return join(dir, "safety.db");
+  return databaseIn(dir);
 }
 
 /** One council member's reading of one turn, found or not. */
@@ -101,6 +109,7 @@ export interface MemberState {
   movedAt: string;
 }
 
+/** A member's readings over a span, and how its labels fell. */
 export interface MemberCount {
   member: string;
   readings: number;
@@ -114,6 +123,7 @@ export interface MemberCount {
 const PRUNE_BATCH = 2000;
 const FINGERPRINT = /^[0-9a-f]{6,64}$/;
 
+/** The Safety district's SQLite store; every statement it runs has an index. */
 export class SafetyStore extends Sqlite {
   constructor(
     dir: string,
@@ -121,7 +131,7 @@ export class SafetyStore extends Sqlite {
     private readonly now: () => Date = () => new Date(),
     scripts: string = join(SQL_DIR, "safety"),
   ) {
-    super(databaseIn(dir), {
+    super(madeDatabaseIn(dir), {
       busyTimeoutMs,
       scripts,
       fail: (code, message) => new SafetyError(code, message),
@@ -130,10 +140,12 @@ export class SafetyStore extends Sqlite {
     });
   }
 
+  /** The time on the store's clock, moved by `offsetMs`. */
   private stamp(offsetMs = 0): string {
     return new Date(this.now().getTime() + offsetMs).toISOString();
   }
 
+  /** Keeps one decision; the command is cut to 2000 characters. */
   record(d: DecisionRow): void {
     this.transaction("write", () =>
       this.run(
@@ -154,7 +166,7 @@ export class SafetyStore extends Sqlite {
     );
   }
 
-  /** The code for a blocked command: the one still open for it, or a new six-digit one. */
+  /** The code for a blocked call: the one still open for it, or a new six-digit one. */
   issue(c: {
     hash: string;
     seat: string | null;
@@ -201,6 +213,7 @@ export class SafetyStore extends Sqlite {
     );
   }
 
+  /** Grants the open code bound to `hash`, to be used once. */
   grant(hash: string, by: string): void {
     this.transaction("write", () =>
       this.run(
@@ -212,7 +225,7 @@ export class SafetyStore extends Sqlite {
     );
   }
 
-  /** A granted code for exactly this command, used up by this call; null when there is none. */
+  /** A granted code for exactly this call, used up by it; null when there is none. */
   consume(hash: string): CodeRow | null {
     // nearly every command has no code waiting: a plain read says so without taking the write lock
     if (!this.row("SELECT 1 AS found FROM codes WHERE hash = ? AND granted_at IS NOT NULL AND used_at IS NULL", hash))
@@ -271,6 +284,7 @@ export class SafetyStore extends Sqlite {
     );
   }
 
+  /** Where a seat began and on which commit; the first start of a seat stands. */
   noteStart(agentId: string, cwd: string, head: string | null): void {
     this.transaction("write", () =>
       this.run(
@@ -301,6 +315,7 @@ export class SafetyStore extends Sqlite {
     });
   }
 
+  /** Where a seat began, if the room saw it. */
   startOf(agentId: string): { cwd: string; start_head: string | null; started_at: string } | null {
     return this.row("SELECT cwd, start_head, started_at FROM seats WHERE agent_id = ?", agentId) ?? null;
   }
@@ -333,7 +348,7 @@ export class SafetyStore extends Sqlite {
     });
   }
 
-  /** A seat's word on one of its findings, named whole or by a prefix that names no other; false when it names none or several. */
+  /** Marks a finding acknowledged, named whole or by a prefix that names no other; false when it names none or several. */
   acknowledge(seat: string, fingerprint: string, reason: string): boolean {
     if (!FINGERPRINT.test(fingerprint)) return false;
     return this.transaction("write", () => {
@@ -356,7 +371,7 @@ export class SafetyStore extends Sqlite {
     });
   }
 
-  /** Drops decisions, used or lapsed codes and findings older than the keep; the decisions, the largest, a slice at a time. */
+  /** Drops decisions, escalations and findings older than `before`, and codes that ran out by then; decisions a slice at a time. */
   expire(before: Date): number {
     const at = before.toISOString();
     let gone = 0;
@@ -494,6 +509,7 @@ export class SafetyStore extends Sqlite {
     );
   }
 
+  /** How many labels a member has for a version. */
   labelCount(member: string, version: number): number {
     return (
       this.row<{ n: number }>(
@@ -504,6 +520,7 @@ export class SafetyStore extends Sqlite {
     );
   }
 
+  /** A member's state as last stored, whatever its version. */
   memberState(member: string): MemberState | null {
     return (
       this.row<MemberState>(
@@ -513,6 +530,7 @@ export class SafetyStore extends Sqlite {
     );
   }
 
+  /** Stores a member's state. */
   setMemberState(state: Omit<MemberState, "movedAt">): void {
     this.transaction("write", () =>
       this.run(

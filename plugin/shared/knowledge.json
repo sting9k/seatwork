@@ -1,5 +1,5 @@
 {
-  "$comment": "The gate: what the Knowledge district asks the decision model before it keeps a decision. Under `at` for `keep`, a decision is noise; at `at` or more for a repeat of one in force, it is a repeat.",
+  "$comment": "The gate: what the Knowledge district asks the decision model before it keeps a decision. A decision whose `keep` label has a probability under `at` is noise; one that duplicates or replaces a decision in force at `at` or more is a repeat. `most` older decisions are read beside it, `deadlineMs` is the wait for the model, `version` names the caller in the log.",
   "gate": {
     "version": 1,
     "at": 0.6,

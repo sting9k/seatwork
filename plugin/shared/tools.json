@@ -1,5 +1,5 @@
 {
-  "$comment": "The room's MCP tools, written once: the plugin serves them and the evals' stand-in shows the same text. Placeholders: {{signals}} (signals.json), {{keep_log_days}} (settings.json), {{rotate_k}} and {{mail_chars}} (policy room.params). callers: \"any\" seat, \"spawners\" (roles the workflow lets create seats) or \"room\" (roles the workflow puts at home in the room); the plugin refuses the rest. Every seat is listed every tool, so a description names no role above a project.",
+  "$comment": "The room's MCP tools, written once: the plugin serves them and the evals' stand-in shows the same text. Placeholders: {{signals}} (signals.json), {{keep_log_days}} (settings.json), {{rotate_k}} and {{mail_chars}} (policy room.params). callers: \"any\" seat, \"spawners\" (roles the workflow lets create seats) or \"room\" (roles the workflow puts at home in the room); a call from another role is refused. Every seat is listed every tool, so a description names no role above a project.",
   "tools": {
     "seatwork_mail": {
       "callers": "any",
@@ -76,7 +76,7 @@
     },
     "seatwork_projects": {
       "callers": "room",
-      "description": "The project registry, one line per project Paseo knows: registered or not, name, root, whether its mission and law exist, its model table (default or custom), the Supervisor seat to use. Refused for seats that do not keep the registry.",
+      "description": "The project registry, one line per project Paseo knows: registered or not, name, root, whether its mission and law exist, and its model table (default or custom, with the seats of one model it names). Refused for seats that do not keep the registry.",
       "inputSchema": {
         "type": "object",
         "properties": {},
@@ -103,7 +103,7 @@
           },
           "models": {
             "type": "object",
-            "description": "Only the differences from ROOM_DIR/models.json, same shape; objects merge, lists and values replace, null removes a key. Omit to use the room's table."
+            "description": "Only the differences from ROOM_DIR/models.json, same shape; objects merge, lists and values replace, null removes a key. Omit to leave the project's table as it is; {} takes its own table out."
           }
         },
         "required": ["path"]
@@ -125,7 +125,7 @@
     },
     "seatwork_room_stats": {
       "callers": "room",
-      "description": "What the mail log shows for the last `days`, per project and signal (candidates accepted or rejected, reopen requests conceded or held, decisions escalated, questions), then what each project's seats used per role, as their agent CLIs report it. Refused for seats that do not keep the registry.",
+      "description": "What the mail log shows for the last `days`, per project and signal (candidates accepted or rejected, reopen requests conceded or held, decisions escalated, questions), how the mail stands (unwell stores, asks answered, refusals), then what each project's seats used per role, as their agent CLIs report it. Refused for seats that do not keep the registry.",
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -263,7 +263,7 @@
     },
     "seatwork_seats": {
       "callers": "spawners",
-      "description": "The open seats under you, one line each: role, title, id; at work or at rest and for how long, waiting for a permission, failed, or waiting for the room's retry; context held and cost; the signal its last turn ended with; a Peer's rejections since its last ACCEPT; mail held for it. A seat past {{rotate_k}}K tokens of context is marked: each step rereads the whole context, so its next task belongs to a fresh seat.",
+      "description": "The open seats under you, one line each: role, title, id; at work or at rest and for how long, waiting for a permission, failed, or waiting for the room's retry; context held and cost; the signal its last turn ended with; the rejections of its task since its last ACCEPT; mail held for it; the answers it owes. A seat past {{rotate_k}}K tokens of context is marked: each step rereads the whole context, so its next task belongs to a fresh seat.",
       "inputSchema": {
         "type": "object",
         "properties": {},
@@ -325,7 +325,7 @@
           },
           "task": {
             "type": "string",
-            "description": "search, pack: one task."
+            "description": "search, pack: one task. decide with scope task: the task it binds."
           },
           "agent": {
             "type": "string",
@@ -344,17 +344,20 @@
             "description": "search: an ISO date, or a time with its zone."
           },
           "limit": {
-            "type": "integer"
+            "type": "integer",
+            "description": "search: how many hits (10 by default, 50 at most)."
           },
           "address": {
             "type": "string",
             "description": "view, expand: an entry's address."
           },
           "around": {
-            "type": "integer"
+            "type": "integer",
+            "description": "expand: entries on each side of the address (5 by default, 20 at most)."
           },
           "budget": {
-            "type": "integer"
+            "type": "integer",
+            "description": "pack: characters of evidence (6000 by default, 20000 at most)."
           },
           "project": {
             "type": "string",

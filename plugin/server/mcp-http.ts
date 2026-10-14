@@ -47,6 +47,7 @@ async function bodyOf(req: IncomingMessage): Promise<string | null> {
   return Buffer.concat(chunks).toString("utf8");
 }
 
+/** The room's loopback server: MCP for the seats' tools, plain routes for the guard's hooks. */
 export class McpHttpServer {
   private server: Server | null = null;
   private readonly tools = new Map<string, { tool: McpTool; handler: McpToolHandler }>();
@@ -58,10 +59,12 @@ export class McpHttpServer {
     private readonly version: string,
   ) {}
 
+  /** Offers a tool to every seat that connects. */
   register(tool: McpTool, handler: McpToolHandler): void {
     this.tools.set(tool.name, { tool, handler });
   }
 
+  /** Answers POSTs to `/<name>/<token>`. */
   route(name: string, handler: Route): void {
     this.routes.set(name, handler);
   }
@@ -99,6 +102,7 @@ export class McpHttpServer {
     });
   }
 
+  /** The MCP URL of the seat that holds `nonce`. */
   urlFor(port: number, nonce: string): string {
     return `http://127.0.0.1:${port}/mcp/${this.token}/${nonce}`;
   }
@@ -107,29 +111,41 @@ export class McpHttpServer {
     const url = new URL(req.url ?? "/", "http://127.0.0.1");
     const plain = /^\/([a-z]+)\/([A-Za-z0-9_-]+)\/?$/.exec(url.pathname);
     const route = plain && plain[1] !== "mcp" ? this.routes.get(plain[1]) : undefined;
-    if (plain && route) {
-      if (plain[2] !== this.token || req.method !== "POST") {
-        res.writeHead(404).end();
-        return;
-      }
-      const body = await bodyOf(req);
-      if (body === null) {
-        res.writeHead(413).end();
-        req.destroy();
-        return;
-      }
-      try {
-        const answer = await route(body, {
-          query: url.searchParams,
-          header: (name) => [req.headers[name.toLowerCase()]].flat()[0],
-        });
-        res.writeHead(200, { "Content-Type": answer.type }).end(answer.text);
-      } catch (error) {
-        console.error(`seatwork: /${plain[1]} failed`, error);
-        res.writeHead(500).end();
-      }
+    if (plain && route) await this.handleRoute(req, res, url, plain[1], plain[2], route);
+    else await this.handleMcp(req, res);
+  }
+
+  private async handleRoute(
+    req: IncomingMessage,
+    res: ServerResponse,
+    url: URL,
+    name: string,
+    token: string,
+    route: Route,
+  ): Promise<void> {
+    if (token !== this.token || req.method !== "POST") {
+      res.writeHead(404).end();
       return;
     }
+    const body = await bodyOf(req);
+    if (body === null) {
+      res.writeHead(413).end();
+      req.destroy();
+      return;
+    }
+    try {
+      const answer = await route(body, {
+        query: url.searchParams,
+        header: (header) => [req.headers[header.toLowerCase()]].flat()[0],
+      });
+      res.writeHead(200, { "Content-Type": answer.type }).end(answer.text);
+    } catch (error) {
+      console.error(`seatwork: /${name} failed`, error);
+      res.writeHead(500).end();
+    }
+  }
+
+  private async handleMcp(req: IncomingMessage, res: ServerResponse): Promise<void> {
     const match = /^\/mcp\/([A-Za-z0-9_-]+)\/([A-Za-z0-9_-]+)\/?$/.exec(req.url ?? "");
     if (!match || match[1] !== this.token) {
       res.writeHead(404).end();
@@ -177,6 +193,7 @@ export class McpHttpServer {
     res.writeHead(200, { "Content-Type": "application/json" }).end(JSON.stringify(payload));
   }
 
+  /** One JSON-RPC request answered; undefined for a notification, which takes no answer. */
   private async dispatch(request: JsonRpcRequest, context: McpCallContext): Promise<unknown> {
     const id = request.id ?? null;
     const method = request.method ?? "";
@@ -222,10 +239,12 @@ export class McpHttpServer {
   }
 }
 
+/** A JSON-RPC success. */
 function rpcResult(id: string | number | null, result: unknown): unknown {
   return { jsonrpc: "2.0", id, result };
 }
 
+/** A JSON-RPC error. */
 function rpcError(id: string | number | null, code: number, message: string): unknown {
   return { jsonrpc: "2.0", id, error: { code, message } };
 }

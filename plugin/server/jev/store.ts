@@ -4,9 +4,10 @@ import { SQL_DIR } from "../paths";
 import { Sqlite, type SqliteFailure } from "../sqlite";
 import type { Answer } from "./contract";
 
-/** The decision log in the room home: calls, the answers they gave, the states they read, later labels. */
+/** The Jev district's log in the room home: what was asked, what was answered, what was read, and the labels that came later. */
 
-export class JevStoreError extends Error {
+/** A decision log that cannot be used: held by another process, or its layout is newer or invalid; `code` says which. */
+class JevStoreError extends Error {
   constructor(
     readonly code: SqliteFailure,
     message: string,
@@ -15,6 +16,7 @@ export class JevStoreError extends Error {
   }
 }
 
+/** One call as the log keeps it: who asked, of which provider, what it cost, how long it took, and how it failed. */
 export interface CallRow {
   caller: string;
   provider: string;
@@ -40,6 +42,7 @@ export const districtOf = (caller: string): string => caller.split(/[.:@]/, 1)[0
 const valueOf = (answer: Answer): number =>
   answer.type === "noul" ? answer.noul : answer.type === "choice" ? answer.confidence : answer.score;
 
+/** The decision log: calls with their answers and states, later labels, and the spending kept as running totals. */
 export class JevStore extends Sqlite {
   constructor(
     dir: string,
@@ -57,7 +60,7 @@ export class JevStore extends Sqlite {
     });
   }
 
-  /** One call with its answers and the state it read, and the month's total; returns each answer's id. */
+  /** Logs one call with its answers and the state it read, and adds it to the month's and the day's totals; returns the ids. */
   record(
     call: CallRow,
     answers: Record<string, Answer> = {},
@@ -158,7 +161,7 @@ export class JevStore extends Sqlite {
     });
   }
 
-  /** Drops states read before `statesBefore`, and calls before `callsBefore` that no label holds, a slice at a time. */
+  /** Drops states read before `statesBefore`, the calls before `callsBefore` that no label holds (a slice at a time), and those days' totals. */
   expire(statesBefore: Date, callsBefore: Date): { states: number; calls: number } {
     const states = this.transaction(
       "write",

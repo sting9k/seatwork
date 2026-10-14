@@ -23,6 +23,7 @@ export interface SeatRow {
 const minutesSince = (at: string | null, now: number) =>
   at ? Math.max(0, Math.floor((now - Date.parse(at)) / 60_000)) : null;
 
+/** What a seat is doing, in words: at work, waiting, failed, or at rest, and for how long. */
 function state(row: SeatRow, now: number): string {
   if (row.waiting) return "waiting for a permission";
   if (row.status === "running") {
@@ -37,6 +38,7 @@ function state(row: SeatRow, now: number): string {
   return rested === null ? "at rest" : `at rest for ${rested} min`;
 }
 
+/** One line per seat, nested by depth, under a head line that counts them. */
 export function describeSeats(rows: readonly SeatRow[], rotateAtTokens: number, now: number): string {
   if (rows.length === 0) return "No seat you launched is open.";
   const atWork = rows.filter((row) => row.status === "running" && !row.waiting).length;

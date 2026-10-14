@@ -1,4 +1,4 @@
-import { accessSync, constants, existsSync, lstatSync, readFileSync, statSync } from "node:fs";
+import { accessSync, constants, existsSync, lstatSync, readFileSync, statSync, type Stats } from "node:fs";
 import { delimiter, dirname, join } from "node:path";
 import { runGit } from "../git";
 import type { Tools } from "./gate/evaluate";
@@ -44,9 +44,22 @@ class Recent<T> {
   }
 }
 
-/** Tools for one seat: `since` is when it started; a file changed after it may be the seat's. */
+const aliases = new Recent<string | null>(256, 60_000);
+const unchanged = new Recent<true>(256, 10_000);
+
+/** Whether git sees a file as new or changed; one it saw unchanged is not asked about again for a few seconds. */
+async function differsFromCommit(path: string, stat: Stats): Promise<boolean> {
+  const key = `${path}\0${stat.mtimeMs}\0${stat.size}`;
+  if (unchanged.get(key)) return false;
+  const done = await git(["status", "--porcelain", "--", path], dirname(path));
+  if (done.code !== 0) return false;
+  if (done.out.trim()) return true;
+  unchanged.set(key, true);
+  return false;
+}
+
+/** Tools for one seat: `since` is when it started; a file written after it may be the seat's own. */
 export function machineTools(since: () => number | null): Tools {
-  const aliases = new Recent<string | null>(256, 60_000);
   return {
     async ignored(paths) {
       const dir = paths.length ? existingDir(dirname(paths[0])) : null;
@@ -96,12 +109,8 @@ export function machineTools(since: () => number | null): Tools {
         const s = statSync(path);
         if (!s.isFile() || s.size > MAX_SCRIPT) return null;
         const start = since();
-        const recent = start !== null && s.mtimeMs >= start;
-        if (!recent) {
-          const dir = dirname(path);
-          const done = await git(["status", "--porcelain", "--", path], dir);
-          if (done.code !== 0 || !done.out.trim()) return null;
-        }
+        const written = start !== null && s.mtimeMs >= start;
+        if (!written && !(await differsFromCommit(path, s))) return null;
         return readFileSync(path, "utf8");
       } catch {
         return null;

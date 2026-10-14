@@ -2,6 +2,8 @@ import type { PluginTheme } from "@getpaseo/plugin";
 import { Icon } from "@getpaseo/plugin/client/react-native";
 import { Pressable, Text, View } from "react-native";
 
+/** The setup screen's parts: cards, chips, buttons, tabs, toggles; CLI_COLOR marks each agent CLI, MONO text Paseo leaves in a monospace font. */
+
 export type Colors = PluginTheme["colors"];
 /** What a component is given to draw inside itself; React is the host's, typed loosely here. */
 export type Inside = unknown;
@@ -16,12 +18,16 @@ export function tint(color: string, alpha: number): string {
   return `rgba(${r}, ${g}, ${b}, ${alpha})`;
 }
 
-/** The mark of each agent CLI: a seat's model reads at a glance by whose it is. */
 export const CLI_COLOR: Record<string, string> = {
   claude: "#D97757",
   codex: "#6FA8F5",
   pi: "#B08CF5",
   opencode: "#E0B84C",
+};
+
+export const MONO = {
+  dataSet: { pmono: "true" },
+  style: { fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace" },
 };
 
 /** A bordered block of the screen. */
@@ -92,7 +98,6 @@ export function Dot(props: { color: string; size?: number }) {
   return <View style={{ width: size, height: size, borderRadius: size / 2, backgroundColor: props.color }} />;
 }
 
-/** How many of a meter's three bars a thinking level fills. */
 const BARS: Record<string, number> = {
   off: 0,
   none: 0,
@@ -105,7 +110,7 @@ const BARS: Record<string, number> = {
   ultracode: 3,
 };
 
-/** A thinking level as three rising bars. */
+/** A thinking level as three rising bars (BARS says how many a level fills). */
 export function Meter(props: { level: string; colors: Colors }) {
   const on = BARS[props.level] ?? 2;
   return (

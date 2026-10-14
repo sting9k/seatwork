@@ -26,7 +26,6 @@ import { formatToml, parseToml, type TomlTable } from "../toml";
 
 /** Keeps a seat apart from the user's setup: a home under runtimes/, or launch flags for Claude. */
 
-/** Bump when the way a runtime is built changes. Policy and user config changes rebuild on their own. */
 const RUNTIME_VERSION = 14;
 const MARKER = ".seatwork-runtime.json";
 
@@ -34,17 +33,13 @@ function ensureDir(path: string): void {
   mkdirSync(path, { recursive: true });
 }
 
-/** Symlink `name` inside the runtime to the same name in the user's home, if it exists. */
+/** Links `name` inside the runtime to the same name in the user's home, if it exists there. */
 function share(runtime: string, home: string, name: string): void {
   const target = join(home, name);
   const link = join(runtime, name);
   if (!existsSync(target)) return;
-  try {
-    lstatSync(link);
-    return; // never replace what is there, symlink or not
-  } catch {
-    // link does not exist: create it
-  }
+  // never replace what is there, symlink or not
+  if (lstatSync(link, { throwIfNoEntry: false })) return;
   symlinkSync(target, link);
 }
 
@@ -60,6 +55,7 @@ function pruneLinks(runtime: string): void {
   }
 }
 
+/** A JSON object read from a file; empty where the file is absent or holds anything else. */
 function readJsonObject(path: string): Record<string, unknown> {
   if (!existsSync(path)) return {};
   try {
@@ -70,6 +66,7 @@ function readJsonObject(path: string): Record<string, unknown> {
   }
 }
 
+/** Writes a value as indented JSON. */
 function writeJson(path: string, value: unknown): void {
   writeFileSync(path, `${JSON.stringify(value, null, 2)}\n`);
 }
@@ -80,6 +77,7 @@ function lay(runtime: string, path: string, text: string): void {
   writeFileSync(join(runtime, path), text);
 }
 
+/** A Codex seat's home: the user's config without MCP servers, plugins and hooks, with the policy's switches and shares. */
 function buildCodex(runtime: string, policy: RuntimePolicy["codex"], guarded: boolean): void {
   // the user's config without MCP servers, plugins and hooks, and with Codex's own agent features off
   const file = join(CODEX_HOME, "config.toml");
@@ -123,6 +121,7 @@ function buildCodex(runtime: string, policy: RuntimePolicy["codex"], guarded: bo
   for (const name of policy.shareSkills) share(join(runtime, "skills"), join(CODEX_HOME, "skills"), name);
 }
 
+/** A Pi seat's home: the user's settings with the policy's laid over them, and what the policy shares. */
 function buildPi(runtime: string, policy: RuntimePolicy["pi"], guarded: boolean): void {
   // credentials and the model catalog are shared; settings are copied with the policy's laid over them
   writeJson(join(runtime, "settings.json"), { ...readJsonObject(join(PI_HOME, "settings.json")), ...policy.settings });
@@ -132,6 +131,7 @@ function buildPi(runtime: string, policy: RuntimePolicy["pi"], guarded: boolean)
   ensureDir(join(runtime, "sessions"));
 }
 
+/** An OpenCode seat's home: the policy's config, and what the policy shares of the user's. */
 function buildOpenCode(runtime: string, policy: RuntimePolicy["opencode"], guarded: boolean): void {
   // the seat gets an empty config dir plus what policy shares; auth and storage stay shared, not isolated
   writeJson(join(runtime, "opencode.json"), policy.config);
@@ -163,21 +163,23 @@ export function roleSkillNames(role: string): string[] {
     .sort();
 }
 
-/** The home of a Codex, Pi or OpenCode seat. Claude seats have none. */
+/** The home of a Codex, Pi or OpenCode seat; a Claude seat has none. */
 export function runtimeDir(seat: Pick<Seat, "harness" | "role">): string {
   return join(RUNTIMES_DIR, seat.harness, seat.role);
 }
 
-/** The extra directory a Claude seat of this role gets: only `.claude/skills`. */
+/** The extra directory a Claude seat of this role gets: it holds only `.claude/skills`. */
 export function claudeRoleDir(role: string): string {
   return join(ROLE_SKILLS_DIR, "claude", role);
 }
 
+/** Lays out a seat's home for its harness. */
 function build(seat: Pick<Seat, "harness" | "role">, dir: string, policy: RuntimePolicy): void {
   const guarded = policy.safety?.mode !== "off";
   switch (seat.harness) {
     case "claude":
-      return; // no home to build
+      // a Claude seat runs on the user's home and has none to build
+      return;
     case "codex":
       return buildCodex(dir, policy.codex, guarded);
     case "pi":
@@ -187,7 +189,7 @@ function build(seat: Pick<Seat, "harness" | "role">, dir: string, policy: Runtim
   }
 }
 
-/** What a build is made from: the build logic, the harness's policy and the user file it copies. */
+/** What a build is made from: the build logic (RUNTIME_VERSION, bumped when the way a runtime is built changes), the harness's policy and the user file it copies. */
 function fingerprint(harness: Exclude<Harness, "claude">, policy: RuntimePolicy): string {
   const copied =
     harness === "codex" ? join(CODEX_HOME, "config.toml") : harness === "pi" ? join(PI_HOME, "settings.json") : null;
@@ -197,7 +199,7 @@ function fingerprint(harness: Exclude<Harness, "claude">, policy: RuntimePolicy)
     .digest("hex");
 }
 
-/** A seat's home with its role's skills, rebuilt when its fingerprint changes; null for Claude. */
+/** A seat's home with its role's skills, rebuilt when its fingerprint changes; null for Claude, whose skills sit in a folder of their own. */
 export function ensureRuntime(seat: Pick<Seat, "harness" | "role">, policy: RuntimePolicy): string | null {
   if (seat.harness === "claude") {
     installRoleSkills("", seat);
@@ -230,7 +232,7 @@ export function sharedClaudeFiles(policy: RuntimePolicy = loadPolicy()): string 
   return texts.filter(Boolean).join("\n\n") || null;
 }
 
-/** The environment every session of a seat opens with (policy `launch.env`). */
+/** The environment every session of a seat opens with (policy `launch.env`), `{runtime}` filled with the seat's home. */
 export function envFor(
   seat: Pick<Seat, "harness" | "role">,
   policy: RuntimePolicy = loadPolicy(),
@@ -241,7 +243,7 @@ export function envFor(
   );
 }
 
-/** Everything in the shared homes that a runtime deliberately does not see; for `seatwork` logs. */
+/** A line for the logs: what each harness's runtime leaves out of the user's setup. */
 export function describeIsolation(policy: RuntimePolicy = loadPolicy()): string {
   return [
     `claude: user home, personal settings off; shares ${policy.claude.shareFiles.join(",") || "nothing"}; denied skills ${policy.claude.deniedSkills.length}`,

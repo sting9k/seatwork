@@ -13,7 +13,7 @@ import type { OwedList } from "./status";
 import type { WorkStores } from "../tasks/stores";
 import type { Callers } from "./callers";
 
-/** What the parts of a running room share: the districts, the app, what a turn leaves. */
+/** What the parts of a running room share: the districts, the app, and per seat its mail up this turn, last signal, last usage and brief. */
 export interface RoomContext {
   host: Host;
   policy: RuntimePolicy;
@@ -31,14 +31,11 @@ export interface RoomContext {
   jev: Jev;
   forks: Forks;
   knowledge: Knowledge;
-  /** seat → the signals it mailed its parent in the turn it is in; read when that turn ends */
   mailedUp: Map<string, Set<string>>;
-  /** seat → the signal its last turn ended with */
   lastSignal: Map<string, string>;
   lastUsage: Map<string, SeatUsage>;
   briefs: Map<string, string>;
   rotateAt: number;
-  /** Sets up seats the room does not have yet, for a project whose own model table names them. */
   addSeats(providers: string[]): Promise<void>;
 }
 
@@ -59,5 +56,4 @@ export function releaseWork(room: RoomContext, from: string, to: string | null):
   if (moved.length > 0) room.log(`work: ${moved.join(", ")} of ${from} ${to ? `now held by ${to}` : "open again"}`);
 }
 
-/** A notice from the room itself. */
 export const fromRoom = { agentId: "room", role: "system" } as const;

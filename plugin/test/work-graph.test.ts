@@ -177,3 +177,42 @@ test("write scopes collide however a path is written: ./, a line number, a glob 
     assert.ok(pairs.includes([a, b].sort().join(" ")), `${a} and ${b}`);
   assert.ok(!pairs.some((pair) => pair.includes(prose)));
 });
+
+test("the pairs whose scopes no path can tell are found in time with the issues, not with all their pairs", () => {
+  const store = new WorkStore(join(ROOM_HOME, `graph-test-${(stores += 1)}`), TIMING, () => NOW);
+  const shape = store.create({ title: "shape" }, "lead");
+  store.close();
+  /** `count` planned issues with a path each, and one whose scope is prose. */
+  const planned = (count: number) => {
+    const issues = Array.from({ length: count }, (_, i) => ({
+      ...shape,
+      id: `sw-${i}`,
+      write_scope: i === count >> 1 ? "the login module" : `src/file${i}.ts`,
+    }));
+    const work = { issues, dependencies: [], ready: new Set<string>(), blocked: new Map() };
+    const tracks = [
+      {
+        track: "track-1",
+        items: issues.map(({ id }) => ({ id, title: id, priority: 2, status: "open", unblocks: [] })),
+      },
+    ];
+    return () => {
+      const started = performance.now();
+      const found = unreadScopes(work, { tracks, ready: count, blocked: 0, overlaps: [] }, count);
+      assert.equal(found.length, count - 1, "the prose one pairs with every other");
+      return performance.now() - started;
+    };
+  };
+  const [small, large] = [planned(1500), planned(6000)];
+  small();
+  large();
+  let [fastSmall, fastLarge] = [Infinity, Infinity];
+  for (let i = 0; i < 5; i += 1) {
+    fastSmall = Math.min(fastSmall, small());
+    fastLarge = Math.min(fastLarge, large());
+  }
+  assert.ok(
+    fastLarge < Math.max(fastSmall, 2) * 9,
+    `1500 issues: ${fastSmall.toFixed(1)} ms, 6000 issues: ${fastLarge.toFixed(1)} ms`,
+  );
+});

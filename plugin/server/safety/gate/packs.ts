@@ -51,7 +51,6 @@ const PACKS: Pack[] = [core, system, room, optional, database]
 
 const BY_ID = new Map(PACKS.map((p) => [p.id, p]));
 
-/** Database clients by pack. */
 export const DB_CLIENTS = database.clients as Record<string, string[]>;
 
 export function packOf(id: string): Pack | undefined {
@@ -74,7 +73,7 @@ export function packsInForce(add: readonly string[] = [], remove: readonly strin
   for (const p of PACKS) if (p.always || p.default) out.add(p.id);
   for (const id of add) for (const found of expand(id)) out.add(found);
   for (const id of remove) for (const found of expand(id)) if (!BY_ID.get(found)?.always) out.delete(found);
-  // policies change rarely: a handful of keys, never more
+  // policies change rarely, so dropping the whole cache past the limit costs nothing
   if (inForceCache.size > 64) inForceCache.clear();
   inForceCache.set(key, out);
   return out;
@@ -184,7 +183,6 @@ interface Entry {
   match: Match;
 }
 
-/** Declared rules and safe blocks by the command they name; names ending in * kept apart. */
 const BY_COMMAND = new Map<string, Entry[]>();
 const BY_PREFIX: { prefix: string; entry: Entry }[] = [];
 const SAFE_BY_PACK = new Map<string, Match[]>();
@@ -199,7 +197,7 @@ for (const pack of PACKS) {
       }
 }
 
-/** Declared rules of the packs in force that hold for a command; a safe block lifts its pack. */
+/** Declared rules of the packs in force that hold for a command, by name or `name*`; a safe block lifts its pack. */
 export function declaredHits(
   scene: Pick<Scene, "call">,
   inForce: ReadonlySet<string>,
@@ -222,5 +220,4 @@ export function declaredHits(
   return out.sort((a, b) => BY_ID.get(a.pack)!.tier - BY_ID.get(b.pack)!.tier || a.pack.localeCompare(b.pack));
 }
 
-/** Every command name a declared rule names: worth reading on through an unknown wrapper. */
 export const DECLARED_COMMANDS: ReadonlySet<string> = new Set(BY_COMMAND.keys());

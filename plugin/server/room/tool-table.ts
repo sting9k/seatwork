@@ -11,7 +11,6 @@ interface ToolRow {
 }
 
 const TOOLS = table.tools as Record<string, ToolRow | undefined>;
-/** The tools in the order shared/tools.json lists them: the order a seat is shown them. */
 export const TOOL_NAMES: readonly string[] = Object.keys(table.tools);
 
 function fill(value: unknown, vars: Record<string, string>): unknown {
@@ -22,7 +21,7 @@ function fill(value: unknown, vars: Record<string, string>): unknown {
   return value;
 }
 
-/** A tool as a seat is shown it, its `{{placeholders}}` filled from `vars`. */
+/** A tool as a seat is shown it, its `{{placeholders}}` filled from `vars`; `TOOL_NAMES` is the order a seat is shown them. */
 export function roomTool(name: string, vars: Record<string, string>): McpTool {
   const row = TOOLS[name];
   if (!row) throw new Error(`seatwork: shared/tools.json defines no tool ${name}`);

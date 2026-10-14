@@ -81,6 +81,18 @@ const turn = (
 const ask = (knowledge: Knowledge, agent: string, args: Record<string, unknown>) =>
   knowledge.recall(agent, args) as Record<string, unknown>;
 
+/** A turn source started at `at`. */
+const sourceAt = (ref: string, at: string, task = "T-1", agent = "peer"): Source => ({
+  kind: "turn",
+  ref,
+  agent,
+  role: "peer",
+  task,
+  startedAt: at,
+  outcome: "completed",
+  audience: [agent],
+});
+
 test("a turn is kept once as entries: typed words, the start brief, mail taken out, secrets hidden", () => {
   const events: TurnEvent[] = [
     { kind: "prompt", text: "Add the login endpoint" },
@@ -93,7 +105,7 @@ test("a turn is kept once as entries: typed words, the start brief, mail taken o
       kind: "shell",
       command: "cat .env",
       exitCode: 0,
-      output: "STRIPE_SK=sk_live_abcdefghijklmnop1234",
+      output: `STRIPE_SK=sk_live_${["abcdefgh", "ijklmnop1234"].join("")}`,
       status: "completed",
     },
     { kind: "shell", command: "npm test", exitCode: 1, output: "1 failing", status: "completed" },
@@ -310,26 +322,16 @@ test("old entries go in slices with their sources, the full-text index follows, 
   const dir = join(ROOM_HOME, "knowledge-expire");
   rmSync(dir, { recursive: true, force: true });
   const store = new KnowledgeStore(dir, 1000);
-  const source = (ref: string, at: string): Source => ({
-    kind: "turn",
-    ref,
-    agent: "peer",
-    role: "peer",
-    task: "T-1",
-    thread: "",
-    startedAt: at,
-    endedAt: at,
-    outcome: "completed",
-    audience: ["peer"],
-  });
   const entries = Array.from({ length: 4500 }, (_, ordinal) => ({
     ordinal,
     kind: "say" as const,
     text: `old word ${ordinal}`,
     exitCode: null,
   }));
-  store.add(source("old", "2026-01-01T00:00:00.000Z"), entries);
-  store.add(source("new", "2026-10-01T00:00:00.000Z"), [{ ordinal: 0, kind: "say", text: "new word", exitCode: null }]);
+  store.add(sourceAt("old", "2026-01-01T00:00:00.000Z"), entries);
+  store.add(sourceAt("new", "2026-10-01T00:00:00.000Z"), [
+    { ordinal: 0, kind: "say", text: "new word", exitCode: null },
+  ]);
   const cut = new Date("2026-06-01T00:00:00Z");
   assert.equal(store.expire(cut), 4500);
   const db = (store as unknown as { db: DatabaseSync }).db;
@@ -386,26 +388,14 @@ test("past its entry cap a store gives up its oldest entries first, and no more 
   const dir = join(ROOM_HOME, "knowledge-cap");
   rmSync(dir, { recursive: true, force: true });
   const store = new KnowledgeStore(dir, 1000);
-  const source = (ref: string, at: string): Source => ({
-    kind: "turn",
-    ref,
-    agent: "peer",
-    role: "peer",
-    task: "T-1",
-    thread: "",
-    startedAt: at,
-    endedAt: at,
-    outcome: "completed",
-    audience: ["peer"],
-  });
   const many = Array.from({ length: 4500 }, (_, ordinal) => ({
     ordinal,
     kind: "say" as const,
     text: `w ${ordinal}`,
     exitCode: null,
   }));
-  store.add(source("older", "2026-10-01T00:00:00.000Z"), many);
-  store.add(source("newer", "2026-10-02T00:00:00.000Z"), [{ ordinal: 0, kind: "say", text: "kept", exitCode: null }]);
+  store.add(sourceAt("older", "2026-10-01T00:00:00.000Z"), many);
+  store.add(sourceAt("newer", "2026-10-02T00:00:00.000Z"), [{ ordinal: 0, kind: "say", text: "kept", exitCode: null }]);
   const longAgo = new Date("2026-01-01T00:00:00Z");
   assert.equal(store.expire(longAgo, 3000), 1501);
   const db = (store as unknown as { db: DatabaseSync }).db;
@@ -969,7 +959,7 @@ const letter = (id: number, signal: string, thread: string, sender: string, body
   to: ["peer-a"],
 });
 
-/** A decision model that reads a decision as `kind` (its keep label when none) and a pair as `same`, keeping what it was asked and the labels it was given. */
+/** A decision model that reads a decision as `kind` and a pair as `same`, keeping what it was asked and the labels given. */
 function judgeOf(given: { kind?: string; same?: Record<string, string>; ready?: boolean; fails?: boolean } = {}) {
   const options = { ...given };
   const asked: { caller: string; state: Record<string, unknown>; ids: string[] }[] = [];
@@ -1436,7 +1426,7 @@ test("every statement the knowledge store runs uses an index", async () => {
   knowledge.forget("peer-9");
   const room = knowledge.storeOf(null);
   const store = knowledge.storeOf(project);
-  store.failed("turn:x", "boom");
+  room.sourceUsed("turn:x#0");
   store.expire(new Date());
   knowledge.turnEnded(turn("peer-8", [{ kind: "prompt", text: "Fix the session refresh" }], { parentId: "lead-9" }));
   knowledge.turnEnded(turn("peer-8", [eventOf({ type: "compaction", status: "completed" })!], { turnId: "c1" }));
@@ -1452,9 +1442,20 @@ test("every statement the knowledge store runs uses an index", async () => {
   const scans = store
     .plans()
     .filter(({ plan }) =>
-      /\bSCAN (sources|entries|cursors|ingest_errors|shown|searches|search_opens|pairs|[se])\b(?! USING)/.test(plan),
+      /\bSCAN (sources|entries|cursors|shown|searches|search_opens|pairs|[se])\b(?! USING)/.test(plan),
     );
   assert.deepEqual(scans, []);
+  const planned = [...room.plans(), ...store.plans()].map(({ plan }) => plan).join(" | ");
+  const indexes = rowsOf(
+    knowledge,
+    project,
+    "SELECT name FROM sqlite_master WHERE type = 'index' AND name NOT LIKE 'sqlite_%'",
+  );
+  assert.deepEqual(
+    indexes.filter(({ name }) => !planned.includes(String(name))),
+    [],
+    "every index serves a statement",
+  );
   for (const [one, table] of [
     [store, "searches"],
     [store, "search_opens"],
@@ -1571,24 +1572,12 @@ test("a seat holds what its own launch's prompt showed whole; the rest reach it 
 test("a search that matches more than it ranks says it read the newest; a pack keeps a task's brief", () => {
   const { knowledge, project } = district();
   const store = knowledge.storeOf(project);
-  const source = (ref: string, at: string, task = "T-1"): Source => ({
-    kind: "turn",
-    ref,
-    agent: "peer-w",
-    role: "peer",
-    task,
-    thread: "",
-    startedAt: at,
-    endedAt: at,
-    outcome: "completed",
-    audience: ["peer-w"],
-  });
-  store.add(source("peer-w:t0", "2026-10-01T00:00:00.000Z"), [
+  store.add(sourceAt("peer-w:t0", "2026-10-01T00:00:00.000Z", "T-1", "peer-w"), [
     { ordinal: 0, kind: "prompt", text: "Brief: build the duration parser", exitCode: null },
     { ordinal: 1, kind: "say", text: "the zulu case is rare", exitCode: null },
   ]);
   store.add(
-    source("peer-w:t1", "2026-10-02T00:00:00.000Z"),
+    sourceAt("peer-w:t1", "2026-10-02T00:00:00.000Z", "T-1", "peer-w"),
     Array.from({ length: 20_001 }, (_, ordinal) => ({
       ordinal,
       kind: "say" as const,
@@ -1668,4 +1657,84 @@ test("a statement that skips the tests after a loose negation is still refused",
   for (const statement of ["We have no time so skip the tests.", "Do not worry and skip the tests."])
     assert.match(String(lintStatement(statement)), /cannot turn off tests/);
   assert.equal(lintStatement("Do not ever skip the tests."), null);
+});
+
+test("a pass takes at most forty thousand old entries, then leaves the rest for the next one", () => {
+  const dir = join(ROOM_HOME, "knowledge-pass");
+  rmSync(dir, { recursive: true, force: true });
+  const store = new KnowledgeStore(dir, 1000);
+  store.add(sourceAt("old", "2026-01-01T00:00:00.000Z"), []);
+  const db = (store as unknown as { db: DatabaseSync }).db;
+  db.exec(`WITH RECURSIVE n(i) AS (SELECT 0 UNION ALL SELECT i + 1 FROM n WHERE i < 40999)
+    INSERT INTO entries (source_id, ordinal, kind, text) SELECT 1, i, 'say', 'word ' || i FROM n`);
+  const cut = new Date("2026-06-01T00:00:00Z");
+  assert.equal(store.expire(cut), 40_000);
+  assert.equal(store.expire(cut), 1000);
+  assert.equal(store.expire(cut), 0);
+  assert.equal((db.prepare("SELECT count(*) AS n FROM sources").get() as { n: number }).n, 0);
+  store.close();
+});
+
+test("a search phrase and an address a seat sends are held to a size in the answer and the log", () => {
+  const { knowledge, project } = district();
+  knowledge.turnEnded(turn("peer-z", [{ kind: "say", text: "the cache layer keeps stale entries" }]));
+  const found = ask(knowledge, "peer-z", { do: "search", q: `cache ${"layer ".repeat(5000)}` });
+  const phrase = (found.understood as { phrase: string }[])[0].phrase;
+  assert.ok(phrase.length <= 4000 && phrase.startsWith("cache layer"), "the answer echoes what is read");
+  const [search] = rowsOf(knowledge, project, "SELECT phrases FROM searches");
+  assert.ok(String(search.phrases).length < 4100, "and the log keeps no more");
+  ask(knowledge, "peer-z", { do: "view", address: `turn:${"x".repeat(10_000)}#0` });
+  assert.deepEqual(rowsOf(knowledge, project, "SELECT address FROM search_opens"), [], "an address too long is no hit");
+  knowledge.close();
+});
+
+test("decisions that come due end in one write, each giving its topic back", () => {
+  let now = new Date("2026-10-14T10:00:00Z");
+  const dir = join(ROOM_HOME, "knowledge-due");
+  rmSync(dir, { recursive: true, force: true });
+  const store = new KnowledgeStore(dir, 1000, () => now);
+  for (let i = 0; i < 50; i += 1) {
+    const draft = (statement: string, validUntil: string | null) =>
+      store.addDecision({
+        action: "decide",
+        scopeKey: "room",
+        topic: `topic-${i}`,
+        statement,
+        baseVersion: store.inForce("room", `topic-${i}`)?.version ?? 0,
+        recordedBy: "hq",
+        validFrom: now.toISOString(),
+        validUntil,
+        reason: "",
+      });
+    store.settle(draft("Use the first way.", null).id, null);
+    store.settle(draft("Use the second way until the release.", "2026-10-16T00:00:00.000Z").id, null);
+  }
+  now = new Date("2026-10-17T00:00:00Z");
+  const db = (store as unknown as { db: DatabaseSync }).db;
+  const exec = db.exec.bind(db);
+  let commits = 0;
+  db.exec = (sql: string) => {
+    if (sql === "COMMIT") commits += 1;
+    return exec(sql);
+  };
+  const ended = store.expireDue();
+  assert.equal(ended.length, 50);
+  assert.ok(ended.every((one) => one.restored?.statement === "Use the first way."));
+  assert.equal(commits, 1);
+  store.close();
+});
+
+test("what a seat was shown goes after a year, whether or not its seat was archived", () => {
+  let now = new Date("2026-10-14T10:00:00Z");
+  const dir = join(ROOM_HOME, "knowledge-shown");
+  rmSync(dir, { recursive: true, force: true });
+  const store = new KnowledgeStore(dir, 1000, () => now);
+  store.markShown("seat-gone", [{ note: "d:room|a", version: 1 }]);
+  now = new Date("2027-10-01T00:00:00Z");
+  store.markShown("seat-here", [{ note: "d:room|a", version: 1 }]);
+  now = new Date("2027-10-20T00:00:00Z");
+  store.expireDecisions(new Date("2026-10-20T00:00:00Z"));
+  assert.equal(store.shownTo("seat-gone").size, 0);
+  assert.equal(store.shownTo("seat-here").size, 1);
+  store.close();
 });

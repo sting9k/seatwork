@@ -1,8 +1,7 @@
 -- Decisions: what a person with the authority decided, as an English statement, kept in the room's own store.
--- A scope is room, project:<root> or task:<root>:<task>; each topic of a scope has one decision in force,
--- which SQLite holds by a unique index. A decision that is replaced, withdrawn or past its date stays, closed,
--- so the reason for a change is never lost; a temporary one that ends, or one withdrawn, gives the topic back to the
--- decision it replaced. Every lookup the store makes has an index.
+-- A scope is room, project:<root> or task:<root>:<task>; a unique index holds one decision in force per topic.
+-- A decision that is replaced, withdrawn or past its date stays, closed; one that ends or is withdrawn gives
+-- the topic back to the decision it replaced. Every lookup the store makes has an index.
 
 -- action: decide records a decision, withdraw closes the one in force on its topic. base_version: the version in
 -- force when it was asked for; a pending one whose base moved meanwhile is dropped, not laid over the change.
@@ -18,7 +17,6 @@ CREATE TABLE decisions (
   base_version INTEGER NOT NULL,
   state TEXT NOT NULL CHECK (state IN ('pending', 'active', 'applied', 'dropped', 'superseded', 'expired', 'withdrawn')),
   recorded_by TEXT NOT NULL,
-  needs_person INTEGER NOT NULL CHECK (needs_person IN (0, 1)),
   valid_from TEXT NOT NULL,
   valid_until TEXT,
   supersedes INTEGER REFERENCES decisions (id) ON DELETE SET NULL,
@@ -66,6 +64,7 @@ CREATE TABLE shown (
   at TEXT NOT NULL,
   PRIMARY KEY (seat, note)
 ) STRICT, WITHOUT ROWID;
+CREATE INDEX shown_by_at ON shown (at);
 
 -- counts per day, for what the district did and missed
 CREATE TABLE tallies (

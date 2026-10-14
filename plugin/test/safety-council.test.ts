@@ -260,6 +260,15 @@ test("the council's log keeps what a label holds and lets the rest go; every sta
     .filter(({ sql }) => /council_/.test(sql))
     .filter(({ plan }) => /\bSCAN (council_readings|council_labels|r|l)\b(?! USING)/.test(plan));
   assert.deepEqual(scans, []);
+  const plans = store.plans().map(({ plan }) => plan);
+  const indexes = (store as unknown as { db: import("node:sqlite").DatabaseSync }).db
+    .prepare("SELECT name FROM sqlite_master WHERE type = 'index' AND name LIKE 'council_%'")
+    .all() as { name: string }[];
+  assert.deepEqual(
+    indexes.map(({ name }) => name).filter((name) => !plans.some((plan) => plan.includes(name))),
+    [],
+    "an index no statement uses costs a write for nothing",
+  );
 });
 
 test("labels move a member by exact binomial bounds: up when enough are right, down when the recent ones fail it", () => {
@@ -365,8 +374,14 @@ test("scope sees every file a turn changed, a shell's edits included, by git", a
   // as `sed -i` and `echo >` would: no edit tool call for either file
   writeFileSync(join(repo, "README.md"), "changed by a shell\n");
   writeFileSync(join(repo, "src", "duration.js"), "2\n");
+  mkdirSync(join(repo, "test"), { recursive: true });
+  writeFileSync(join(repo, "test", "tést.js"), "3\n");
   const tree = await council.changedIn(seat.id);
-  assert.deepEqual([tree?.root, tree?.files.sort()], [realpathSync(repo), ["README.md", "src/duration.js"]]);
+  assert.deepEqual(
+    [tree?.root, tree?.files.sort()],
+    [realpathSync(repo), ["README.md", "src/duration.js", "test/tést.js"]],
+    "a name git would quote is given as it is",
+  );
   const found = await council.endOfTurn({
     ...peerTurn([shell("sed -i '' s/x/y/ README.md")], "STATUS: working"),
     seat: { ...seat, root: tree!.root },

@@ -6,6 +6,7 @@ import type { Hit } from "./store";
 
 /** A seat's mailbox as it asks to see it: what waits, one mail, a thread, sent, owed, a search. */
 
+/** What a seat may ask of its mailbox; each field is optional and read as text or a number. */
 export interface InboxArgs {
   view?: unknown;
   id?: unknown;
@@ -21,24 +22,25 @@ export interface InboxArgs {
 
 const VIEWS = ["new", "all", "sent", "owed", "thread", "search"] as const;
 const text = (value: unknown) => (typeof value === "string" && value.trim() ? value.trim() : undefined);
-const count = (value: unknown, fallback: number) => Math.min(Math.max(1, Math.trunc(Number(value)) || fallback), 200);
-const minutes = (since: string, now: number) => Math.max(0, Math.round((now - Date.parse(since)) / 60_000));
+const limitOf = (value: unknown, fallback: number) => Math.min(Math.max(1, Math.trunc(Number(value)) || fallback), 200);
+const minutesSince = (at: string, now: number) => Math.max(0, Math.round((now - Date.parse(at)) / 60_000));
 
 /** The asks a seat has not answered, as one line under what it reads; empty when it owes none. */
-export function owedLine(engine: MailEngine, me: string, now: number): string {
+function owedLine(engine: MailEngine, me: string, now: number): string {
   const owed = engine.storeOf(me, false)?.owedBy(me) ?? [];
   if (owed.length === 0) return "";
-  const list = owed.slice(0, 5).map((ask) => `#${ask.id} (${ask.signal}, ${minutes(ask.at, now)} min)`);
+  const list = owed.slice(0, 5).map((ask) => `#${ask.id} (${ask.signal}, ${minutesSince(ask.at, now)} min)`);
   return `[room] you owe ${owed.length === 1 ? "an answer" : `${owed.length} answers`}: ${list.join(", ")}${owed.length > 5 ? ", …" : ""}. Answer with reply_to.`;
 }
 
 /** One search hit as a line: id, time, sender, subject, the words around the match. */
 const hitLine = (hit: Hit, from: string) => `#${hit.id} ${clock(hit.at)} ${from} · ${hit.subject} · ${hit.snippet}`;
 
+/** A seat's mailbox as the view it asks for: one mail by id, or what is new, all, sent, owed, a thread or a search. */
 export function inbox(engine: MailEngine, me: string, args: InboxArgs, now: number): string {
   const store = engine.storeOf(me, false);
   const seenBy = engine.seenBy(me);
-  const limit = count(args.limit, 20);
+  const limit = limitOf(args.limit, 20);
   const id = Number(String(args.id ?? "").replace(/^#/, "")) || 0;
   if (id) {
     const message = store?.get(id);

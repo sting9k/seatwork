@@ -1,5 +1,5 @@
--- What the district keeps to measure itself before anything more is turned on: searches and what was opened after,
--- and pairs of decisions. Nothing here changes what a seat is told or what is in force.
+-- What the district keeps to measure itself: searches and what was opened after, and pairs of decisions.
+-- Nothing here changes what a seat is told or what is in force.
 
 -- One search: its phrasings, how each matched, and the addresses it found, best first.
 CREATE TABLE searches (
@@ -14,7 +14,7 @@ CREATE TABLE searches (
 ) STRICT;
 CREATE INDEX searches_by_at ON searches (at);
 
--- An address the seat read within its next few calls after a search: the relevance a reranker is judged on.
+-- An address the seat read within its next few calls after a search, with its place among the hits.
 CREATE TABLE search_opens (
   search_id INTEGER NOT NULL REFERENCES searches (id) ON DELETE CASCADE,
   address TEXT NOT NULL,

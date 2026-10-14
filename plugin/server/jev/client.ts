@@ -4,6 +4,7 @@ import { replyOf, requestOf, type Dialect, type Wire } from "./dialects";
 
 /** One decision call: a deadline, retries on what may pass, the reply read into the room's shape. */
 
+/** How one call goes: time per attempt and in all, retries, the caller's signal, and stand-ins for fetch, sleep and random. */
 export interface CallOptions {
   attemptMs: number;
   retries: number;
@@ -14,6 +15,7 @@ export interface CallOptions {
   random?: () => number;
 }
 
+/** A reply with how long the call took and how many attempts it made. */
 export interface CallResult extends Reply {
   latencyMs: number;
   attempts: number;
@@ -62,6 +64,7 @@ async function readCapped(response: Response, max: number, over: "refuse" | "cut
   return Buffer.concat(chunks).toString("utf8");
 }
 
+/** Waits `ms`, or rejects at once when the signal aborts. */
 const pause = (ms: number, signal: AbortSignal | undefined) =>
   new Promise<void>((resolve, reject) => {
     const timer = setTimeout(done, ms);
@@ -116,6 +119,7 @@ async function attempt(
   }
 }
 
+/** Sends one request, retried with backoff on what may pass within the deadline; the reply is read into the room's shape. */
 export async function call(
   dialect: Dialect,
   wire: Wire,

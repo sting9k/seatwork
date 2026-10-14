@@ -3,11 +3,13 @@ import type { KnowledgeStore } from "./store";
 
 /** Pairs of decisions: a new one beside older ones, with the seat's word and the model's on each, to be measured. */
 
+/** What the pair book takes: the decision model, and a log. */
 export interface PairDeps {
   judge: Judge | null;
   log(line: string): void;
 }
 
+/** Keeps pairs of decisions and passes the seat's word on each to the decision model's log. */
 export class PairBook {
   constructor(private readonly deps: PairDeps) {}
 

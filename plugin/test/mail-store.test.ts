@@ -1,9 +1,11 @@
-import { mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import fs, { mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import assert from "node:assert/strict";
 import test from "node:test";
 import { DatabaseSync } from "node:sqlite";
+import config from "../shared/mail.json";
+import { readSettled } from "../server/coordination/archive";
 import { MailStore, MailStoreError, type NewMessage } from "../server/coordination/store";
 
 const base = mkdtempSync(join(tmpdir(), "seatwork-mail-store-"));
@@ -240,6 +242,8 @@ test("every query the store runs is served by an index, but the rare whole-store
   store.posted("2026");
   store.openAsks("p1", "lead", null, 5);
   store.kept();
+  store.after(0, 5);
+  store.keepTaken();
   store.seen(ask.id, ["lead"]);
   store.mark("lead", [ask.id], "delivered", "idle");
   store.refusals("2026");
@@ -323,4 +327,100 @@ test("a mail written while another process writes the store is refused as one to
     "FYI: one",
   );
   slow.close();
+});
+
+test("deleting a message looks no child table over: every foreign key column leads an index", () => {
+  const { store, dir } = fresh();
+  store.close();
+  const db = new DatabaseSync(join(dir, "mail.db"), { readOnly: true });
+  const tables = db.prepare("SELECT name FROM sqlite_master WHERE type = 'table'").all() as { name: string }[];
+  const unindexed: string[] = [];
+  for (const { name } of tables) {
+    const keys = db.prepare(`PRAGMA foreign_key_list(${name})`).all() as { from: string }[];
+    const leads = (db.prepare(`PRAGMA index_list(${name})`).all() as { name: string }[]).map(
+      (index) => (db.prepare(`PRAGMA index_info(${index.name})`).all() as { seqno: number; name: string }[])[0].name,
+    );
+    for (const key of keys) if (!leads.includes(key.from)) unindexed.push(`${name}.${key.from}`);
+  }
+  db.close();
+  assert.deepEqual(unindexed, []);
+});
+
+test("the mails after a place are the ones that went out: a report kept for its turn end holds back what follows it, a replaced draft is no mail", () => {
+  const { store } = fresh();
+  const to = [{ seat: "lead", kind: "to" as const, priority: "action" as const }];
+  const first = store.insert(mail("p2", "FYI: one"), [{ seat: "p1", kind: "cc", priority: "fyi" }, ...to]);
+  const draft = store.insert(mail("p1", "CANDIDATE: first try"), [{ ...to[0], state: "kept" }]);
+  const third = store.insert(mail("p2", "FYI: three"), to);
+  const ids = (found: { id: number }[]) => found.map((one) => one.id);
+  assert.deepEqual(ids(store.after(0, 10)), [first.id], "nothing is read past a report that is still kept");
+  assert.deepEqual(store.after(0, 10)[0].to, ["lead", "p1"], "each mail comes with its recipients");
+
+  store.mark("lead", [draft.id], "replaced", "draft");
+  const final = store.insert(mail("p1", "CANDIDATE: store"), [{ ...to[0], state: "kept" }]);
+  assert.deepEqual(ids(store.after(0, 10)), [first.id, third.id], "a replaced draft is skipped, the new one holds");
+  store.mark("lead", [final.id], "withdrawn", "taken");
+  assert.deepEqual(ids(store.after(0, 10)), [first.id, third.id], "a report taken to go out is still not mail");
+
+  store.revive(final.id);
+  assert.deepEqual(ids(store.after(0, 10)), [first.id, third.id, final.id]);
+  assert.deepEqual(ids(store.after(third.id, 10)), [final.id], "a reader that keeps its place reads each once");
+  assert.deepEqual(ids(store.after(0, 2)), [first.id, third.id], "at most `limit`");
+});
+
+test("a reader reads the recipients of a page of mail in one query, not one per mail", () => {
+  const { store } = fresh();
+  for (let i = 0; i < 20; i += 1)
+    store.insert(mail("p1", `FYI: ${i}`), [{ seat: "lead", kind: "to", priority: "fyi" }]);
+  let asked = 0;
+  const deliveries = store.deliveries.bind(store);
+  store.deliveries = (id) => ((asked += 1), deliveries(id));
+  assert.equal(store.after(0, 20).length, 20);
+  assert.equal(asked, 0);
+});
+
+test("a search of many words reads only the first of them: a long text costs no more than a short one", () => {
+  const { store } = fresh();
+  const hit = store.insert(mail("p1", "FYI: offset"), [{ seat: "lead", kind: "to", priority: "fyi" }]);
+  const query = `${"offset ".repeat(config.searchWords)}${"nothing-like-it ".repeat(500)}`;
+  assert.deepEqual(
+    store.search(query, null, { limit: 5 }).map((found) => found.id),
+    [hit.id],
+  );
+});
+
+test("the notices of a seat that went unread are withdrawn in one write per seat, not one per notice", () => {
+  const { store } = fresh();
+  for (const seat of ["p1", "p1", "p1", "p2", "p2"])
+    store.insert(mail("lead", "FYI: main moved"), [{ seat, kind: "cc", priority: "fyi", quiet: true }]);
+  const marks: string[] = [];
+  const mark = store.mark.bind(store);
+  store.mark = (seat, ids, state, how) => (marks.push(`${seat}:${ids.length}`), mark(seat, ids, state, how));
+  assert.equal(store.expire("2027-01-01T00:00:00Z"), 5);
+  assert.deepEqual(marks, ["p1:3", "p2:2"]);
+});
+
+test("the deliveries one write settles reach the journal in one append", () => {
+  const { store, dir } = fresh();
+  const ids = [1, 2, 3, 4, 5].map(
+    (i) => store.insert(mail("lead", `FYI: ${i}`), [{ seat: "p1", kind: "to", priority: "fyi" }]).id,
+  );
+  const append = fs.appendFileSync;
+  let appends = 0;
+  fs.appendFileSync = ((...args: Parameters<typeof append>) => ((appends += 1), append(...args))) as typeof append;
+  try {
+    store.mark("p1", ids, "delivered", "idle");
+  } finally {
+    fs.appendFileSync = append;
+  }
+  assert.equal(appends, 1);
+  assert.equal(readSettled(dir).states.size, 5);
+});
+
+test("a subject longer than the store keeps is cut in its search and in the record of what was posted too", () => {
+  const { store } = fresh();
+  const subject = `FYI: ${"word ".repeat(100)}beyond`;
+  store.insert(mail("p1", subject), [{ seat: "lead", kind: "to", priority: "fyi" }]);
+  assert.equal(store.posted("2026")[0].subject.length, config.subjectChars);
+  assert.deepEqual(store.search("beyond", null, { limit: 5 }), [], "the cut part is not searched");
 });

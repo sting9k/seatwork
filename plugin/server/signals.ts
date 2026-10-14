@@ -20,20 +20,18 @@ const ROWS: readonly SignalRow[] = table.signals;
 const NOTICES: readonly SignalRow[] = table.notices;
 const named = (pick: (row: SignalRow) => unknown, rows = ROWS) => rows.filter(pick).map((row) => row.name);
 const row = (word: string) => ROWS.find((one) => one.name === word);
-/** A pattern for a subject naming any of these words. */
 const naming = (words: readonly string[]) => new RegExp(`\\b(?:${words.join("|")})\\b`);
 
-export const SIGNAL = new RegExp(`\\b(${named((row) => row.report).join("|")})\\b`);
-/** Every word a mail's subject may open with: signals and the answers to them. */
+const SIGNAL = new RegExp(`\\b(${named((row) => row.report).join("|")})\\b`);
 export const SUBJECT_SIGNALS: readonly string[] = named(() => true);
-/** What room stats count by name: the marked signals and the room's own notices. */
 export const COUNTED: readonly string[] = [...named((row) => row.counted), ...NOTICES.map((row) => row.name)];
-/** Signals that answer an ask when they come back to its sender. */
 export const ANSWERS: ReadonlySet<string> = new Set(named((row) => row.answers));
-/** Signals whose report asks the seat above for a decision rather than a reply. */
 export const DECIDES: ReadonlySet<string> = new Set(named((row) => row.asks === "decision"));
+export const CLOSES_WORK: ReadonlySet<string> = new Set(named((row) => row.closesWork));
+
 /** What a signal says of the work it answers: accepted, returned, deferred, or nothing. */
 export const verdictOf = (word: string | undefined): string | undefined => (word ? row(word)?.verdict : undefined);
+
 /** Whether a signal returns the work only when it answers a candidate. */
 export const onlyAfterCandidate = (word: string): boolean => row(word)?.onlyAfterCandidate === true;
 
@@ -59,39 +57,47 @@ export function priorityOf(subject: string, needs: string, toWorker: boolean): "
 }
 
 const RECEIPT = new RegExp(`^\\W*(?:${named((row) => row.receipt).join("|")})\\b`);
+
 /** Whether a subject opens with a receipt: a word from above that asks nothing of work handed in. */
 export const isReceiptWord = (subject: string): boolean => RECEIPT.test(subject);
 
-/** The one of them a subject opens with, if any. */
+const OPENINGS = SUBJECT_SIGNALS.map((signal) => [signal, new RegExp(`^${signal}\\b`)] as const);
+
+/** The signal a subject opens with, if any. */
 export function subjectOpening(subject: string): string | undefined {
   const opening = subject.replace(/^\W+/, "").toUpperCase();
-  return SUBJECT_SIGNALS.find((signal) => opening === signal || new RegExp(`^${signal}\\b`).test(opening));
+  return OPENINGS.find(([signal, starts]) => opening === signal || starts.test(opening))?.[0];
 }
 
-/** An acknowledgement counts only where a line opens with it: the word turns up inside other reports. */
 const ACK = /^\W*ACK\b/;
-/** Signals that say "my work is finished": the parent acts on the seat when it reads one. */
-export const CLOSES_WORK: ReadonlySet<string> = new Set(named((row) => row.closesWork));
+const REPORT_OPENING = new RegExp(`^\\W*${SIGNAL.source}`);
+const WAITING = /^[^\S\r\n\u2028\u2029]*WAITING ON YOU:\s*\S/m;
 
-/** The protocol signal of a final message. The first line is where it belongs; the whole text is the fallback. */
-export function signalOf(text: string): string | undefined {
-  const firstLine =
+/** The first line of a text that holds anything, trimmed. */
+function firstLine(text: string): string {
+  return (
     text
       .split("\n")
       .find((line) => line.trim())
-      ?.trim() ?? "";
-  if (ACK.test(firstLine)) return "ACK";
-  return SIGNAL.exec(firstLine)?.[1] ?? SIGNAL.exec(text)?.[1];
+      ?.trim() ?? ""
+  );
 }
 
-/** What a final message leaves for the Owner to answer (DECISION_NEEDED, BLOCKED, WAITING ON YOU), or null. */
+/** The protocol signal of a final message: the first line is where it belongs, the whole text the fallback; ACK counts only where the first line opens with it, as the word turns up inside other reports. */
+export function signalOf(text: string): string | undefined {
+  const opening = firstLine(text);
+  if (ACK.test(opening)) return "ACK";
+  return SIGNAL.exec(opening)?.[1] ?? SIGNAL.exec(text)?.[1];
+}
+
+/** What a final message leaves for the Owner to answer (DECISION_NEEDED, BLOCKED, WAITING ON YOU), or null; the blanks before a wait stay on its line, so a long run of blank lines is read in one pass. */
 export function asksOwner(text: string): string | null {
-  const opening = SIGNAL.exec(text.split("\n").find((line) => line.trim()) ?? "")?.[1];
+  const opening = SIGNAL.exec(firstLine(text))?.[1];
   if (opening === "DECISION_NEEDED" || opening === "BLOCKED") return opening;
-  return /^\s*WAITING ON YOU:\s*\S/m.test(text) ? "WAITING ON YOU" : null;
+  return WAITING.test(text) ? "WAITING ON YOU" : null;
 }
 
 /** The signal a mail's subject opens with, if any; a signal word further in is part of a sentence. */
 export function subjectSignal(subject: string): string | undefined {
-  return ACK.test(subject) ? "ACK" : new RegExp(`^\\W*${SIGNAL.source}`).exec(subject)?.[1];
+  return ACK.test(subject) ? "ACK" : REPORT_OPENING.exec(subject)?.[1];
 }

@@ -1,20 +1,19 @@
 import { runGit } from "../git";
 import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { packsInForce } from "./gate/packs";
-import type { Place } from "./gate/types";
 import { Guard, type SafetyPolicy, type SeatRef } from "./guard";
+import type { Place } from "./gate/types";
 import { inspectHandIn, type HandIn } from "./handin";
 import { Council, type Decider } from "./council/council";
 import { snapshot } from "./council/git";
 import { answerHook, claudePlugin, GATE_ENV, type Cli } from "./hooks";
-import { SafetyStore, type CodeRow } from "./store";
+import { databaseIn, SafetyStore, type CodeRow } from "./store";
 import { machineTools } from "./system";
 
-/** The Safety district: the command guard, the hand-in check and the codes. */
+/** The Safety district: the command guard, the hand-in check, the council and the codes. */
 
+/** What the district needs of the room: a folder for its store and hooks, the room's own files no seat writes, and a way to tell an Owner of a rule its seat keeps hitting. */
 export interface SafetyDeps {
-  /** the district's store and hook files */
   dir: string;
   userHome: string;
   policy(): SafetyPolicy | undefined;
@@ -22,10 +21,8 @@ export interface SafetyDeps {
   projectOf(agentId: string): string | null;
   isAncestor(ancestor: string, agentId: string): boolean;
   tmpOf(agentId: string): string;
-  /** the room's own files, and folders inside them a seat may use */
   guard: { paths: string[]; except: string[] };
   roomFolder: string;
-  /** its Owner hears of a rule a seat keeps hitting */
   repeated(seat: string, rule: string, count: number, command: string): void;
   decider: Decider | null;
   log(message: string): void;
@@ -44,7 +41,7 @@ export class Safety {
     this.guard = new Guard({
       store: () => this.store(),
       policy: deps.policy,
-      tools: machineTools(() => null),
+      tools: (seat) => machineTools(() => this.startedAt(seat?.id ?? null)),
       place: (seat) => this.placeOf(seat),
       repeated: (seat, rule, count, command) => deps.repeated(seat.id, rule, count, command),
     });
@@ -61,22 +58,16 @@ export class Safety {
     return this.deps.policy()?.mode !== "off";
   }
 
+  /** The district's store, opened on first use. */
   store(): SafetyStore {
-    if (!this.storeHandle) {
-      mkdirSync(this.deps.dir, { recursive: true, mode: 0o700 });
-      this.storeHandle = new SafetyStore(this.deps.dir, BUSY_MS);
-    }
+    if (!this.storeHandle) this.storeHandle = new SafetyStore(this.deps.dir, BUSY_MS);
     return this.storeHandle;
-  }
-
-  get claudePluginDir(): string {
-    return join(this.deps.dir, "claude");
   }
 
   /** Lays down Claude's plugin folder; idempotent. */
   install(): void {
     for (const [path, text] of Object.entries(claudePlugin()))
-      writeIfChanged(join(this.claudePluginDir, path), text, 0o600);
+      writeIfChanged(join(this.deps.dir, "claude", path), text, 0o600);
   }
 
   /** The env a seat's session opens with, guard on or off: a hook that cannot reach the room blocks. */
@@ -98,9 +89,10 @@ export class Safety {
 
   /** What the guard would make of a command, without running it or keeping anything. */
   async explain(agentId: string, command: string, cwd: string | null): Promise<string> {
-    const verdict = await this.guard.check(this.seatRef(agentId), "tool", command, cwd, true);
-    if (verdict.allow) return verdict.message ?? "Allowed: no rule of the room's guard holds for this command.";
-    return verdict.message ?? "Blocked.";
+    const ruling = await this.guard.check(this.seatRef(agentId), "tool", command, cwd, true);
+    return (
+      ruling.message ?? (ruling.allow ? "Allowed: no rule of the room's guard holds for this command." : "Blocked.")
+    );
   }
 
   /** A new seat: where it starts, and the commit its hand-ins are read from. */
@@ -110,25 +102,19 @@ export class Safety {
     this.store().noteStart(agentId, cwd, head);
   }
 
+  /** A successor takes its predecessor's start, so its hand-ins cover the work it took over. */
   inherit(from: string, to: string): void {
     this.store().inherit(from, to);
   }
 
   /** The hand-in check of a seat's candidate; null when the check is off. */
   async handIn(agentId: string): Promise<HandIn | null> {
-    const policy = this.deps.policy();
-    if (!this.on || policy?.handin?.mode === "off") return null;
-    const seat = this.seatRef(agentId);
-    const place = this.placeOf(seat);
+    if (!this.on || this.deps.policy()?.handin?.mode === "off") return null;
+    const place = this.placeOf(this.seatRef(agentId));
     return inspectHandIn(agentId, this.store(), {
       place,
-      config: {
-        packs: packsInForce(policy?.packs?.add, policy?.packs?.remove),
-        exempt: policy?.exempt ?? {},
-        budgetMs: 1000,
-        maxBytes: 64 * 1024,
-      },
-      tools: machineTools(() => this.starts.get(agentId) ?? null),
+      config: this.guard.gateConfig(place),
+      tools: machineTools(() => this.startedAt(agentId)),
     });
   }
 
@@ -153,7 +139,7 @@ export class Safety {
           continue;
         }
       }
-      this.store().grant(row.hash, by === "human" ? "human" : by);
+      this.store().grant(row.hash, by);
       out.push(`Granted: the seat may run this once, in ${row.cwd ?? "its folder"}: ${row.shown}`);
     }
     return out.join("\n");
@@ -164,6 +150,7 @@ export class Safety {
     return this.store().waiting(all.filter((id) => id !== agentId && this.deps.isAncestor(agentId, id)));
   }
 
+  /** A seat's word on one of its hand-in findings. */
   acknowledge(agentId: string, fingerprint: string, reason: string): boolean {
     return this.store().acknowledge(agentId, fingerprint, reason);
   }
@@ -173,7 +160,7 @@ export class Safety {
     if (!this.storeHandle) return null;
     const since = this.noted.get(agentId) ?? new Date(this.starts.get(agentId) ?? 0).toISOString();
     this.noted.set(agentId, new Date().toISOString());
-    const rows = this.store().blocksSince(agentId, since);
+    const rows = this.storeHandle.blocksSince(agentId, since);
     if (!rows.length) return null;
     return `the guard blocked ${rows.length} command(s) of this seat: ${rows
       .slice(0, 5)
@@ -181,21 +168,22 @@ export class Safety {
       .join("; ")}`;
   }
 
-  /** An archived seat: what the district held for it in memory goes. */
+  /** An archived seat: what the district held for it goes. */
   forget(agentId: string): void {
     this.starts.delete(agentId);
     this.noted.delete(agentId);
     this.council.forget(agentId);
-    if (this.storeHandle || existsSync(join(this.deps.dir, "safety.db"))) this.store().forgetSeat(agentId);
+    this.existing()?.forgetSeat(agentId);
   }
 
+  /** Drops guard records past their keep. */
   expire(before: Date): number {
-    return this.storeHandle || existsSync(join(this.deps.dir, "safety.db")) ? this.store().expire(before) : 0;
+    return this.existing()?.expire(before) ?? 0;
   }
 
   /** A seat's word on a council finding about a seat under it. */
   label(by: string, id: number, value: "right" | "wrong", reason: string): string {
-    const seat = this.storeHandle || existsSync(join(this.deps.dir, "safety.db")) ? this.store().readingSeat(id) : null;
+    const seat = this.existing()?.readingSeat(id) ?? null;
     if (!seat) return `No council finding #${id}: copy the number from the [council] line.`;
     if (seat === by || !this.deps.isAncestor(by, seat)) return `Finding #${id} is about a seat that is not under you.`;
     const member = this.council.label(id, `seat:${by}`, value, reason);
@@ -204,7 +192,7 @@ export class Safety {
 
   /** How each council member has read turns over the last `days`, as lines. */
   councilLines(days: number): string {
-    const counts = this.storeHandle || existsSync(join(this.deps.dir, "safety.db")) ? this.council.counts(days) : [];
+    const counts = this.existing() ? this.council.counts(days) : [];
     if (!counts.length) return `The council read no turn in the last ${days} days.`;
     return counts
       .map(
@@ -216,12 +204,29 @@ export class Safety {
 
   /** Drops council readings past the policy's days that no label holds. */
   expireCouncil(): number {
-    return this.storeHandle || existsSync(join(this.deps.dir, "safety.db")) ? this.council.expire() : 0;
+    return this.existing() ? this.council.expire() : 0;
   }
 
   close(): void {
     this.storeHandle?.close();
     this.storeHandle = null;
+  }
+
+  /** The store when the room has one; a look or a sweep never makes an empty one. */
+  private existing(): SafetyStore | null {
+    return this.storeHandle ?? (existsSync(databaseIn(this.deps.dir)) ? this.store() : null);
+  }
+
+  /** When a seat began: this process saw it begin, or the store remembers it from an earlier run. */
+  private startedAt(agentId: string | null): number | null {
+    if (!agentId) return null;
+    const seen = this.starts.get(agentId);
+    if (seen !== undefined) return seen;
+    const stored = this.existing()?.startOf(agentId);
+    if (!stored) return null;
+    const at = Date.parse(stored.started_at);
+    this.starts.set(agentId, at);
+    return at;
   }
 
   private seatRef(agentId: string): SeatRef {

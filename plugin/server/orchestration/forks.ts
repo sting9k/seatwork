@@ -1,10 +1,10 @@
 import catalog from "../../shared/forks.json";
 
-/** The room's forks: small choices about mail and work put to the decision model; a sharp answer is acted on, a split one keeps the room's own rule. */
+/** Small choices about mail and work put to the decision model: a sharp answer is acted on, a split one keeps the room's rule. */
 
 export type ForkName = keyof typeof catalog.forks;
 
-/** The model's word on one fork, as the Jev district gives it. */
+/** The model's word on one fork: its label, how sure it is, and whether that is sharp enough to act on. */
 export interface Fork {
   label: string | null;
   probability: number;
@@ -25,19 +25,20 @@ export interface Router {
   ): Promise<Record<string, Fork>>;
 }
 
-export interface ForkDeps {
+interface ForkDeps {
   router: Router | null;
   on(name: ForkName): boolean;
   log(line: string): void;
 }
 
-export const FORKS = catalog.forks;
+const FORKS = catalog.forks;
 
 /** The head of a text a fork reads. */
 export function clip(text: string, most: number): string {
   return text.length > most ? `${text.slice(0, most)}…` : text;
 }
 
+/** The catalog of forks asked of the decision model; an answer that fails or is split leaves the room's own rule. */
 export class Forks {
   constructor(private readonly deps: ForkDeps) {}
 
@@ -55,7 +56,7 @@ export class Forks {
     return (await this.takeMany(name, state, ["fork"], labels))[0];
   }
 
-  /** Questions of one fork asked in one call, one for each id; the sharp label of each in the same order, null where it is split. */
+  /** Questions of one fork asked in one call, one per id; the sharp label of each in the same order, null where it is split. */
   async takeMany(
     name: ForkName,
     state: Record<string, unknown>,
@@ -68,9 +69,18 @@ export class Forks {
     const asked = Object.fromEntries(
       ids.map((id) => [id, { ...question, instructions: question.instructions.replaceAll("{{id}}", id) } as never]),
     );
-    const found = await this.deps.router!.routes(`forks.${name}@${fork.version}`, state, asked, fork.sharpAt, {
-      deadlineMs: fork.deadlineMs,
-    });
+    let found: Record<string, Fork>;
+    try {
+      found = await this.deps.router!.routes(`forks.${name}@${fork.version}`, state, asked, fork.sharpAt, {
+        deadlineMs: fork.deadlineMs,
+      });
+    } catch (error) {
+      // a fork only advises: a model that fails must not stop the mail or the turn that asked
+      this.deps.log(
+        `fork ${name}: the decision model failed: ${error instanceof Error ? error.message : String(error)}`,
+      );
+      return ids.map(() => null);
+    }
     return ids.map((id) => {
       const one = found[id];
       if (!one?.sharp || one.label === null) return null;

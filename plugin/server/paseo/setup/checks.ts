@@ -4,6 +4,7 @@ import type { PaseoApi } from "../api";
 import { readSwitches } from "./paseo-config";
 import type { Setup } from "./plan";
 
+/** Whether a dotted version (a suffix after `-` ignored) is at least `wanted`. */
 const atLeast = (version: string, wanted: number[]): boolean => {
   const parts = version.split("-")[0].split(".").map(Number);
   if (parts.some(Number.isNaN)) return false;

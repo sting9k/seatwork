@@ -11,6 +11,7 @@ import { eventsOf, sinceMark, type ReadMark } from "./timeline";
 
 type CreateRequest = PluginBeforeRequests["agent.create"];
 
+/** The agent Paseo's events carry. */
 interface Agent {
   id: string;
   provider: string;
@@ -19,6 +20,7 @@ interface Agent {
   parentAgentId?: string | null;
 }
 
+/** A Paseo agent as the room's seat. */
 const seatOf = (agent: Agent): SeatEvent => ({
   id: agent.id,
   provider: agent.provider,
@@ -80,7 +82,7 @@ export async function seatRequest(room: Room, request: CreateRequest): Promise<C
 export function connect(server: Pick<PluginServerContext, "on" | "before">, room: Room, host: PaseoHost): () => void {
   let projectOpened = false;
   const marks = new Map<string, ReadMark>();
-  /** Every hook hands the room Paseo's client; the first also opens the room's own project. */
+  /** Gives the room Paseo's client, which every hook carries; the first hook also opens the room's own project. */
   const enter = (paseo: PaseoApi): Room => {
     host.use(paseo);
     if (!projectOpened) {

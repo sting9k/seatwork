@@ -1,9 +1,11 @@
-import { existsSync, readFileSync, realpathSync } from "node:fs";
+import { existsSync, readFileSync, realpathSync, renameSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { REGISTRY_FILE, ROOM_PROJECT_DIR } from "../paths";
 import { inRoom, ROOM_PROJECT } from "../../shared/workflow";
 
-export interface ProjectEntry {
+/** The registry of projects (projects.json) and what each project keeps under .seatwork/. */
+
+interface ProjectEntry {
   name: string;
   cwd: string;
 }
@@ -13,12 +15,15 @@ export interface Registry {
   projects: ProjectEntry[];
 }
 
-export interface ProjectMatch {
-  entry: ProjectEntry;
-  root: string;
+interface ProjectFiles {
   room: Record<string, unknown>;
   mission: string | null;
   law: string | null;
+}
+
+interface ProjectMatch extends ProjectFiles {
+  entry: ProjectEntry;
+  root: string;
 }
 
 /** The project's law: `.seatwork/<name>-law.md`, else `.seatwork/law.md`. */
@@ -29,6 +34,22 @@ export function readLaw(root: string, name: string): string | null {
   return null;
 }
 
+/** A project's room marker (.seatwork/room.json); empty where it has none. */
+export function readRoomJson(root: string): Record<string, unknown> {
+  const file = join(root, ".seatwork", "room.json");
+  return existsSync(file) ? (JSON.parse(readFileSync(file, "utf8")) as Record<string, unknown>) : {};
+}
+
+function readProjectFiles(root: string, name: string): ProjectFiles {
+  const missionFile = join(root, ".seatwork", "mission.md");
+  return {
+    room: readRoomJson(root),
+    mission: existsSync(missionFile) ? readFileSync(missionFile, "utf8").trim() : null,
+    law: readLaw(root, name),
+  };
+}
+
+/** The real path of a folder, or its absolute path where it does not exist. */
 export function realOrSelf(path: string): string {
   try {
     return realpathSync(path);
@@ -50,13 +71,30 @@ export function loadRegistry(): Registry | null {
   };
 }
 
+/** The registry file as written, so that keys this plugin does not know survive its changes. */
+export function readRegistryFile(): Record<string, unknown> {
+  return existsSync(REGISTRY_FILE) ? (JSON.parse(readFileSync(REGISTRY_FILE, "utf8")) as Record<string, unknown>) : {};
+}
+
+/** Writes the registry file whole by a rename: a reader sees the old file or the new one. */
+export function writeRegistryFile(content: Record<string, unknown>): void {
+  writeFileSync(`${REGISTRY_FILE}.tmp`, `${JSON.stringify(content, null, 2)}\n`, { mode: 0o600 });
+  renameSync(`${REGISTRY_FILE}.tmp`, REGISTRY_FILE);
+}
+
+/** Whether `child` is `parent` or lies inside it. */
 export function isInside(child: string, parent: string): boolean {
   return child === parent || child.startsWith(parent.endsWith("/") ? parent : `${parent}/`);
 }
 
-/** Where the room's own seats sit: `roomProject` in projects.json, else the default. */
+/** Where the room's own seats sit: `roomProject` in the registry, else the default. */
+export function roomProjectIn(registry: Registry | null): string {
+  return registry?.roomProject ?? realOrSelf(ROOM_PROJECT_DIR);
+}
+
+/** Where the room's own seats sit, by the registry as it is now. */
 export function roomProjectDir(): string {
-  return loadRegistry()?.roomProject ?? realOrSelf(ROOM_PROJECT_DIR);
+  return roomProjectIn(loadRegistry());
 }
 
 /** A seat at home in the room is created in the room's project, and nothing else is created there. */
@@ -71,47 +109,42 @@ export function checkPlacement(role: string, provider: string, cwd: string): voi
     );
 }
 
-/** Finds the registered project that contains cwd, and reads its .seatwork files. */
-export function findProject(registry: Registry, cwd: string): ProjectMatch | null {
+/** The registered project a folder lies in; a project inside another is the one a folder in it belongs to. */
+function entryFor(registry: Registry, cwd: string): ProjectEntry | undefined {
   const real = realOrSelf(cwd);
-  // a project inside another is the one a folder in it belongs to: the longest match wins
-  const entry = registry.projects
+  return registry.projects
     .filter((p) => isInside(real, p.cwd))
-    .reduce<(typeof registry.projects)[number] | undefined>(
-      (best, p) => (!best || p.cwd.length > best.cwd.length ? p : best),
-      undefined,
-    );
-  if (!entry) return null;
-  const seatworkDir = join(entry.cwd, ".seatwork");
-  const roomFile = join(seatworkDir, "room.json");
-  const missionFile = join(seatworkDir, "mission.md");
-  const room = existsSync(roomFile) ? (JSON.parse(readFileSync(roomFile, "utf8")) as Record<string, unknown>) : {};
-  const mission = existsSync(missionFile) ? readFileSync(missionFile, "utf8").trim() : null;
-  return { entry, root: entry.cwd, room, mission, law: readLaw(entry.cwd, entry.name) };
+    .reduce<ProjectEntry | undefined>((best, p) => (!best || p.cwd.length > best.cwd.length ? p : best), undefined);
 }
 
-/** Walks up from cwd looking for a .seatwork/room.json, for open mode (no registry). */
-export function findRoomMarker(
-  cwd: string,
-): { root: string; room: Record<string, unknown>; mission: string | null; law: string | null } | null {
+/** Finds the registered project that contains cwd, and reads its .seatwork files. */
+export function findProject(registry: Registry, cwd: string): ProjectMatch | null {
+  const entry = entryFor(registry, cwd);
+  return entry ? { entry, root: entry.cwd, ...readProjectFiles(entry.cwd, entry.name) } : null;
+}
+
+/** The nearest folder above cwd that holds a .seatwork/room.json, for open mode (no registry). */
+export function markerRoot(cwd: string): string | null {
   let dir = realOrSelf(cwd);
   for (let i = 0; i < 64; i += 1) {
-    if (existsSync(join(dir, ".seatwork", "room.json"))) {
-      const missionFile = join(dir, ".seatwork", "mission.md");
-      const name = dir.split("/").pop() ?? dir;
-      const room = JSON.parse(readFileSync(join(dir, ".seatwork", "room.json"), "utf8")) as Record<string, unknown>;
-      return {
-        root: dir,
-        room,
-        mission: existsSync(missionFile) ? readFileSync(missionFile, "utf8").trim() : null,
-        law: readLaw(dir, name),
-      };
-    }
+    if (existsSync(join(dir, ".seatwork", "room.json"))) return dir;
     const parent = dirname(dir);
     if (parent === dir) break;
     dir = parent;
   }
   return null;
+}
+
+/** Walks up from cwd looking for a .seatwork/room.json, for open mode (no registry). */
+export function findRoomMarker(cwd: string): (ProjectFiles & { root: string }) | null {
+  const root = markerRoot(cwd);
+  return root ? { root, ...readProjectFiles(root, root.split("/").pop() ?? root) } : null;
+}
+
+/** The project a folder lies in, by the registry or by the room's marker above it; only its root. */
+export function projectRootOf(cwd: string): string | null {
+  const registry = loadRegistry();
+  return (registry ? entryFor(registry, cwd)?.cwd : undefined) ?? markerRoot(cwd);
 }
 
 /** The skills of a role that a law names in backticks. */

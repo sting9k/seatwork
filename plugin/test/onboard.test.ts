@@ -1,6 +1,6 @@
-import { installRoom, PROJECT, ROOM_HOME } from "./support/room";
+import { deferred, installRoom, PROJECT, ROOM_HOME } from "./support/room";
 import assert from "node:assert/strict";
-import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { beforeEach, test } from "node:test";
 import { registerProject, unregisterProject } from "../server/orchestration/onboard";
@@ -75,4 +75,57 @@ test("a project leaves the registry only when none of its seats is open, and kee
   assert.match(result, /^unregistered: demo at .*no project, so no project seat can start/);
   assert.deepEqual(loadRegistry()?.projects, []);
   assert.ok(existsSync(join(PROJECT, ".seatwork", "mission.md")));
+});
+
+test("projects registered at the same moment all stay in the registry, however long one of them takes", async () => {
+  const other = join(PROJECT, "..", "other-project");
+  mkdirSync(other, { recursive: true });
+  const both = async () => [
+    { name: "demo", path: PROJECT },
+    { name: "other", path: other },
+  ];
+  rmSync(join(ROOM_HOME, "projects.json"), { force: true });
+  const release = deferred();
+  const slow = async (providers: string[]) => {
+    await release.promise;
+    await setUpSeats(providers);
+  };
+  // the first has a table that needs a seat set up, which takes a while
+  const models = { seats: { supervisor: { provider: "pi-supervisor/zai/glm-5" } } };
+  const first = registerProject(both, { path: PROJECT, models }, slow);
+  const second = registerProject(both, { path: other }, setUpSeats);
+  await new Promise((done) => setTimeout(done, 50));
+  release.resolve();
+  await Promise.all([first, second]);
+  assert.deepEqual(
+    loadRegistry()
+      ?.projects.map((entry) => entry.name)
+      .sort(),
+    ["demo", "other"],
+  );
+});
+
+test("a project leaves the registry without taking one registered at the same moment with it", async () => {
+  const other = join(PROJECT, "..", "other-project");
+  mkdirSync(other, { recursive: true });
+  const both = async () => [
+    { name: "demo", path: PROJECT },
+    { name: "other", path: other },
+  ];
+  rmSync(join(ROOM_HOME, "projects.json"), { force: true });
+  await registerProject(both, { path: PROJECT }, setUpSeats);
+  const release = deferred();
+  const slowList = async () => {
+    await release.promise;
+    return [];
+  };
+  const leaving = unregisterProject("demo", slowList);
+  const arriving = registerProject(both, { path: other }, setUpSeats);
+  await new Promise((done) => setTimeout(done, 50));
+  release.resolve();
+  await Promise.all([leaving, arriving]);
+  assert.deepEqual(
+    loadRegistry()?.projects.map((entry) => entry.name),
+    ["other"],
+  );
 });

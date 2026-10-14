@@ -17,8 +17,11 @@ import { ROOM_HOME, RUNTIMES_DIR, SEAT_TMP_DIR } from "./paths";
 import type { GcPolicy, RuntimeLeftovers } from "./policy";
 import { routeOpen } from "../shared/workflow";
 
-/** Garbage collection: idle seats, what gone seats left behind, and old files. */
+/** Garbage collection: idle seats, what gone seats left behind, and old files, each with a short keep. */
 
+export const KEEP_LOG_DAYS: number = settings.keepLogDays;
+const KEEP_REMOVED_DAYS: number = settings.keepRemovedDays;
+const DAY_MS = 86_400_000;
 const GC_LOG = join(ROOM_HOME, "gc.log");
 
 /** How long a seat has been at rest, in ms; 0 while it works, starts, or waits on someone. */
@@ -27,16 +30,19 @@ function restMs(seat: LiveSeat): number {
   return Date.now() - Date.parse(seat.updatedAt);
 }
 
+const reason = (error: unknown): string => (error instanceof Error ? error.message : String(error));
+
 function logLine(kind: string, detail: Record<string, unknown>): void {
   appendFileSync(GC_LOG, `${JSON.stringify({ at: new Date().toISOString(), kind, ...detail })}\n`);
 }
 
-/** A district's records that age out with the logs, and the words GC logs them by. */
+/** A district's records that age out with the logs: `what` is how GC names them in its log. */
 export interface DistrictRecords {
   what: string;
   expire(before: Date): number;
 }
 
+/** The room's garbage collection, a pass on a timer and a clean-up on each archive; a step that fails is logged and the others still run. */
 export class Collector {
   private running = false;
 
@@ -51,36 +57,33 @@ export class Collector {
     private readonly districts: readonly DistrictRecords[] = [],
   ) {}
 
-  /** One full pass: idle seats, orphan heartbeats, seat leftovers, finished mail. */
+  /** One full pass: idle seats, orphan heartbeats, seat leftovers, finished mail, the districts' records, old handoffs. */
   async run(): Promise<void> {
     if (this.running) return;
     this.running = true;
     try {
-      const live = await this.host.live();
-      await this.archiveIdleSeats(live);
-      if (this.policy.deleteOrphanHeartbeats) await this.dropWakers((agentId) => !live.has(agentId));
-      for (const dir of dropSeatTmp(SEAT_TMP_DIR, [...live.keys()])) this.log(`gc: deleted ${dir}, a closed seat's`);
-      const open = new Set([...live.values()].flatMap((seat) => seat.provider || []));
-      for (const line of sweepRuntimes(RUNTIMES_DIR, open, this.policy.runtimes ?? {})) this.log(`gc: ${line}`);
-      const cutoff = new Date(Date.now() - this.keepMailDays * 86_400_000).toISOString();
-      const mails = this.engine.prune(cutoff);
-      if (mails > 0)
-        this.log(`gc: ${mails} mails finished more than ${this.keepMailDays} days ago left the mail stores`);
-      if (this.expireUnreadDays !== undefined) {
-        const unread = this.engine.expire(new Date(Date.now() - this.expireUnreadDays * 86_400_000).toISOString());
+      const live = await this.attempt("listing the open seats", () => this.host.live());
+      if (live) {
+        await this.attempt("archiving idle seats", () => this.archiveIdleSeats(live));
+        if (this.policy.deleteOrphanHeartbeats)
+          await this.attempt("deleting heartbeats", () => this.dropWakers((agentId) => !live.has(agentId)));
+        await this.attempt("clearing what closed seats left", () => this.clearLeftovers(live));
+      }
+      const cutoff = new Date(Date.now() - this.keepMailDays * DAY_MS);
+      await this.attempt("pruning mail", () => {
+        const mails = this.engine.prune(cutoff.toISOString());
+        if (mails > 0)
+          this.log(`gc: ${mails} mails finished more than ${this.keepMailDays} days ago left the mail stores`);
+        if (this.expireUnreadDays === undefined) return;
+        const unread = this.engine.expire(new Date(Date.now() - this.expireUnreadDays * DAY_MS).toISOString());
         if (unread > 0) this.log(`gc: ${unread} mails sent only to be read went unread ${this.expireUnreadDays} days`);
-      }
-      for (const district of this.districts) {
-        const gone = district.expire(new Date(cutoff));
-        if (gone > 0) this.log(`gc: ${gone} ${district.what} past their keep left the room`);
-      }
-      // a successor holds its handoff in its prompt: the file is a copy for people
-      const before = Date.now() - KEEP_LOG_DAYS * 86_400_000;
-      for (const root of this.engine.projects())
-        for (const file of dropOld(join(root, ".seatwork", "handoffs"), ".md", before))
-          this.log(`gc: deleted ${file}, a handoff older than ${KEEP_LOG_DAYS} days`);
-    } catch (error) {
-      this.log(`gc: pass failed: ${error instanceof Error ? error.message : String(error)}`);
+      });
+      for (const district of this.districts)
+        await this.attempt(`expiring ${district.what}`, () => {
+          const gone = district.expire(cutoff);
+          if (gone > 0) this.log(`gc: ${gone} ${district.what} past their keep left the room`);
+        });
+      await this.attempt("deleting old handoffs", () => this.dropHandoffs());
     } finally {
       this.running = false;
     }
@@ -90,19 +93,21 @@ export class Collector {
   async onArchived(agentId: string): Promise<void> {
     if (!this.engine.seat(agentId)) return;
     this.forgetAgent(agentId);
+    // the engine sees "gone" and bounces what was held
+    await this.attempt(`bouncing the mail of ${agentId}`, () => this.engine.deliver(agentId));
+    if (this.policy.deleteOrphanHeartbeats)
+      await this.attempt(`deleting the heartbeats of ${agentId}`, () =>
+        this.dropWakers((target) => target === agentId),
+      );
+  }
+
+  /** Runs one step of a pass; a failure is logged by name and ends that step only. */
+  private async attempt<T>(step: string, work: () => T | Promise<T>): Promise<T | undefined> {
     try {
-      await this.engine.deliver(agentId); // the engine sees "gone" and bounces what was held
+      return await work();
     } catch (error) {
-      this.log(`gc: bounce for ${agentId} failed: ${error instanceof Error ? error.message : String(error)}`);
-    }
-    if (this.policy.deleteOrphanHeartbeats) {
-      try {
-        await this.dropWakers((target) => target === agentId);
-      } catch (error) {
-        this.log(
-          `gc: heartbeat cleanup for ${agentId} failed: ${error instanceof Error ? error.message : String(error)}`,
-        );
-      }
+      this.log(`gc: ${step} failed: ${reason(error)}`);
+      return undefined;
     }
   }
 
@@ -122,9 +127,7 @@ export class Collector {
       try {
         fresh = await this.host.seat(seat.agentId);
       } catch (error) {
-        this.log(
-          `gc: cannot read ${seat.agentId}, left alone: ${error instanceof Error ? error.message : String(error)}`,
-        );
+        this.log(`gc: cannot read ${seat.agentId}, left alone: ${reason(error)}`);
         continue;
       }
       if (!fresh || !(restMs(fresh) > hours * 3_600_000)) continue;
@@ -132,7 +135,7 @@ export class Collector {
       try {
         await this.host.archive(seat.agentId);
       } catch (error) {
-        this.log(`gc: archive ${seat.agentId} failed: ${error instanceof Error ? error.message : String(error)}`);
+        this.log(`gc: archive ${seat.agentId} failed: ${reason(error)}`);
         continue;
       }
       live.delete(seat.agentId);
@@ -142,64 +145,113 @@ export class Collector {
       // where the route up is off, the parent looks at the room instead of being told
       const above = parent ? this.engine.seat(parent) : undefined;
       if (this.policy.tellParent && above && live.has(above.agentId) && routeOpen(seat.role, above.role)) {
-        await this.engine.post({
-          from: { agentId: "room", role: "system" },
-          to: above.agentId,
-          priority: "fyi",
-          subject: `GC: archived ${seat.role} ${seat.title ?? seat.agentId} after ${idleHours}h idle`,
-          body: `The room archived ${seat.role} ${seat.agentId} ("${seat.title ?? ""}"): idle for ${idleHours} hours with nothing alive below it. Nothing was waiting on it. If its work still matters, launch a new seat with the brief and what was tried.`,
-          needs: "nothing",
-          why: "a seat you launched was archived for inactivity",
-        });
+        await this.attempt(`telling ${above.agentId} that ${seat.agentId} was archived`, () =>
+          this.engine.post({
+            from: { agentId: "room", role: "system" },
+            to: above.agentId,
+            priority: "fyi",
+            subject: `GC: archived ${seat.role} ${seat.title ?? seat.agentId} after ${idleHours}h idle`,
+            body: `The room archived ${seat.role} ${seat.agentId} ("${seat.title ?? ""}"): idle for ${idleHours} hours with nothing alive below it. Nothing was waiting on it. If its work still matters, launch a new seat with the brief and what was tried.`,
+            needs: "nothing",
+            why: "a seat you launched was archived for inactivity",
+          }),
+        );
       }
     }
   }
 
   /** Deletes the app's timers that wake seats `orphaned` says are gone, or that the app finished. */
   private async dropWakers(orphaned: (agentId: string) => boolean): Promise<void> {
-    for (const line of await this.host.dropWakers((agentId) =>
+    const { deleted, failed } = await this.host.dropWakers((agentId) =>
       !this.engine.seat(agentId) ? null : orphaned(agentId) ? "gone" : "live",
-    )) {
+    );
+    for (const line of deleted) {
       logLine("deleted-waker", { what: line });
       this.log(`gc: deleted ${line}`);
     }
+    for (const line of failed) this.log(`gc: could not delete ${line}`);
+  }
+
+  /** The files the open seats do not need: temporary directories and agent CLI leftovers of seats that are closed. */
+  private clearLeftovers(live: ReadonlyMap<string, LiveSeat>): void {
+    for (const dir of dropSeatTmp(SEAT_TMP_DIR, [...live.keys()])) this.log(`gc: deleted ${dir}, a closed seat's`);
+    const open = new Set([...live.values()].flatMap((seat) => seat.provider || []));
+    for (const line of sweepRuntimes(RUNTIMES_DIR, open, this.policy.runtimes ?? {})) this.log(`gc: ${line}`);
+  }
+
+  /** A successor holds its handoff in its prompt: the file is a copy for people. */
+  private dropHandoffs(): void {
+    const before = Date.now() - KEEP_LOG_DAYS * DAY_MS;
+    for (const root of this.engine.projects())
+      for (const file of dropOld(join(root, ".seatwork", "handoffs"), ".md", before))
+        this.log(`gc: deleted ${file}, a handoff older than ${KEEP_LOG_DAYS} days`);
   }
 }
-
-/* ---------- files ---------- */
-
-export const KEEP_LOG_DAYS: number = settings.keepLogDays;
-const KEEP_REMOVED_DAYS: number = settings.keepRemovedDays;
 
 type Line = Record<string, unknown>;
 
 const LOGS: readonly string[] = ["gc.log", "usage-log.jsonl"];
+const SEAT_RECORDS = "registry-log.jsonl";
+const RETIRED: readonly string[] = [join("mail", "log.jsonl"), join("mail", "queue"), join("mail", "reports")];
 
-/** Drops a log's lines dated before `before`; returns how many. */
-function trimLines(file: string, before: number): number {
+/** Rewrites a log without the lines `keep` refuses, given its parsed lines in order (null where one is not JSON); returns how many went. */
+function trimLog(file: string, keep: (lines: readonly (Line | null)[]) => boolean[]): number {
   if (!existsSync(file)) return 0;
-  const lines = readFileSync(file, "utf8")
+  const texts = readFileSync(file, "utf8")
     .split("\n")
     .filter((text) => text.trim());
-  const kept = lines.filter((text) => {
+  const parsed = texts.map((text): Line | null => {
     try {
-      const line = JSON.parse(text) as Line;
-      return Date.parse(String(line.at)) >= before;
+      return JSON.parse(text) as Line;
     } catch {
-      return false;
+      return null;
     }
   });
-  if (kept.length === lines.length) return 0;
-  if (kept.length === 0) rmSync(file, { force: true });
+  const kept = keep(parsed);
+  const lines = texts.filter((_, index) => kept[index]);
+  if (lines.length === texts.length) return 0;
+  if (lines.length === 0) rmSync(file, { force: true });
   else {
-    writeFileSync(`${file}.tmp`, `${kept.join("\n")}\n`, { mode: statSync(file).mode & 0o777 });
+    writeFileSync(`${file}.tmp`, `${lines.join("\n")}\n`, { mode: statSync(file).mode & 0o777 });
     renameSync(`${file}.tmp`, file);
   }
-  return lines.length - kept.length;
+  return texts.length - lines.length;
 }
 
-/** What earlier versions kept in the room home and no version writes any more. */
-const RETIRED: readonly string[] = [join("mail", "log.jsonl"), join("mail", "queue"), join("mail", "reports")];
+/** The lines of a log dated at or after `since`. */
+const datedSince =
+  (since: number) =>
+  (lines: readonly (Line | null)[]): boolean[] =>
+    lines.map((line) => line !== null && Date.parse(String(line.at)) >= since);
+
+/** The seat records still needed: recent or undated ones, those of open seats and the seats above them, the newest of each folder. */
+function seatRecordsNeeded(since: number, open: ReadonlySet<string>) {
+  return (lines: readonly (Line | null)[]): boolean[] => {
+    const byId = new Map<string, Line>();
+    const newest = new Map<string, Line>();
+    for (const line of lines) {
+      if (!line) continue;
+      if (typeof line.agentId === "string") byId.set(line.agentId, line);
+      if (typeof line.cwd === "string") newest.set(line.cwd, line);
+    }
+    const needed = new Set<string>();
+    for (const id of open) {
+      let at: string | undefined = id;
+      while (at && !needed.has(at)) {
+        needed.add(at);
+        const parent: unknown = byId.get(at)?.parentAgentId;
+        at = typeof parent === "string" ? parent : undefined;
+      }
+    }
+    return lines.map(
+      (line) =>
+        line !== null &&
+        (!(Date.parse(String(line.at)) < since) ||
+          needed.has(String(line.agentId)) ||
+          (typeof line.cwd === "string" && newest.get(line.cwd) === line)),
+    );
+  };
+}
 
 /** Backups the room leaves in another folder, `<prefix><stamp>`: the `spare` newest always stay. */
 export interface Stamped {
@@ -208,17 +260,26 @@ export interface Stamped {
   spare: number;
 }
 
-/** Clears old log lines, retired files, old backups and set-aside folders; needs no daemon. */
-export function collectFiles(roomHome: string, backups: readonly Stamped[], now = new Date()): string[] {
+/** Clears old log lines, retired files, old backups and set-aside folders; the seat records too once `open` names the open seats. */
+export function collectFiles(
+  roomHome: string,
+  backups: readonly Stamped[],
+  now = new Date(),
+  open?: ReadonlySet<string>,
+): string[] {
   const done: string[] = [];
   for (const name of RETIRED.filter((name) => existsSync(join(roomHome, name)))) {
     rmSync(join(roomHome, name), { recursive: true, force: true });
     done.push(`deleted ${name}, which no version of the room writes any more`);
   }
-  const before = now.getTime() - KEEP_LOG_DAYS * 86_400_000;
+  const since = now.getTime() - KEEP_LOG_DAYS * DAY_MS;
   for (const log of LOGS) {
-    const gone = trimLines(join(roomHome, log), before);
+    const gone = trimLog(join(roomHome, log), datedSince(since));
     if (gone > 0) done.push(`${gone} lines older than ${KEEP_LOG_DAYS} days left ${log}`);
+  }
+  if (open) {
+    const gone = trimLog(join(roomHome, SEAT_RECORDS), seatRecordsNeeded(since, open));
+    if (gone > 0) done.push(`${gone} seat records that no recent or open seat or folder needs left ${SEAT_RECORDS}`);
   }
   for (const backup of backups)
     for (const file of dropStamped(backup.dir, backup.prefixes, KEEP_LOG_DAYS, now, backup.spare))
@@ -231,13 +292,7 @@ export function collectFiles(roomHome: string, backups: readonly Stamped[], now 
 const STAMP = /^(\d{4})(\d\d)(\d\d)-(\d\d)(\d\d)(\d\d)$/;
 
 /** Deletes entries named `<prefix><stamp>` older than `days`, sparing the `spare` newest. */
-export function dropStamped(
-  dir: string,
-  prefixes: readonly string[],
-  days: number,
-  now = new Date(),
-  spare = 0,
-): string[] {
+function dropStamped(dir: string, prefixes: readonly string[], days: number, now = new Date(), spare = 0): string[] {
   if (!existsSync(dir)) return [];
   const dated: { path: string; at: number }[] = [];
   for (const entry of readdirSync(dir)) {
@@ -252,7 +307,7 @@ export function dropStamped(
   dated.sort((a, b) => b.at - a.at);
   const gone = dated
     .slice(spare)
-    .filter((entry) => now.getTime() - entry.at >= days * 86_400_000)
+    .filter((entry) => now.getTime() - entry.at >= days * DAY_MS)
     .map((entry) => entry.path);
   for (const path of gone) rmSync(path, { recursive: true, force: true });
   return gone;
@@ -264,7 +319,7 @@ export function dropSeatTmp(dir: string, open: readonly string[], days = KEEP_LO
   const gone = readdirSync(dir)
     .filter((name) => !open.some((agentId) => agentId.startsWith(name)))
     .map((name) => join(dir, name))
-    .filter((path) => now.getTime() - statSync(path).mtimeMs >= days * 86_400_000);
+    .filter((path) => now.getTime() - statSync(path).mtimeMs >= days * DAY_MS);
   for (const path of gone) rmSync(path, { recursive: true, force: true });
   return gone;
 }
@@ -296,7 +351,7 @@ function dropUnwritten(dir: string, before: number): number {
   return gone;
 }
 
-/** Clears what agent CLIs left in seats' homes; `open` are the providers that have a seat. */
+/** Clears what agent CLIs left in seats' homes, one home at a time, so a home that cannot be cleared is named and the rest still are; `open` are the providers that have a seat. */
 export function sweepRuntimes(
   dir: string,
   open: ReadonlySet<string>,
@@ -305,7 +360,7 @@ export function sweepRuntimes(
   now = new Date(),
 ): string[] {
   const done: string[] = [];
-  const before = now.getTime() - days * 86_400_000;
+  const before = now.getTime() - days * DAY_MS;
   // a name is an entry of the home itself: nothing above it, nothing reached through a link
   const own = (home: string, name: string) => {
     if (isAbsolute(name) || name.split(/[\\/]/).includes("..")) return null;
@@ -316,19 +371,23 @@ export function sweepRuntimes(
   for (const [harness, left] of Object.entries(leftovers)) {
     const homes = join(dir, harness);
     if (!left || !existsSync(homes)) continue;
-    for (const role of readdirSync(homes)) {
+    for (const role of readdirSync(homes).sort()) {
       if (open.has(`${harness}-${role}`)) continue;
       const home = join(homes, role);
-      for (const name of left.rebuilt) {
-        const entry = own(home, name);
-        if (!entry) continue;
-        rmSync(entry.path, { recursive: true, force: true });
-        done.push(`deleted ${entry.path}, which ${harness} makes again`);
-      }
-      for (const name of left.sessions) {
-        const entry = own(home, name);
-        const gone = entry?.folder ? dropUnwritten(entry.path, before) : 0;
-        if (gone > 0) done.push(`deleted ${gone} session files not written for ${days} days in ${entry!.path}`);
+      try {
+        for (const name of left.rebuilt) {
+          const entry = own(home, name);
+          if (!entry) continue;
+          rmSync(entry.path, { recursive: true, force: true });
+          done.push(`deleted ${entry.path}, which ${harness} makes again`);
+        }
+        for (const name of left.sessions) {
+          const entry = own(home, name);
+          const gone = entry?.folder ? dropUnwritten(entry.path, before) : 0;
+          if (gone > 0) done.push(`deleted ${gone} session files not written for ${days} days in ${entry!.path}`);
+        }
+      } catch (error) {
+        done.push(`could not clear ${home}: ${reason(error)}`);
       }
     }
   }

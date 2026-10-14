@@ -1,7 +1,7 @@
 import { notEnglish } from "../english";
 import { hasSecret } from "../redact";
 
-/** What the district refuses in what a seat writes: a sentence not English, too short or long, with a secret, a relative date or a rule turned off; a date not ISO. */
+/** What the district refuses in the sentences and dates a seat writes. */
 
 const RELATIVE =
   /\b(today|tonight|tomorrow|yesterday|from now on|next (week|month|year|monday|tuesday|wednesday|thursday|friday|saturday|sunday)|this (week|month|year|weekend)|in \d+ (days?|weeks?|months?))\b/i;
@@ -27,7 +27,7 @@ export function lintSentence(text: string, least: number, most: number): string 
 
 const ISO = /^(\d{4})-(\d{2})-(\d{2})(?:T\d{2}:\d{2}(?::\d{2}(?:\.\d{1,3})?)?(?:Z|[+-]\d{2}:\d{2}))?$/;
 
-/** An ISO date, or an ISO time with its zone, as an instant; null for anything else, such as a day past its month's end. */
+/** An ISO date or ISO time with its zone as an instant; null for anything else, such as a day its month lacks. */
 export function isoTime(raw: string): Date | null {
   const match = ISO.exec(raw.trim());
   if (!match) return null;

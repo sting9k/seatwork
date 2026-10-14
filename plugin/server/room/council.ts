@@ -1,12 +1,13 @@
 import { traits } from "../../shared/workflow";
+import type { LiveSeat } from "../host";
 import { fromTemplate } from "../orchestration/brief";
 import { briefInForce } from "../orchestration/rotation";
 import type { Finding, Verdict } from "../safety/council/council";
 import { subjectOpening, verdictOf } from "../signals";
-import { taskOf, type RoomContext } from "./context";
+import { fromRoom, taskOf, type RoomContext } from "./context";
 import type { TurnEnd } from "./turns";
 
-/** What the room gathers for the council about a turn that ended; the Safety district reads it. */
+/** What the room gathers for the council about turns, ended and running; the Safety district reads it. */
 
 const HISTORY = 4000;
 
@@ -44,8 +45,8 @@ async function verdictsOf(room: RoomContext, seat: string, since: number): Promi
   return out;
 }
 
-/** The council's reading of an ended turn: what is to be shown with its report. */
-export async function councilRead(room: RoomContext, end: TurnEnd, role: string): Promise<Finding[]> {
+/** The council's reading of an ended turn on `task`: what is to be shown with its report. */
+export async function councilRead(room: RoomContext, end: TurnEnd, role: string, task: string): Promise<Finding[]> {
   const council = room.safety.council;
   if (!council.on) return [];
   const id = end.seat.id;
@@ -61,7 +62,7 @@ export async function councilRead(room: RoomContext, end: TurnEnd, role: string)
       role,
       traits: kinds,
       root: tree?.root ?? room.engine.projectOf(id) ?? end.seat.cwd,
-      task: taskOf(room, id),
+      task,
     },
     turn: end.turnId,
     events: end.events,
@@ -75,3 +76,42 @@ export async function councilRead(room: RoomContext, end: TurnEnd, role: string)
 /** The council's line under a report, one member a part. */
 export const councilLine = (findings: readonly Finding[]): string | null =>
   findings.length ? `[council] ${findings.map((finding) => finding.line).join("; ")}` : null;
+
+/** The council's look at one running turn: loops and silence, told to the seat above. */
+async function lookAt(room: RoomContext, id: string, live: LiveSeat): Promise<void> {
+  const { engine, host, safety } = room;
+  const events = await host.turn(id, 60);
+  if (!events) return;
+  const { role } = engine.seat(id)!;
+  const seat = {
+    id,
+    role,
+    traits: traits(role),
+    root: engine.projectOf(id) ?? live.cwd,
+    task: taskOf(room, id),
+  };
+  const reader = engine.parentOf(id);
+  for (const finding of safety.council.whileRunning(seat, events))
+    if (reader)
+      await engine.post({
+        from: fromRoom,
+        to: reader,
+        priority: "action",
+        subject: `COUNCIL: ${finding.member} on ${live.title ?? id}`,
+        body: finding.line,
+        needs: "nothing",
+        why: "the room's council saw a running turn of a seat under you",
+      });
+}
+
+/** The council's look at the turns now running; a seat that cannot be looked at is logged and the others are still looked at. */
+export async function lookAtRunningTurns(room: RoomContext): Promise<void> {
+  for (const [id, live] of await room.host.live()) {
+    if (live.status !== "running" || !room.engine.seat(id)) continue;
+    try {
+      await lookAt(room, id, live);
+    } catch (error) {
+      room.log(`the council could not look at ${id}: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+}

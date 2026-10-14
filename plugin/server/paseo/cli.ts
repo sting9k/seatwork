@@ -5,19 +5,13 @@ import { delimiter, join } from "node:path";
 /** The paseo CLI, for daemon operations the plugin SDK lacks; SEATWORK_PASEO_BIN overrides the lookup. */
 export function paseoBin(): string {
   const fromPath = (process.env.PATH ?? "").split(delimiter).map((dir) => join(dir, "paseo"));
-  for (const candidate of [
-    process.env.SEATWORK_PASEO_BIN,
-    ...fromPath,
-    "/opt/homebrew/bin/paseo",
-    "/usr/local/bin/paseo",
-  ]) {
+  const candidates = [process.env.SEATWORK_PASEO_BIN, ...fromPath, "/opt/homebrew/bin/paseo", "/usr/local/bin/paseo"];
+  for (const candidate of candidates) {
     if (!candidate) continue;
     try {
       accessSync(candidate, constants.X_OK);
       return candidate;
-    } catch {
-      // next
-    }
+    } catch {}
   }
   throw new Error("paseo CLI not found on PATH; set SEATWORK_PASEO_BIN");
 }

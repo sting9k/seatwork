@@ -1,7 +1,8 @@
 import table from "./workflow.json";
 
-/** The orchestration in force, from shared/workflow.json: code asks a role's traits, never its name. */
+/** The orchestration in force, from shared/workflow.json: code asks a role's traits, never its name; the room's role is the first at home in the room. */
 
+/** What a role is and does: how the setup screen shows it, and which behaviors the code gives its seats. */
 export interface RoleTraits {
   label: string;
   profile: string;
@@ -19,28 +20,28 @@ export interface RoleTraits {
   tableNote?: { one: string; several: string };
 }
 
-export type Note = keyof typeof table.notes;
+type Note = keyof typeof table.notes;
 
 const TRAITS = table.roles as Record<string, RoleTraits>;
 const NONE: RoleTraits = { label: "", profile: "", icon: "", count: "", job: "", models: "one" };
 
 export const ROLES: readonly string[] = Object.keys(TRAITS);
 export const ROOM_PROJECT: string = table.roomProject;
-/** The role the installer asks a model for: the first one at home in the room. */
 export const ROOM_ROLE: string | undefined = ROLES.find((role) => TRAITS[role].home === "room");
 const ROUTES: Readonly<Record<string, boolean>> = table.routes;
 export const SPAWN: Readonly<Record<string, readonly string[]>> = table.spawn;
-/** The params entry for a reviewer's silence: how long a review round waits for its last. */
 export const REVIEW_STALL: string = table.reviewers.stall;
 export const VARS: Readonly<Record<string, { role: string; except: readonly string[] }>> = table.vars;
 
+/** Whether the workflow has a role of this name. */
 export const isRole = (name: string): boolean => Object.hasOwn(TRAITS, name);
+/** A role's traits; none at all for a name that is no role. */
 export const traits = (role: string | undefined): RoleTraits =>
   role && Object.hasOwn(TRAITS, role) ? TRAITS[role] : NONE;
+/** The roles whose traits satisfy `pick`, in the workflow's order. */
 export const rolesWhere = (pick: (traits: RoleTraits) => unknown): string[] =>
   ROLES.filter((role) => pick(TRAITS[role]));
 
-/** The roles the tree opens with: those at home in the room, else those no role creates. */
 export const ROOTS: readonly string[] = (() => {
   const home = ROLES.filter((role) => TRAITS[role].home === "room");
   return home.length ? home : ROLES.filter((role) => !ROLES.some((parent) => (SPAWN[parent] ?? []).includes(role)));
@@ -81,6 +82,7 @@ export function reviews(role: string, title: string | null | undefined): boolean
   );
 }
 
+/** A text with its `{{name}}` placeholders filled from `vars`; one without a value stays as written. */
 const fill = (text: string, vars: Record<string, string | number>) =>
   text.replace(/\{\{(\w+)\}\}/g, (whole, name: string) => (Object.hasOwn(vars, name) ? String(vars[name]) : whole));
 

@@ -7,7 +7,7 @@ import { keptOutOfGit } from "../sqlite";
 import { fromTemplate } from "./brief";
 import type { SeatFit } from "./models";
 
-/** Replacing a seat whose context has grown: its handoff, and its successor's start. */
+/** A seat whose context has grown is replaced: its handoff is asked for and read, and its successor starts on it. */
 
 const HANDOFF_HEADINGS = ["CURRENT TASK", "PROGRESS", "KEY DECISIONS", "ACTIVE FILES", "BLOCKERS"] as const;
 type Heading = (typeof HANDOFF_HEADINGS)[number];
@@ -15,6 +15,7 @@ type Heading = (typeof HANDOFF_HEADINGS)[number];
 const HANDOFF_CHARS = 6000;
 const BRIEF_CHARS = 12_000;
 
+/** The mail that asks a seat for its handoff. */
 export function handoffRequest(why: string): string {
   return [
     `A fresh seat will continue your work${why ? ` (${why})` : ""}: every step a seat takes reads its whole context again, and yours has grown large. Nothing about the work changes, and nothing you did is lost.`,
@@ -28,13 +29,13 @@ export function handoffRequest(why: string): string {
   ].join("\n");
 }
 
-export interface Handoff {
+interface Handoff {
   sections: Record<Heading, string>;
   text: string;
 }
 
-/** A heading at the start of a line, behind whatever list or emphasis marks the writer put there. */
-const headingAt = (heading: string) => new RegExp(`^[\\s#>*_\\-\\d.)]*${heading}\\b[*_]*\\s*[:—-]?[ \\t]*`, "im");
+/** A heading at the start of a line, behind whatever list or emphasis marks the writer put there on that line. */
+const headingAt = (heading: string) => new RegExp(`^[ \\t#>*_\\-\\d.)]*${heading}\\b[*_]*\\s*[:—-]?[ \\t]*`, "im");
 
 /** The handoff in a seat's reply; null when it does not say what it was doing and how far it got. */
 export function parseHandoff(message: string): Handoff | null {
@@ -64,6 +65,7 @@ export function briefInForce(received: readonly string[]): string | null {
   return brief ? brief.slice(0, BRIEF_CHARS) : null;
 }
 
+/** What the successor reads first: the brief in force, the handoff, and the threads the old seat was in. */
 export function successorPrompt(input: {
   brief: string | null;
   handoff: string;
@@ -93,17 +95,16 @@ export function nextTitle(title: string | null): string {
 }
 
 /** A rotation asked for: `starting` once the room has begun to start the successor. */
-export interface Asked {
+interface Asked {
   by: string;
   mailId: number;
   at: number;
   state: "asked" | "starting";
 }
 
-/** Rotations asked for and not done, kept on disk: a restart neither repeats one nor forgets it. */
+/** Rotations asked for and not done, kept on disk: a restart neither repeats one nor forgets it; those a stop left `starting` are in `interrupted`, to be told once. */
 export class Rotations {
   private readonly items = new Map<string, Asked>();
-  /** Left in `starting` by a process that stopped: their askers are told once. */
   readonly interrupted: [string, Asked][] = [];
 
   constructor(private readonly file: string) {
@@ -114,16 +115,18 @@ export class Rotations {
     if (this.interrupted.length > 0) this.save();
   }
 
+  /** The rotation asked of a seat, if one waits. */
   get(seat: string): Asked | undefined {
     return this.items.get(seat);
   }
 
+  /** `by` asked for a seat's handoff with the mail `mailId`. */
   ask(seat: string, by: string, mailId: number, at: number): void {
     this.items.set(seat, { by, mailId, at, state: "asked" });
     this.save();
   }
 
-  /** The claim is written before the successor is started. */
+  /** Marks the rotation as begun: the claim is written before the successor is started. */
   starting(seat: string): void {
     const asked = this.items.get(seat);
     if (!asked) return;
@@ -131,6 +134,7 @@ export class Rotations {
     this.save();
   }
 
+  /** The rotation is over, done or failed. */
   done(seat: string): void {
     if (this.items.delete(seat)) this.save();
   }
@@ -148,14 +152,12 @@ export class Rotations {
   }
 }
 
-/** What starting a successor needs besides the app. */
-export interface RotateDeps {
+/** What starting a successor needs: the app, the mail engine, the table in force at a folder (`fit`), and the moving of what the room keeps for the old seat (`handOver`). */
+interface RotateDeps {
   host: Host;
   engine: MailEngine;
   version: string;
-  /** What the table in force at that folder makes of a seat on this model. */
   fit(cwd: string, role: string, provider: string, model: string | undefined): SeatFit;
-  /** Moves what the room keeps for the old seat to the successor: its task's rounds, its claimed work. */
   handOver(from: string, to: string): void;
 }
 

@@ -13,7 +13,6 @@ import { join } from "node:path";
 import { ROOM_HOME } from "../../paths";
 import { isInside, realOrSelf } from "../../orchestration/registry";
 
-/** The names the room keeps in a project's `.seatwork/`; a name not listed here is not the room's. */
 const ROOM_FILES = new Set([
   "room.json",
   "mission.md",
@@ -39,15 +38,14 @@ export interface ProjectFiles {
 /** The folders a room worked in: every project in its registry, and the folder of every seat in its log. */
 export function roomFolders(home: string = ROOM_HOME): string[] {
   const named = new Set<string>();
-  const lines = (file: string) =>
-    existsSync(join(home, file)) ? readFileSync(join(home, file), "utf8").split("\n") : [];
+  const text = (file: string) => (existsSync(join(home, file)) ? readFileSync(join(home, file), "utf8") : "");
   try {
-    const registry = JSON.parse(lines("projects.json").join("\n") || "{}") as { projects?: { cwd?: unknown }[] };
+    const registry = JSON.parse(text("projects.json") || "{}") as { projects?: { cwd?: unknown }[] };
     for (const project of registry.projects ?? []) if (typeof project?.cwd === "string") named.add(project.cwd);
   } catch {
     // a registry that cannot be read names no project
   }
-  for (const line of lines("registry-log.jsonl")) {
+  for (const line of text("registry-log.jsonl").split("\n")) {
     try {
       const { cwd } = JSON.parse(line) as { cwd?: unknown };
       if (typeof cwd === "string") named.add(cwd);
@@ -56,7 +54,7 @@ export function roomFolders(home: string = ROOM_HOME): string[] {
     }
   }
   const folders = new Set([...named].map((cwd) => realOrSelf(cwd)));
-  // HQ's own folder is in the room home and moves with it
+  // the room's own project sits in the room home and moves with it
   const real = realOrSelf(home);
   return [...folders].filter((folder) => !isInside(folder, real));
 }
@@ -65,7 +63,7 @@ export function roomFolders(home: string = ROOM_HOME): string[] {
 export const keptAt = (movedTo: string, root: string, folder = ".seatwork") =>
   join(movedTo, "projects", root.replace(/[^A-Za-z0-9._-]+/g, "-").replace(/^-+/, ""), folder);
 
-/** Moves the room's files out of a project's `folder` into `into`, by name; null when the project has none. */
+/** Moves the room's files, by name, out of a project's `folder` into `into`; the rest stays. Null when the project has none. */
 export function takeRoomFiles(root: string, into: string, folder = ".seatwork"): ProjectFiles | null {
   const seatwork = join(root, folder);
   // a link of that name points at someone else's folder

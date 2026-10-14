@@ -9,17 +9,16 @@ export interface GitHit {
   detail: string;
 }
 
+/** What the git rules ask of the machine: an alias in git config, a `git-<name>` program, a rebase under way. */
 export interface GitTools {
-  /** an alias from the user's or the repository's git config, null when none */
   alias(name: string, cwd: string | null): Promise<string | null>;
-  /** a `git-<name>` program on PATH: an external subcommand, not an alias */
   external(name: string): Promise<boolean>;
   rebasing(cwd: string | null): Promise<boolean>;
 }
 
+/** The rules a git command trips; `shell` is the line an alias runs through the shell, which is judged too. */
 export interface GitOutcome {
   hits: GitHit[];
-  /** an alias that runs a shell line: the gate judges that line too */
   shell: string | null;
 }
 
@@ -78,6 +77,7 @@ const RECOVERY = new Set([
 const MAX_ALIAS = 64;
 const PROTECTED_BRANCHES = (["master", "main"] as const).map((b) => [b, new RegExp(`(^|[:/+])${b}$`)] as const);
 
+/** A git command after its global options: the subcommand, and what follows it. */
 interface Line {
   sub: string;
   args: Word[];
@@ -129,6 +129,7 @@ export async function gitRules(scene: Scene, tools: GitTools, strict: boolean): 
   return unverified("the alias goes deeper than the room reads");
 }
 
+/** The outcome for a subcommand the room cannot read. */
 function unverified(detail: string): GitOutcome {
   return { hits: [{ pack: "core.git", rule: "git-alias-semantic-unverified", detail }], shell: null };
 }
@@ -198,14 +199,18 @@ function splitAlias(body: string): Word[] {
   return out.map((text) => ({ raw: text, start: 0, end: 0, parts: [{ kind: "text", text, quote: "single" }] }));
 }
 
+/** True for a cluster of short options such as `-fd`. */
 const isCluster = (t: string | null): t is string => t !== null && /^-[^-]/.test(t);
+/** True when `t` is a long option cut short of `full` by at least `min` letters. */
 const abbrev = (t: string | null, full: string, min: number): boolean =>
   t !== null && t.startsWith("--") && t.length - 2 >= min && full.startsWith(t.slice(2)) && !t.includes("=");
+/** The words before a bare `--`. */
 const beforeEnd = (texts: (string | null)[]): (string | null)[] => {
   const end = texts.indexOf("--");
   return end < 0 ? texts : texts.slice(0, end);
 };
 
+/** The rules for one subcommand and its arguments; during a rebase the discard rules stand down. */
 async function rules(line: Line, scene: Scene, tools: GitTools, strict: boolean): Promise<GitHit[]> {
   const hits: GitHit[] = [];
   const core = (rule: string, detail = `git ${line.sub}`) => hits.push({ pack: "core.git", rule, detail });
@@ -331,6 +336,7 @@ async function rules(line: Line, scene: Scene, tools: GitTools, strict: boolean)
   return hits;
 }
 
+/** The rules for `git push`: force in its forms, mirror, delete, prune, and the protected branches. */
 function pushRules(
   line: Line,
   core: (rule: string, detail?: string) => void,

@@ -19,6 +19,7 @@ const attribute = (value: string) =>
     .replace(/</g, "&lt;")
     .replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;");
+/** A time as `YYYY-MM-DD HH:MM`. */
 export const clock = (at: string) => at.slice(0, 16).replace("T", " ");
 
 /** A seat as a mail names it: role, the start of its id, its title without the role tag. */
@@ -35,6 +36,7 @@ function shownBody(message: Message, chars: number | undefined): string {
   return `${body.slice(0, chars).trimEnd()}\n[cut at ${chars} of ${body.length} characters; the whole mail is in ${message.file}]`;
 }
 
+/** One mail as a tagged block: its header values on one line, its body cut where the file takes over. */
 export function envelope({ message, delivery, from, chars }: Shown): string {
   const marks = [
     `id="${message.id}"`,

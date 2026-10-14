@@ -8,7 +8,7 @@ const TEXT_CHARS = 20_000;
 const STATUSES: readonly ToolStatus[] = ["running", "completed", "failed", "canceled"];
 
 const text = (value: unknown, most: number): string => (typeof value === "string" ? value.slice(0, most) : "");
-/** The end of an output is where a command says how it went. */
+/** The end of an output: where a command says how it went. */
 const tail = (value: unknown): string => (typeof value === "string" ? value.slice(-OUTPUT_CHARS) : "");
 
 /** One timeline item as a turn event, a skill call with the skill named in its label; null for what the room does not read. */

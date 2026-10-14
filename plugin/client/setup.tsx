@@ -30,6 +30,7 @@ import {
   IconTile,
   KeyValue,
   Link,
+  MONO,
   Tabs,
   tint,
   Toggle,
@@ -44,9 +45,7 @@ type Choices = Record<string, unknown>;
 
 const STATE_KEY = ["seatwork", "setup.state"];
 const ROOM_ROLES = [...SEAT_ROLES, ...TIER_ROLES];
-/** The room's own seat by name, for the lines that tell where to ask it. */
 const OWN = ROOM_ROLE ? traits(ROOM_ROLE).label : "the room's own seat";
-const MONO = { dataSet: { pmono: "true" }, style: { fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace" } };
 
 /** What went wrong, in the room's words: Paseo wraps a refused request in its own prefix. */
 const failed = (error: unknown) =>
@@ -265,6 +264,244 @@ function removedLine(done: RpcOutput<typeof setupRemove>): string {
     .join(" ");
 }
 
+/** The projects the room works in, each with what it changes in the room's table; a press opens one's models. */
+function ProjectsCard(props: {
+  projects: Project[];
+  running: Table;
+  harnesses: Harness[];
+  open: Open;
+  fit: Fit;
+  colors: Colors;
+}) {
+  const { projects, running, harnesses, open, fit, colors: c } = props;
+  return (
+    <Card colors={c}>
+      <CardHead
+        title="Projects"
+        count={projects.length}
+        sub="A project runs on the room's table unless you give it models of its own. Press one to change its models."
+        colors={c}
+      />
+      <View style={{ paddingHorizontal: 8, paddingBottom: 8 }}>
+        {projects.map((project, index) => (
+          <Pressable
+            key={project.name}
+            accessibilityRole="button"
+            accessibilityLabel={`${project.name}: its models`}
+            onPress={() => open({ project: project.name })}
+            style={{
+              flexDirection: "row",
+              alignItems: "center",
+              gap: 14,
+              paddingVertical: 11,
+              paddingHorizontal: 12,
+              borderTopWidth: index > 0 ? 1 : 0,
+              borderTopColor: c.border,
+            }}
+          >
+            <View style={{ gap: 1, ...(fit.narrow ? { flex: 1 } : { width: 208 }) }}>
+              <Text numberOfLines={1} style={{ color: c.foreground, fontSize: 14, lineHeight: 19, fontWeight: "600" }}>
+                {project.name}
+              </Text>
+              <Text
+                {...MONO}
+                numberOfLines={1}
+                style={{ ...MONO.style, color: c.foregroundMuted, fontSize: 11.5, lineHeight: 16 }}
+              >
+                {short(project.root)}
+              </Text>
+            </View>
+            <ProjectChanges project={project} running={running} harnesses={harnesses} brief={fit.narrow} colors={c} />
+            <Icon name="ChevronRight" size={16} color={c.foregroundMuted} />
+          </Pressable>
+        ))}
+        {projects.length === 0 ? (
+          <Text style={{ ...small(c), paddingVertical: 10, paddingHorizontal: 12 }}>
+            No project is in the room yet. Open {OWN} in the {ROOM_PROJECT} project and write: set up project X.
+          </Text>
+        ) : null}
+      </View>
+    </Card>
+  );
+}
+
+/** What this host can run: its checks, and which agent CLIs are ready. */
+function HostCard(props: { checks: State["checks"]; harnesses: Harness[]; colors: Colors }) {
+  const { checks, harnesses, colors: c } = props;
+  return (
+    <Card colors={c} style={RAIL}>
+      <RailHead icon="Monitor" title="This host" colors={c} />
+      {checks.map((check) => (
+        <View key={check.id} style={{ flexDirection: "row", alignItems: "flex-start", gap: 9 }}>
+          <View style={{ paddingTop: 2 }}>
+            <Icon
+              name={check.ok ? "Check" : check.ok === false ? "TriangleAlert" : "CircleHelp"}
+              size={14}
+              color={check.ok ? c.statusSuccess : check.ok === false ? c.statusWarning : c.foregroundMuted}
+            />
+          </View>
+          <View style={{ flex: 1 }}>
+            <Text style={{ color: c.foreground, fontSize: 12.5, lineHeight: 18 }}>{check.label}</Text>
+            {check.ok ? null : <Text style={small(c)}>{check.detail}</Text>}
+          </View>
+        </View>
+      ))}
+      <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 6, paddingTop: 2 }}>
+        {harnesses.map((h) => (
+          <View
+            key={h.id}
+            accessibilityLabel={h.available ? `${h.label}: ready` : `${h.label}: not ready. ${h.why}`}
+            style={{
+              flexDirection: "row",
+              alignItems: "center",
+              gap: 6,
+              height: 24,
+              paddingHorizontal: 9,
+              borderRadius: 999,
+              borderWidth: 1,
+              borderColor: c.border,
+              backgroundColor: c.surface2,
+            }}
+          >
+            <Dot color={h.available ? (CLI_COLOR[h.id] ?? c.foregroundMuted) : tint(c.foreground, 0.25)} />
+            <Text style={{ color: h.available ? c.foreground : c.foregroundMuted, fontSize: 12, lineHeight: 16 }}>
+              {h.label}
+            </Text>
+          </View>
+        ))}
+      </View>
+    </Card>
+  );
+}
+
+/** The way out of the room: a link, then a confirmation that says what Remove takes and keeps. */
+function RemoveCard(props: {
+  confirming: boolean;
+  setConfirming(on: boolean): void;
+  busy: boolean;
+  pending: boolean;
+  error: unknown;
+  onRemove(): void;
+  colors: Colors;
+}) {
+  const { confirming, setConfirming, busy, pending, error, onRemove, colors: c } = props;
+  return confirming ? (
+    <Card colors={c} style={{ ...RAIL, borderColor: tint(c.statusDanger, 0.5) }}>
+      <Text style={{ color: c.foreground, fontSize: 13, lineHeight: 18, fontWeight: "600" }}>Remove the room?</Text>
+      <Text style={small(c)}>
+        Its seats, its profiles and the {ROOM_PROJECT} project leave Paseo. The room's folder is moved aside with its
+        mail and logs, and with it the notes the room kept in each project's .seatwork folder; it is deleted 30 days
+        later. Your projects and their code stay as they are. Archive the room's agents first.
+      </Text>
+      <View style={{ flexDirection: "row", gap: 8 }}>
+        <Btn
+          label={pending ? "Removing…" : "Remove"}
+          kind="danger"
+          grow
+          disabled={busy}
+          onPress={() => onRemove()}
+          colors={c}
+        />
+        <Btn label="Cancel" disabled={busy} onPress={() => setConfirming(false)} colors={c} />
+      </View>
+      {error ? <Text style={{ ...small(c), color: c.statusDanger }}>{failed(error)}</Text> : null}
+    </Card>
+  ) : (
+    <View style={{ paddingVertical: 6, paddingHorizontal: 4 }}>
+      <Link
+        label="Remove the room…"
+        icon="Trash2"
+        color={c.statusDanger}
+        onPress={() => setConfirming(true)}
+        colors={c}
+      />
+    </View>
+  );
+}
+
+/** How the room stands: not set up, changes not applied, files older than the plugin, or running; and the one button for it. */
+function RoomStanding(props: {
+  applied: State["applied"];
+  waiting: string[];
+  stale: boolean;
+  version: string;
+  home: string;
+  pending: boolean;
+  busy: boolean;
+  onApply(): void;
+  onDiscard(): void;
+  error: unknown;
+  notes: string[];
+  moved: string | null;
+  colors: Colors;
+}) {
+  const {
+    applied,
+    waiting,
+    stale,
+    version,
+    home,
+    pending,
+    busy,
+    onApply,
+    onDiscard,
+    error,
+    notes,
+    moved,
+    colors: c,
+  } = props;
+  return (
+    <Card colors={c} style={RAIL}>
+      {!applied ? (
+        <>
+          <Standing tone="idle" title="Not set up yet" sub="Nothing exists before Init." colors={c} />
+          <Text style={small(c)}>
+            Init creates the room's folder, its seats and profiles in Paseo, and the {ROOM_PROJECT} project.
+          </Text>
+          <Btn label={pending ? "Working…" : "Init"} kind="primary" disabled={busy} onPress={onApply} colors={c} />
+        </>
+      ) : waiting.length > 0 ? (
+        <>
+          <Standing
+            tone="warn"
+            title={`${waiting.length} ${waiting.length === 1 ? "change" : "changes"} not applied`}
+            sub={waiting.join(" · ")}
+            colors={c}
+          />
+          <View style={{ flexDirection: "row", gap: 8 }}>
+            <Btn
+              label={pending ? "Working…" : "Apply changes"}
+              kind="primary"
+              grow
+              disabled={busy}
+              onPress={onApply}
+              colors={c}
+            />
+            <Btn label="Discard" disabled={busy} onPress={onDiscard} colors={c} />
+          </View>
+        </>
+      ) : stale ? (
+        <>
+          <Standing
+            tone="warn"
+            title="The room's files are older"
+            sub={`Set up by ${applied.version || "an earlier version"}. No new seat opens until they are applied.`}
+            colors={c}
+          />
+          <Btn label={pending ? "Working…" : "Apply"} kind="primary" disabled={busy} onPress={onApply} colors={c} />
+        </>
+      ) : (
+        <Standing tone="ok" title={`Running · ${applied.seats.length} seats`} sub="Everything is applied" colors={c} />
+      )}
+      {error ? <Text style={{ ...small(c), color: c.statusDanger }}>{failed(error)}</Text> : null}
+      {notes.length > 0 ? <Text style={small(c)}>{notes.join(" ")}</Text> : null}
+      {moved ? <Text style={small(c)}>{moved}</Text> : null}
+      <KeyValue name="Plugin" value={version} colors={c} />
+      {applied ? <KeyValue name="Folder" value={short(home)} mono colors={c} /> : null}
+    </Card>
+  );
+}
+
 /** The room's setup: each role's model and the projects that follow it; the room changes on Init or Apply. */
 function RoomSetup({
   data,
@@ -340,65 +577,21 @@ function RoomSetup({
   };
 
   const room = (
-    <Card colors={c} style={RAIL}>
-      {!applied ? (
-        <>
-          <Standing tone="idle" title="Not set up yet" sub="Nothing exists before Init." colors={c} />
-          <Text style={small(c)}>
-            Init creates the room's folder, its seats and profiles in Paseo, and the {ROOM_PROJECT} project.
-          </Text>
-          <Btn label={init.isPending ? "Working…" : "Init"} kind="primary" disabled={busy} onPress={apply} colors={c} />
-        </>
-      ) : waiting.length > 0 ? (
-        <>
-          <Standing
-            tone="warn"
-            title={`${waiting.length} ${waiting.length === 1 ? "change" : "changes"} not applied`}
-            sub={waiting.join(" · ")}
-            colors={c}
-          />
-          <View style={{ flexDirection: "row", gap: 8 }}>
-            <Btn
-              label={init.isPending ? "Working…" : "Apply changes"}
-              kind="primary"
-              grow
-              disabled={busy}
-              onPress={apply}
-              colors={c}
-            />
-            <Btn
-              label="Discard"
-              disabled={busy}
-              onPress={() => save({ models: applied.models, chime: applied.chime })}
-              colors={c}
-            />
-          </View>
-        </>
-      ) : stale ? (
-        <>
-          <Standing
-            tone="warn"
-            title="The room's files are older"
-            sub={`Set up by ${applied.version || "an earlier version"}. No new seat opens until they are applied.`}
-            colors={c}
-          />
-          <Btn
-            label={init.isPending ? "Working…" : "Apply"}
-            kind="primary"
-            disabled={busy}
-            onPress={apply}
-            colors={c}
-          />
-        </>
-      ) : (
-        <Standing tone="ok" title={`Running · ${applied.seats.length} seats`} sub="Everything is applied" colors={c} />
-      )}
-      {init.error ? <Text style={{ ...small(c), color: c.statusDanger }}>{failed(init.error)}</Text> : null}
-      {done && done.notes.length > 0 ? <Text style={small(c)}>{done.notes.join(" ")}</Text> : null}
-      {moved ? <Text style={small(c)}>{removedLine(moved)}</Text> : null}
-      <KeyValue name="Plugin" value={data.version} colors={c} />
-      {applied ? <KeyValue name="Folder" value={short(data.home)} mono colors={c} /> : null}
-    </Card>
+    <RoomStanding
+      applied={applied}
+      waiting={waiting}
+      stale={stale}
+      version={data.version}
+      home={data.home}
+      pending={init.isPending}
+      busy={busy}
+      onApply={apply}
+      onDiscard={() => save({ models: applied!.models, chime: applied!.chime })}
+      error={init.error}
+      notes={done?.notes ?? []}
+      moved={moved ? removedLine(moved) : null}
+      colors={c}
+    />
   );
 
   const pad = fit.narrow ? 12 : 20;
@@ -453,62 +646,14 @@ function RoomSetup({
   const projects = (
     <>
       {applied && running ? (
-        <Card colors={c}>
-          <CardHead
-            title="Projects"
-            count={data.projects.length}
-            sub="A project runs on the room's table unless you give it models of its own. Press one to change its models."
-            colors={c}
-          />
-          <View style={{ paddingHorizontal: 8, paddingBottom: 8 }}>
-            {data.projects.map((project, index) => (
-              <Pressable
-                key={project.name}
-                accessibilityRole="button"
-                accessibilityLabel={`${project.name}: its models`}
-                onPress={() => open({ project: project.name })}
-                style={{
-                  flexDirection: "row",
-                  alignItems: "center",
-                  gap: 14,
-                  paddingVertical: 11,
-                  paddingHorizontal: 12,
-                  borderTopWidth: index > 0 ? 1 : 0,
-                  borderTopColor: c.border,
-                }}
-              >
-                <View style={{ gap: 1, ...(fit.narrow ? { flex: 1 } : { width: 208 }) }}>
-                  <Text
-                    numberOfLines={1}
-                    style={{ color: c.foreground, fontSize: 14, lineHeight: 19, fontWeight: "600" }}
-                  >
-                    {project.name}
-                  </Text>
-                  <Text
-                    {...MONO}
-                    numberOfLines={1}
-                    style={{ ...MONO.style, color: c.foregroundMuted, fontSize: 11.5, lineHeight: 16 }}
-                  >
-                    {short(project.root)}
-                  </Text>
-                </View>
-                <ProjectChanges
-                  project={project}
-                  running={running}
-                  harnesses={data.harnesses}
-                  brief={fit.narrow}
-                  colors={c}
-                />
-                <Icon name="ChevronRight" size={16} color={c.foregroundMuted} />
-              </Pressable>
-            ))}
-            {data.projects.length === 0 ? (
-              <Text style={{ ...small(c), paddingVertical: 10, paddingHorizontal: 12 }}>
-                No project is in the room yet. Open {OWN} in the {ROOM_PROJECT} project and write: set up project X.
-              </Text>
-            ) : null}
-          </View>
-        </Card>
+        <ProjectsCard
+          projects={data.projects}
+          running={running}
+          harnesses={data.harnesses}
+          open={open}
+          fit={fit}
+          colors={c}
+        />
       ) : (
         <Card colors={c} style={RAIL}>
           <Text style={small(c)}>Projects appear here once the room is set up: press Init under Settings.</Text>
@@ -528,84 +673,18 @@ function RoomSetup({
         <Toggle label="Chime" value={values.chime} onChange={(chime) => save({ ...values, chime })} colors={c} />
       </Card>
 
-      <Card colors={c} style={RAIL}>
-        <RailHead icon="Monitor" title="This host" colors={c} />
-        {data.checks.map((check) => (
-          <View key={check.id} style={{ flexDirection: "row", alignItems: "flex-start", gap: 9 }}>
-            <View style={{ paddingTop: 2 }}>
-              <Icon
-                name={check.ok ? "Check" : check.ok === false ? "TriangleAlert" : "CircleHelp"}
-                size={14}
-                color={check.ok ? c.statusSuccess : check.ok === false ? c.statusWarning : c.foregroundMuted}
-              />
-            </View>
-            <View style={{ flex: 1 }}>
-              <Text style={{ color: c.foreground, fontSize: 12.5, lineHeight: 18 }}>{check.label}</Text>
-              {check.ok ? null : <Text style={small(c)}>{check.detail}</Text>}
-            </View>
-          </View>
-        ))}
-        <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 6, paddingTop: 2 }}>
-          {data.harnesses.map((h) => (
-            <View
-              key={h.id}
-              accessibilityLabel={h.available ? `${h.label}: ready` : `${h.label}: not ready. ${h.why}`}
-              style={{
-                flexDirection: "row",
-                alignItems: "center",
-                gap: 6,
-                height: 24,
-                paddingHorizontal: 9,
-                borderRadius: 999,
-                borderWidth: 1,
-                borderColor: c.border,
-                backgroundColor: c.surface2,
-              }}
-            >
-              <Dot color={h.available ? (CLI_COLOR[h.id] ?? c.foregroundMuted) : tint(c.foreground, 0.25)} />
-              <Text style={{ color: h.available ? c.foreground : c.foregroundMuted, fontSize: 12, lineHeight: 16 }}>
-                {h.label}
-              </Text>
-            </View>
-          ))}
-        </View>
-      </Card>
+      <HostCard checks={data.checks} harnesses={data.harnesses} colors={c} />
 
       {applied ? (
-        confirming ? (
-          <Card colors={c} style={{ ...RAIL, borderColor: tint(c.statusDanger, 0.5) }}>
-            <Text style={{ color: c.foreground, fontSize: 13, lineHeight: 18, fontWeight: "600" }}>
-              Remove the room?
-            </Text>
-            <Text style={small(c)}>
-              Its seats, its profiles and the {ROOM_PROJECT} project leave Paseo. The room's folder is moved aside with
-              its mail and logs, and with it the notes the room kept in each project's .seatwork folder; it is deleted
-              30 days later. Your projects and their code stay as they are. Archive the room's agents first.
-            </Text>
-            <View style={{ flexDirection: "row", gap: 8 }}>
-              <Btn
-                label={remove.isPending ? "Removing…" : "Remove"}
-                kind="danger"
-                grow
-                disabled={busy}
-                onPress={() => remove.mutate()}
-                colors={c}
-              />
-              <Btn label="Cancel" disabled={busy} onPress={() => setConfirming(false)} colors={c} />
-            </View>
-            {remove.error ? <Text style={{ ...small(c), color: c.statusDanger }}>{failed(remove.error)}</Text> : null}
-          </Card>
-        ) : (
-          <View style={{ paddingVertical: 6, paddingHorizontal: 4 }}>
-            <Link
-              label="Remove the room…"
-              icon="Trash2"
-              color={c.statusDanger}
-              onPress={() => setConfirming(true)}
-              colors={c}
-            />
-          </View>
-        )
+        <RemoveCard
+          confirming={confirming}
+          setConfirming={setConfirming}
+          busy={busy}
+          pending={remove.isPending}
+          error={remove.error}
+          onRemove={() => remove.mutate()}
+          colors={c}
+        />
       ) : null}
       {settings.saveError ? <Text style={{ ...small(c), color: c.statusDanger }}>{settings.saveError}</Text> : null}
     </>

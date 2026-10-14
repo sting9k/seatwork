@@ -1,5 +1,5 @@
 {
-  "$comment": "Off until turned on. sql: read on the statements a client gets; statement: must open one; noWhere: UPDATE without WHERE.",
+  "$comment": "Off until turned on. clients: the programs that read each pack. sql: tested on the statements a client gets; statement: must open one; noWhere: an UPDATE without WHERE.",
   "clients": {
     "database.postgresql": ["psql"],
     "database.mysql": ["mysql", "mariadb"],

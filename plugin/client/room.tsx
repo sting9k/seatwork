@@ -4,9 +4,10 @@ import { ScrollView } from "@getpaseo/plugin/client/react-native";
 import { SidebarRow } from "@getpaseo/plugin/client/ui";
 import { useQuery } from "@tanstack/react-query";
 import type { PluginTheme, RpcOutput } from "@getpaseo/plugin";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Pressable, Text, View } from "react-native";
-import { roomStatus, roomWaiting } from "../shared/room";
+import { roomStatus } from "../shared/room";
+import { onWaitingCount, waitingCount } from "./waiting";
 
 type Room = RpcOutput<typeof roomStatus>;
 
@@ -17,14 +18,12 @@ function tone(status: string, colors: PluginTheme["colors"]): string {
   return status === "waiting" ? colors.statusWarning : colors.foregroundMuted;
 }
 
-/** A seat at rest says nothing: its dot is enough. */
 const AT_REST = new Set(["idle", "closed"]);
 
 /** Hour and minute on this device's clock. */
 const clock = (at: string) =>
   new Date(at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hour12: false });
 
-/** How many seat dots a project's row shows before it counts the rest. */
 const DOTS = 8;
 
 export function RoomScreen({ theme, layout, navigation }: PluginScreenProps) {
@@ -154,13 +153,11 @@ export function RoomScreen({ theme, layout, navigation }: PluginScreenProps) {
 
 /** The sidebar row: it opens the screen, and says how many turns wait on the Owner. */
 export function RoomItem({ theme, currentScreen, openScreen }: PluginSidebarItemProps) {
-  const read = useRpc(roomWaiting);
-  const waiting = useQuery({
-    queryKey: ["seatwork", "room.waiting"],
-    queryFn: () => read({}),
-    refetchInterval: 15_000,
-  });
-  const count = waiting.data?.waiting.length ?? 0;
+  const [count, setCount] = useState(waitingCount());
+  useEffect(() => {
+    setCount(waitingCount());
+    return onWaitingCount(setCount);
+  }, []);
   return (
     <SidebarRow
       icon="Network"

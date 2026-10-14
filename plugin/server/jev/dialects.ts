@@ -11,9 +11,11 @@ import {
 
 /** How each provider's wire is spoken: the request it takes and the reply it gives. */
 
+/** The wires providers speak: System One, OpenRouter's route to it, and OpenAI's Decisions. */
 export type Dialect = "systemone" | "openrouter" | "openai-decisions";
 export const DIALECTS: readonly Dialect[] = ["systemone", "openrouter", "openai-decisions"];
 
+/** Where a provider is and how to reach it. */
 export interface Wire {
   url: string;
   model: string;
@@ -74,6 +76,7 @@ function fromOpenAi(answers: unknown): Record<string, unknown> {
   return out;
 }
 
+/** The request a provider's wire takes for a state and its questions. */
 export function requestOf(dialect: Dialect, wire: Wire, state: State, questions: Questions): WireRequest {
   const headers: Record<string, string> = { "Content-Type": "application/json", Accept: "application/json" };
   if (wire.key) headers.Authorization = `Bearer ${wire.key}`;

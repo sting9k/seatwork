@@ -7,6 +7,7 @@ export type Severity = "critical" | "high" | "medium" | "low";
 
 export const SEVERITY_RANK: Record<Severity, number> = { low: 0, medium: 1, high: 2, critical: 3 };
 
+/** A rule that holds for a command, with the words the seat reads and the command text it was found in as written. */
 export interface Finding {
   pack: string;
   rule: string;
@@ -14,7 +15,6 @@ export interface Finding {
   reason: string;
   explanation?: string;
   safer?: string[];
-  /** the command it was found in, as written */
   text: string;
 }
 
@@ -24,33 +24,28 @@ export interface Doubt {
   text: string;
 }
 
-/** The machine around a command: who runs it, where, and what the shell has been told so far. */
+/** The machine around a command: the seat's own temp folder, where its agent began it, the room's own files no seat writes (save `except`), and the room's folder in each project. */
 export interface Place {
   home: string;
   project: string | null;
-  /** the seat's own temporary folder, set by the room */
   tmp: string | null;
-  /** where the seat's agent started the command */
   start: string | null;
-  /** the room's own files: no seat writes them, save the folders in `except` */
   guard: { paths: string[]; except: string[] } | null;
-  /** the room's folder inside each project (`.seatwork`) */
   roomFolder: string | null;
 }
 
+/** A shell variable the walk knows; `temp` when its value came from `mktemp`. */
 export interface Variable {
   value: string | null;
-  /** the value came from `mktemp`: a fresh temporary path */
   temp: boolean;
 }
 
-/** One simple command as the gate judges it, with the shell state at that point. */
+/** One simple command as the gate judges it; `moved` is set once a `cd` on the line left the folder it started in. */
 export interface Scene {
   simple: Simple;
   call: Invocation;
   text: string;
   cwd: string | null;
-  /** a `cd` earlier in the line moved away from where the command started */
   moved: boolean;
   stdinFed: boolean;
   pipeline: Pipeline | null;
@@ -59,15 +54,15 @@ export interface Scene {
   vars: ReadonlyMap<string, Variable>;
 }
 
-/** A word's value as far as the gate can know it before the shell runs. */
+/** What a word's value depends on besides its text: the variables set so far, the machine, the folder. */
+export type Known = Pick<Scene, "vars" | "place" | "cwd">;
+
+/** A word's value as far as the gate knows it before the shell runs: `text` is null when part of it is known only at run time, `prefix` is what comes before that part. */
 export interface Value {
-  /** the whole text, or null when a part is only known at run time */
   text: string | null;
-  /** the text up to the first unknown part */
   prefix: string;
   quoted: boolean;
   glob: boolean;
-  /** an unknown part is a fresh temporary path (`$(mktemp -d)`) */
   temp: boolean;
   word: Word;
 }

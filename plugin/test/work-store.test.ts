@@ -2,12 +2,13 @@ import { ROOM_HOME, shipSql } from "./support/room";
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { execFileSync } from "node:child_process";
-import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
 import { basename, dirname, join } from "node:path";
 import { test } from "node:test";
 import vocabulary from "../shared/work.json";
 import { WorkError, WorkStore } from "../server/tasks/store";
+import { WorkStores } from "../server/tasks/stores";
 import { work } from "../server/tasks/tools";
 
 shipSql();
@@ -15,6 +16,7 @@ shipSql();
 const POLICY = { minReasonChars: 20, forbidSelfClose: true };
 const TIMING = { busyTimeoutMs: 5000, flushAfterMs: 60_000 };
 let stores = 0;
+const stores_ = (name: string) => `${name}-${(stores += 1)}`;
 /** A store of its own, with a clock that moves a second at every reading. */
 function fresh(): { store: WorkStore; dir: string } {
   const dir = join(ROOM_HOME, `work-test-${(stores += 1)}`);
@@ -264,6 +266,7 @@ test("every query the store runs is served by an index, but the whole-store ones
   store.release("p1", null, "room");
   store.removeDependency(c.id, b.id, "lead");
   store.closeIssue(c.id, "done in abc1234, tests green", "lead", POLICY);
+  store.expire(new Date("2099-01-01T00:00:00Z"));
   // a pass over every issue is the store's whole: its count and its text copy
   const whole = ["SELECT COUNT(*) AS n FROM issues", "SELECT * FROM issues ORDER BY"];
   const scans = store
@@ -492,4 +495,182 @@ test("a write that finds another process writing is refused as one to try again,
   other.close();
   assert.equal(store.create({ title: "waits" }, "lead").title, "waits");
   store.close();
+});
+
+test("deleting an issue looks no child table over: every foreign key column leads an index", () => {
+  const { store, dir } = fresh();
+  store.close();
+  const db = new DatabaseSync(join(dir, "work.db"), { readOnly: true });
+  const tables = db.prepare("SELECT name FROM sqlite_master WHERE type = 'table'").all() as { name: string }[];
+  const unindexed: string[] = [];
+  for (const { name } of tables) {
+    const keys = db.prepare(`PRAGMA foreign_key_list(${name})`).all() as { from: string }[];
+    const leads = (db.prepare(`PRAGMA index_list(${name})`).all() as { name: string }[]).map(
+      (index) => (db.prepare(`PRAGMA index_info(${index.name})`).all() as { seqno: number; name: string }[])[0].name,
+    );
+    for (const key of keys) if (!leads.includes(key.from)) unindexed.push(`${name}.${key.from}`);
+  }
+  db.close();
+  assert.deepEqual(unindexed, []);
+});
+
+/** A small deterministic random generator. */
+function dice(seed: number): () => number {
+  return () => {
+    seed = (seed + 0x6d2b79f5) | 0;
+    let t = Math.imul(seed ^ (seed >>> 15), 1 | seed);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+test("what stands in one issue's way is what the whole graph says of it, in any mix of parents, blockers, closed and reopened", () => {
+  const roll = dice(7);
+  const kinds = new Set<string>();
+  for (let round = 0; round < 6; round += 1) {
+    const { store } = fresh();
+    const made: { id: string; title: string }[] = [];
+    for (let i = 0; i < 40; i += 1) {
+      const earlier = () => made[Math.floor(roll() * i)]?.id;
+      const input = {
+        title: `issue ${i}`,
+        issue_type: roll() < 0.3 ? ("epic" as const) : ("task" as const),
+        parent: roll() < 0.5 ? earlier() : undefined,
+        deps: roll() < 0.6 && i > 0 ? [{ id: earlier() }] : [],
+      };
+      try {
+        made.push(store.create(input, "lead"));
+      } catch (error) {
+        // an edge that would close a ring is refused; the issue stands alone
+        if (!(error instanceof WorkError)) throw error;
+        made.push(store.create({ title: input.title }, "lead"));
+      }
+    }
+    const closed = made.filter(() => roll() < 0.35);
+    for (const issue of closed) store.closeIssue(issue.id, "closed to try a graph, see 4f2a91c", "lead", POLICY, true);
+    for (const issue of closed) if (roll() < 0.2) store.reopen(issue.id, "lead");
+    const whole = store.openWork().blocked;
+    for (const issue of made) {
+      assert.deepEqual(store.blockers(issue.id), whole.get(issue.id) ?? [], issue.title);
+      for (const ref of whole.get(issue.id) ?? []) kinds.add(ref.replace(/^[^:]*/, ""));
+    }
+  }
+  assert.deepEqual([...kinds].sort(), ["", ":child-open", ":parent-blocked"], "every kind of blocker was tried");
+});
+
+test("what stands in an issue's way is read from its own corner of the graph: ten times the issues cost about the same", () => {
+  const stand = (count: number) => {
+    const { store } = fresh();
+    const made = store.createMany(
+      Array.from({ length: count }, (_, i) => ({
+        key: `k${i}`,
+        title: `issue ${i}`,
+        deps: i % 3 === 0 ? [] : [{ id: `k${i - 1}` }],
+      })),
+      "lead",
+    );
+    return () => {
+      const started = performance.now();
+      for (let i = 0; i < 30; i += 1) store.blockers(made[2].id);
+      return performance.now() - started;
+    };
+  };
+  const [small, large] = [stand(300), stand(3000)];
+  small();
+  large();
+  let [fastSmall, fastLarge] = [Infinity, Infinity];
+  for (let i = 0; i < 5; i += 1) {
+    fastSmall = Math.min(fastSmall, small());
+    fastLarge = Math.min(fastLarge, large());
+  }
+  assert.ok(
+    fastLarge < Math.max(fastSmall, 1) * 4,
+    `300 issues: ${fastSmall.toFixed(1)} ms, 3000 issues: ${fastLarge.toFixed(1)} ms`,
+  );
+});
+
+test("a store opened and closed with no write leaves its text copy as it was", () => {
+  const { store, dir } = fresh();
+  store.create({ title: "schema" }, "lead");
+  store.close();
+  const copy = join(dir, "issues.jsonl");
+  const before = statSync(copy).ino;
+  new WorkStore(dir, TIMING).close();
+  assert.equal(statSync(copy).ino, before);
+});
+
+test("an issue holds at most the characters the vocabulary allows, in every text field, its labels, its notes and a comment", () => {
+  const { store } = fresh();
+  const most = vocabulary.textChars;
+  const issue = store.create({ title: "index", description: "d".repeat(most) }, "lead");
+  refuses("VALIDATION_FAILED", () => store.create({ title: "x", design: "d".repeat(most + 1) }, "lead"));
+  refuses("VALIDATION_FAILED", () => store.create({ title: "x", write_scope: "d".repeat(most + 1) }, "lead"));
+  refuses("VALIDATION_FAILED", () => store.update(issue.id, { acceptance_criteria: "d".repeat(most + 1) }, "lead"));
+  refuses("VALIDATION_FAILED", () => store.comment(issue.id, "lead", "c".repeat(most + 1)));
+  refuses("VALIDATION_FAILED", () =>
+    store.update(issue.id, { labels: Array.from({ length: most }, () => "l") }, "lead"),
+  );
+  store.comment(issue.id, "lead", "c".repeat(most));
+  store.update(issue.id, { append_notes: "n".repeat(most - 200) }, "lead");
+  refuses("VALIDATION_FAILED", () => store.update(issue.id, { append_notes: "n".repeat(300) }, "lead"));
+  assert.ok(store.get(issue.id).notes.length <= most);
+});
+
+test("closed issues past their keep leave the store, with their comments; open work and closed work in a live tree stay", () => {
+  const { store, dir } = fresh();
+  const close = (id: string) => store.closeIssue(id, "done in 4f2a91c, tests green", "lead", POLICY, true);
+  const old = store.create({ title: "old" }, "lead");
+  store.comment(old.id, "lead", "keep the v2 reader");
+  const gate = store.create({ title: "gate" }, "lead");
+  const waits = store.create({ title: "waits", deps: [{ id: gate.id }] }, "lead");
+  const live = store.create({ title: "live epic", issue_type: "epic" }, "lead");
+  const doneChild = store.create({ title: "done child", parent: live.id }, "lead");
+  store.create({ title: "open child", parent: live.id }, "lead");
+  const done = store.create({ title: "done epic", issue_type: "epic" }, "lead");
+  const doneKid = store.create({ title: "done kid", parent: done.id }, "lead");
+  const held = store.create({ title: "closed parent", issue_type: "epic" }, "lead");
+  store.create({ title: "open kid", parent: held.id }, "lead");
+  for (const issue of [old, gate, doneChild, doneKid, done, held]) close(issue.id);
+
+  assert.equal(store.expire(new Date("2026-10-14T09:00:00Z")), 0, "nothing is past a keep that began before it all");
+  assert.equal(store.expire(new Date("2026-10-15T00:00:00Z")), 4, "old, gate, and the finished tree of done");
+  const left = store.all().map((issue) => issue.title);
+  assert.deepEqual(
+    left.sort(),
+    ["closed parent", "done child", "live epic", "open child", "open kid", "waits"].sort(),
+    "a closed child of a live parent keeps its number, a closed parent keeps its open child",
+  );
+  assert.deepEqual(store.blockers(waits.id), [], "what the gate held back is free");
+  assert.deepEqual(
+    store.ready().map((issue) => issue.title),
+    ["waits", "open child", "open kid"],
+  );
+  assert.equal(store.create({ title: "next child", parent: live.id }, "lead").id, `${live.id}.3`);
+  store.flush();
+  assert.equal(readFileSync(join(dir, "issues.jsonl"), "utf8").trim().split("\n").length, store.count());
+});
+
+test("the stores of the projects a room names expire their closed issues; a project with no store is left as it is", () => {
+  const rules = { busyTimeoutMs: 5000, flushAfterMs: 60_000, staleClaimMinutes: 120, close: POLICY };
+  const stores = new WorkStores(rules, () => {});
+  const [one, two, none] = ["one", "two", "none"].map((name) => join(ROOM_HOME, `expire-${stores_(name)}`));
+  for (const root of [one, two]) {
+    const { store } = stores.of(root);
+    const made = store.create({ title: "finished" }, "lead");
+    store.create({ title: "going on" }, "lead");
+    store.closeIssue(made.id, "done in 4f2a91c, tests green", "lead", POLICY);
+  }
+  mkdirSync(none, { recursive: true });
+  assert.equal(stores.expire(new Date("2099-01-01T00:00:00Z"), [one, two, none]), 2);
+  assert.equal(stores.of(one).store.count(), 1);
+  assert.equal(existsSync(join(none, ".seatwork")), false);
+  stores.close();
+});
+
+test("a store whose text copy cannot be written is closed all the same", () => {
+  const { store, dir } = fresh();
+  store.create({ title: "schema" }, "lead");
+  mkdirSync(join(dir, "issues.jsonl", "in-the-way"), { recursive: true });
+  assert.throws(() => store.close());
+  assert.throws(() => store.count(), /not open/);
 });

@@ -4,7 +4,7 @@ import { isAbsolute, join } from "node:path";
 import { note, owns } from "../../shared/workflow";
 import { MailError, namesTeam, reachable, resolve, shown } from "../coordination/address";
 import { refusal } from "../refusal";
-import type { Mail, MailEngine, NewMail, Needs } from "../coordination/engine";
+import type { Mail, MailEngine, NewMail, Needs, SeatRecord } from "../coordination/engine";
 import { inbox } from "../coordination/reader";
 import { MailStoreError } from "../coordination/store";
 import type { LiveSeat } from "../host";
@@ -13,6 +13,10 @@ import { CLOSES_WORK, isReceiptWord, priorityOf, SUBJECT_SIGNALS, subjectOpening
 import { fromRoom, taskOf, type RoomContext } from "./context";
 
 /** The room's two mail tools: what a seat sends is checked, routed and posted; its inbox is read. */
+
+const INFORMS = new Set(["FYI", "HANDOFF"]);
+const MOST_NAMED = 50;
+const MOST_THREAD_CHARS = 255;
 
 /** A mail tool's refusal as JSON a seat can act on. */
 export function refused(room: RoomContext, seat: string | null, error: unknown): Error {
@@ -34,10 +38,81 @@ function isReceipt(subject: string, needs: unknown, toWorker: boolean, endedWith
   );
 }
 
-const INFORMS = new Set(["FYI", "HANDOFF"]);
+/** The words of a tool argument given as a string or a list, at most MOST_NAMED of them. */
+function words(name: string, value: unknown): string[] {
+  const list = Array.isArray(value) ? value.map(String) : typeof value === "string" && value.trim() ? [value] : [];
+  if (list.length > MOST_NAMED)
+    throw new MailError("INVALID_ARGUMENT", `\`${name}\` names ${list.length} entries; ${MOST_NAMED} at most`);
+  return list;
+}
 
-const words = (value: unknown) =>
-  Array.isArray(value) ? value.map(String) : typeof value === "string" && value.trim() ? [value] : [];
+/** The id of the mail an answer names, 0 for none; `#12` and `12` name the same one. */
+const replyOf = (args: Record<string, unknown>): number =>
+  Number(
+    String(args.reply_to ?? "")
+      .trim()
+      .replace(/^#/, ""),
+  ) || 0;
+
+/** Who a mail goes to, and the thread it joins: the sender of the mail answered, the team, or the seats named. */
+function addressed(
+  room: RoomContext,
+  from: string,
+  args: Record<string, unknown>,
+  open: (id: string) => boolean,
+  whom: () => { to: string[] },
+): { to: string[]; viaReply: boolean; team: boolean; thread: string | undefined } {
+  const eng = room.engine;
+  const replyTo = replyOf(args);
+  let thread = typeof args.thread === "string" && args.thread.trim() ? args.thread.trim() : undefined;
+  if (thread && thread.length > MOST_THREAD_CHARS)
+    throw new MailError("INVALID_ARGUMENT", `\`thread\` is ${thread.length} characters; ${MOST_THREAD_CHARS} at most`);
+  if (replyTo) {
+    const ref = eng.lookupMail(replyTo, from);
+    if (!ref) throw new MailError("UNKNOWN_MAIL", `no mail #${replyTo} is known; copy the id from the mail you answer`);
+    if (!ref.to.includes(from))
+      throw new MailError(
+        "NOT_YOUR_MAIL",
+        `mail #${replyTo} was not addressed to you; you can only answer your own mail`,
+      );
+    if (ref.from === "room")
+      throw new MailError("NOT_YOUR_MAIL", `#${replyTo} is a notice from the room; nobody waits for an answer`);
+    thread ??= ref.thread;
+    return { to: [ref.from], viaReply: true, team: false, thread };
+  }
+  const named = words("to", args.to);
+  const below = reachable(eng, from).filter((seat) => eng.isAncestor(from, seat.agentId) && open(seat.agentId));
+  if (named.some(namesTeam)) {
+    const to = below.filter((seat) => eng.canWrite(from, seat.agentId).ok).map((seat) => seat.agentId);
+    if (to.length === 0) throw new MailError("NO_RECIPIENT", "no open seat under you takes your mail", whom());
+    return { to, viaReply: false, team: true, thread };
+  }
+  if (named.length === 0) {
+    // a seat with no seat under it has one place to write to
+    const owner = eng.parentOf(from);
+    if (below.length > 0 || !owner)
+      throw new MailError("NO_RECIPIENT", "give `to`, or `reply_to` to answer a mail", whom());
+    return { to: [owner], viaReply: false, team: false, thread };
+  }
+  return {
+    to: [...new Set(named.map((word) => resolve(eng, from, word, open)))],
+    viaReply: false,
+    team: false,
+    thread,
+  };
+}
+
+/** The files a mail points at, each by its whole path; a file that does not exist is refused. */
+function filesOf(sender: SeatRecord, args: Record<string, unknown>): string[] {
+  const files = words("files", args.files).map((file) =>
+    isAbsolute(file) || !sender.cwd ? file : join(sender.cwd, file),
+  );
+  if (files.some((file) => !isAbsolute(file)))
+    throw new MailError("MISSING_FILE", "your seat has no folder the room knows: name files by their whole path");
+  const missing = files.filter((file) => !existsSync(file));
+  if (missing.length > 0) throw new MailError("MISSING_FILE", "the mail names files that do not exist", { missing });
+  return files;
+}
 
 /** seatwork_mail: checks a seat's mail against the routes, posts it, returns a receipt. */
 export async function sendMail(room: RoomContext, from: string, args: Record<string, unknown>): Promise<string> {
@@ -53,57 +128,21 @@ export async function sendMail(room: RoomContext, from: string, args: Record<str
       reachable(eng, from).filter((seat) => open(seat.agentId)),
     ),
   });
-  const replyTo =
-    Number(
-      String(args.reply_to ?? "")
-        .trim()
-        .replace(/^#/, ""),
-    ) || 0;
-  let to: string[];
-  let viaReply = false;
-  let team = false;
-  let thread = typeof args.thread === "string" && args.thread.trim() ? args.thread.trim() : undefined;
-  if (replyTo) {
-    const ref = eng.lookupMail(replyTo, from);
-    if (!ref) throw new MailError("UNKNOWN_MAIL", `no mail #${replyTo} is known; copy the id from the mail you answer`);
-    if (!ref.to.includes(from))
-      throw new MailError(
-        "NOT_YOUR_MAIL",
-        `mail #${replyTo} was not addressed to you; you can only answer your own mail`,
-      );
-    if (ref.from === "room")
-      throw new MailError("NOT_YOUR_MAIL", `#${replyTo} is a notice from the room; nobody waits for an answer`);
-    to = [ref.from];
-    viaReply = true;
-    thread ??= ref.thread;
-  } else {
-    const named = words(args.to);
-    const below = reachable(eng, from).filter((seat) => eng.isAncestor(from, seat.agentId) && open(seat.agentId));
-    if (named.some(namesTeam)) {
-      team = true;
-      to = below.filter((seat) => eng.canWrite(from, seat.agentId).ok).map((seat) => seat.agentId);
-      if (to.length === 0) throw new MailError("NO_RECIPIENT", "no open seat under you takes your mail", whom());
-    } else if (named.length === 0) {
-      // a seat with no seat under it has one place to write to
-      const owner = eng.parentOf(from);
-      if (below.length > 0 || !owner)
-        throw new MailError("NO_RECIPIENT", "give `to`, or `reply_to` to answer a mail", whom());
-      to = [owner];
-    } else to = [...new Set(named.map((word) => resolve(eng, from, word, open)))];
-  }
-  const cc = [...new Set(words(args.cc).map((word) => resolve(eng, from, word, open)))].filter(
+  const { to, viaReply, team, thread } = addressed(room, from, args, open, whom);
+  const replyTo = replyOf(args);
+  const cc = [...new Set(words("cc", args.cc).map((word) => resolve(eng, from, word, open)))].filter(
     (seat) => !to.includes(seat),
   );
   for (const seat of [...to, ...cc]) {
     const check = eng.canWrite(from, seat, viaReply);
     if (!check.ok) throw new MailError("ROUTE_REFUSED", check.reason, whom());
   }
-  const found = new Map<string, Awaited<ReturnType<MailEngine["recipientStatus"]>>>();
-  for (const seat of [...to, ...cc]) {
-    found.set(seat, await eng.recipientStatus(seat));
+  const everyone = [...to, ...cc];
+  const states = await Promise.all(everyone.map((seat) => eng.recipientStatus(seat)));
+  const found = new Map(everyone.map((seat, index) => [seat, states[index]]));
+  for (const seat of everyone)
     if (found.get(seat) === "gone")
       throw new MailError("RECIPIENT_GONE", `${seat} is archived or gone; nothing was sent`, whom());
-  }
   const subject = String(args.subject ?? "").trim() || "(no subject)";
   const opening = subjectOpening(subject);
   if (!opening)
@@ -132,12 +171,7 @@ export async function sendMail(room: RoomContext, from: string, args: Record<str
       "TEAM_ASKS_NOTHING",
       "a mail to your team informs; ask a seat by name when you need its answer",
     );
-  // a file the mail points at is named where every seat finds it
-  const files = words(args.files).map((file) => (isAbsolute(file) || !sender.cwd ? file : join(sender.cwd, file)));
-  if (files.some((file) => !isAbsolute(file)))
-    throw new MailError("MISSING_FILE", "your seat has no folder the room knows: name files by their whole path");
-  const missing = files.filter((file) => !existsSync(file));
-  if (missing.length > 0) throw new MailError("MISSING_FILE", "the mail names files that do not exist", { missing });
+  const files = filesOf(sender, args);
   // a seat that owns none is the one doing the work: what comes down to it is its next step
   const toWorker = to.length === 1 && eng.isAncestor(from, to[0]) && !owns(eng.seat(to[0])?.role);
   const signal = subjectSignal(subject);
@@ -195,7 +229,7 @@ export async function sendMail(room: RoomContext, from: string, args: Record<str
   if (to.length === 1 && eng.parentOf(to[0]) === from) {
     const task = taskOf(room, to[0]);
     const before = room.rounds.rejected(task);
-    const count = room.rounds.answered(task, opening);
+    const count = room.rounds.answered(task, opening, to[0]);
     if (count > before && count >= 3) round = note("pastLastRound", { rejected: count });
   }
   return JSON.stringify({

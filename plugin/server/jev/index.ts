@@ -13,16 +13,18 @@ import {
   type DecisionFailure,
   type NoulQuestion,
   type Questions,
+  type Reply,
   type State,
 } from "./contract";
 import { DIALECTS, type Dialect } from "./dialects";
 import { cleanState, guarded } from "./input";
 import { districtOf, JevStore, type CallRow } from "./store";
 
-/** The Jev district: decisions from the provider in force, its input made safe, logged, costed, capped, and held off while the provider is down. */
+/** The Jev district: decisions from the provider in force, input made safe, calls logged, costed, capped, and held off while it is down. */
 
 export type ProviderName = "jev" | "openrouter" | "custom";
 
+/** One provider's wire: url, model and dialect, the env variable of its key, and its price per million input tokens. */
 export interface ProviderPolicy {
   url: string;
   model: string;
@@ -31,6 +33,7 @@ export interface ProviderPolicy {
   usdPerMillionInput: number;
 }
 
+/** The policy's jev section: the provider in force and every provider's wire, the caps, a call's limits, and the forks. */
 export interface JevPolicy {
   provider: ProviderName;
   providers: Record<ProviderName, ProviderPolicy>;
@@ -42,6 +45,7 @@ export interface JevPolicy {
   forks?: string[];
 }
 
+/** What the district takes: its folder and policy, and stand-ins for the environment, clock, network and log. */
 export interface JevDeps {
   dir: string;
   policy(): JevPolicy | undefined;
@@ -51,6 +55,7 @@ export interface JevDeps {
   log?: (line: string) => void;
 }
 
+/** A decision as its caller reads it: the answers, the ids they were logged under, its cost, and whether memory gave it. */
 export interface Decision {
   callId: number;
   model: string;
@@ -96,6 +101,20 @@ function outOfRange(policy: JevPolicy, settings: ProviderPolicy): string | null 
   return null;
 }
 
+/** What a reply cost: the provider's figure, else the price on its input tokens, or on what was sent when it counts none. */
+function costOf(
+  reply: Reply,
+  usdPerMillionInput: number,
+  sentTokens: () => number,
+): { usd: number | null; usdSource: CallRow["usdSource"] } {
+  const tokens = reply.inputTokens > 0 ? reply.inputTokens : sentTokens();
+  const priced = usdPerMillionInput > 0 ? (tokens * usdPerMillionInput) / 1e6 : null;
+  return {
+    usd: reply.costUsd ?? priced,
+    usdSource: reply.costUsd !== null ? "provider" : priced !== null ? "price" : null,
+  };
+}
+
 /** The log row of a call that failed or was refused. */
 function failedRow(
   logged: Pick<CallRow, "caller" | "provider" | "modelAsked" | "stateHash" | "suspect">,
@@ -115,6 +134,7 @@ function failedRow(
   };
 }
 
+/** The district: puts questions to the provider in force and logs every call. */
 export class Jev {
   private storeHandle: JevStore | null = null;
   private readonly keys = new Map<ProviderName, { at: number; key: string | undefined }>();
@@ -141,8 +161,12 @@ export class Jev {
     const now = this.now().getTime();
     const kept = this.keys.get(name);
     if (kept && now - kept.at < KEY_KEPT_MS) return kept.key;
-    const file = this.keyFile(name);
-    const key = existsSync(file) ? readFileSync(file, "utf8").trim() || undefined : undefined;
+    let key: string | undefined;
+    try {
+      key = readFileSync(this.keyFile(name), "utf8").trim() || undefined;
+    } catch {
+      // a file that is missing or unreadable is no key; `why()` names the file
+    }
     this.keys.set(name, { at: now, key });
     return key;
   }
@@ -173,6 +197,7 @@ export class Jev {
     return this.now().getTime() < this.down.until ? this.downWhy() : null;
   }
 
+  /** Why the provider is held off, and until when. */
   private downWhy(): string {
     return `the provider failed ${BREAKER.trips} times in a row; it is asked again after ${new Date(this.down.until).toISOString()}`;
   }
@@ -239,11 +264,13 @@ export class Jev {
     return { ...kept.decision, usd: 0, latencyMs: 0, attempts: 0, cached: true };
   }
 
+  /** Keeps a decision for its question; past the cache's size the longest unused goes. */
   private remember(key: string, decision: Decision): void {
     this.cache.set(key, { at: this.now().getTime(), decision });
     if (this.cache.size > CACHE.entries) this.cache.delete(this.cache.keys().next().value!);
   }
 
+  /** The log, opened on first use. */
   store(): JevStore {
     return (this.storeHandle ??= new JevStore(this.deps.dir, BUSY_MS, () => this.now()));
   }
@@ -303,10 +330,7 @@ export class Jev {
         fetch: this.deps.fetch,
       });
       Object.assign(this.down, { failures: 0, opens: 0, until: 0 });
-      // a reply that counts no tokens is priced on what was sent, so the caps still hold
-      const tokens = reply.inputTokens > 0 ? reply.inputTokens : tokensOf(sent, asked);
-      const priced = settings.usdPerMillionInput > 0 ? (tokens * settings.usdPerMillionInput) / 1e6 : null;
-      const usd = reply.costUsd ?? priced;
+      const { usd, usdSource } = costOf(reply, settings.usdPerMillionInput, () => tokensOf(sent, asked));
       const { callId, asks } = this.store().record(
         {
           ...logged,
@@ -314,7 +338,7 @@ export class Jev {
           inputTokens: reply.inputTokens,
           outputTokens: reply.outputTokens,
           usd,
-          usdSource: reply.costUsd !== null ? "provider" : priced !== null ? "price" : null,
+          usdSource,
           latencyMs: reply.latencyMs,
           attempts: reply.attempts,
           error: null,
@@ -347,7 +371,7 @@ export class Jev {
     }
   }
 
-  /** Forks asked in one call, each by its id: the model's label, how sure it is, sharp at `sharpAt` or more with no orders in the state. Never throws on a failed call. */
+  /** Puts forks to the model in one call: for each id its label and probability, sharp at `sharpAt` or more; a failed call leaves every fork unsure, never thrown. */
   async routes(
     caller: string,
     state: State,
@@ -418,6 +442,7 @@ export class Jev {
     return gone ? gone.states + gone.calls : 0;
   }
 
+  /** Closes the log. */
   close(): void {
     this.storeHandle?.close();
     this.storeHandle = null;

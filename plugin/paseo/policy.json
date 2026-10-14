@@ -206,7 +206,7 @@
         "memories",
         "plugins"
       ],
-      "$comment_featuresOff": "plugins: left on, Codex syncs its marketplace into every seat's home at each start, and a seat gets no plugin. An owner who sets sharePlugins removes it from this list.",
+      "$comment_featuresOff": "plugins: off, because with it on Codex syncs its marketplace into every seat's home at each start and a seat gets no plugin from it. An owner who sets sharePlugins removes it from this list.",
       "multiAgentV2Off": true,
       "agentsOff": true
     }
@@ -284,7 +284,7 @@
     "chime": true
   },
   "gc": {
-    "$comment": "Room garbage collection, every everyMinutes and on agent.archived. A seat idle past its role's hours (0 = never) is archived unless a descendant is alive; a heartbeat of a seat archived or gone is deleted; mail held for an archived seat bounces to its sender. It kills no process and touches no agent that is not a room seat.",
+    "$comment": "Room garbage collection, every everyMinutes and on agent.archived. A seat idle past its role's hours (0 = never) is archived unless a descendant is alive; a heartbeat of a seat archived or gone, or one the app finished, is deleted; mail held for an archived seat bounces to its sender. It kills no process and touches no agent that is not a room seat.",
     "everyMinutes": 10,
     "idleHoursBeforeArchive": {
       "hq": 0,

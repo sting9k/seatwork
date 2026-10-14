@@ -5,6 +5,8 @@ import { loadModels, promptVars, render, type Models } from "./models";
 import type { RoomParams } from "../policy";
 import { inRoom, isRole } from "../../shared/workflow";
 
+/** The seats of the room: a provider named `<harness>-<role>`, the room's prompts for them, and which of them this machine has. */
+
 export const HARNESSES = ["claude", "codex", "pi", "opencode"] as const;
 
 export type Harness = (typeof HARNESSES)[number];
@@ -27,6 +29,7 @@ export function parseSeat(provider: string | undefined): Seat | null {
   return { provider, harness: harness as Harness, role };
 }
 
+/** A file's text, or null where there is none. */
 function readIfExists(path: string): string | null {
   return existsSync(path) ? readFileSync(path, "utf8") : null;
 }
@@ -44,7 +47,8 @@ function specSheet(name: string | undefined): string | null {
   return readIfExists(join(ROOM_DIR, "specs", `${name}.md`));
 }
 
-export interface PromptContext {
+/** What a seat's prompt is rendered from: its agent CLI, its specialization, the room's numbers and the table in force. */
+interface PromptContext {
   harness: Harness;
   spec?: string;
   params: RoomParams;

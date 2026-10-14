@@ -29,6 +29,7 @@ export const cliCatalog: Catalog = async (harness) => {
   }
 };
 
+/** An agent CLI as the running daemon sees it: ready or not, and the models it lists. */
 export interface HarnessState {
   id: Harness;
   label: string;

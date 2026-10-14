@@ -3,7 +3,9 @@ import { join } from "node:path";
 import { WorkStore, type WorkPolicy } from "./store";
 import { projectPolicy, WORK_DIR } from "./tools";
 
-/** One open work store per project, opened on first use. */
+/** The room's work stores, one per project. */
+
+/** One open work store per project, opened on first use; `policy` is the room's, undefined when its files predate the work store. */
 export class WorkStores {
   private readonly open = new Map<string, WorkStore>();
 
@@ -31,6 +33,19 @@ export class WorkStores {
     return this.of(root).store;
   }
 
+  /** Expires the closed issues past their keep in the stores of these projects, those that have one; returns how many left. */
+  expire(before: Date, roots: readonly string[]): number {
+    let gone = 0;
+    for (const root of roots)
+      try {
+        gone += this.existing(root)?.expire(before) ?? 0;
+      } catch (error) {
+        this.log(`work: expiring the closed issues of ${root} failed: ${(error as Error).message}`);
+      }
+    return gone;
+  }
+
+  /** Closes every store, the text copy of each written first. */
   close(): void {
     for (const store of this.open.values()) store.close();
     this.open.clear();

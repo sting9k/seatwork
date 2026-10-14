@@ -58,3 +58,18 @@ test("a fork's labels may be the call's own, and many questions of one fork go i
   assert.deepEqual(await forksOf(pairs.router).forks.takeMany("overlap", {}, []), []);
   assert.equal(pairs.asked.length, 1, "no question, no call");
 });
+
+test("a decision model that throws keeps the room's rule and is logged, whatever it threw", async () => {
+  const lines: string[] = [];
+  const router: Router = {
+    why: () => null,
+    routes: async () => {
+      throw new Error("database is locked");
+    },
+  };
+  const forks = new Forks({ router, on: () => true, log: (line) => lines.push(line) });
+  assert.equal(await forks.take("report", {}), null);
+  assert.deepEqual(await forks.takeMany("overlap", {}, ["p1", "p2"]), [null, null]);
+  assert.equal(lines.length, 2);
+  assert.match(lines[0], /fork report: .*database is locked/);
+});

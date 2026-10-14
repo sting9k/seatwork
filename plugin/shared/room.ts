@@ -1,7 +1,8 @@
 import { defineRpc } from "@getpaseo/plugin";
 import { z } from "zod";
 
-/** What the app asks the room while open: the turns that wait on the Owner, and whether to chime. */
+/** What the open app asks the room: which turns wait on the Owner and whether to chime, and the seats of each project. */
+
 export const roomWaiting = defineRpc({
   name: "room.waiting",
   input: z.object({}),
@@ -19,7 +20,6 @@ export const roomWaiting = defineRpc({
   }),
 });
 
-/** What the Room screen shows: what waits on the Owner, and the seats that exist, project by project. */
 export const roomStatus = defineRpc({
   name: "room.status",
   input: z.object({}),

@@ -1,7 +1,7 @@
 import { ROOM_HOME, shipSql } from "./support/room";
 import assert from "node:assert/strict";
 import { getEventListeners } from "node:events";
-import { mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { DatabaseSync } from "node:sqlite";
 import { test } from "node:test";
@@ -270,6 +270,24 @@ test("the district is off without a provider or a key, and stops at the month's 
   jev.close();
 });
 
+test(
+  "a key file that cannot be read is no key: the district says so and never throws",
+  { skip: process.getuid?.() === 0 },
+  async () => {
+    const none = provider();
+    const { jev, dir } = district(POLICY("jev"), none.fetch, false);
+    const file = join(dir, "jev.key");
+    writeFileSync(file, "key-jev\n");
+    chmodSync(file, 0o000);
+    assert.match(String(jev.why()), /no key for jev/);
+    const fork = await jev.routes("t", "s", { fork: { type: "noul", instructions: "Is it done?" } }, 0.9);
+    assert.match(String(fork.fork.why), /no key for jev/);
+    assert.equal(none.sent.length, 0);
+    chmodSync(file, 0o600);
+    jev.close();
+  },
+);
+
 test("text that is not English is never sent; each refusal is logged as a failed call of its district today", async () => {
   const replies = provider(json({ model: "m", answers: SYSTEM_ONE, usage: {} }));
   const { jev } = district(POLICY("jev"), replies.fetch);
@@ -402,6 +420,20 @@ test("every statement the decision log runs uses an index", async () => {
     .plans()
     .filter(({ plan }) => /\bSCAN (calls|asks|states|labels|spend|spend_daily|[cal])\b(?! USING)/.test(plan));
   assert.deepEqual(scans, []);
+  const planned = jev
+    .store()
+    .plans()
+    .map(({ plan }) => plan)
+    .join(" | ");
+  const db = (jev.store() as unknown as { db: DatabaseSync }).db;
+  const indexes = db
+    .prepare("SELECT name FROM sqlite_master WHERE type = 'index' AND name NOT LIKE 'sqlite_%'")
+    .all() as { name: string }[];
+  assert.deepEqual(
+    indexes.filter(({ name }) => !planned.includes(name)).map((one) => ({ ...one })),
+    [],
+    "every index serves a statement",
+  );
   jev.close();
 });
 

@@ -4,6 +4,7 @@ import { seatLabel } from "./envelope";
 
 /** Whom a seat may write to, and which seat a word in `to` names. */
 
+/** A seat the room registered: its parent, role and agent CLI, its title and the folder it works in. */
 export interface SeatRecord {
   agentId: string;
   parentAgentId: string | null;
@@ -57,12 +58,14 @@ export class MailError extends Error {
 const OWNER = new Set<string>(config.owner);
 const TEAM = new Set<string>(config.team);
 const ROLE_TAG = new RegExp(`^(?:${ROLES.join("|")}):`, "i");
+/** A title without its role tag, lowercased: what two titles are compared by. */
 const bare = (title: string | null) =>
   (title ?? "")
     .replace(/^\[[^\]]*\]\s*/, "")
     .trim()
     .toLowerCase();
 
+/** Whether a word of `to` names the sender's whole team. */
 export const namesTeam = (word: string) => TEAM.has(word.trim().toLowerCase());
 
 /** The seats a seat may start a mail to: its Owner, then every seat under it. */

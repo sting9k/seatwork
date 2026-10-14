@@ -28,6 +28,9 @@ interface Agent {
   effectiveThinkingOptionId?: string | null;
 }
 
+const LIST_PAGE_SIZE = 200;
+const LIST_PAGES = 20;
+
 /** A Paseo agent as the room reads a seat. */
 function liveSeat(agent: Agent): LiveSeat {
   return {
@@ -48,8 +51,8 @@ function liveSeat(agent: Agent): LiveSeat {
   };
 }
 
+/** A seat's state from what the daemon says of it; null is an agent the daemon answered it does not have. */
 function stateOf(agent: { status?: string; archived?: boolean; waiting: boolean } | null): SeatState {
-  // the daemon answered: it has no such agent (deleted), or the agent is archived
   if (!agent || agent.archived) return "gone";
   if (agent.waiting) return "permission";
   if (agent.status === "running") return "running";
@@ -65,31 +68,32 @@ interface Schedule {
   target?: { type?: string; agentId?: string };
 }
 
-/** Every schedule in the daemon's store, read from disk: `paseo schedule ls` hides heartbeats. */
+/** Every schedule in the daemon's store, read from disk by file name: `paseo schedule ls` hides heartbeats. */
 function storedSchedules(): Schedule[] {
   if (!existsSync(PASEO_SCHEDULES)) return [];
   const out: Schedule[] = [];
-  for (const name of readdirSync(PASEO_SCHEDULES)) {
+  for (const name of readdirSync(PASEO_SCHEDULES).sort()) {
     if (!name.endsWith(".json")) continue;
     try {
       const parsed = JSON.parse(readFileSync(join(PASEO_SCHEDULES, name), "utf8")) as Schedule;
       if (parsed && typeof parsed.id === "string") out.push(parsed);
     } catch {
-      // not ours to judge
+      // a file the daemon is writing or another version wrote is left alone
     }
   }
   return out;
 }
 
+/** The Host the room runs on: Paseo hands a client only inside hooks and app calls, so the latest one is kept. */
 export class PaseoHost implements Host {
   private client: PaseoApi | null = null;
   private wakerLock: Promise<unknown> = Promise.resolve();
 
-  /** Paseo hands a client only inside hooks and app calls: the latest is kept. */
   use(paseo: PaseoApi): void {
     this.client = paseo;
   }
 
+  /** The client Paseo last handed over; null before the first hook or app call. */
   get ready(): PaseoApi | null {
     return this.client;
   }
@@ -112,6 +116,7 @@ export class PaseoHost implements Host {
     return stateOf(agent && { ...liveSeat(agent), archived: !!agent.archivedAt });
   }
 
+  /** The state of a seat read through the CLI, for the time before Paseo has handed a client. */
   private async stateByCli(agentId: string): Promise<SeatState> {
     let raw: string;
     try {
@@ -119,7 +124,13 @@ export class PaseoHost implements Host {
     } catch (error) {
       return /not found|no agent/i.test(String(error)) ? "gone" : "unknown";
     }
-    const agent = JSON.parse(raw) as { Status?: string; Archived?: boolean; PendingPermissions?: unknown[] | null };
+    let agent: { Status?: string; Archived?: boolean; PendingPermissions?: unknown[] | null };
+    try {
+      agent = JSON.parse(raw);
+    } catch {
+      // an answer that is no JSON proves nothing about the seat
+      return "unknown";
+    }
     return stateOf({
       status: agent.Status,
       archived: agent.Archived === true,
@@ -148,7 +159,7 @@ export class PaseoHost implements Host {
   }
 
   async reparent(child: string, parent: string): Promise<void> {
-    // Paseo's parent link is a label; moving it keeps its archive cascade off the adopted child
+    // Paseo's parent link is a label; moving it keeps the parent's archive from cascading to the adopted child
     await paseoCli(["agent", "update", child, "--label", `paseo.parent-agent-id=${parent}`]);
   }
 
@@ -156,10 +167,10 @@ export class PaseoHost implements Host {
     const paseo = this.sdk();
     const out = new Map<string, LiveSeat>();
     let cursor: string | undefined;
-    for (let page = 0; page < 20; page += 1) {
+    for (let page = 0; page < LIST_PAGES; page += 1) {
       const result = await paseo.agents.list({
         filter: { includeArchived: false },
-        page: { limit: 200, ...(cursor ? { cursor } : {}) },
+        page: { limit: LIST_PAGE_SIZE, ...(cursor ? { cursor } : {}) },
       });
       for (const entry of result.entries) {
         const agent = (entry as { agent: Agent }).agent;
@@ -167,9 +178,10 @@ export class PaseoHost implements Host {
       }
       const info = (result as { pageInfo?: { nextCursor?: string | null; hasMore?: boolean } }).pageInfo;
       cursor = info?.hasMore && info.nextCursor ? info.nextCursor : undefined;
-      if (!cursor) break;
+      if (!cursor) return out;
     }
-    return out;
+    // a seat missing from a cut list would read as gone, and its heartbeats would be deleted
+    throw new Error(`Paseo lists more than ${LIST_PAGES * LIST_PAGE_SIZE} open agents`);
   }
 
   async seat(agentId: string): Promise<LiveSeat | null> {
@@ -229,19 +241,25 @@ export class PaseoHost implements Host {
     return projects.map((project) => ({ name: project.projectDisplayName, path: project.projectRootPath }));
   }
 
-  /** A heartbeat is a Paseo schedule aimed at a seat; one pass at a time. */
-  dropWakers(seat: (agentId: string) => "gone" | "live" | null): Promise<string[]> {
+  /** A heartbeat is a Paseo schedule aimed at a seat; one pass at a time, and one that cannot be deleted does not stop the rest. */
+  dropWakers(seat: (agentId: string) => "gone" | "live" | null): Promise<{ deleted: string[]; failed: string[] }> {
     const run = this.wakerLock.then(async () => {
-      const gone: string[] = [];
+      const deleted: string[] = [];
+      const failed: string[] = [];
       for (const schedule of storedSchedules()) {
         const target = schedule.target?.type === "agent" ? schedule.target.agentId : undefined;
         const state = target ? seat(target) : null;
         // a schedule aimed at an agent that is not the room's is the user's own, finished or not
         if (!target || state === null || (state === "live" && schedule.status !== "completed")) continue;
-        await paseoCli(["schedule", "delete", schedule.id]);
-        gone.push(`heartbeat ${schedule.id} (${schedule.name ?? ""}) of ${target}`);
+        const what = `heartbeat ${schedule.id} (${schedule.name ?? ""}) of ${target}`;
+        try {
+          await paseoCli(["schedule", "delete", schedule.id]);
+          deleted.push(what);
+        } catch (error) {
+          failed.push(`${what}: ${error instanceof Error ? error.message : String(error)}`);
+        }
       }
-      return gone;
+      return { deleted, failed };
     });
     this.wakerLock = run.catch(() => undefined);
     return run;

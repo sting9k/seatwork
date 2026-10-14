@@ -2,7 +2,7 @@ import { randomBytes } from "node:crypto";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { readJson, writeJson } from "../persisted";
 
-/** Who calls the room's MCP server: a nonce given at launch, tied to the seat's id later. */
+/** Who calls the room's MCP server: a nonce given at launch, tied to the seat's id once its session opens. */
 export class Callers {
   private readonly nonces: Record<string, string>;
 
@@ -15,12 +15,14 @@ export class Callers {
     return randomBytes(9).toString("base64url");
   }
 
+  /** Ties a nonce to the seat whose session opened with it. */
   bind(nonce: string, agentId: string): void {
     if (this.nonces[nonce] === agentId) return;
     this.nonces[nonce] = agentId;
     this.save();
   }
 
+  /** The seat a nonce names, if one is tied to it. */
   seatOf(nonce: string): string | null {
     return this.nonces[nonce] ?? null;
   }

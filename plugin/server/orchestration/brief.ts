@@ -1,6 +1,6 @@
 /** A brief as the room's template writes it: `Label: value` lines, read into fields. */
 
-export type BriefField =
+type BriefField =
   | "project"
   | "outcome"
   | "candidate"
@@ -42,7 +42,7 @@ const LABELS: readonly [RegExp, BriefField][] = [
   [/^inputs$/, "inputs"],
   [/^lane$/, "lane"],
 ];
-const LABEL_LINE = /^\s*(?:[-*>]\s+)?[*_`"']*([a-z][a-z /_-]*?)[*_]*\s*:\s*(.*)$/i;
+const LABEL_LINE = /^\s*(?:[-*>]\s+)?[*_`"']*([a-z][a-z /_-]{0,40}?)[*_]*\s*:\s*(.*)$/i;
 
 /** The fields a brief holds; a value runs to the next label, and a later label of a field wins. */
 export function briefFields(text: string): Partial<Record<BriefField, string>> {
@@ -58,7 +58,7 @@ export function briefFields(text: string): Partial<Record<BriefField, string>> {
   return Object.fromEntries(Object.entries(lines).map(([field, own]) => [field, own.join("\n")]));
 }
 
-/** Written from the room's template, and not some other prompt that happens to hold a label. */
+/** Whether a prompt was written from the room's template: it holds at least three of its labels, not one stray one. */
 export const fromTemplate = (prompt: string): boolean => Object.keys(briefFields(prompt)).length >= 3;
 
 const PROGRAM = /^(?:\.{0,2}\/[\w./-]+|[a-z][\w.+-]*)$/i;

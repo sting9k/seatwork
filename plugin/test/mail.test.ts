@@ -1,6 +1,6 @@
 import { deferred, hostOf, MAIL_POLICY, ROOM_HOME, shipSql } from "./support/room";
 import assert from "node:assert/strict";
-import { existsSync, mkdirSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { test } from "node:test";
 import { MailError } from "../server/coordination/address";
@@ -615,4 +615,143 @@ test("a seat that reads every project searches another project's mail, or all of
     () => inbox(engine, id.peer, { view: "search", q: "offset", project: "all" }, Date.now()),
     /`project` is for a seat that reads every project/,
   );
+});
+
+test("a reader of the mail sees a report only once it went out, as it went out, and never a draft that was replaced", async () => {
+  const id = names("lead", "peer");
+  const engine = engineFor({ [id.lead]: listener().handle, [id.peer]: idle });
+  engine.rememberSeat(seat(id.lead, "lead"));
+  engine.rememberSeat(seat(id.peer, "peer", id.lead));
+  const marker = await engine.post(mail(id.lead, "FYI: a place to read from"));
+  const report = (subject: string) =>
+    mail(id.lead, subject, { from: { agentId: id.peer, role: "peer" }, needs: "reply", quiet: true });
+  const read = () => engine.mailAfter(null, marker.id, 50).map((one) => one.subject);
+  engine.keepReport(report("CANDIDATE: first try"));
+  engine.keepReport(report("CANDIDATE: store"));
+  assert.deepEqual(read(), [], "kept for the turn end: not mail yet");
+  const draft = engine.takeReport(id.peer)!;
+  assert.deepEqual(read(), [], "taken to go out: not mail yet");
+  await engine.post({ ...draft, body: `${draft.body}\n\n[room] second candidate` });
+  assert.deepEqual(read(), ["CANDIDATE: store"], "the replaced draft is no mail");
+  assert.match(engine.mailAfter(null, marker.id, 50)[0].body, /second candidate/);
+});
+
+test("a report taken at a turn end by a process that stopped before it went out is posted by the next engine's sweep", async () => {
+  const id = names("lead", "peer");
+  const lead = listener();
+  const first = engineFor({ [id.lead]: lead.handle, [id.peer]: idle });
+  first.rememberSeat(seat(id.lead, "lead"));
+  first.rememberSeat(seat(id.peer, "peer", id.lead));
+  first.keepReport(mail(id.lead, "DONE: docs", { from: { agentId: id.peer, role: "peer" }, needs: "reply" }));
+  assert.ok(first.takeReport(id.peer), "taken, and the process ends before it posts");
+  const next = engineFor({ [id.lead]: lead.handle, [id.peer]: idle });
+  next.rememberSeat(seat(id.lead, "lead"));
+  next.rememberSeat(seat(id.peer, "peer", id.lead));
+  await next.sweep();
+  assert.equal(lead.got.length, 1);
+  assert.match(lead.got[0], /subject="DONE: docs"/);
+});
+
+test("a seat whose delivery fails does not hold up the other seats of the sweep, nor does a report that cannot go out", async () => {
+  const id = names("aa", "bb", "peer-a", "peer-b");
+  let status = "running";
+  const at = () => {
+    const got: string[] = [];
+    return {
+      got,
+      handle: {
+        refresh: async () => {},
+        current: () => ({ status }),
+        send: async (text: string) => void got.push(text),
+      },
+    };
+  };
+  const [a, b] = [at(), at()];
+  const engine = engineFor({ [id.aa]: a.handle, [id.bb]: b.handle, [id["peer-a"]]: idle, [id["peer-b"]]: idle });
+  engine.rememberSeat(seat(id.aa, "lead"));
+  engine.rememberSeat(seat(id.bb, "lead"));
+  engine.rememberSeat(seat(id["peer-a"], "peer", id.aa));
+  engine.rememberSeat(seat(id["peer-b"], "peer", id.bb));
+  await engine.post(mail(id.aa, "FYI: one"));
+  await engine.post(mail(id.bb, "FYI: two"));
+  const report = (from: string, to: string) =>
+    mail(to, "DONE: docs", { from: { agentId: from, role: "peer" }, needs: "reply" });
+  engine.keepReport(report(id["peer-a"], id.aa));
+  engine.keepReport(report(id["peer-b"], id.bb));
+  status = "idle";
+  // another district's hook fails for the first seat
+  engine.appendix = (agent) => {
+    if (agent === id.aa) throw new Error("boom");
+    return null;
+  };
+  await engine.sweep();
+  assert.equal(a.got.length, 0);
+  assert.equal(
+    engine.held(id.aa).length,
+    2,
+    "the mail and the report that could not go out are held for the next pass",
+  );
+  assert.match(b.got.join("\n"), /FYI: two[\s\S]*DONE: docs/, "the report after the failed one still goes out");
+});
+
+test("a project that could not be read is not remembered as none: the next ask finds it", () => {
+  const id = names("lead");
+  const project = join(ROOM_HOME, `unread-${cases}`);
+  mkdirSync(project, { recursive: true });
+  let failing = true;
+  const engine = engineFor(
+    {},
+    {
+      rootOf: () => {
+        if (failing) throw new Error("the registry is busy");
+        return project;
+      },
+    },
+  );
+  engine.rememberSeat(seat(id.lead, "lead", null, project));
+  assert.equal(engine.projectOf(id.lead), null);
+  failing = false;
+  assert.equal(engine.projectOf(id.lead), project);
+});
+
+test("a store that cannot be read is said in the log and passed over by the counts and the record of what was posted", async () => {
+  const id = names("lead", "peer");
+  const project = join(ROOM_HOME, `broken-${cases}`);
+  mkdirSync(project, { recursive: true });
+  const said: string[] = [];
+  const paseo = { agents: { ref: () => ({ ...idle, send: async () => {} }) } };
+  const engine = new MailEngine(hostOf(paseo), MAIL_POLICY, (line) => said.push(line), {
+    rootOf: (cwd: string) => (cwd.startsWith(project) ? project : null),
+  });
+  engine.rememberSeat(seat(id.lead, "lead", null, project));
+  engine.rememberSeat(seat(id.peer, "peer", id.lead, project));
+  await engine.post(mail(id.peer, "INSTRUCTION: go", { from: { agentId: id.lead, role: "lead" } }));
+  const store = engine.storeOf(id.lead)!;
+  const broken = () => {
+    throw new Error("the store is locked");
+  };
+  store.replies = broken;
+  store.posted = broken;
+  assert.doesNotThrow(() => engine.answering("2000"));
+  assert.doesNotThrow(() => engine.posted("2000"));
+  assert.equal(said.filter((line) => /the store is locked/.test(line)).length, 2);
+});
+
+test("a store read back from its files passes over a file it cannot read, and stands", async () => {
+  const id = names("lead", "peer");
+  const project = join(ROOM_HOME, `unreadable-${cases}`);
+  mkdirSync(project, { recursive: true });
+  const options = { rootOf: (cwd: string) => (cwd.startsWith(project) ? project : null) };
+  const engine = engineFor({ [id.peer]: listener().handle, [id.lead]: listener().handle }, options);
+  engine.rememberSeat(seat(id.lead, "lead", null, project));
+  engine.rememberSeat(seat(id.peer, "peer", id.lead, project));
+  await engine.post(mail(id.peer, "INSTRUCTION: go", { from: { agentId: id.lead, role: "lead" } }));
+  engine.close();
+  const folder = join(project, ".seatwork", ".mail");
+  for (const suffix of ["", "-wal", "-shm"]) rmSync(join(folder, `mail.db${suffix}`), { force: true });
+  const month = readdirSync(folder).find((name) => /^\d{4}-\d{2}$/.test(name))!;
+  mkdirSync(join(folder, month, "a-folder-named-like-a-mail.md"));
+  const again = engineFor({ [id.peer]: listener().handle, [id.lead]: listener().handle }, options);
+  again.rememberSeat(seat(id.lead, "lead", null, project));
+  assert.equal(again.storeOf(id.lead)!.count(), 1);
 });

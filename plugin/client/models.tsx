@@ -19,7 +19,7 @@ import {
 } from "../shared/model-choices";
 import { childrenOf, ROOTS, traits } from "../shared/workflow";
 import type { setupState } from "../shared/setup";
-import { Btn, Chip, CLI_COLOR, Dot, IconTile, Seg, tint, type Colors, type Inside } from "./kit";
+import { Btn, Chip, CLI_COLOR, Dot, IconTile, MONO, Seg, tint, type Colors, type Inside } from "./kit";
 
 export type Harness = RpcOutput<typeof setupState>["harnesses"][number];
 type Role = string;
@@ -29,10 +29,6 @@ const isTierRole = (role: Role): boolean => traits(role).models === "tiers";
 /** The roles below `roles` in the order the tree draws them, each before those it creates. */
 const inOrder = (roles: readonly Role[], seen = new Set<Role>()): Role[] =>
   roles.flatMap((role) => (seen.has(role) ? [] : (seen.add(role), [role, ...inOrder(childrenOf(role), seen)])));
-/** The host's modal; its type leans on React's, which this plugin does not install. */
-const Sheet = Modal as any;
-/** Paseo sets its own font on everything but what carries this mark. */
-const MONO = { dataSet: { pmono: "true" }, style: { fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace" } };
 
 /** A model as this host names it. */
 const modelName = (choice: ModelChoice, harnesses: Harness[]) =>
@@ -74,6 +70,8 @@ export function RoleTree(props: {
   colors: Colors;
 }) {
   const { mode, base, choices, running, harnesses, onChange, where, compact, colors: c } = props;
+  // the host's modal: its type leans on React's, which this plugin does not install
+  const Sheet = Modal as any;
   const [opened, setOpen] = useState(null as Role | null);
   const open = opened as Role | null;
   const [measured, setWidth] = useState(0);

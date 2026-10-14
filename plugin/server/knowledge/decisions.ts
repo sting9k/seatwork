@@ -8,7 +8,7 @@ import type { Decision, KnowledgeStore, PairChoice, Settled, SourceWords } from 
 
 /** Decisions: what a person with the authority decided, recorded by a seat, settled on the person's words, pushed. */
 
-export const DECISION_LIMITS = {
+const DECISION_LIMITS = {
   statement: 300,
   topic: 60,
   nearby: 5,
@@ -44,8 +44,7 @@ export function lintStatement(statement: string): string | null {
 }
 
 /** The note a seat is shown a decision under: one per topic of a scope, whatever its version. */
-export const noteOf = (decision: Pick<Decision, "scopeKey" | "topic">): string =>
-  `d:${decision.scopeKey}|${decision.topic}`;
+const noteOf = (decision: Pick<Decision, "scopeKey" | "topic">): string => `d:${decision.scopeKey}|${decision.topic}`;
 
 /** A scope as a seat reads it: room, project, or the task it is about. */
 function scopeLabel(scopeKey: string): string {
@@ -56,13 +55,13 @@ function scopeLabel(scopeKey: string): string {
 /** A decision as one text, its topic first, as the gate reads it and a pair keeps it. */
 const textOf = (decision: Pick<Decision, "topic" | "statement">): string => `${decision.topic}: ${decision.statement}`;
 
-/** One decision as a line. */
-export function lineOf(decision: Decision): string {
+/** A decision as one line of a prompt or a notice. */
+function lineOf(decision: Decision): string {
   const until = decision.validUntil ? `, until ${decision.validUntil.slice(0, 10)}` : "";
   return `- [${scopeLabel(decision.scopeKey)}] ${decision.topic}: ${decision.statement} (since ${decision.validFrom.slice(0, 10)}${until}; v${decision.version})`;
 }
 
-/** The decisions in force for a seat's start, whole while they fit, then by topic, then counted; `whole`: how many lead it whole. */
+/** The decisions for a seat's start: whole while they fit, then by topic, then counted; `whole` is how many lead it whole. */
 export function promptBlock(decisions: readonly Decision[], asOf: string): { text: string; whole: number } | null {
   if (decisions.length === 0) return null;
   const head = [
@@ -97,6 +96,7 @@ export function promptBlock(decisions: readonly Decision[], asOf: string): { tex
   };
 }
 
+/** What the book takes from the district: its stores, the room's seats, tasks and projects, the gate and the pairs. */
 export interface DecisionDeps {
   book(): KnowledgeStore;
   recordOf(agent: string): KnowledgeStore | null;
@@ -112,7 +112,7 @@ export interface DecisionDeps {
   now(): Date;
 }
 
-/** A notice as it was made for a seat: its text, the changes it holds, what it was made against, and its last own note. */
+/** A notice as made for a seat: its text, the changes it holds, what it was made against, and its last own note. */
 export interface Told {
   text: string;
   seen: { note: string; version: number }[];
@@ -213,6 +213,21 @@ export class DecisionBook {
     return at.toISOString();
   }
 
+  /** The dates a call gives, checked: a decision takes effect when recorded, and a task's ends after its days unless told. */
+  private datesOf(args: Record<string, unknown>, forTask: boolean): { validFrom: string; validUntil: string | null } {
+    const validFrom = this.dateOf(args.valid_from, "valid_from", this.now())!;
+    if (validFrom > new Date(this.deps.now().getTime() + 60_000).toISOString())
+      throw new KnowledgeRefused("valid_from is ahead: a decision takes effect when it is recorded; record it then");
+    const validUntil = this.dateOf(
+      args.valid_until,
+      "valid_until",
+      forTask ? new Date(this.deps.now().getTime() + DECISION_LIMITS.taskDays * DAY).toISOString() : null,
+    );
+    if (validUntil !== null && validUntil <= validFrom)
+      throw new KnowledgeRefused("valid_until must come after valid_from");
+    return { validFrom, validUntil };
+  }
+
   /** The person's words a `from` address names, checked as the caller's own recent words that carry no decision yet. */
   private wordsAt(agent: string, from: string): SourceWords {
     const at = parseAddress(from);
@@ -267,17 +282,7 @@ export class DecisionBook {
       const near = words ? book.nearby(key, words, topic, DECISION_LIMITS.nearby) : [];
       if (near.length) this.refuseNear(agent, key, topic, `topics near ${topic} are in force`, near);
     }
-    const scopeIsTask = key.startsWith("task:");
-    const validFrom = this.dateOf(args.valid_from, "valid_from", this.now())!;
-    if (validFrom > new Date(this.deps.now().getTime() + 60_000).toISOString())
-      throw new KnowledgeRefused("valid_from is ahead: a decision takes effect when it is recorded; record it then");
-    const validUntil = this.dateOf(
-      args.valid_until,
-      "valid_until",
-      scopeIsTask ? new Date(this.deps.now().getTime() + DECISION_LIMITS.taskDays * DAY).toISOString() : null,
-    );
-    if (validUntil !== null && validUntil <= validFrom)
-      throw new KnowledgeRefused("valid_until must come after valid_from");
+    const { validFrom, validUntil } = this.datesOf(args, key.startsWith("task:"));
     const read = action === "decide" ? await this.gated(agent, key, { topic, statement }, current, args) : null;
     const from = typeof args.from === "string" && args.from.trim() ? args.from.trim() : null;
     // read after the gate: another call may have used the same words while the model read this one
@@ -297,7 +302,6 @@ export class DecisionBook {
       statement,
       baseVersion: base,
       recordedBy: agent,
-      needsPerson,
       validFrom,
       validUntil,
       reason: action === "withdraw" ? statement : "",
@@ -405,6 +409,7 @@ export class DecisionBook {
     };
   }
 
+  /** A decision settled: counted, and the seat that recorded a change reads it in its own answer. */
   private changed(agent: string, settled: Settled): void {
     const book = this.deps.book();
     book.tally(`decision-${settled.state}`);
@@ -553,7 +558,7 @@ export class DecisionBook {
     };
   }
 
-  /** The GC's pass: pending decisions past their hours drop, and decisions past their date end. */
+  /** The minute's pass: pending decisions past their hours drop, and decisions past their date end. */
   sweep(): void {
     const book = this.deps.book();
     const before = new Date(this.deps.now().getTime() - DECISION_LIMITS.pendingHours * 3_600_000).toISOString();

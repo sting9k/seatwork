@@ -1,6 +1,6 @@
 /** What the room needs from the app that runs its seats; server/paseo/ is the one implementation. */
 
-/** `idle` is any seat a message starts a turn in: at rest, closed, or after a failed turn. */
+/** What a seat is doing; `idle` is any seat a message starts a turn in: at rest, closed, or after a failed turn. */
 export type SeatState = "idle" | "running" | "permission" | "gone" | "unknown";
 
 /** What a seat's agent CLI reports after a turn: dollars so far, context held now. */
@@ -10,16 +10,14 @@ export interface SeatUsage {
   contextWindowUsedTokens?: number;
 }
 
-/** An open seat as the app shows it. */
+/** An open seat as the app shows it; `status` is idle, running, initializing, error or closed, `waiting` that a permission request waits on someone. */
 export interface LiveSeat {
   id: string;
   provider: string;
   title: string | null;
   cwd: string;
   parentId: string | null;
-  /** idle, running, initializing, error or closed */
   status: string;
-  /** a permission request waits on someone */
   waiting: boolean;
   updatedAt: string;
   turnStartedAt: string | null;
@@ -77,6 +75,6 @@ export interface Host {
   prompts(agentId: string, limit: number): Promise<string[] | null>;
   /** The projects the app knows, by folder. */
   projects(): Promise<{ name: string; path: string }[]>;
-  /** Deletes the app's timers that wake a seat `seat` calls gone, or a live one's the app finished; `null` marks an agent that is not the room's. */
-  dropWakers(seat: (agentId: string) => "gone" | "live" | null): Promise<string[]>;
+  /** Deletes the app's timers that wake a seat `seat` calls gone, or a live one's the app finished (null: not the room's agent); names what went and what could not. */
+  dropWakers(seat: (agentId: string) => "gone" | "live" | null): Promise<{ deleted: string[]; failed: string[] }>;
 }

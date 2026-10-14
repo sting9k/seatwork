@@ -7,25 +7,24 @@ import { enabledSeats, parseSeat, rolePrompt } from "../orchestration/seats";
 import { SAFETY_DIR } from "../paths";
 import type { RuntimePolicy } from "../policy";
 
-/** A seat about to start, as the app asks for it. */
+/** A seat about to start, as the app asks for it; `spec` is a specialization the app passed beside the title. */
 export interface SeatLaunch {
   provider: string;
   model?: string;
   cwd: string;
   title?: string | null;
-  /** a specialization the app passed beside the title */
   spec?: string;
   systemPrompt?: string;
 }
 
-/** What the room lays into that start: the table's model, the prompt, Claude's flags. */
+/** What the room lays into a start: the table's model (absent where the asked one stands; `thinking` null takes the model's own default), the prompt, Claude's flags. */
 export interface Launched {
-  /** absent: the asked model stands; `thinking` null takes the model's own default */
   model?: { id: string; thinking?: string | null };
   systemPrompt: string;
   claude?: { dirs: string[]; args: Record<string, string | null> };
 }
 
+/** A registered project, or one found by its marker, as a seat's start sees it. */
 interface Project {
   name: string;
   root: string;
@@ -36,8 +35,8 @@ interface Project {
 
 /** The project a folder lies in: by the registry, or by the room's marker above it in open mode. */
 function projectAt(cwd: string, role: string, provider: string): Project | null {
-  const registry = loadRegistry();
   if (inRoom(role)) return null;
+  const registry = loadRegistry();
   if (!registry) {
     const marker = findRoomMarker(cwd);
     return marker
@@ -93,7 +92,7 @@ export function launch(request: SeatLaunch, policy: RuntimePolicy, log: (message
       `seatwork: ${seat.provider}/${request.model ?? "(default model)"} refused: ${table} for ${seat.role} only ${fit.listed.join(", ")} (${own ?? "the Seatwork screen sets it"}). Create the seat again on one of these.`,
     );
   }
-  // a seat asked for on a model the table has since replaced starts on the table's
+  // a model the table does not list is replaced by the table's
   if (fit.model)
     log(
       `${seat.provider}: asked for ${request.model ?? "its default model"}, starts on ${fit.model} as the model table says`,

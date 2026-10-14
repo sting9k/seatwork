@@ -1,12 +1,12 @@
-/** Scripts given to an interpreter (`python -c`, a heredoc): their shell lines and deletes. */
+/** Scripts given to an interpreter (`python -c`, a heredoc): the shell lines they run, the files they delete, write. */
 
 export type Language = "python" | "javascript" | "ruby" | "perl" | "php" | "lua";
 
+/** What a script does that the gate can read; `dynamicExec` names the calls that run a shell line built at run time. */
 export interface Embedded {
   shell: string[];
   deletes: { path: string; recursive: boolean; how: string }[];
   writes: { path: string; append: boolean; how: string }[];
-  /** a call that runs a shell line built at run time */
   dynamicExec: string[];
 }
 
@@ -22,11 +22,11 @@ const INTERPRETERS: [RegExp, Language][] = [
   [/^lua(jit|\d+(\.\d+)*)?$/, "lua"],
 ];
 
+/** The language an interpreter's command name stands for, or null. */
 export function languageOf(name: string): Language | null {
   return INTERPRETERS.find(([test]) => test.test(name))?.[1] ?? null;
 }
 
-/** The flags that hand an interpreter its program inline. */
 export const INLINE_FLAGS: Record<Language, string[]> = {
   python: ["-c"],
   javascript: ["-e", "-p", "--eval", "--print"],
@@ -176,7 +176,7 @@ export function scanEmbedded(language: Language, source: string): Embedded {
   return out;
 }
 
-/** Calls named like exec sinks that are not: `re.run`, a list's `.call` in JS. */
+/** True when a call named like a program runner is one: `subprocess.run` is, `re.run` is not. */
 function execOwner(language: Language, path: string, method: string): boolean {
   if (
     language === "python" &&
@@ -198,6 +198,7 @@ function execOwner(language: Language, path: string, method: string): boolean {
   return true;
 }
 
+/** True when a call named like a file delete is one: `os.remove` is, a list's `remove` is not. */
 function deleteOwner(language: Language, path: string): boolean {
   if (language === "python") return /(^|\.)(os|Path\([^)]*\))\.[a-z]+$/.test(path) || /^os\./.test(path);
   if (language === "ruby") return /(File|FileUtils)\.[a-z_]+$/.test(path);
@@ -211,7 +212,7 @@ type Arg =
   | { kind: "options"; text: string }
   | { kind: "other" };
 
-/** A call's arguments, top level only: literal strings, lists, option objects, anything else. */
+/** A call's arguments from its first 400 tokens, top level only: strings, lists, option objects, anything else. */
 function argumentsAt(tokens: Token[], start: number): Arg[] {
   const out: Arg[] = [];
   let depth = 0;
@@ -350,6 +351,7 @@ function tokenize(language: Language, src: string): Token[] {
   return out;
 }
 
+/** A Python string literal opening at `at`, its escapes decoded unless raw. */
 function pythonString(src: string, at: number, raw: boolean): { value: string; end: number } {
   const q = src[at];
   const triple = src.startsWith(q.repeat(3), at);
@@ -369,6 +371,7 @@ function pythonString(src: string, at: number, raw: boolean): { value: string; e
   return { value, end: Math.min(src.length, i + close.length) };
 }
 
+/** A quoted string opening at `at`, up to the same quote, its escapes decoded. */
 function quoted(src: string, at: number, q: string): { value: string; end: number } {
   let i = at + 1;
   let value = "";

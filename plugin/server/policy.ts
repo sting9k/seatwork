@@ -124,12 +124,14 @@ export function claudeDisallowed(raw: Record<string, any>, role: string): string
   });
 }
 
+/** A part of the policy that must be there; the message tells the owner to apply the room again. */
 function need<T>(value: T | undefined, where: string): T {
   if (value === undefined || value === null)
     throw new Error(`seatwork: ${POLICY_FILE} is missing "${where}" (set the room up again)`);
   return value;
 }
 
+/** The policy the room runs on, read from the room home. */
 export function loadPolicy(): RuntimePolicy {
   if (!existsSync(POLICY_FILE)) throw new Error(`seatwork: ${POLICY_FILE} not found; set the room up again`);
   const parsed = JSON.parse(readFileSync(POLICY_FILE, "utf8")) as Record<string, any>;
@@ -138,7 +140,7 @@ export function loadPolicy(): RuntimePolicy {
   return {
     room: {
       params: need(room.params, "room.params"),
-      // absent in a home an earlier version wrote, until the update has brought it up
+      // absent until the room is applied again after the plugin updates
       recovery: room.recovery,
       rotation: room.rotation,
       handin: room.handin,

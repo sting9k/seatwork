@@ -16,6 +16,7 @@ import type { Delivery, Message } from "./store";
 
 /** A project's mail as files, one per mail and one per thread: for a reader, and for a rebuild. */
 
+/** A mail and the recipients it was written with. */
 export interface Archived {
   message: Message;
   deliveries: Pick<Delivery, "seat" | "kind" | "priority" | "quiet">[];
@@ -27,8 +28,19 @@ export interface Settled {
   answers: Map<number, { at: string; by: number | null }>;
 }
 
+/** One line of the journal: a delivery that settled (`seat`, `state`), or an ask that was answered (`answeredBy`). */
+export interface SettledLine {
+  id: number;
+  seat?: string;
+  state?: Delivery["state"];
+  answeredBy?: number | null;
+  at: string;
+}
+
 const OPENING = "---json\n";
 const CLOSING = "\n---\n";
+const JOURNAL = "states.jsonl";
+
 /** A name as a file name: each odd character, `_` too, written as `_` and its code; a long one cut, with a digest so two never share. */
 function safe(name: string): string {
   const written = name.replace(/[^A-Za-z0-9.-]/g, (char) => `_${char.codePointAt(0)!.toString(16)}`) || "none";
@@ -36,33 +48,24 @@ function safe(name: string): string {
     ? written
     : `${written.slice(0, 100)}-${createHash("sha256").update(name).digest("hex").slice(0, 16)}`;
 }
-const JOURNAL = "states.jsonl";
 
-/** Notes in the journal that a delivery settled, or that an ask was answered. */
-export function noteSettled(
-  dir: string,
-  line: { id: number; seat?: string; state?: string; answeredBy?: number | null; at: string },
-): void {
-  appendFileSync(join(keptOutOfGit(dir), JOURNAL), `${JSON.stringify(line)}\n`);
+/** Appends lines to the journal in one write. */
+export function noteSettled(dir: string, lines: readonly SettledLine[]): void {
+  appendFileSync(join(keptOutOfGit(dir), JOURNAL), lines.map((line) => `${JSON.stringify(line)}\n`).join(""));
 }
 
+/** What the journal says of how deliveries settled and asks were answered; the last line about a thing stands. */
 export function readSettled(dir: string): Settled {
   const settled: Settled = { states: new Map(), answers: new Map() };
   const file = join(dir, JOURNAL);
   if (!existsSync(file)) return settled;
   for (const text of readFileSync(file, "utf8").split("\n")) {
     try {
-      const line = JSON.parse(text) as {
-        id: number;
-        seat?: string;
-        state?: Delivery["state"];
-        answeredBy?: number | null;
-        at: string;
-      };
+      const line = JSON.parse(text) as SettledLine;
       if (line.seat && line.state) settled.states.set(`${line.id}|${line.seat}`, line.state);
       if ("answeredBy" in line) settled.answers.set(line.id, { at: line.at, by: line.answeredBy ?? null });
     } catch {
-      // a torn last line
+      // a torn line, or the empty one after the last
     }
   }
   return settled;
@@ -85,6 +88,7 @@ export function forgetSettled(dir: string, ids: ReadonlySet<number>): void {
   renameSync(`${file}.tmp`, file);
 }
 
+/** Where a mail's file lies: a folder per month, the id and the signal in its name. */
 function messageFile(dir: string, message: Pick<Message, "id" | "at" | "signal">): string {
   return join(dir, message.at.slice(0, 7), `${message.id}-${safe(message.signal.toLowerCase())}.md`);
 }
@@ -109,6 +113,7 @@ export function appendThread(dir: string, message: Message, from: string, to: st
   return file;
 }
 
+/** The file of a thread, or null when none was written. */
 export function threadFile(dir: string, thread: string): string | null {
   const file = join(dir, "threads", `${safe(thread)}.md`);
   return existsSync(file) ? file : null;
@@ -122,17 +127,17 @@ export function countFiles(dir: string): number {
     .reduce((sum, month) => sum + readdirSync(join(dir, month)).filter((name) => name.endsWith(".md")).length, 0);
 }
 
-/** Every mail the folder holds, by id; a file that does not read as one is left out. */
+/** Every mail the folder holds, by id; a file that cannot be read as one is left out. */
 export function readArchive(dir: string): Archived[] {
   if (!existsSync(dir)) return [];
   const found: Archived[] = [];
   for (const month of readdirSync(dir)) {
     if (!/^\d{4}-\d{2}$/.test(month)) continue;
     for (const name of readdirSync(join(dir, month))) {
-      const text = readFileSync(join(dir, month, name), "utf8");
-      const end = text.indexOf(CLOSING);
-      if (!text.startsWith(OPENING) || end < 0) continue;
       try {
+        const text = readFileSync(join(dir, month, name), "utf8");
+        const end = text.indexOf(CLOSING);
+        if (!text.startsWith(OPENING) || end < 0) continue;
         const { to, ...head } = JSON.parse(text.slice(OPENING.length, end)) as Omit<Message, "body"> & {
           to: Archived["deliveries"];
         };
@@ -142,7 +147,7 @@ export function readArchive(dir: string): Archived[] {
           .trimEnd();
         found.push({ message: { ...head, body }, deliveries: to });
       } catch {
-        // not a mail this code wrote
+        // not a mail this code wrote, or a file that cannot be read
       }
     }
   }

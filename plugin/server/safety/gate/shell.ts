@@ -86,12 +86,14 @@ export interface Sequence {
 
 export type Script = Sequence[];
 
+/** A command line read whole, or as far as it goes; `costly` marks a line that stopped at the step budget. */
 export interface Parsed {
   script: Script;
   error: { at: number; message: string; costly?: true } | null;
 }
 
-export class ShellSyntaxError extends Error {
+/** Text the parser cannot read as shell: `at` is where it stopped. */
+class ShellSyntaxError extends Error {
   constructor(
     readonly at: number,
     message: string,
@@ -101,7 +103,7 @@ export class ShellSyntaxError extends Error {
 }
 
 /** A command line too costly to read: the reading stops, whatever try was under way. */
-export class ShellLimitError extends Error {}
+class ShellLimitError extends Error {}
 
 const MAX_DEPTH = 64;
 const MAX_STEPS = 100_000;
@@ -126,13 +128,10 @@ const ANSI_NAMED: Record<string, string> = {
   "?": "?",
 };
 
-interface Pending {
-  heredoc: Heredoc;
-}
-
+/** A recursive-descent reader of one text; the parsers made for text nested in it share its step budget. */
 class Parser {
   pos = 0;
-  private pending: Pending[] = [];
+  private pending: Heredoc[] = [];
 
   constructor(
     readonly src: string,
@@ -530,7 +529,7 @@ class Parser {
         parts: [],
         terminated: false,
       };
-      this.pending.push({ heredoc });
+      this.pending.push(heredoc);
       return { op, fd, target: word, heredoc };
     }
     if (this.eof() || WORD_END.has(this.peek())) throw new ShellSyntaxError(this.pos, `missing target for ${op}`);
@@ -842,7 +841,7 @@ class Parser {
   private newline(): void {
     this.pos += 1;
     const pending = this.pending.splice(0);
-    for (const { heredoc } of pending) this.readBody(heredoc);
+    for (const heredoc of pending) this.readBody(heredoc);
   }
 
   private readBody(heredoc: Heredoc): void {
@@ -936,6 +935,7 @@ function readsAsCommands(raw: string): boolean {
   return /[;\n]/.test(raw) || /[A-Za-z_][\w.-]*\s+-{1,2}[A-Za-z]/.test(raw);
 }
 
+/** A `~` expands at the start of a word and after the `=` or `:` of an assignment. */
 function tildeAllowed(parts: Part[], atStart: boolean): boolean {
   if (atStart) return true;
   const last = parts[parts.length - 1];
@@ -964,6 +964,7 @@ function valueAfter(word: Word, cut: number): Word | null {
   return { raw: word.raw.slice(cut), start: word.start + cut, end: word.end, parts };
 }
 
+/** The scripts inside the command substitutions and expansions among some parts. */
 function scriptsIn(parts: Part[]): Script[] {
   const out: Script[] = [];
   for (const part of parts) {
@@ -987,6 +988,7 @@ function substitutionsIn(text: string, depth: number, budget: { steps: number })
   return out;
 }
 
+/** A script read from a text nested in the line, such as the inside of backticks. */
 function parseScriptAt(text: string, depth: number, budget: { steps: number }): Script {
   const parser = new Parser(text, depth, budget);
   return parser.script(new Set(), null);
@@ -1008,7 +1010,7 @@ export function parseShell(text: string): Parsed {
   }
 }
 
-/** A word's text when nothing in it waits for run time; tildes read as `~user`. */
+/** The text of word parts when none waits for run time; a tilde reads as `~user`. */
 function literalOf(parts: readonly Part[]): string | null {
   let out = "";
   for (const part of parts) {
@@ -1019,4 +1021,5 @@ function literalOf(parts: readonly Part[]): string | null {
   return out;
 }
 
+/** A word's text when nothing in it waits for run time. */
 export const literal = (word: Word): string | null => literalOf(word.parts);

@@ -1,7 +1,7 @@
 import { notEnglish } from "../english";
 import { DecisionError, type Questions, type State } from "./contract";
 
-/** What a caller hands the model, made safe before it is sent: its shape and size bounded, its text cleaned, its tricks named. */
+/** What a caller hands the model, made safe before it is sent: shape and size bounded, text cleaned, tricks named. */
 
 export const INPUT = {
   depth: 6,
@@ -28,8 +28,8 @@ const ADDRESSED = [
   /\b(system prompt|you are an? (ai|assistant|language model|classifier|judge))\b/i,
 ] as const;
 
-/** One text cleaned: as typed, nothing hidden, `mask` run on what is left, quoted words of another language left out, blank runs shortened, cut with the cut said. */
-export function cleanText(
+/** One text cleaned of hidden letters, masked, quoted foreign words left out, blank runs shortened, cut with the cut said. */
+function cleanText(
   text: string,
   mask: (text: string) => string = (same) => same,
   most: number = INPUT.textChars,
@@ -43,7 +43,7 @@ export function cleanText(
   return clean.length <= most ? clean : `${clean.slice(0, most)} … (${clean.length - most} characters cut)`;
 }
 
-/** The first line of a text that speaks to the model, or null. */
+/** The first phrase of a text that speaks to the model, or null. */
 export function addressed(text: string): string | null {
   for (const words of ADDRESSED) {
     const found = words.exec(text);
@@ -52,7 +52,7 @@ export function addressed(text: string): string | null {
   return null;
 }
 
-/** A state made safe: refused when its shape is no caller's or it is too large, cleaned otherwise, with what in it speaks to the model. */
+/** A state made safe: refused if misshapen or too large, else cleaned; `suspect` names the text that speaks to the model. */
 export function cleanState(
   state: State,
   mask: (text: string) => string = (same) => same,

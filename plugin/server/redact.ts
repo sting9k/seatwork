@@ -1,4 +1,4 @@
-/** Hides secrets in text before the room keeps it, shows it, or sends it out. */
+/** Hides secrets in text before the room keeps it, shows it, or sends it out; SURE patterns match only secrets, LIKELY ones read a word as a value because its name says secret. */
 
 const TOKENS = new RegExp(
   [
@@ -23,7 +23,6 @@ const SECRET_NAME = String.raw`[A-Za-z0-9_.-]{0,40}(?:secret|token|passw(?:or)?d
 
 type Replacement = string | ((match: string, ...groups: string[]) => string);
 
-/** Patterns that only match a secret: a known issuer's token, a key block, a password in a URL or a command, NAME=value. */
 const SURE: [RegExp, Replacement][] = [
   [/-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?(-----END [A-Z ]*PRIVATE KEY-----|$)/g, "***private key***"],
   [TOKENS, "***"],
@@ -48,7 +47,6 @@ const SURE: [RegExp, Replacement][] = [
   ],
 ];
 
-/** Patterns that read a word as a value because a name says it is a secret: right for a record, too wide to judge prose. */
 const LIKELY: [RegExp, Replacement][] = [
   [
     new RegExp(
@@ -63,7 +61,7 @@ const LIKELY: [RegExp, Replacement][] = [
   ],
 ];
 
-/** The text with every pattern of a list applied. */
+/** The text with every pattern of a list applied, in order. */
 function apply(patterns: readonly [RegExp, Replacement][], text: string): string {
   let out = text;
   for (const [pattern, replacement] of patterns)
@@ -77,12 +75,12 @@ function looksGenerated(value: string): boolean {
   return (/[a-z]/.test(value) && /[A-Z]/.test(value)) || value.length >= 32;
 }
 
-/** The text with every secret the patterns know replaced by stars; one pass for all prefixed tokens. */
+/** The text with every secret replaced by stars: right for a record, too wide to judge prose. */
 export function redact(text: string): string {
   return apply(LIKELY, apply(SURE, text));
 }
 
-/** Whether a sentence holds something that can only be a secret; prose about passwords and tokens is not one. */
+/** Whether a sentence holds something only a secret can match; prose about passwords and tokens is not one. */
 export function hasSecret(text: string): boolean {
   return apply(SURE, text) !== text;
 }

@@ -10,14 +10,15 @@ export interface RmHit {
   detail: string;
 }
 
+/** What the rm rules ask of the machine: which paths git leaves out of the project, and which the owner exempted. */
 export interface RmTools {
-  /** git leaves this path out of the project: generated, made again by a build */
   ignored(paths: string[]): Promise<ReadonlySet<string>>;
   exempt(rule: string, paths: string[]): boolean;
 }
 
 type Mode = "none" | "always" | "once";
 
+/** How rm's options read: whether it recurses or forces and how each was spelled, its prompting, and its operands. */
 interface Flags {
   recursive: boolean;
   force: boolean;
@@ -101,6 +102,7 @@ function bsd(args: Word[]): Flags | null {
   return flags;
 }
 
+/** Reads one cluster of short options into the flags; false for an option rm does not have. */
 function short(cluster: string, flags: Flags, allowed = "rRfiIdEPvWx"): boolean {
   const hasR = /[rR]/.test(cluster);
   const hasF = cluster.includes("f");
@@ -203,10 +205,23 @@ export async function rmRules(scene: Scene, tools: RmTools): Promise<RmHit | nul
     const found = await judge(flags, scene, tools);
     return found === "allow" ? null : found;
   }
-  const [a, b] = await Promise.all([judge(gnu(args), scene, tools), judge(bsd(args), scene, tools)]);
-  if (a && a !== "allow") return a;
-  if (b && b !== "allow") return b;
+  const gnuFlags = gnu(args);
+  const bsdFlags = bsd(args);
+  const readings = same(gnuFlags, bsdFlags) ? [gnuFlags] : [gnuFlags, bsdFlags];
+  for (const found of await Promise.all(readings.map((flags) => judge(flags, scene, tools))))
+    if (found && found !== "allow") return found;
   return null;
+}
+
+/** True when two readings of rm's options agree on every flag and operand. */
+function same(a: Flags | null, b: Flags | null): boolean {
+  if (!a || !b) return a === b;
+  const keys = ["recursive", "force", "combined", "longRecursive", "longForce", "shortForce", "mode"] as const;
+  return (
+    keys.every((key) => a[key] === b[key]) &&
+    a.operands.length === b.operands.length &&
+    a.operands.every((w, i) => w === b.operands[i])
+  );
 }
 
 /** True when these arguments would be blocked had the command word been `rm`. */

@@ -27,6 +27,7 @@ export interface CatalogModel {
 /** A harness's live model catalog by model id, or null when it cannot be read. */
 export type Catalog = (harness: Harness) => Promise<Record<string, CatalogModel> | null>;
 
+/** A seat's provider as Paseo's config holds it. */
 export interface ProviderEntry {
   extends: string;
   label: string;
@@ -38,6 +39,7 @@ export interface ProviderEntry {
   models?: Record<string, unknown>[];
 }
 
+/** An agent profile as Paseo's config holds it. */
 export interface Profile {
   id: string;
   name: string;
@@ -67,7 +69,6 @@ export interface RoomPlan {
 }
 
 const LABEL: Record<Harness, string> = { claude: "Claude", codex: "Codex", pi: "Pi", opencode: "OpenCode" };
-/** How each harness is kept apart from the user's own setup (shown in the provider description). */
 const ISOLATION: Record<Harness, string> = {
   claude: "on the user's Claude sign-in with personal settings switched off",
   codex: "on an isolated Codex runtime (CODEX_HOME per role)",
@@ -75,6 +76,7 @@ const ISOLATION: Record<Harness, string> = {
   opencode: "on an isolated OpenCode runtime (OPENCODE_CONFIG_DIR per role)",
 };
 
+/** A JSON file the plugin ships; a missing one is an error. */
 function readJson(file: string): any {
   if (!existsSync(file)) throw new Error(`seatwork: ${file} is missing from the plugin`);
   return JSON.parse(readFileSync(file, "utf8"));
@@ -153,23 +155,17 @@ function profileSeat(models: Models, role: string): { entry: string; thinking: s
   return tier ? { entry: tier.providers[0], thinking: tier.thinking } : null;
 }
 
-/** Works out the seats, providers, profiles, model table and policy for this machine; writes nothing. */
-export async function planRoom(input: {
-  pluginDir: string;
-  roomHome: string;
-  setup: Setup;
-  catalog: Catalog;
-}): Promise<RoomPlan> {
-  const { pluginDir, roomHome, setup, catalog } = input;
-  const seatsFile = readJson(join(pluginDir, "paseo", "seats.json")) as {
-    seats?: Record<string, string[]>;
-    restrictModels?: boolean;
-  };
-  const policy = readJson(join(pluginDir, "paseo", "policy.json")) as Record<string, any>;
-  const shown = readJson(join(pluginDir, "paseo", "profiles.json")) as ProfileSpec[];
-  const models = machineModels(roomModels(pluginDir), setup);
-  const warnings: string[] = [];
+/** paseo/seats.json: the seats every install has, and whether a seat lists only the models the table gives it. */
+type Seats = { seats?: Record<string, string[]>; restrictModels?: boolean };
+/** paseo/policy.json's Paseo tools: every tool Paseo has, and the ones each role may use. */
+type Tools = { all: string[]; allow: Record<string, string[]> };
 
+/** The seats the room has: those paseo/seats.json lists, those the model table names, those this machine added. */
+function enabledSeats(
+  listed: Seats,
+  models: Models,
+  setup: Setup,
+): { seats: Record<string, string[]>; enabled: string[]; used: Map<string, Set<string>> } {
   const seats: Record<string, string[]> = {};
   const enabled: string[] = [];
   const enable = (harness: string, role: string, where: string) => {
@@ -180,7 +176,7 @@ export async function planRoom(input: {
     enabled.push(`${harness}-${role}`);
     (seats[role] ??= []).push(harness);
   };
-  for (const [role, harnesses] of Object.entries(seatsFile.seats ?? {}))
+  for (const [role, harnesses] of Object.entries(listed.seats ?? {}))
     for (const harness of harnesses ?? []) enable(harness, role, "paseo/seats.json");
   // a seat the table names is a seat the room has
   const used = modelsByProvider(models);
@@ -194,77 +190,91 @@ export async function planRoom(input: {
     if (seat) enable(seat.harness, seat.role, "setup.json");
   }
   if (enabled.length === 0) throw new Error("paseo/seats.json: no seats enabled");
+  return { seats, enabled, used };
+}
 
-  const tools = policy.paseoTools as { all: string[]; allow: Record<string, string[]> };
-  for (const [role, names] of Object.entries(tools.allow)) {
-    const unknown = names.filter((name) => !tools.all.includes(name)).sort();
-    if (unknown.length)
-      throw new Error(`paseo/policy.json: role ${role} allows unknown Paseo tools: ${unknown.join(", ")}`);
-  }
-
-  const catalogs = new Map<Harness, Record<string, CatalogModel> | null>();
-  const catalogOf = async (harness: Harness) => {
-    if (!catalogs.has(harness)) catalogs.set(harness, await catalog(harness));
-    return catalogs.get(harness) ?? null;
-  };
-
-  const providers: Record<string, ProviderEntry> = {};
-  for (const id of enabled) {
-    const { harness, role } = parseSeat(id)!;
-    const allow = tools.allow[role] ?? [];
-    const launch = policy[harness].launch as { env: Record<string, string>; extraArgs?: Record<string, string | null> };
-    const runtime = join(roomHome, "runtimes", harness, role);
-    const entry: ProviderEntry = {
-      extends: harness,
-      label: `${LABEL[harness]} ${traits(role).profile}`,
-      description: `${traits(role).profile} seat ${ISOLATION[harness]}; Paseo tools: ${allow.join(", ") || "none"}`,
-      paseoTools: { enabled: true, disabledTools: tools.all.filter((tool) => !allow.includes(tool)) },
-      // the seat's isolation is part of its provider: it holds for a session the plugin did not open
-      env: Object.fromEntries(
-        Object.entries(launch.env).map(([name, value]) => [name, value.replaceAll("{runtime}", runtime)]),
-      ),
-    };
-    if (launch.extraArgs && Object.keys(launch.extraArgs).length) entry.options = { extraArgs: launch.extraArgs };
-    if (harness === "claude") {
-      const deniedSkills = ((policy.claude.deniedSkills ?? []) as string[]).map((name) => `Skill(skill:${name})`);
-      entry.disallowedTools = [...claudeDisallowed(policy, role), ...deniedSkills];
+/** The models a seat lists in Paseo: those the table assigns it, as its harness's catalog describes them. */
+function modelRows(cat: Record<string, CatalogModel>, assigned: Set<string>, id: string, warnings: string[]) {
+  const rows: Record<string, unknown>[] = [];
+  for (const model of [...assigned].sort()) {
+    const found = cat[model];
+    if (!found) {
+      warnings.push(
+        `the model table assigns ${model} to ${id} but the ${parseSeat(id)!.harness} catalog has no such model`,
+      );
+      continue;
     }
-    const assigned = used.get(id);
-    if ((seatsFile.restrictModels ?? true) && assigned?.size) {
-      const cat = await catalogOf(harness);
-      if (!cat) warnings.push(`cannot read the ${harness} model catalog from the daemon; ${id} keeps the full list`);
-      else {
-        const rows: Record<string, unknown>[] = [];
-        for (const model of [...assigned].sort()) {
-          const found = cat[model];
-          if (!found) {
-            warnings.push(`the model table assigns ${model} to ${id} but the ${harness} catalog has no such model`);
-            continue;
+    rows.push({
+      id: model,
+      label: found.label || model,
+      ...(found.description ? { description: found.description } : {}),
+      ...(found.thinking.length
+        ? {
+            thinkingOptions: found.thinking.map((t) => ({
+              id: t,
+              label: t,
+              ...(t === found.defaultThinking ? { isDefault: true } : {}),
+            })),
           }
-          rows.push({
-            id: model,
-            label: found.label || model,
-            ...(found.description ? { description: found.description } : {}),
-            ...(found.thinking.length
-              ? {
-                  thinkingOptions: found.thinking.map((t) => ({
-                    id: t,
-                    label: t,
-                    ...(t === found.defaultThinking ? { isDefault: true } : {}),
-                  })),
-                }
-              : {}),
-          });
-        }
-        if (rows.length) {
-          rows[0].isDefault = true;
-          entry.models = rows;
-        }
-      }
-    }
-    providers[id] = entry;
+        : {}),
+    });
   }
+  if (rows.length) rows[0].isDefault = true;
+  return rows;
+}
 
+/** What every provider of a plan is worked out from. */
+interface ProviderContext {
+  roomHome: string;
+  policy: Record<string, any>;
+  tools: Tools;
+  restrictModels: boolean;
+  used: Map<string, Set<string>>;
+  catalogOf: (harness: Harness) => Promise<Record<string, CatalogModel> | null>;
+  warnings: string[];
+}
+
+/** A seat's provider in Paseo's config: its launch environment, its Paseo tools, its denied tools, its models. */
+async function providerFor(id: string, context: ProviderContext): Promise<ProviderEntry> {
+  const { roomHome, policy, tools, restrictModels, used, catalogOf, warnings } = context;
+  const { harness, role } = parseSeat(id)!;
+  const allow = tools.allow[role] ?? [];
+  const launch = policy[harness].launch as { env: Record<string, string>; extraArgs?: Record<string, string | null> };
+  const runtime = join(roomHome, "runtimes", harness, role);
+  const entry: ProviderEntry = {
+    extends: harness,
+    label: `${LABEL[harness]} ${traits(role).profile}`,
+    description: `${traits(role).profile} seat ${ISOLATION[harness]}; Paseo tools: ${allow.join(", ") || "none"}`,
+    paseoTools: { enabled: true, disabledTools: tools.all.filter((tool) => !allow.includes(tool)) },
+    // the seat's isolation is part of its provider: it holds for a session the plugin did not open
+    env: Object.fromEntries(
+      Object.entries(launch.env).map(([name, value]) => [name, value.replaceAll("{runtime}", runtime)]),
+    ),
+  };
+  if (launch.extraArgs && Object.keys(launch.extraArgs).length) entry.options = { extraArgs: launch.extraArgs };
+  if (harness === "claude") {
+    const deniedSkills = ((policy.claude.deniedSkills ?? []) as string[]).map((name) => `Skill(skill:${name})`);
+    entry.disallowedTools = [...claudeDisallowed(policy, role), ...deniedSkills];
+  }
+  const assigned = used.get(id);
+  if (restrictModels && assigned?.size) {
+    const cat = await catalogOf(harness);
+    if (!cat) warnings.push(`cannot read the ${harness} model catalog from the daemon; ${id} keeps the full list`);
+    else {
+      const rows = modelRows(cat, assigned, id, warnings);
+      if (rows.length) entry.models = rows;
+    }
+  }
+  return entry;
+}
+
+/** The agent profiles the screen offers, each on the seat and model the table gives its role. */
+async function profilesFor(
+  shown: ProfileSpec[],
+  models: Models,
+  providers: Record<string, ProviderEntry>,
+  catalogOf: (harness: Harness) => Promise<Record<string, CatalogModel> | null>,
+): Promise<Profile[]> {
   const profiles: Profile[] = [];
   for (const { role, ...rest } of shown) {
     const seat = profileSeat(models, role);
@@ -293,6 +303,49 @@ export async function planRoom(input: {
       ...(thinking ? { thinkingOptionId: thinking } : {}),
     });
   }
+  return profiles;
+}
+
+/** Works out the seats, providers, profiles, model table and policy for this machine; writes nothing. */
+export async function planRoom(input: {
+  pluginDir: string;
+  roomHome: string;
+  setup: Setup;
+  catalog: Catalog;
+}): Promise<RoomPlan> {
+  const { pluginDir, roomHome, setup, catalog } = input;
+  const seatsFile = readJson(join(pluginDir, "paseo", "seats.json")) as Seats;
+  const policy = readJson(join(pluginDir, "paseo", "policy.json")) as Record<string, any>;
+  const shown = readJson(join(pluginDir, "paseo", "profiles.json")) as ProfileSpec[];
+  const models = machineModels(roomModels(pluginDir), setup);
+  const warnings: string[] = [];
+  const { seats, enabled, used } = enabledSeats(seatsFile, models, setup);
+
+  const tools = policy.paseoTools as Tools;
+  for (const [role, names] of Object.entries(tools.allow)) {
+    const unknown = names.filter((name) => !tools.all.includes(name)).sort();
+    if (unknown.length)
+      throw new Error(`paseo/policy.json: role ${role} allows unknown Paseo tools: ${unknown.join(", ")}`);
+  }
+
+  const catalogs = new Map<Harness, Record<string, CatalogModel> | null>();
+  const catalogOf = async (harness: Harness) => {
+    if (!catalogs.has(harness)) catalogs.set(harness, await catalog(harness));
+    return catalogs.get(harness) ?? null;
+  };
+
+  const context: ProviderContext = {
+    roomHome,
+    policy,
+    tools,
+    restrictModels: seatsFile.restrictModels ?? true,
+    used,
+    catalogOf,
+    warnings,
+  };
+  const providers: Record<string, ProviderEntry> = {};
+  for (const id of enabled) providers[id] = await providerFor(id, context);
+  const profiles = await profilesFor(shown, models, providers, catalogOf);
 
   if (setup.chime !== undefined) policy.owner.chime = setup.chime;
   if (setup.mailPort !== undefined) policy.mail.port = setup.mailPort;

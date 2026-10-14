@@ -5,7 +5,7 @@ import type { Found } from "./store";
 
 const TOKEN = /[\p{L}\p{N}_]+/gu;
 const MOST_TERMS = 12;
-const READ_CHARS = 4000;
+export const QUERY_CHARS = 4000;
 const RRF_K = 60;
 const STOPWORDS = new Set(
   (
@@ -16,11 +16,11 @@ const STOPWORDS = new Set(
   ).split(" "),
 );
 
-/** A seat's words as FTS5 queries: every term, then any term; each term quoted so no word is read as an operator. Words every text has are left out while others remain. */
+/** A seat's words as two FTS5 queries, every term and any term, each term quoted so none reads as an operator. */
 export function ftsQueries(text: string): { all: string; any: string } | null {
   const seen = new Set<string>();
   const words: string[] = [];
-  for (const [word] of text.slice(0, READ_CHARS).matchAll(TOKEN)) {
+  for (const [word] of text.slice(0, QUERY_CHARS).matchAll(TOKEN)) {
     const key = word.toLowerCase();
     if (word.length > 1 && !seen.has(key)) {
       seen.add(key);
@@ -63,6 +63,7 @@ const WEIGHT: Record<EntryKind, number> = {
 const FAILED_SHELL = 0.9;
 const ITEM_CHARS = 400;
 
+/** One entry of a pack, with how far it can be trusted. */
 export interface PackItem {
   address: string;
   kind: EntryKind;
@@ -72,6 +73,7 @@ export interface PackItem {
   text: string;
 }
 
+/** A task's evidence fitted to a budget: what was used and what was left out, and why. */
 export interface Pack {
   task: string;
   budget: number;

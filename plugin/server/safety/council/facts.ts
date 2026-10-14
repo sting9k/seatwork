@@ -11,12 +11,16 @@ const DENIED = council.claims.denied.map((pattern) => new RegExp(pattern, "i"));
 const squash = (command: string) => command.replace(/\s+/g, " ").trim();
 
 /** Whether a command runs one of `wanted`, as the brief quotes them. */
-export const runsOneOf = (command: string, wanted: readonly string[]): boolean =>
-  wanted.some((one) => squash(command).includes(squash(one)));
+export function runsOneOf(command: string, wanted: readonly string[]): boolean {
+  const flat = squash(command);
+  return wanted.some((one) => flat.includes(squash(one)));
+}
 
 /** Whether a command runs a check: a known runner, or one of the commands its brief names. */
-export const isCheck = (command: string, named: readonly string[]): boolean =>
-  CHECKS.some((pattern) => pattern.test(squash(command))) || runsOneOf(command, named);
+export function isCheck(command: string, named: readonly string[]): boolean {
+  const flat = squash(command);
+  return CHECKS.some((pattern) => pattern.test(flat)) || runsOneOf(flat, named);
+}
 
 /** The lines of a message that say the work passed or was checked, and deny nothing. */
 export function claimsIn(text: string): string[] {
@@ -93,23 +97,24 @@ export function loopIn(events: readonly TurnEvent[], limits: LoopLimits): Loop |
     )
     .slice(-limits.window);
   const label = (step: (typeof steps)[number]) => (step.kind === "shell" ? squash(step.command) : step.name);
-  const result = (step: (typeof steps)[number]) =>
-    step.kind === "shell"
-      ? `${label(step)}\u0000${step.exitCode}\u0000${step.output}`
-      : `${label(step)}\u0000${step.status}`;
   const failing = (step: (typeof steps)[number]) =>
     step.kind === "shell" ? step.exitCode !== null && step.exitCode !== 0 : step.status === "failed";
   if (steps.length === 0) return null;
+  const results = steps.map((step) =>
+    step.kind === "shell"
+      ? `${label(step)}\u0000${step.exitCode}\u0000${step.output}`
+      : `${label(step)}\u0000${step.status}`,
+  );
   let sameRun = 1;
   let errorRun = failing(steps[0]) ? 1 : 0;
   for (let i = 1; i < steps.length; i += 1) {
     const [step, before] = [steps[i], steps[i - 1]];
-    sameRun = result(step) === result(before) ? sameRun + 1 : 1;
+    sameRun = results[i] === results[i - 1] ? sameRun + 1 : 1;
     errorRun = !failing(step) ? 0 : failing(before) && label(step) === label(before) ? errorRun + 1 : 1;
     if (sameRun >= limits.sameResult) return { pattern: "same-result", command: label(step), count: sameRun };
     if (errorRun >= limits.sameError) return { pattern: "same-error", command: label(step), count: errorRun };
   }
-  const tail = steps.slice(-limits.alternation).map(result);
+  const tail = results.slice(-limits.alternation);
   if (tail.length === limits.alternation && tail[0] !== tail[1] && tail.every((key, i) => key === tail[i % 2]))
     return {
       pattern: "alternation",

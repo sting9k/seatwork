@@ -19,13 +19,24 @@ import {
   writeMessage,
 } from "./archive";
 import { digest, seatLabel } from "./envelope";
-import { MailStore, type Held, type Kind, type Message, type Needs, type PostedLine, type Priority } from "./store";
+import {
+  DRAFT,
+  MailStore,
+  TAKEN,
+  type Held,
+  type Kind,
+  type Message,
+  type Needs,
+  type PostedLine,
+  type Priority,
+} from "./store";
 
 /** The room's mail: kept per project, checked against the routes, handed to a seat at rest. */
 
 export type { SeatRecord } from "./address";
 export type { Needs, Priority } from "./store";
 
+/** The seat a mail comes from, and its role. */
 export interface Sender {
   agentId: string;
   role: string;
@@ -75,12 +86,10 @@ export interface EngineOptions extends Partial<MailLimits> {
 /** `idle` is any seat a message starts a turn in: at rest, closed, or after a failed turn. */
 export type Status = "idle" | "running" | "permission" | "unknown" | "gone";
 
-/** What mail needs from the app that runs the seats. */
+/** What mail needs from the app that runs the seats: a seat's status, a text sent to it (a turn on it at rest; `interrupt` ends a running turn first, else it steers), its parent moved. */
 export interface MailHost {
   state(agentId: string): Promise<Status>;
-  /** A seat at rest starts a turn on the text; `interrupt` ends a running turn first, else it steers. */
   send(agentId: string, text: string, interrupt: boolean): Promise<void>;
-  /** Moves the app's own record of a seat's parent. */
   reparent(child: string, parent: string): Promise<void>;
 }
 
@@ -97,16 +106,21 @@ const DEFAULTS: MailLimits = {
 const PRIORITY_RANK: Record<Priority, number> = { blocking: 0, action: 1, fyi: 2 };
 const ASKS_WEIGHED = 8;
 
+/** Whether a mail waits for the next one that starts a turn: it is quiet, or held until a time not yet come. */
 const startsNoTurn = (mail: Held, now: number) => mail.quiet || (!!mail.heldUntil && now < Date.parse(mail.heldUntil));
+
+const sum = (counts: readonly number[]) => counts.reduce((total, count) => total + count, 0);
 
 /** The word a subject opens with: one of the room's signals, or a notice's own name. */
 const signalFor = (subject: string) =>
   subjectOpening(subject) ?? subject.split(":")[0].replace(/^\W+/, "").trim().slice(0, 40).toUpperCase();
 
+/**
+ * The room's mail: its seats, its stores, and delivery to a seat at rest. Other districts set two hooks: `appendix`
+ * adds to the mail a seat is handed, `chooseAsk` picks which open ask an answer that names none settles.
+ */
 export class MailEngine implements Directory {
-  /** What another district adds to a seat's delivered mail, and the call that marks it told. */
   appendix: ((agentId: string) => { text: string; told(): void } | null) | null = null;
-  /** Which of several open asks an answer that names none settles, `ask` null for none of them; null keeps the oldest. Another district gives it. */
   chooseAsk: ((answer: Mail, asks: readonly Message[]) => Promise<{ ask: number | null } | null>) | null = null;
 
   private readonly seats = new Map<string, SeatRecord>();
@@ -150,16 +164,19 @@ export class MailEngine implements Directory {
       if (inRoom(this.seats.get(id)?.role) || inRoom(parent ? this.seats.get(parent)?.role : undefined)) break;
     }
     let root: string | null = null;
+    let unread = false;
     for (const id of chain.reverse()) {
       const cwd = this.seats.get(id)?.cwd;
       try {
         root = cwd ? (this.options.rootOf?.(cwd) ?? null) : null;
       } catch (error) {
+        unread = true;
         this.log(`mail: the project of ${cwd} could not be read: ${(error as Error).message}`);
       }
       if (root) break;
     }
-    this.roots.set(agentId, root);
+    // an answer that failed is asked again, never remembered as none
+    if (!unread) this.roots.set(agentId, root);
     return root;
   }
 
@@ -169,6 +186,7 @@ export class MailEngine implements Directory {
     return root ? join(root, MAIL_DIR) : ROOM_MAIL;
   }
 
+  /** The store of a folder, opened once; null where none exists and `create` is off. A lost or damaged one is read back from the files. */
   private open(dir: string, create: boolean): MailStore | null {
     const known = this.stores.get(dir);
     if (known) return known;
@@ -177,13 +195,21 @@ export class MailEngine implements Directory {
     const since = this.now().toISOString();
     // only a store that is new on disk was lost: one that merely holds no mail now has had its mail pruned
     const fresh = !existsSync(join(dir, "mail.db"));
-    let store: MailStore;
+    let store: MailStore | undefined;
     try {
       store = new MailStore(dir, this.limits.busyTimeoutMs, this.now);
+      this.settleOpening(store, dir, fresh, since);
+      this.stores.set(dir, store);
+      return store;
     } catch (error) {
+      store?.close();
       this.unwell.set(dir, { state: "damaged", since, detail: (error as Error).message });
       throw error;
     }
+  }
+
+  /** What a store just opened gets: its mail back from the files when it lost its file, reports taken by a stopped process kept again, a check against the files. */
+  private settleOpening(store: MailStore, dir: string, fresh: boolean, since: string): void {
     this.unwell.delete(dir);
     // a store that lost its file, or was set aside as damaged, gets its mail back from the files
     if ((fresh || store.startedOver) && store.count() === 0) {
@@ -198,6 +224,9 @@ export class MailEngine implements Directory {
         });
       }
     }
+    // a report taken to go out by a process that stopped is posted by the next sweep
+    const taken = store.keepTaken();
+    if (taken > 0) this.log(`mail: ${taken} reports taken to go out when the room stopped are kept for the next pass`);
     const files = countFiles(dir);
     if (files > store.count())
       this.unwell.set(dir, {
@@ -205,11 +234,9 @@ export class MailEngine implements Directory {
         since,
         detail: `${files} mail files and ${store.count()} mails in the store: mail written to its file never reached the store`,
       });
-    this.stores.set(dir, store);
-    return store;
   }
 
-  /** The mails after `id` in a project's store, or the room home's for `null`; none where no store exists. */
+  /** The mail that went out after `id` in a project's store, or the room home's for `null`; none where no store exists. */
   mailAfter(root: string | null, id: number, limit: number): (Message & { to: string[] })[] {
     return this.open(root ? join(root, MAIL_DIR) : ROOM_MAIL, false)?.after(id, limit) ?? [];
   }
@@ -254,25 +281,19 @@ export class MailEngine implements Directory {
 
   /** Withdraws unread mail sent only to be read, before `before`, in every store. */
   expire(before: string): number {
-    let gone = 0;
-    for (const store of this.known()) {
-      try {
-        gone += store.expire(before);
-      } catch (error) {
-        this.log(`mail: expiring unread mail failed in one store: ${(error as Error).message}`);
-      }
-    }
-    return gone;
+    return sum(this.across("expiring unread mail", (store) => store.expire(before)));
   }
 
   /** How the room answers its asks since `since`, and the refusals of its mail tools by code. */
   answering(since: string): { minutes: number[]; open: number; refusals: Map<string, number> } {
     const out = { minutes: [] as number[], open: 0, refusals: new Map<string, number>() };
-    for (const store of this.known()) {
-      const replies = store.replies(since);
+    for (const { replies, refusals } of this.across("counting the answers", (store) => ({
+      replies: store.replies(since),
+      refusals: store.refusals(since),
+    }))) {
       out.minutes.push(...replies.minutes);
       out.open += replies.open;
-      for (const [code, n] of store.refusals(since)) out.refusals.set(code, (out.refusals.get(code) ?? 0) + n);
+      for (const [code, n] of refusals) out.refusals.set(code, (out.refusals.get(code) ?? 0) + n);
     }
     return out;
   }
@@ -295,26 +316,35 @@ export class MailEngine implements Directory {
     });
   }
 
-  /** Runs `work` on each store; one that fails is said in the log and passed over. */
-  private each(what: string, work: (store: MailStore) => void | Promise<void>): Promise<void> {
-    return this.known().reduce(
-      (done, store) =>
-        done.then(async () => {
-          try {
-            await work(store);
-          } catch (error) {
-            this.log(`mail: ${what} failed in one store: ${(error as Error).message}`);
-          }
-        }),
-      Promise.resolve(),
-    );
+  /** The result of `work` on each store; a store where it fails is said in the log and passed over. */
+  private across<T>(what: string, work: (store: MailStore) => T): T[] {
+    return this.known().flatMap((store) => {
+      try {
+        return [work(store)];
+      } catch (error) {
+        this.log(`mail: ${what} failed in one store: ${error instanceof Error ? error.message : String(error)}`);
+        return [];
+      }
+    });
   }
 
+  /** Runs `work` for each item in turn; one that fails is said in the log and the rest still run. */
+  private async each<T>(items: Iterable<T>, what: string, work: (item: T) => Promise<void>): Promise<void> {
+    for (const item of items)
+      try {
+        await work(item);
+      } catch (error) {
+        this.log(`mail: ${what} failed: ${error instanceof Error ? error.message : String(error)}`);
+      }
+  }
+
+  /** Closes every store. */
   close(): void {
     for (const store of this.stores.values()) store.close();
     this.stores.clear();
   }
 
+  /** Reads the handovers made before this start from their file. */
   private loadAdoptions(): void {
     if (!existsSync(ADOPTIONS_FILE)) return;
     try {
@@ -329,6 +359,7 @@ export class MailEngine implements Directory {
     }
   }
 
+  /** Reads the seats the room registered from its log. */
   private loadSeats(): void {
     if (!existsSync(REGISTRY_LOG)) return;
     for (const line of readFileSync(REGISTRY_LOG, "utf8").split("\n")) {
@@ -344,15 +375,19 @@ export class MailEngine implements Directory {
           ...(rec.cwd ? { cwd: rec.cwd } : {}),
           ...(rec.version ? { version: rec.version } : {}),
         });
-      } catch {}
+      } catch {
+        // a torn line
+      }
     }
   }
 
+  /** Records a seat as registered; its project is worked out again. */
   rememberSeat(seat: SeatRecord): void {
     this.seats.set(seat.agentId, seat);
     this.roots.delete(seat.agentId);
   }
 
+  /** A registered seat's record. */
   seat(agentId: string): SeatRecord | undefined {
     return this.seats.get(agentId);
   }
@@ -377,6 +412,7 @@ export class MailEngine implements Directory {
     return false;
   }
 
+  /** Whether a seat may write to another: the workflow's routes and the tree both allow it. */
   canWrite(from: string, to: string, viaReply = false): { ok: true } | { ok: false; reason: string } {
     return mayWrite(this, from, to, viaReply);
   }
@@ -448,6 +484,7 @@ export class MailEngine implements Directory {
     return this.host.state(agentId);
   }
 
+  /** A digest of what a mail says and to whom, so the same text sent again is known for a repeat. */
   private print(input: NewMail): string {
     const to = [[input.to].flat().join(","), [...(input.cc ?? [])].sort().join(",")].join("|");
     const said = [
@@ -485,6 +522,7 @@ export class MailEngine implements Directory {
     return same ? this.heldBy(store, same.id, first) : null;
   }
 
+  /** A mail as `seat` holds it, or as its first recipient does when `seat` is none of them. */
   private heldBy(store: MailStore, id: number, seat: string): Mail | null {
     const message = store.get(id);
     const delivery = store.deliveries(id).find((to) => to.seat === seat) ?? store.deliveries(id)[0];
@@ -499,6 +537,7 @@ export class MailEngine implements Directory {
     return this.storeOf(recipients[0])!;
   }
 
+  /** Puts a new mail in the store with a delivery to each recipient, the copies quiet. */
   private write(store: MailStore, input: NewMail, state: "queued" | "kept"): Mail {
     const to = [input.to].flat();
     const flags = {
@@ -578,6 +617,7 @@ export class MailEngine implements Directory {
     store.answer(asks.find((ask) => ask.id === chosen?.ask)?.id ?? asks[0].id, mail.id);
   }
 
+  /** Stores a mail, writes its files, settles the ask it answers and hands it to each recipient that can take it. */
   async post(input: NewMail): Promise<Mail> {
     const to = [input.to].flat();
     const recipients = [...to, ...(input.cc ?? []).filter((seat) => !to.includes(seat))];
@@ -597,7 +637,7 @@ export class MailEngine implements Directory {
     return this.heldBy(store, mail.id, to[0])!;
   }
 
-  /** A report taken at its sender's turn end goes out; one that fails to is kept again for the next pass, never lost. */
+  /** A report taken at its sender's turn end goes out; one that cannot be posted is kept again for the next pass, never lost. */
   async postReport(report: NewMail): Promise<Mail> {
     try {
       return await this.post(report);
@@ -610,7 +650,7 @@ export class MailEngine implements Directory {
   /** A report written before its sender's turn ended: kept, one per seat, until that turn ends. */
   keepReport(input: NewMail): Mail {
     const store = this.shared([input.to].flat());
-    for (const old of store.kept(input.from.agentId)) store.mark(old.seat, [old.id], "replaced");
+    for (const old of store.kept(input.from.agentId)) store.mark(old.seat, [old.id], "replaced", DRAFT);
     return this.write(store, input, "kept");
   }
 
@@ -619,7 +659,7 @@ export class MailEngine implements Directory {
     const store = this.storeOf(agentId, false);
     const kept = store?.kept(agentId)[0];
     if (!store || !kept) return null;
-    store.mark(kept.seat, [kept.id], "withdrawn");
+    store.mark(kept.seat, [kept.id], "withdrawn", TAKEN);
     return {
       id: kept.id,
       from: { agentId: kept.sender, role: kept.senderRole },
@@ -659,6 +699,7 @@ export class MailEngine implements Directory {
     this.paused.add(agentId);
   }
 
+  /** The seat takes mail again. */
   unpause(agentId: string): void {
     this.paused.delete(agentId);
   }
@@ -712,6 +753,7 @@ export class MailEngine implements Directory {
     };
   }
 
+  /** Mail for a seat that is gone is bounced, and each sender is told. */
   private async bounce(store: MailStore, agentId: string, queue: readonly Mail[]): Promise<void> {
     store.mark(
       agentId,
@@ -804,14 +846,14 @@ export class MailEngine implements Directory {
 
   /** Delivers what is held, and posts the kept reports whose turn end never reached the room. */
   async sweep(): Promise<void> {
-    await this.each("the sweep", async (store) => {
-      for (const seat of store.waiting().keys()) await this.deliver(seat);
-      for (const kept of store.kept()) {
+    await this.each(this.known(), "the sweep of one store", async (store) => {
+      await this.each(store.waiting().keys(), "a delivery of the sweep", (seat) => this.deliver(seat));
+      await this.each(store.kept(), "a kept report of the sweep", async (kept) => {
         const status = await this.host.state(kept.sender);
-        if (status !== "idle" && status !== "gone") continue;
+        if (status !== "idle" && status !== "gone") return;
         const report = this.takeReport(kept.sender);
         if (report) await this.postReport(report);
-      }
+      });
     });
   }
 
@@ -839,30 +881,20 @@ export class MailEngine implements Directory {
 
   /** What was posted in every project since `since`, a line per recipient, oldest first. */
   posted(since: string): PostedLine[] {
-    return this.known()
-      .flatMap((store) => {
-        try {
-          return store.posted(since);
-        } catch {
-          return [];
-        }
-      })
+    return this.across("reading what was posted", (store) => store.posted(since))
+      .flat()
       .sort((a, b) => a.at.localeCompare(b.at));
   }
 
   /** Drops finished mail older than `before` from every store, with its files; returns how many. */
   prune(before: string): number {
-    let gone = 0;
-    for (const store of this.known()) {
-      try {
+    return sum(
+      this.across("pruning mail", (store) => {
         const pruned = store.prune(before);
         dropFiles(store.folder, pruned.files, pruned.threads);
         forgetSettled(store.folder, pruned.ids);
-        gone += pruned.messages;
-      } catch (error) {
-        this.log(`mail: pruning one store failed: ${(error as Error).message}`);
-      }
-    }
-    return gone;
+        return pruned.messages;
+      }),
+    );
   }
 }

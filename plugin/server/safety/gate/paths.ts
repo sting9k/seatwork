@@ -1,10 +1,8 @@
 import { posix } from "node:path";
 import { literal, type Part, type Script, type Word } from "./shell";
-import type { Scene, Value, Variable } from "./types";
+import type { Known, Value, Variable } from "./types";
 
-/** What a word names on disk, and the classes of path that DCG's file rules judge by. */
-
-type Known = Pick<Scene, "vars" | "place" | "cwd">;
+/** What a word names on disk, and the classes of path the file rules judge by. */
 
 const GLOB = /[*?[]|[@!?*+]\(/;
 
@@ -37,6 +35,7 @@ export function valueOf(word: Word, known: Known): Value {
   return { text, prefix: text ?? prefix, quoted, glob, temp, word };
 }
 
+/** What one run-time part of a word is worth: a variable's value, a substitution's text, or nothing known. */
 function fill(part: Exclude<Part, { kind: "text" | "tilde" }>, known: Known): Variable & { text: string | null } {
   if (part.kind === "param") {
     if (!/^\$\{?[A-Za-z_][A-Za-z0-9_]*\}?$/.test(part.raw)) return { text: null, value: null, temp: false };
@@ -122,48 +121,52 @@ export function isTemp(value: Value, known: Known): boolean {
   );
 }
 
+/** True when `path` is `root` or lies below it. */
 export function within(path: string, root: string): boolean {
   const base = root.endsWith("/") ? root : `${root}/`;
   return path === root || path.startsWith(base);
 }
 
-/** Folders whose loss is the loss of the system at any depth (DCG's list, with macOS). */
+export const SYSTEM_ROOTS = [
+  "/etc",
+  "/usr",
+  "/bin",
+  "/sbin",
+  "/root",
+  "/boot",
+  "/lib",
+  "/lib64",
+  "/var",
+  "/sys",
+  "/proc",
+  "/dev",
+  "/opt",
+  "/System",
+  "/Library",
+];
+
 const SYSTEM = new Set([
+  ...SYSTEM_ROOTS.map((root) => root.slice(1).toLowerCase()),
   "applications",
-  "library",
+  "volumes",
+  "private",
   "program files",
   "program files (x86)",
   "programdata",
-  "system",
-  "volumes",
   "windows",
-  "bin",
-  "boot",
   "cores",
-  "dev",
-  "etc",
-  "lib",
   "lib32",
-  "lib64",
   "libx32",
   "media",
   "mnt",
   "nix",
-  "opt",
-  "private",
-  "proc",
-  "root",
-  "sbin",
   "snap",
   "srv",
-  "sys",
-  "usr",
-  "var",
 ]);
 
 const EXPANSION = /[$`*?[{~\\]/;
 
-/** How bad losing a path is, by DCG's rm rule: critical for the system, a home, its dotfiles. */
+/** How bad losing a path is, by DCG's rm rule: critical for a system folder at any depth, a home and its dotfiles. */
 export function lossOf(value: Value, known: Known, project: string | null): "critical" | "high" {
   const text = value.text ?? value.prefix;
   const unknownTail = value.text === null;
@@ -182,6 +185,7 @@ export function lossOf(value: Value, known: Known, project: string | null): "cri
   return lossOfAbsolute(text, unknownTail, known.place.home);
 }
 
+/** `lossOf` for an absolute path. */
 function lossOfAbsolute(path: string, unknownTail: boolean, home: string): "critical" | "high" {
   const parts = path.split("/").filter((c) => c && c !== ".");
   if (parts.some((c) => c === ".." || EXPANSION.test(c))) return "critical";
@@ -205,31 +209,9 @@ function deepUnder(rest: string, unknownTail: boolean): boolean {
   return parts.length >= 2 && !parts[0].startsWith(".");
 }
 
-const SENSITIVE = [
-  "/etc",
-  "/usr",
-  "/bin",
-  "/sbin",
-  "/root",
-  "/boot",
-  "/lib",
-  "/lib64",
-  "/var",
-  "/home",
-  "/Users",
-  "/sys",
-  "/proc",
-  "/dev",
-  "/opt",
-  "/System",
-  "/Library",
-  "/Applications",
-  "/Volumes",
-  "/private/etc",
-  "/private/var",
-];
+const SENSITIVE = [...SYSTEM_ROOTS, "/home", "/Users", "/Applications", "/Volumes", "/private/etc", "/private/var"];
 
-/** DCG's sensitive set for its file rules: `/`, the system roots, any home, and `~`. */
+/** DCG's sensitive set for its file rules: `/`, the system's root folders, any home, and `~`. */
 export function sensitive(value: Value, known: Known, resolveRelative: boolean): boolean {
   let text = value.text ?? value.prefix;
   if (!text) return false;

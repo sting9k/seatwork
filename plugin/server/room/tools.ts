@@ -11,12 +11,13 @@ import { describeSeats, type SeatRow } from "../orchestration/seats-view";
 import { parseSeat } from "../orchestration/seats";
 import { refusedCaller, roomTool, TOOL_NAMES } from "./tool-table";
 import { SUBJECT_SIGNALS } from "../signals";
-import { roomStats } from "../stats";
 import { unreadScopes, type Plan, type Work } from "../tasks/graph";
 import { graph, work } from "../tasks/tools";
 import { refusal } from "../refusal";
 import { WorkError } from "../tasks/store";
 import { KnowledgeRefused } from "../knowledge/refused";
+import { OperationsRefused } from "../operations/index";
+import { OperationsError } from "../operations/store";
 import { KnowledgeError } from "../knowledge/store";
 import { fromRoom, taskOf, type RoomContext } from "./context";
 import { readInbox, refused, sendMail } from "./mail-tools";
@@ -36,7 +37,7 @@ const seatArg = (value: unknown) =>
     .replace(ROLE_PREFIX, "");
 
 /** How the room's mail stands: unwell stores, answers to asks, refusals by code. */
-function mailHealth(room: RoomContext, since: string): string[] {
+export function mailHealth(room: RoomContext, since: string): string[] {
   const lines = room.engine
     .health()
     .map((ill) => `mail store ${ill.state} since ${ill.since.slice(0, 16)}: ${ill.folder}: ${ill.detail}`);
@@ -328,13 +329,18 @@ export function registerTools(room: RoomContext, mcp: McpHttpServer): void {
         .map((seat) => ({ title: seat.title ?? seat.id, cwd: seat.cwd })),
     ),
   );
-  add("seatwork_room_stats", (args) =>
-    roomStats(
-      Number(args.days) > 0 ? Number(args.days) : KEEP_LOG_DAYS,
-      (since) => engine.posted(since),
-      (since) => mailHealth(room, since),
-    ),
-  );
+  add("seatwork_room", (args, me) => {
+    try {
+      return JSON.stringify(room.operations.act(me, args));
+    } catch (error) {
+      if (error instanceof OperationsRefused) throw new Error(refusal(error));
+      if (error instanceof OperationsError)
+        throw new Error(
+          refusal({ code: error.code, message: error.message, retryable: error.code === "DATABASE_LOCKED" }),
+        );
+      throw error;
+    }
+  });
 
   for (const name of TOOL_NAMES) {
     const run = handlers.get(name);

@@ -43,6 +43,7 @@ export interface JevPolicy {
   retries: number;
   keepDays: number;
   forks?: string[];
+  sharpAt?: Record<string, number>;
 }
 
 /** What the district takes: its folder and policy, and stand-ins for the environment, clock, network and log. */

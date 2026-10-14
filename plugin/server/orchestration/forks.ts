@@ -25,9 +25,11 @@ export interface Router {
   ): Promise<Record<string, Fork>>;
 }
 
+/** What forks take from the room: the model, which forks are on, a threshold set apart from the catalog's, and a log. */
 interface ForkDeps {
   router: Router | null;
   on(name: ForkName): boolean;
+  sharpAt?(name: ForkName): number | undefined;
   log(line: string): void;
 }
 
@@ -71,7 +73,10 @@ export class Forks {
     );
     let found: Record<string, Fork>;
     try {
-      found = await this.deps.router!.routes(`forks.${name}@${fork.version}`, state, asked, fork.sharpAt, {
+      // a threshold the policy sets holds when it is one: from a half up to certainty
+      const set = this.deps.sharpAt?.(name);
+      const sharpAt = typeof set === "number" && set >= 0.5 && set <= 1 ? set : fork.sharpAt;
+      found = await this.deps.router!.routes(`forks.${name}@${fork.version}`, state, asked, sharpAt, {
         deadlineMs: fork.deadlineMs,
       });
     } catch (error) {

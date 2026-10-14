@@ -1,4 +1,4 @@
-import { deferred, installRoom, PROJECT, ROOM_HOME } from "./support/room";
+import { deferred, installRoom, PLUGIN_DIR, PROJECT, ROOM_HOME } from "./support/room";
 import { BRIEF, prompt } from "./support/timeline";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
@@ -1363,17 +1363,17 @@ test("a person's decision reaches every seat: a new seat starts with it, a worki
   const project = join(PROJECT, "..", "decisions-project");
   mkdirSync(join(project, ".seatwork"), { recursive: true });
   writeFileSync(join(project, ".seatwork", "room.json"), "{}");
-  const hq = await seat("hq-decide", "claude-hq", null, "HQ Supervisor", join(ROOM_HOME, "hq-seatwork"));
+  const sup = await seat("sup-decide", "claude-supervisor", null, "[Supervisor] decide", project);
   const lead = await seat("lead-decide", "claude-lead", null, "[Lead] decide", project);
   const ownerSays = async (words: string, turnId: string, args: Record<string, unknown>) => {
-    await call("on agent.turn_started", { agent: hq.agent, turnId }, context);
+    await call("on agent.turn_started", { agent: sup.agent, turnId }, context);
     const answer = JSON.parse(
-      await hq.call("seatwork_knowledge", { do: "decide", scope: "project", project: "decisions-project", ...args }),
+      await sup.call("seatwork_knowledge", { do: "decide", scope: "project", project: "decisions-project", ...args }),
     );
     await call(
       "on agent.turn_ended",
       {
-        agent: hq.agent,
+        agent: sup.agent,
         turnId,
         outcome: { kind: "completed" },
         timeline: [
@@ -1385,7 +1385,7 @@ test("a person's decision reaches every seat: a new seat starts with it, a worki
     );
     return answer;
   };
-  const asked = await ownerSays("dùng pnpm thôi, đừng dùng npm", "hq-t1", {
+  const asked = await ownerSays("dùng pnpm thôi, đừng dùng npm", "sup-t1", {
     topic: "package manager",
     statement: "Use pnpm for every install; never npm.",
   });
@@ -1406,7 +1406,7 @@ test("a person's decision reaches every seat: a new seat starts with it, a worki
       })
     ).text();
   assert.equal(await hook("ls"), "", "a seat that holds every decision is told nothing");
-  await ownerSays("thôi chuyển qua yarn", "hq-t2", {
+  await ownerSays("thôi chuyển qua yarn", "sup-t2", {
     topic: "package manager",
     statement: "Use yarn for every install; pnpm and npm are out.",
     replaces_version: 1,
@@ -1655,4 +1655,28 @@ test("the seat asked for its handoff is archived first: whoever asked is told, a
     supervisor.inbox.at(-1) ?? (await supervisor.held()),
     /subject="ROTATION FAILED: \[Lead\] stream was archived before its handoff"/,
   );
+});
+
+test("the room's own seat runs the room through its tool; no seat writes the code that runs the room", async () => {
+  const hq = await seat("hq-ops", "claude-hq", null, "HQ Supervisor", join(ROOM_HOME, "hq-seatwork"));
+  const lead = await seat("lead-ops", "claude-lead", null, "[Lead] ops", PROJECT);
+  const health = JSON.parse(await hq.call("seatwork_room", { do: "health" }));
+  assert.deepEqual(health.readings, ["jev", "knowledge", "mail", "safety", "seats"]);
+  const policy = JSON.parse(await hq.call("seatwork_room", { do: "policy" }));
+  assert.equal(policy.tunable["knowledge.keepDays"].value, 60);
+  const refused = await hq
+    .call("seatwork_room", { do: "tune", path: "knowledge.keepDays", value: 30 })
+    .catch((error: Error) => error.message);
+  assert.match(refused, /read knowledge in this turn first/);
+  const gate = lead.url.replace(/\/mcp\/([^/]+)\/[^/]+$/, "/gate/$1");
+  const write = await fetch(`${gate}?cli=claude`, {
+    method: "POST",
+    headers: { "content-type": "application/json", "x-seat": lead.agent.id },
+    body: JSON.stringify({
+      tool_name: "Write",
+      tool_input: { file_path: join(PLUGIN_DIR, "server", "room", "room.ts"), content: "" },
+      cwd: PROJECT,
+    }),
+  });
+  assert.match(JSON.parse(await write.text()).hookSpecificOutput.permissionDecision, /deny/);
 });

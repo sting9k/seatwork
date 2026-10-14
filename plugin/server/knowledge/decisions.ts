@@ -101,6 +101,7 @@ export interface DecisionDeps {
   book(): KnowledgeStore;
   recordOf(agent: string): KnowledgeStore | null;
   isRoomSeat(agent: string): boolean;
+  decides(agent: string, scope: "room" | "project"): boolean;
   briefs(agent: string): boolean;
   ownedTask(agent: string, task: string): string | null;
   taskOf(agent: string): string;
@@ -184,12 +185,19 @@ export class DecisionBook {
       return { key: `task:${root}:${owned}`, needsPerson: false };
     }
     if (scope !== "room" && scope !== "project") throw new KnowledgeRefused("`scope` is room, project or task");
-    if (!this.deps.isRoomSeat(agent))
+    if (!this.deps.decides(agent, scope))
       throw new KnowledgeRefused(
-        "a room's or a project's decision is recorded by the room's own seat, where the person speaks: mail it there",
+        `a ${scope}'s decision is recorded by the seat the person speaks to about the ${scope}: mail it there`,
       );
     if (scope === "room") return { key: "room", needsPerson: true };
     const named = String(args.project ?? "").trim();
+    // a seat that works in a project records that project's decisions, and no other's
+    const own = this.deps.projectOf(agent);
+    if (own) {
+      if (named && named !== own && named !== own.split("/").at(-1))
+        throw new KnowledgeRefused(`you record the decisions of your own project, ${own.split("/").at(-1)}`);
+      return { key: `project:${own}`, needsPerson: true };
+    }
     const roots = this.deps.projects().filter((one) => one === named || one.split("/").at(-1) === named);
     if (roots.length > 1) throw new KnowledgeRefused(`more than one project is named ${named}: give its full path`);
     if (roots.length === 0)

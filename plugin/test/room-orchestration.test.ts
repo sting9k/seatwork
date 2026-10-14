@@ -273,7 +273,7 @@ test("seatwork_seats lists the seats under a seat in tree order, each nested und
 const BIG = [10_000, 40_000];
 
 /** The fastest of a few runs: a loaded machine slows a run, never speeds one up. */
-function fastest(run: () => unknown, times = 3): number {
+function fastest(run: () => unknown, times = 7): number {
   run();
   let best = Infinity;
   for (let i = 0; i < times; i += 1) {

@@ -42,6 +42,7 @@ export type Verdict =
 export interface GateDeps {
   judge: Judge | null;
   on(): boolean;
+  at?(): number | undefined;
   log(line: string): void;
 }
 
@@ -67,14 +68,17 @@ export class Gate {
       store.tally("gate-unread");
       return { kept: true, reading: null };
     }
-    if (reading.keep < GATE.at) {
+    // a threshold the policy sets holds when it is one: from a half up to certainty
+    const set = this.deps.at?.();
+    const at = typeof set === "number" && set >= 0.5 && set <= 1 ? set : GATE.at;
+    if (reading.keep < at) {
       store.tally("gate-noise");
       const criteria: Record<string, string> = GATE.question.criteria;
       return { kept: false, noise: { label: reading.label, meaning: criteria[reading.label] ?? "" } };
     }
     const unsaid = new Set(olds.filter((old) => old.choice === null).map((old) => old.id));
     const repeats = reading.same
-      .filter((one) => unsaid.has(one.id) && REPEATS.includes(one.choice) && one.probabilities[one.choice] >= GATE.at)
+      .filter((one) => unsaid.has(one.id) && REPEATS.includes(one.choice) && one.probabilities[one.choice] >= at)
       .map((one) => one.id);
     store.tally(`gate-${repeats.length ? "repeat" : "kept"}`);
     return repeats.length ? { kept: false, repeats } : { kept: true, reading };

@@ -16,6 +16,7 @@ export interface RoleTraits {
   briefed?: boolean;
   writes?: boolean;
   reviews?: boolean;
+  decides?: ("room" | "project")[];
   rotate?: string;
   tableNote?: { one: string; several: string };
 }

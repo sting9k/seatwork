@@ -52,6 +52,7 @@ function district(
     ownedTask: (agent, task) =>
       task === "T-1" || (options.owns?.(agent, task) ?? false) ? (options.full?.(task) ?? task) : null,
     isRoomSeat: (agent) => agent.startsWith("hq"),
+    decides: (agent, scope) => agent.startsWith(scope === "room" ? "hq" : "sup"),
     briefs: (agent) => agent.startsWith("lead"),
     taskOf: options.taskOf ?? (() => "T-1"),
     rootOf: () => project,
@@ -416,10 +417,10 @@ function endTurn(knowledge: Knowledge, agent: string, events: TurnEvent[], turnI
 const decide = async (knowledge: Knowledge, agent: string, args: Record<string, unknown>) =>
   (await knowledge.act(agent, { do: "decide", ...args })) as Record<string, unknown>;
 
-test("a person's decision recorded by the room's seat takes effect when its turn ends, on the person's words in it", async () => {
+test("a person's decision recorded by the seat they speak to takes effect when its turn ends, on the person's words in it", async () => {
   const { knowledge } = district();
-  knowledge.turnStarted("hq-1");
-  const asked = await decide(knowledge, "hq-1", {
+  knowledge.turnStarted("sup-1");
+  const asked = await decide(knowledge, "sup-1", {
     scope: "project",
     project: "project",
     topic: "Package manager",
@@ -430,7 +431,7 @@ test("a person's decision recorded by the room's seat takes effect when its turn
   assert.deepEqual((ask(knowledge, "peer-a", { do: "list" }).inForce as string[]).length, 0, "pending binds no one");
   endTurn(
     knowledge,
-    "hq-1",
+    "sup-1",
     [
       { kind: "prompt", text: "từ mai dùng pnpm nhé" },
       { kind: "say", text: "ok" },
@@ -444,15 +445,15 @@ test("a person's decision recorded by the room's seat takes effect when its turn
   const book = knowledge.storeOf(null) as unknown as { db: DatabaseSync };
   assert.deepEqual(
     { ...(book.db.prepare("SELECT address, text FROM decision_sources").get() as object) },
-    { address: "turn:hq-1:t1#0", text: "từ mai dùng pnpm nhé" },
+    { address: "turn:sup-1:t1#0", text: "từ mai dùng pnpm nhé" },
     "the person's own words stay beside the decision, in their own language",
   );
-  const told = ask(knowledge, "hq-1", { do: "list" }).notices as string[];
+  const told = ask(knowledge, "sup-1", { do: "list" }).notices as string[];
   assert.match(told[0], /Recorded: Use pnpm/);
   knowledge.close();
 });
 
-test("only the room's seat records a room's or a project's decision; a seat that briefs records its task's at once", async () => {
+test("only the seat the person speaks to records a room's or a project's decision; a seat that briefs records its task's at once", async () => {
   const { knowledge } = district();
   await assert.rejects(
     () =>
@@ -462,7 +463,7 @@ test("only the room's seat records a room's or a project's decision; a seat that
         topic: "db",
         statement: "Use SQLite for the store.",
       }),
-    /recorded by the room's own seat/,
+    /recorded by the seat the person speaks to about the project/,
   );
   await assert.rejects(
     () => decide(knowledge, "peer-b", { scope: "task", topic: "db", statement: "Use SQLite for the store." }),
@@ -696,9 +697,9 @@ test("a decision is one English sentence with no secret, no relative date, and n
 test("a seat is told each change once: new, changed, no longer in force; a new seat starts with them in its prompt", async () => {
   const { knowledge, project } = district();
   const say = async (words: string, turnId: string, args: Record<string, unknown>, action = "decide") => {
-    knowledge.turnStarted("hq-3");
-    await knowledge.act("hq-3", { do: action, scope: "project", project: "project", ...args });
-    endTurn(knowledge, "hq-3", [{ kind: "prompt", text: words }], turnId);
+    knowledge.turnStarted("sup-3");
+    await knowledge.act("sup-3", { do: action, scope: "project", project: "project", ...args });
+    endTurn(knowledge, "sup-3", [{ kind: "prompt", text: words }], turnId);
   };
   await say("keep MIT", "t1", { topic: "license", statement: "Keep the MIT license on every file." });
   assert.match(
@@ -794,24 +795,24 @@ test("a seat opened after its task's decision is told it; a later call on a topi
   knowledge.opened("peer-n4", null);
   assert.match(knowledge.noticesFor("peer-n4")!.text, /New decision: \[task T-1\] store: Use SQLite/);
 
-  knowledge.turnStarted("hq-v1");
-  await decide(knowledge, "hq-v1", {
+  knowledge.turnStarted("sup-v1");
+  await decide(knowledge, "sup-v1", {
     scope: "project",
     project: "project",
     topic: "package manager",
     statement: "Use pnpm for every install.",
   });
-  await decide(knowledge, "hq-v1", {
+  await decide(knowledge, "sup-v1", {
     scope: "project",
     project: "project",
     topic: "package manager",
     statement: "Use yarn for every install.",
   });
-  endTurn(knowledge, "hq-v1", [{ kind: "prompt", text: "pnpm... no, yarn" }], "t1");
+  endTurn(knowledge, "sup-v1", [{ kind: "prompt", text: "pnpm... no, yarn" }], "t1");
   assert.match((ask(knowledge, "peer-n4", { do: "list" }).inForce as string[]).join(), /Use yarn for every install/);
   await assert.rejects(
     () =>
-      decide(knowledge, "hq-v1", {
+      decide(knowledge, "sup-v1", {
         scope: "project",
         project: "project",
         topic: "deploy",
@@ -908,23 +909,23 @@ test("a task named by its short id binds the seats on its full id; a statement t
 
 test("a decision made between a seat's prompt and its start reaches it as a notice", async () => {
   const { knowledge, project } = district();
-  knowledge.turnStarted("hq-d14");
-  await decide(knowledge, "hq-d14", {
+  knowledge.turnStarted("sup-d14");
+  await decide(knowledge, "sup-d14", {
     scope: "project",
     project: "project",
     topic: "license",
     statement: "Keep the MIT license on every file.",
   });
-  endTurn(knowledge, "hq-d14", [{ kind: "prompt", text: "MIT" }], "t1");
+  endTurn(knowledge, "sup-d14", [{ kind: "prompt", text: "MIT" }], "t1");
   assert.match(String(knowledge.promptFor(project, "L14")), /license/);
-  knowledge.turnStarted("hq-d14");
-  await decide(knowledge, "hq-d14", {
+  knowledge.turnStarted("sup-d14");
+  await decide(knowledge, "sup-d14", {
     scope: "project",
     project: "project",
     topic: "test runner",
     statement: "Run the tests with vitest only.",
   });
-  endTurn(knowledge, "hq-d14", [{ kind: "prompt", text: "vitest" }], "t2");
+  endTurn(knowledge, "sup-d14", [{ kind: "prompt", text: "vitest" }], "t2");
   knowledge.opened("peer-d14", "L14");
   const told = knowledge.noticesFor("peer-d14")!.text;
   assert.match(told, /test-runner: Run the tests with vitest/);
@@ -1234,16 +1235,19 @@ test("a seat whose context was compacted is told every decision again, where its
       agent === "peer-c" ? ['- T-1: 2 mails, the last #4 "REVIEW: checkout" from your Lead.'] : [],
   });
   const record = async (statement: string, turnId: string, extra: Record<string, unknown> = {}) => {
-    knowledge.turnStarted("hq-1");
-    await decide(knowledge, "hq-1", {
+    knowledge.turnStarted("sup-1");
+    await decide(knowledge, "sup-1", {
       scope: "project",
       project: "project",
       topic: "package manager",
       statement,
       ...extra,
     });
-    knowledge.turnEnded({ ...turn("hq-1", [{ kind: "prompt", text: "the package manager" }], { turnId }), role: "hq" });
-    knowledge.noticesFor("hq-1")?.told();
+    knowledge.turnEnded({
+      ...turn("sup-1", [{ kind: "prompt", text: "the package manager" }], { turnId }),
+      role: "supervisor",
+    });
+    knowledge.noticesFor("sup-1")?.told();
   };
   await record("Use pnpm for every install.", "t1");
   assert.match(knowledge.promptFor(project, "Lc")!, /Use pnpm/);
@@ -1271,16 +1275,19 @@ test("a seat whose context was compacted is told every decision again, where its
   again.told();
   assert.equal(knowledge.noticesFor("peer-c"), null, "told again once");
   assert.deepEqual(knowledge.storeOf(null).tallies("2000-01-01")["seat-compacted"], 1);
-  knowledge.turnStarted("hq-1");
-  await decide(knowledge, "hq-1", {
+  knowledge.turnStarted("sup-1");
+  await decide(knowledge, "sup-1", {
     scope: "project",
     project: "project",
     topic: "linter",
     statement: "Run the linter before each commit.",
   });
-  knowledge.turnEnded({ ...turn("hq-1", [{ kind: "prompt", text: "/compact" }], { turnId: "t3" }), role: "hq" });
+  knowledge.turnEnded({
+    ...turn("sup-1", [{ kind: "prompt", text: "/compact" }], { turnId: "t3" }),
+    role: "supervisor",
+  });
   assert.match(
-    knowledge.noticesFor("hq-1")!.text,
+    knowledge.noticesFor("sup-1")!.text,
     /Dropped: no person's words/,
     "a command typed to the seat's program is no person's words",
   );
@@ -1536,10 +1543,10 @@ test("a seat holds what its own launch's prompt showed whole; the rest reach it 
   const { knowledge, project } = district();
   let turns = 0;
   const record = async (rules: Record<string, unknown>[]) => {
-    knowledge.turnStarted("hq-p");
+    knowledge.turnStarted("sup-p");
     for (const args of rules)
-      await decide(knowledge, "hq-p", { scope: "project", project: "project", new_topic: true, ...args });
-    endTurn(knowledge, "hq-p", [{ kind: "prompt", text: "the rules" }], `t${(turns += 1)}`);
+      await decide(knowledge, "sup-p", { scope: "project", project: "project", new_topic: true, ...args });
+    endTurn(knowledge, "sup-p", [{ kind: "prompt", text: "the rules" }], `t${(turns += 1)}`);
   };
   await record([{ topic: "license", statement: "Keep the MIT license on every file." }]);
   knowledge.promptFor(project, "La");
@@ -1737,4 +1744,21 @@ test("what a seat was shown goes after a year, whether or not its seat was archi
   assert.equal(store.shownTo("seat-gone").size, 0);
   assert.equal(store.shownTo("seat-here").size, 1);
   store.close();
+});
+
+test("a project's seat records its own project's decisions only, and the room's seat the room's", async () => {
+  const { knowledge } = district();
+  const rule = { topic: "logs", statement: "Keep every log for a week." };
+  knowledge.turnStarted("sup-o");
+  await assert.rejects(() => decide(knowledge, "sup-o", { scope: "room", ...rule }), /a room's decision is recorded/);
+  await assert.rejects(
+    () => decide(knowledge, "sup-o", { scope: "project", project: "other", ...rule }),
+    /your own project, project/,
+  );
+  assert.equal((await decide(knowledge, "sup-o", { scope: "project", ...rule })).state, "pending");
+  await assert.rejects(
+    () => decide(knowledge, "hq-o", { scope: "project", project: "project", ...rule }),
+    /a project's decision is recorded/,
+  );
+  knowledge.close();
 });

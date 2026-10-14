@@ -1,11 +1,7 @@
 {
-  "$comment": "The seats every install gets: only these <harness>-<role> providers, plus every seat the model table names and the seats this machine added (setup.json), are written into Paseo and have a runtime. Harnesses: claude, codex, pi, opencode. Roles: hq, supervisor, lead, peer, lens. Any harness can hold any role.",
+  "$comment": "The seat every install gets: the room's own, which ships with the plugin. A worker seat comes from the model table (room/models.json, a project's own table) or from what this machine added (setup.json). Harnesses: claude, codex, pi, opencode; any harness can hold any role.",
   "seats": {
-    "hq": ["claude"],
-    "supervisor": ["claude"],
-    "lead": ["claude"],
-    "peer": ["claude", "codex"],
-    "lens": ["codex", "claude"]
+    "hq": ["claude"]
   },
   "$comment_restrictModels": "true: each provider lists only the models room/models.json assigns to it (read from the harness's live catalog when the room is set up). false: the harness's full model list.",
   "restrictModels": true

@@ -3,6 +3,7 @@ import type { Host, SeatUsage } from "../host";
 import type { Jev } from "../jev/index";
 import type { Forks } from "../orchestration/forks";
 import type { Knowledge } from "../knowledge/index";
+import type { Operations } from "../operations/index";
 import type { Recovery } from "../orchestration/recovery";
 import type { ReviewGate } from "../orchestration/review-gate";
 import type { Rotations } from "../orchestration/rotation";
@@ -31,6 +32,8 @@ export interface RoomContext {
   jev: Jev;
   forks: Forks;
   knowledge: Knowledge;
+  operations: Operations;
+  operators: Set<string>;
   mailedUp: Map<string, Set<string>>;
   lastSignal: Map<string, string>;
   lastUsage: Map<string, SeatUsage>;

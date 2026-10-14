@@ -20,6 +20,7 @@ export interface KnowledgePolicy {
   keepDays: number;
   maxEntries?: number;
   gate?: boolean;
+  gateAt?: number;
 }
 
 /** What the district takes from the room: its seats, projects, mail and tasks, and the decision model. */
@@ -32,6 +33,7 @@ export interface KnowledgeDeps {
   seen(reader: string): readonly string[] | null;
   ownedTask(agentId: string, task: string): string | null;
   isRoomSeat(agentId: string): boolean;
+  decides(agentId: string, scope: "room" | "project"): boolean;
   briefs(agentId: string): boolean;
   taskOf(agentId: string): string;
   rootOf(cwd: string): string | null;
@@ -142,12 +144,18 @@ export class Knowledge {
 
   constructor(private readonly deps: KnowledgeDeps) {
     const judge = deps.judge ?? null;
-    this.gate = new Gate({ judge, on: () => this.on && this.deps.policy()?.gate === true, log: deps.log });
+    this.gate = new Gate({
+      judge,
+      on: () => this.on && this.deps.policy()?.gate === true,
+      at: () => this.deps.policy()?.gateAt,
+      log: deps.log,
+    });
     this.pairs = new PairBook({ judge, log: deps.log });
     this.decisions = new DecisionBook({
       book: () => this.storeOf(null),
       recordOf: (agent) => this.existing(deps.projectOf(agent)),
       isRoomSeat: deps.isRoomSeat,
+      decides: deps.decides,
       briefs: deps.briefs,
       ownedTask: deps.ownedTask,
       taskOf: deps.taskOf,
@@ -577,6 +585,12 @@ export class Knowledge {
         this.deps.log(`knowledge: the store of ${root ?? "the room"} was not expired: ${(error as Error).message}`);
       }
     return gone;
+  }
+
+  /** What the room's operator reads of the district: whether it runs, and the room store's counts of the last day. */
+  reading(): Record<string, unknown> {
+    const since = new Date(this.now().getTime() - 86_400_000).toISOString();
+    return { on: this.on, lastDay: this.on ? (this.existing(null)?.tallies(since) ?? {}) : {} };
   }
 
   /** A runtime closed and took its turn with it: no end comes for the turn that started. */

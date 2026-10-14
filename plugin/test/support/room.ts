@@ -25,7 +25,7 @@ export function installRoom(providers: string[]): void {
   const policy = JSON.parse(readFileSync(join(PLUGIN_DIR, "paseo", "policy.json"), "utf8"));
   policy.mail.port = 0; // any free port
   writeFileSync(join(ROOM_HOME, "policy.json"), JSON.stringify(policy));
-  writeFileSync(join(ROOM_HOME, "seats.json"), JSON.stringify({ providers }));
+  writeFileSync(join(ROOM_HOME, "seats.json"), JSON.stringify({ providers, source: PLUGIN_DIR }));
   // set up by the plugin version under test: a room from another version is asked to apply again first
   writeFileSync(
     join(ROOM_HOME, "setup.json"),

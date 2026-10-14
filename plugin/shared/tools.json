@@ -9,12 +9,16 @@
         "properties": {
           "to": {
             "type": ["string", "array"],
-            "items": { "type": "string" },
+            "items": {
+              "type": "string"
+            },
             "description": "`owner`, a seat you launched (its id, the start of its id, or its title), several of them, or `team`: every open seat under you, which reads it with its next mail. Omit with reply_to."
           },
           "cc": {
             "type": "array",
-            "items": { "type": "string" },
+            "items": {
+              "type": "string"
+            },
             "description": "Seats that get a copy to read; it starts no turn of theirs."
           },
           "reply_to": {
@@ -40,7 +44,9 @@
           },
           "files": {
             "type": "array",
-            "items": { "type": "string" },
+            "items": {
+              "type": "string"
+            },
             "description": "Paths the mail points at; each must exist."
           },
           "key": {
@@ -57,15 +63,42 @@
       "inputSchema": {
         "type": "object",
         "properties": {
-          "view": { "type": "string", "enum": ["new", "all", "sent", "owed", "thread", "search"] },
-          "id": { "type": ["string", "integer"], "description": "One mail, with its whole body." },
-          "thread": { "type": "string", "description": "An issue id, or the thread a mail names." },
-          "q": { "type": "string", "description": "search: the words to look for." },
-          "signal": { "type": "string", "description": "all, search: only mail whose subject opens with this signal." },
-          "since": { "type": "string", "description": "all, sent, search: only mail after this ISO time." },
-          "limit": { "type": "integer", "description": "20 by default, 200 at most." },
-          "bodies": { "type": "boolean", "description": "thread: the mails whole, not a line each." },
-          "peek": { "type": "boolean", "description": "new: leave the mail unread." },
+          "view": {
+            "type": "string",
+            "enum": ["new", "all", "sent", "owed", "thread", "search"]
+          },
+          "id": {
+            "type": ["string", "integer"],
+            "description": "One mail, with its whole body."
+          },
+          "thread": {
+            "type": "string",
+            "description": "An issue id, or the thread a mail names."
+          },
+          "q": {
+            "type": "string",
+            "description": "search: the words to look for."
+          },
+          "signal": {
+            "type": "string",
+            "description": "all, search: only mail whose subject opens with this signal."
+          },
+          "since": {
+            "type": "string",
+            "description": "all, sent, search: only mail after this ISO time."
+          },
+          "limit": {
+            "type": "integer",
+            "description": "20 by default, 200 at most."
+          },
+          "bodies": {
+            "type": "boolean",
+            "description": "thread: the mails whole, not a line each."
+          },
+          "peek": {
+            "type": "boolean",
+            "description": "new: leave the mail unread."
+          },
           "project": {
             "type": "string",
             "description": "search, thread: another project's mail, by its folder or name, or all; for a seat that reads every project."
@@ -123,18 +156,56 @@
         "required": ["project"]
       }
     },
-    "seatwork_room_stats": {
+    "seatwork_room": {
       "callers": "room",
-      "description": "What the mail log shows for the last `days`, per project and signal (candidates accepted or rejected, reopen requests conceded or held, decisions escalated, questions), how the mail stands (unwell stores, asks answered, refusals), then what each project's seats used per role, as their agent CLIs report it. Refused for seats that do not keep the registry.",
+      "description": "Run the room itself. `do` is the action. health: incidents of the last day by district, and the readings there are. A reading by its name (jev, knowledge, mail, safety, seats): that district's numbers of the last day. log: the room's log, newest first, narrowed by `district`, `since`, `q`. incidents: troubles the room met in the last `days`, each with how often. policy: the keys you may tune, their values and ranges, and the last changes. tune: set one key's `value`; it needs a reading of that key's district in this turn, a `reason` and the `evidence` you measured, in English. revert: undo change `id` the same way. Refused for seats that do not run the room.",
       "inputSchema": {
         "type": "object",
         "properties": {
+          "do": {
+            "type": "string",
+            "description": "health, a reading's name, log, incidents, policy, tune or revert."
+          },
+          "district": {
+            "type": "string",
+            "description": "log: one district."
+          },
+          "since": {
+            "type": "string",
+            "description": "log: an ISO time."
+          },
+          "q": {
+            "type": "string",
+            "description": "log: words a line holds."
+          },
+          "limit": {
+            "type": "integer"
+          },
           "days": {
-            "type": "number",
-            "description": "Window in days, {{keep_log_days}} at most and by default."
+            "type": "integer",
+            "description": "incidents: the window, a few days at most."
+          },
+          "path": {
+            "type": "string",
+            "description": "tune: the key, as policy lists it."
+          },
+          "value": {
+            "description": "tune: the new value."
+          },
+          "id": {
+            "type": "integer",
+            "description": "revert: the change to undo."
+          },
+          "reason": {
+            "type": "string",
+            "description": "tune, revert: why, in English."
+          },
+          "evidence": {
+            "type": "string",
+            "description": "tune, revert: what you read and measured, in English."
           }
         },
-        "required": []
+        "required": ["do"]
       }
     },
     "seatwork_work": {
@@ -160,26 +231,49 @@
               "reopen"
             ]
           },
-          "id": { "type": "string", "description": "An issue id, or enough of it after the prefix to name one issue." },
+          "id": {
+            "type": "string",
+            "description": "An issue id, or enough of it after the prefix to name one issue."
+          },
           "issues": {
             "type": "array",
             "description": "create: several issues in one write. Each has title and may have key, description, design, acceptance_criteria, write_scope, priority, issue_type, labels, parent, deps.",
-            "items": { "type": "object" }
+            "items": {
+              "type": "object"
+            }
           },
-          "title": { "type": "string" },
+          "title": {
+            "type": "string"
+          },
           "description": {
             "type": "string",
             "description": "What is to be done and why, enough for a seat that sees nothing else."
           },
-          "design": { "type": "string" },
-          "acceptance_criteria": { "type": "string", "description": "The checks that show it is done, a line each." },
+          "design": {
+            "type": "string"
+          },
+          "acceptance_criteria": {
+            "type": "string",
+            "description": "The checks that show it is done, a line each."
+          },
           "write_scope": {
             "type": "string",
             "description": "The files or folders this issue may change; the plan view names ready issues whose scopes collide."
           },
-          "priority": { "type": "integer", "description": "0 critical, 1 high, 2 normal (default), 3 low, 4 backlog." },
-          "issue_type": { "type": "string", "enum": ["task", "bug", "feature", "epic", "chore", "docs", "question"] },
-          "labels": { "type": "array", "items": { "type": "string" } },
+          "priority": {
+            "type": "integer",
+            "description": "0 critical, 1 high, 2 normal (default), 3 low, 4 backlog."
+          },
+          "issue_type": {
+            "type": "string",
+            "enum": ["task", "bug", "feature", "epic", "chore", "docs", "question"]
+          },
+          "labels": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
           "parent": {
             "type": "string",
             "description": "create: the issue this one is a child of. ready: only what is under this issue."
@@ -189,7 +283,10 @@
             "description": "create: what this issue waits for: ids or keys, or {id, type}.",
             "items": {}
           },
-          "on": { "type": "string", "description": "depend, undepend: the issue `id` waits for." },
+          "on": {
+            "type": "string",
+            "description": "depend, undepend: the issue `id` waits for."
+          },
           "type": {
             "type": "string",
             "enum": ["blocks", "parent-child", "discovered-from", "related"],
@@ -208,15 +305,29 @@
             "type": ["string", "null"],
             "description": "update: an ISO time before which the issue is not ready."
           },
-          "text": { "type": "string", "description": "note, comment: the line to add." },
-          "reason": { "type": "string", "description": "close: what was done, and the commit or the evidence." },
+          "text": {
+            "type": "string",
+            "description": "note, comment: the line to add."
+          },
+          "reason": {
+            "type": "string",
+            "description": "close: what was done, and the commit or the evidence."
+          },
           "if_revision": {
             "type": "integer",
             "description": "update: the revision you read; the write is refused when the issue has moved on."
           },
-          "unassigned": { "type": "boolean", "description": "ready: only issues no seat holds." },
-          "force": { "type": "boolean", "description": "close: close over open blockers or children." },
-          "limit": { "type": "integer" }
+          "unassigned": {
+            "type": "boolean",
+            "description": "ready: only issues no seat holds."
+          },
+          "force": {
+            "type": "boolean",
+            "description": "close: close over open blockers or children."
+          },
+          "limit": {
+            "type": "integer"
+          }
         },
         "required": ["do"]
       }
@@ -227,9 +338,18 @@
       "inputSchema": {
         "type": "object",
         "properties": {
-          "view": { "type": "string", "enum": ["triage", "next", "plan", "blockers", "alerts"] },
-          "id": { "type": "string", "description": "blockers: the issue to start from." },
-          "limit": { "type": "integer", "description": "triage: how many recommendations (10 by default)." }
+          "view": {
+            "type": "string",
+            "enum": ["triage", "next", "plan", "blockers", "alerts"]
+          },
+          "id": {
+            "type": "string",
+            "description": "blockers: the issue to start from."
+          },
+          "limit": {
+            "type": "integer",
+            "description": "triage: how many recommendations (10 by default)."
+          }
         },
         "required": ["view"]
       }
@@ -240,9 +360,18 @@
       "inputSchema": {
         "type": "object",
         "properties": {
-          "action": { "type": "string", "enum": ["check", "grant", "waiting", "ack", "council", "label"] },
-          "command": { "type": "string", "description": "check: the shell command." },
-          "code": { "type": "string", "description": "grant: the six-digit code." },
+          "action": {
+            "type": "string",
+            "enum": ["check", "grant", "waiting", "ack", "council", "label"]
+          },
+          "command": {
+            "type": "string",
+            "description": "check: the shell command."
+          },
+          "code": {
+            "type": "string",
+            "description": "grant: the six-digit code."
+          },
           "id": {
             "type": "string",
             "description": "ack: the finding's id from the returned candidate. label: the council finding's number."
@@ -256,7 +385,10 @@
             "enum": ["right", "wrong"],
             "description": "label: whether the finding was right."
           },
-          "days": { "type": "number", "description": "council: how many days back; 30 when not given." }
+          "days": {
+            "type": "number",
+            "description": "council: how many days back; 30 when not given."
+          }
         },
         "required": ["action"]
       }

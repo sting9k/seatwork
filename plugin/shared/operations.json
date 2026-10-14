@@ -1,0 +1,92 @@
+{
+  "$comment": "The room's operations: what its operator seat is told and when, how long the room's log is kept, and the policy keys it may tune on its own, each with its range. A key not listed here is changed by the owner only.",
+  "incidentMinutes": 15,
+  "retellHours": 1,
+  "digestHours": 24,
+  "logKeepDays": 3,
+  "logMost": 100000,
+  "lineChars": 1000,
+  "evidenceChars": 2000,
+  "tunables": {
+    "knowledge.keepDays": {
+      "district": "knowledge",
+      "type": "integer",
+      "min": 7,
+      "max": 365
+    },
+    "knowledge.maxEntries": {
+      "district": "knowledge",
+      "type": "integer",
+      "min": 10000,
+      "max": 2000000
+    },
+    "knowledge.gate": {
+      "district": "knowledge",
+      "type": "boolean"
+    },
+    "jev.monthlyCapUsd": {
+      "district": "jev",
+      "type": "number",
+      "min": 0,
+      "max": 100
+    },
+    "jev.dailyCapUsd.council": {
+      "district": "jev",
+      "type": "number",
+      "min": 0,
+      "max": 10
+    },
+    "jev.dailyCapUsd.knowledge": {
+      "district": "jev",
+      "type": "number",
+      "min": 0,
+      "max": 10
+    },
+    "jev.dailyCapUsd.forks": {
+      "district": "jev",
+      "type": "number",
+      "min": 0,
+      "max": 10
+    },
+    "jev.forks": {
+      "district": "jev",
+      "type": "forks"
+    },
+    "jev.sharpAt.report": {
+      "district": "jev",
+      "type": "number",
+      "min": 0.5,
+      "max": 0.99
+    },
+    "jev.sharpAt.wake": {
+      "district": "jev",
+      "type": "number",
+      "min": 0.5,
+      "max": 0.99
+    },
+    "jev.sharpAt.failure": {
+      "district": "jev",
+      "type": "number",
+      "min": 0.5,
+      "max": 0.99
+    },
+    "jev.sharpAt.answers": {
+      "district": "jev",
+      "type": "number",
+      "min": 0.5,
+      "max": 0.99
+    },
+    "jev.sharpAt.overlap": {
+      "district": "jev",
+      "type": "number",
+      "min": 0.5,
+      "max": 0.99
+    },
+    "knowledge.gateAt": {
+      "district": "knowledge",
+      "type": "number",
+      "min": 0.5,
+      "max": 0.95
+    }
+  }
+}

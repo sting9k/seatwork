@@ -10,6 +10,7 @@ import { clip, Forks } from "../orchestration/forks";
 import { Recovery, resumeDue } from "../orchestration/recovery";
 import { ReviewGate } from "../orchestration/review-gate";
 import { Rotations } from "../orchestration/rotation";
+import { keepOperator } from "../orchestration/operator";
 import { Rounds } from "../orchestration/rounds";
 import { describeIsolation, ensureRuntime, envFor } from "../orchestration/runtimes";
 import { enabledSeats, parseSeat } from "../orchestration/seats";
@@ -18,6 +19,7 @@ import {
   CODEX_HOME,
   JEV_DIR,
   KNOWLEDGE_DIR,
+  OPERATIONS_DIR,
   OPENCODE_CONFIG_HOME,
   PASEO_HOME,
   PI_HOME,
@@ -25,9 +27,13 @@ import {
   ROOM_HOME,
   SAFETY_DIR,
   SEAT_TMP_DIR,
+  SEATS_FILE,
   USER_HOME,
 } from "../paths";
-import { loadPolicy, type RuntimePolicy } from "../policy";
+import { readJson } from "../persisted";
+import { loadPolicy, POLICY_FILE, type RuntimePolicy } from "../policy";
+import { costLines, roomStats } from "../stats";
+import { Operations, writePolicyKey } from "../operations/index";
 import { OwedList, roomStatus } from "./status";
 import { Jev } from "../jev/index";
 import { Knowledge } from "../knowledge/index";
@@ -38,7 +44,7 @@ import { Callers, serverToken } from "./callers";
 import { fromRoom, releaseWork, taskOf, type RoomContext } from "./context";
 import { lookAtRunningTurns } from "./council";
 import { launch, type Launched, type SeatLaunch } from "./launch";
-import { registerTools } from "./tools";
+import { mailHealth, registerTools } from "./tools";
 import { rotationFailed, turnEnded, type SeatEvent, type TurnEnd } from "./turns";
 
 /** The running room: it wires the districts, serves the seats' MCP tools, and reacts to the app's events. */
@@ -46,6 +52,7 @@ import { rotationFailed, turnEnded, type SeatEvent, type TurnEnd } from "./turns
 export type { SeatEvent, TurnEnd } from "./turns";
 
 const ROOM_MAIL = join(ROOM_HOME, "mail");
+const OPERATOR_EVERY_MINUTES = 5;
 
 /** A room seat's start as the room lays it out: its launch, the nonce that names it, its MCP server. */
 interface SeatStart extends Launched {
@@ -124,6 +131,7 @@ function startKnowledge(
       return below ? full : null;
     },
     isRoomSeat: (id) => inRoom(engine.seat(id)?.role),
+    decides: (id, scope) => traits(engine.seat(id)?.role).decides?.includes(scope) === true,
     briefs: (id) => traits(engine.seat(id)?.role).briefs === true,
     taskOf: (id) => taskOf(room(), id),
     rootOf: projectRootOf,
@@ -149,7 +157,7 @@ function startSafety(engine: MailEngine, jev: Jev, policy: RuntimePolicy, log: (
     tmpOf: (id) => join(SEAT_TMP_DIR, id.slice(0, 8)),
     // what decides how every seat runs: the room, the agents' homes, the app's config
     guard: {
-      paths: [ROOM_HOME, CLAUDE_HOME, CODEX_HOME, PI_HOME, OPENCODE_CONFIG_HOME, PASEO_HOME],
+      paths: [ROOM_HOME, CLAUDE_HOME, CODEX_HOME, PI_HOME, OPENCODE_CONFIG_HOME, PASEO_HOME, ...pluginSource()],
       except: [SEAT_TMP_DIR, roomProjectDir()],
     },
     roomFolder: ".seatwork",
@@ -166,7 +174,7 @@ function startSafety(engine: MailEngine, jev: Jev, policy: RuntimePolicy, log: (
           needs: "nothing",
           why: "a seat under you keeps running into the room's guard",
         })
-        .catch((error) => console.error("seatwork: the guard's notice was not sent", error));
+        .catch((error) => log(`the guard's notice was not sent: ${String(error)}`));
     },
     decider: jev,
     log,
@@ -269,10 +277,7 @@ function serve(room: RoomContext, safety: Safety, knowledge: Knowledge) {
     })
     .catch((error) => {
       unbound = error instanceof Error ? error.message : String(error);
-      console.error(
-        `seatwork: the room's MCP server failed to listen on ${port}; the room's tools are unavailable`,
-        error,
-      );
+      room.log(`the room's MCP server failed to listen on ${port}; the room's tools are unavailable: ${unbound}`);
     });
   return { mcp, started, port: () => port, unbound: () => unbound };
 }
@@ -289,24 +294,40 @@ function startTimers(room: RoomContext, gc: Collector): { touch(): void; stop():
         asked.by,
         record,
         "the room stopped while it started the successor; seatwork_seats shows whether one stands",
-      ).catch((error) => console.error("seatwork: the notice of an interrupted rotation was not sent", error));
+      ).catch((error) => log(`the notice of an interrupted rotation was not sent: ${String(error)}`));
   }
+  // the room's own seat is looked for a minute after the app is in, then every few minutes, never on the app's poll
+  const operator = { at: 0 };
+  let minutes = 0;
+  const keep = () =>
+    void keepOperator(
+      {
+        host: room.host,
+        provider: () => enabledSeats().find((seat) => inRoom(seat.role))?.provider,
+        folder: roomProjectDir(),
+        log,
+      },
+      room.operators,
+      operator,
+    ).catch((error) => log(`room: its own seat could not be kept: ${String(error)}`));
   // what waits is moved every minute: held mail, failed turns due again, handoffs never written
   const sweep = setInterval(() => {
-    void engine.sweep().catch((error) => console.error("seatwork: the mail sweep failed", error));
+    void room.operations.tick();
+    if (touched && (minutes += 1) % OPERATOR_EVERY_MINUTES === 1) keep();
+    void engine.sweep().catch((error) => log(`the mail sweep failed: ${String(error)}`));
     try {
       room.knowledge.tick();
     } catch (error) {
       log(`knowledge: the minute's pass failed: ${(error as Error).message}`);
     }
     void resumeDue(room.recovery, engine, Date.now(), log).catch((error) =>
-      console.error("seatwork: resuming a failed seat did not work", error),
+      log(`resuming a failed seat did not work: ${String(error)}`),
     );
     for (const [seat, asked] of room.rotations.expired(Date.now(), policy.room.rotation?.answerMinutes ?? 120)) {
       const record = engine.seat(seat);
       if (record)
         void rotationFailed(room, asked.by, record, "it did not answer the handoff request in time").catch((error) =>
-          console.error("seatwork: the notice of a failed rotation was not sent", error),
+          log(`the notice of a failed rotation was not sent: ${String(error)}`),
         );
     }
   }, 60_000);
@@ -335,7 +356,7 @@ function startTimers(room: RoomContext, gc: Collector): { touch(): void; stop():
       if (touched) return;
       touched = true;
       // held mail moves at once rather than at the next sweep
-      void engine.sweep().catch((error) => console.error("seatwork: the mail sweep failed", error));
+      void engine.sweep().catch((error) => log(`the mail sweep failed: ${String(error)}`));
     },
     stop() {
       clearInterval(sweep);
@@ -368,13 +389,13 @@ async function seatCreated(room: RoomContext, agent: SeatEvent): Promise<void> {
   room.engine.rememberSeat(record);
   void room.safety
     .started(agent.id, agent.cwd)
-    .catch((error) => console.error("seatwork: the guard did not note where a seat starts", error));
+    .catch((error) => room.log(`the guard did not note where a seat starts: ${String(error)}`));
   if (parent && room.policy.mail.gatherReviews && reviews(seat.role, agent.title))
     room.gate.launched(parent.agentId, agent.id);
   try {
     appendFileSync(REGISTRY_LOG, `${JSON.stringify({ at: new Date().toISOString(), ...record })}\n`);
   } catch (error) {
-    console.error("seatwork: cannot append registry log", error);
+    room.log(`cannot append registry log: ${String(error)}`);
   }
 }
 
@@ -389,7 +410,7 @@ async function seatArchived(room: RoomContext, gc: Collector, seat: SeatEvent): 
   try {
     releaseWork(room, id, null);
   } catch (error) {
-    console.error(`seatwork: the work of ${id} could not be released`, error);
+    room.log(`the work of ${id} could not be released: ${String(error)}`);
   }
   const asked = room.rotations.get(id);
   room.rotations.done(id);
@@ -405,7 +426,7 @@ async function seatArchived(room: RoomContext, gc: Collector, seat: SeatEvent): 
         needs: "nothing",
         why: "the rotation you asked for did not happen",
       })
-      .catch((error) => console.error("seatwork: the notice of a failed rotation was not sent", error));
+      .catch((error) => room.log(`the notice of a failed rotation was not sent: ${String(error)}`));
   // a reviewer archived before its report holds its round back no longer
   try {
     const round = room.gate.gone(id);
@@ -436,6 +457,47 @@ async function permissionAsked(room: RoomContext, agent: SeatEvent, request: unk
   });
 }
 
+/** The room's operations: its log and incidents told to the room's own seats, and the policy those seats tune. */
+function startOperations(policy: RuntimePolicy, operators: ReadonlySet<string>, room: () => RoomContext): Operations {
+  const day = () => Date.now() - 86_400_000;
+  return new Operations({
+    dir: OPERATIONS_DIR,
+    busyTimeoutMs: policy.room.work?.busyTimeoutMs ?? 5000,
+    policy: () => policy as unknown as Record<string, unknown>,
+    persist: (path, value) => writePolicyKey(POLICY_FILE, path, value),
+    operators: () => [...operators],
+    mail: (to, subject, body) =>
+      room().engine.post({
+        from: fromRoom,
+        to,
+        priority: "action",
+        subject,
+        body,
+        needs: "nothing",
+        why: "the room's operations",
+      }),
+    readings: {
+      jev: () => ({ spent: room().jev.spent(), today: room().jev.today(), heldOff: room().jev.why() }),
+      knowledge: () => room().knowledge.reading(),
+      mail: () =>
+        roomStats(
+          1,
+          (since) => room().engine.posted(since),
+          (since) => mailHealth(room(), since),
+        ).split("\n"),
+      safety: () => room().safety.councilLines(1).split("\n"),
+      seats: () => ({ retrying: room().recovery.due(Number.MAX_SAFE_INTEGER).length, cost: costLines(day()) }),
+    },
+    echo: (line) => console.log(`seatwork: ${line}`),
+  });
+}
+
+/** The folder the plugin runs from, as setting the room up recorded it: no seat writes the code that runs the room. */
+function pluginSource(): string[] {
+  const source = readJson<{ source?: unknown }>(SEATS_FILE, {}).source;
+  return typeof source === "string" && source ? [source] : [];
+}
+
 /** Starts the room on this machine's files: its districts, its MCP server and its timers; `addSeats` sets up seats the room lacks, as the app's own setup does. */
 export function startRoom(input: {
   host: Host;
@@ -449,7 +511,9 @@ export function startRoom(input: {
   mkdirSync(ROOM_MAIL, { recursive: true });
   mkdirSync(roomProjectDir(), { recursive: true });
   const policy = loadPolicy();
-  const log = (message: string) => console.log(`seatwork: ${message}`);
+  let operations: Operations | undefined;
+  // every line of the room's log goes through its operations once they stand, to be kept and read for trouble
+  const log = (message: string) => (operations ? operations.log(message) : console.log(`seatwork: ${message}`));
   buildRuntimes(policy, version);
 
   const engine = new MailEngine(host, policy.mail, log, {
@@ -459,11 +523,18 @@ export function startRoom(input: {
     dedupeSeconds: policy.mail.dedupeSeconds,
   });
   const jev = new Jev({ dir: JEV_DIR, policy: () => policy.jev, log });
-  const forks = new Forks({ router: jev, on: (name) => policy.jev?.forks?.includes(name) === true, log });
+  const forks = new Forks({
+    router: jev,
+    on: (name) => policy.jev?.forks?.includes(name) === true,
+    sharpAt: (name) => policy.jev?.sharpAt?.[name],
+    log,
+  });
   const knowledge = startKnowledge(engine, jev, policy, () => room, log);
   engine.appendix = (agentId) => knowledge.appendix(agentId);
   engine.chooseAsk = chooseAsk(forks);
   const safety = startSafety(engine, jev, policy, log);
+  const operators = new Set<string>();
+  operations = startOperations(policy, operators, () => room);
   const room: RoomContext = {
     host,
     policy,
@@ -481,6 +552,8 @@ export function startRoom(input: {
     jev,
     forks,
     knowledge,
+    operations,
+    operators,
     mailedUp: new Map(),
     lastSignal: new Map(),
     lastUsage: new Map(),
@@ -496,6 +569,8 @@ export function startRoom(input: {
     room.briefs.delete(agentId);
     safety.forget(agentId);
     knowledge.forget(agentId);
+    operations.forget(agentId);
+    operators.delete(agentId);
   };
   const gc = new Collector(host, engine, policy.gc, log, forget, policy.mail.keepDays, policy.mail.expireUnreadDays, [
     { what: "guard records", expire: (before) => safety.expire(before) },
@@ -505,6 +580,7 @@ export function startRoom(input: {
     { what: "task rounds", expire: (before) => room.rounds.expire(before) },
     // a closed issue lives as long as the finished mail about it
     { what: "closed issues", expire: (before) => room.works.expire(before, engine.projects()) },
+    { what: "operations log lines", expire: () => operations.expire() },
   ]);
   const served = serve(room, safety, knowledge);
   const timers = startTimers(room, gc);
@@ -535,6 +611,7 @@ export function startRoom(input: {
       if (!seat) return null;
       // the seat holds the decisions its launch's prompt showed
       knowledge.opened(agentId, nonce ?? null);
+      if (inRoom(seat.role)) operators.add(agentId);
       // the app saves no env with an agent: a reopened seat would start on the user's own home
       ensureRuntime(seat, policy);
       // a temporary directory per seat: one seat's cleanup cannot take another seat's files
@@ -556,6 +633,7 @@ export function startRoom(input: {
       room.gate.turnStarted(seat.id);
       safety.council.turnStarted(seat.id, seat.cwd);
       knowledge.turnStarted(seat.id);
+      operations.turnStarted(seat.id);
     },
     turnEnded: (end) => turnEnded(room, end),
     archived: (seat) => seatArchived(room, gc, seat),
@@ -585,6 +663,7 @@ export function startRoom(input: {
       safety.close();
       jev.close();
       knowledge.close();
+      operations.close();
       // a mail server still binding would stay open behind a close that came first
       await served.started;
       await served.mcp.close();

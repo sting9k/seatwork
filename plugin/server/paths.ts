@@ -29,3 +29,4 @@ export const OPENCODE_CONFIG_HOME = process.env.OPENCODE_CONFIG_DIR?.trim() || j
 export const SAFETY_DIR = join(ROOM_HOME, "safety");
 export const JEV_DIR = join(ROOM_HOME, "jev");
 export const KNOWLEDGE_DIR = join(ROOM_HOME, "knowledge");
+export const OPERATIONS_DIR = join(ROOM_HOME, "operations");

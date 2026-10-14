@@ -29,7 +29,9 @@ import {
   type Needs,
   type PostedLine,
   type Priority,
+  type WakeUp,
 } from "./store";
+import { dueOf, noteOf, wakeBody, wakeSubject, type WakeAsk } from "./wakeup";
 
 /** The room's mail: kept per project, checked against the routes, handed to a seat at rest. */
 
@@ -706,7 +708,7 @@ export class MailEngine implements Directory {
     this.paused.delete(agentId);
   }
 
-  /** What waits for a replaced seat waits for its successor. */
+  /** What waits for a replaced seat, its mail and its wake-ups, waits for its successor. */
   async move(from: string, to: string): Promise<void> {
     this.storeOf(from, false)?.readdress(from, to);
     await this.deliver(to);
@@ -847,9 +849,10 @@ export class MailEngine implements Directory {
     }
   }
 
-  /** Delivers what is held, and posts the kept reports whose turn end never reached the room. */
+  /** Sends the wake-ups that fell due, delivers what is held, and posts the kept reports whose turn end never reached the room. */
   async sweep(): Promise<void> {
     await this.each(this.known(), "the sweep of one store", async (store) => {
+      await this.each([store], "the wake-ups of one store", (one) => this.fireWakeUps(one));
       await this.each(store.waiting().keys(), "a delivery of the sweep", (seat) => this.deliver(seat));
       await this.each(store.kept(), "a kept report of the sweep", async (kept) => {
         const status = await this.host.state(kept.sender);
@@ -857,6 +860,71 @@ export class MailEngine implements Directory {
         const report = this.takeReport(kept.sender);
         if (report) await this.postReport(report);
       });
+    });
+  }
+
+  /** Sets a wake-up of `seat` for `by` after reading its time and note; null when `seat` already has the most waiting. */
+  setWakeUp(by: string, seat: string, ask: WakeAsk): WakeUp | null {
+    const now = this.now();
+    const due = dueOf(ask, now);
+    const note = noteOf(ask.note);
+    return this.storeOf(seat)!.addWakeUp({ seat, by, at: now.toISOString(), due, note }, config.wake.perSeat);
+  }
+
+  /** The soonest `limit` wake-ups waiting for a seat or set by it, in every project. */
+  wakeUpsOf(seat: string, limit: number): WakeUp[] {
+    return this.across("listing wake-ups", (store) => store.wakeUpsOf(seat, limit))
+      .flat()
+      .sort((a, b) => a.due.localeCompare(b.due) || a.id - b.id)
+      .slice(0, limit);
+  }
+
+  /** Cancels wake-up `id` for the seat it wakes or the seat that set it; `seat` names the one it wakes where two projects hold the same id. Null where `me` has none. */
+  cancelWakeUp(me: string, id: number, seat?: string): WakeUp | null {
+    const found = this.across("looking for a wake-up", (store) => {
+      const wake = store.wakeUp(id);
+      return wake && (wake.seat === me || wake.by === me) && (!seat || wake.seat === seat) ? [{ store, wake }] : [];
+    }).flat();
+    if (found.length > 1)
+      throw new MailError(
+        "INVALID_ARGUMENT",
+        `wake-up #${id} is waiting in ${found.length} projects; give \`to\`, the seat it wakes`,
+        {
+          to: found.map(({ wake }) => wake.seat),
+        },
+      );
+    return found.length === 1 && found[0].store.closeWakeUp(id, "canceled") ? found[0].wake : null;
+  }
+
+  /** Sends the wake-ups of a store that fell due, at most a pass's worth: each a WAKE mail, or dropped with a seat that is gone. */
+  private async fireWakeUps(store: MailStore): Promise<void> {
+    const states = new Map<string, Status>();
+    await this.each(store.dueWakeUps(this.now().toISOString(), config.wake.perPass), "a wake-up", async (wake) => {
+      if (!states.has(wake.seat))
+        states.set(wake.seat, this.seats.has(wake.seat) ? await this.host.state(wake.seat) : "gone");
+      const status = states.get(wake.seat);
+      // an app that cannot be read proves nothing about the seat: the wake-up waits for the next pass
+      if (status === "unknown") return;
+      if (status === "gone") {
+        store.closeWakeUp(wake.id, "dropped");
+        this.log(`mail: wake-up #${wake.id} of ${wake.seat} is dropped: that seat is archived or gone`);
+        return;
+      }
+      const key = `wake-${wake.id}`;
+      // a pass that stopped before the wake-up was closed finds its mail by this key and sends no second
+      const since = new Date(this.now().getTime() - this.limits.keyHours * 3_600_000).toISOString();
+      if (!this.storeOf(wake.seat)!.byKey("room", key, since))
+        await this.post({
+          from: { agentId: "room", role: "system" },
+          to: wake.seat,
+          priority: "action",
+          subject: wakeSubject(wake.note),
+          body: wakeBody(wake, wake.by === wake.seat ? "you" : this.label(wake.by, wake.seat)),
+          needs: "nothing",
+          why: "a wake-up set earlier has come due",
+          key,
+        });
+      store.closeWakeUp(wake.id, "fired");
     });
   }
 

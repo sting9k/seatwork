@@ -1,10 +1,12 @@
 {
-  "$comment": "The work store's vocabulary and the triage numbers. titleChars: the longest title; textChars: the longest description, design, acceptance criteria, write scope, labels in all, notes in all, or comment. commentsShown: how many of the newest comments `show` gives; commentsMost: the most a `comments` call gives. A dependency type with orders may close no cycle. Score: impactShare of the weighted factors (weights sum to 1), plus unblockBoost for what closing frees, plus readyBoost; betweenness is sampled above exactBetweennessUpTo.",
+  "$comment": "The work store's vocabulary and the triage numbers. titleChars: the longest title; textChars: the longest description, design, acceptance criteria, write scope, labels in all, notes in all, or comment. commentsShown: how many of the newest comments `show` gives; commentsMost: the most a `comments` call gives. leaseMinutes: how long a claim by a seat of the room lasts; the minute's sweep pushes it on while the app lists the seat, so it lapses about that long after the seat is gone. leaseMostPerPass: the most issues one pass gives back to the board. A dependency type with orders may close no cycle. Score: impactShare of the weighted factors (weights sum to 1), plus unblockBoost for what closing frees, plus readyBoost; betweenness is sampled above exactBetweennessUpTo.",
   "idPrefix": "sw",
   "titleChars": 500,
   "textChars": 50000,
   "commentsShown": 5,
   "commentsMost": 50,
+  "leaseMinutes": 30,
+  "leaseMostPerPass": 20,
   "statuses": ["open", "in_progress", "deferred", "closed"],
   "issueTypes": ["task", "bug", "feature", "epic", "chore", "docs", "question"],
   "dependencyTypes": {

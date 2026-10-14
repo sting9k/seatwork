@@ -44,6 +44,7 @@ tune, to Human, with the trace.
 2. The `log` around the incident's times; `seatwork_knowledge` search for the seats'
    turns and mail that met it. Add each finding as `evidence`, each hypothesis you
    drop as `eliminated`, a new one as `hypothesis`.
+   To read a number again later, `seatwork_mail` `wake` yourself (`in_minutes`, `note`).
 3. A tunable key answers it → tune for the trace. Three changes for a trace undone,
    or the code at fault → write Human the trace: what happens, how to see it again,
    the log lines, where in the code it seems to lie; then `close` the trace. You

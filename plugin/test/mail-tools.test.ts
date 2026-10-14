@@ -87,6 +87,17 @@ test("a mail by a whole id, to the owner, as an answer, or without `to` from a s
   assert.equal(asked.live, 0);
 });
 
+test("a mail that gives no body is refused before anything is sent; only the wake-up actions go without one", async () => {
+  const id = names("lead", "peer", "boss");
+  const { room, engine, asked } = roomOf({ [id.lead]: idle, [id.peer]: idle, [id.boss]: idle }, [id.lead, id.peer]);
+  tree(engine, id, [[id.peer]]);
+  const bodiless = await refusedWith(sendMail(room, id.lead, { subject: "INSTRUCTION: start", to: id.peer }));
+  assert.equal(bodiless.code, "INVALID_ARGUMENT");
+  assert.match(bodiless.message, /`body`/);
+  assert.equal(asked.live, 0);
+  assert.ok(JSON.parse(await sendMail(room, id.lead, { action: "wakes" })).wakes);
+});
+
 test("the receipt says whether the mail was delivered or is held until the recipient can take it", async () => {
   const id = names("lead", "busy", "boss");
   const running = { ...idle, current: () => ({ status: "running" }) };

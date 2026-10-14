@@ -41,6 +41,11 @@
     { "name": "ROTATED" },
     { "name": "ROTATION FAILED" },
     { "name": "HAND-IN RETURNED" },
-    { "name": "COUNCIL" }
+    { "name": "COUNCIL" },
+    { "name": "APPEAL" },
+    { "name": "INCIDENT" },
+    { "name": "DIGEST" },
+    { "name": "LEASE" },
+    { "name": "WAKE" }
   ]
 }

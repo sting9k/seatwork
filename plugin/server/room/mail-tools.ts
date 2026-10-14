@@ -16,6 +16,7 @@ import { fromRoom, taskOf, type RoomContext } from "./context";
 
 const INFORMS = new Set(["FYI", "HANDOFF"]);
 const MOST_THREAD_CHARS = 255;
+const WAKEUPS_SHOWN = 50;
 
 /** A mail tool's refusal as JSON a seat can act on. */
 export function refused(room: RoomContext, seat: string | null, error: unknown): Error {
@@ -154,11 +155,80 @@ function filesOf(sender: SeatRecord, args: Record<string, unknown>): string[] {
   return files;
 }
 
-/** seatwork_mail: checks a seat's mail against the routes, posts it, returns a receipt. */
+/** A seat as the caller reads it in a wake-up: `you`, `owner`, or its role and id. */
+const seenAs = (eng: MailEngine, me: string, seat: string): string =>
+  seat === me ? "you" : eng.isAncestor(seat, me) ? "owner" : `${eng.seat(seat)?.role ?? "seat"} ${seat}`;
+
+/** seatwork_mail `wake`, `wakes` and `unwake`: a timed wake-up set for the caller or a seat it may mail, listed, or canceled. */
+async function wakeUps(room: RoomContext, me: string, action: string, args: Record<string, unknown>): Promise<string> {
+  const eng = room.engine;
+  if (action === "wakes") {
+    const waiting = eng.wakeUpsOf(me, WAKEUPS_SHOWN + 1);
+    return JSON.stringify({
+      wakes: waiting.slice(0, WAKEUPS_SHOWN).map(({ id, seat, by, due, note }) => ({
+        id,
+        seat: seenAs(eng, me, seat),
+        by: seenAs(eng, me, by),
+        at: due,
+        note,
+      })),
+      ...(waiting.length > WAKEUPS_SHOWN ? { more: true } : {}),
+    });
+  }
+  const seats = openSeats(room, me);
+  const named = words("to", args.to);
+  if (named.length > 1)
+    throw new MailError("INVALID_ARGUMENT", "a wake-up wakes one seat: give one `to`, or none to wake yourself");
+  const seat = named.length === 0 ? me : (await resolved(room, me, named, seats))[0];
+  if (action === "unwake") {
+    const id = Number(String(args.id ?? "").replace(/^\s*#/, ""));
+    if (!Number.isInteger(id) || id < 1)
+      throw new MailError(
+        "INVALID_ARGUMENT",
+        "give `id`, the wake-up's id from the answer that set it or from `wakes`",
+      );
+    const wake = eng.cancelWakeUp(me, id, named.length === 0 ? undefined : seat);
+    if (!wake)
+      throw new MailError(
+        "UNKNOWN_WAKE",
+        `no wake-up #${id} of yours is waiting; \`wakes\` lists them, and one that fired or was canceled is gone`,
+      );
+    return JSON.stringify({ canceled: wake.id, seat: seenAs(eng, me, wake.seat), was_due: wake.due });
+  }
+  if (seat !== me) {
+    const check = eng.canWrite(me, seat);
+    if (!check.ok) throw new MailError("ROUTE_REFUSED", check.reason, await seats.whom());
+    if ((await eng.recipientStatus(seat)) === "gone")
+      throw new MailError("RECIPIENT_GONE", `${seat} is archived or gone; no wake-up was set`, await seats.whom());
+  }
+  const wake = eng.setWakeUp(me, seat, { at: args.at, inMinutes: args.in_minutes, note: args.note });
+  if (!wake)
+    throw new MailError(
+      "WAKE_LIMIT",
+      seat === me
+        ? `you already have ${mailConfig.wake.perSeat} wake-ups waiting: \`wakes\` lists them, \`unwake\` cancels one`
+        : `${seat} already has ${mailConfig.wake.perSeat} wake-ups waiting; wait for one to fire, or ask it to cancel one`,
+    );
+  return JSON.stringify({
+    wake: wake.id,
+    seat: seenAs(eng, me, seat),
+    at: wake.due,
+    note: "the seat is mailed a WAKE at that time, which starts its turn; the pass runs each minute, so it can be up to a minute late",
+  });
+}
+
+/** seatwork_mail: checks a seat's mail against the routes, posts it, returns a receipt; with `action` wake, wakes or unwake, a timed wake-up instead. */
 export async function sendMail(room: RoomContext, from: string, args: Record<string, unknown>): Promise<string> {
   const eng = room.engine;
   const sender = eng.seat(from);
   if (!sender) throw new MailError("NOT_A_SEAT", "this session is not a registered room seat");
+  const action = String(args.action ?? "send");
+  if (action !== "send") {
+    if (!["wake", "wakes", "unwake"].includes(action))
+      throw new MailError("INVALID_ARGUMENT", "`action` is send (the default), wake, wakes or unwake");
+    return wakeUps(room, from, action, args);
+  }
+  if (typeof args.body !== "string") throw new MailError("INVALID_ARGUMENT", "a mail gives a `body`: what it says");
   const seats = openSeats(room, from);
   const { to, viaReply, team, thread } = await addressed(room, from, args, seats);
   const replyTo = replyOf(args);

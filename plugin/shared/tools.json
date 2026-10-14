@@ -3,7 +3,7 @@
   "tools": {
     "seatwork_mail": {
       "callers": "any",
-      "description": "Mail seats of your room; it is delivered between a recipient's turns and kept in the project's mail store. Answer a mail with `reply_to`. Start a thread with `to`; a seat with no seat under it may leave `to` out and writes to its owner. A body past {{mail_chars}} characters is shown cut, with the path of the file that holds all of it. A CANDIDATE, REVIEW or DONE to your owner is your turn's report: it is delivered when your turn ends, and your final message is not mailed again. `STOP`, to one seat you launched or one below it, ends its running turn and every running turn under it at once, and each reads your text next; use it when the work must not go on. The answer is JSON; a refusal is {\"error\": {code, message, retryable, fix}}.",
+      "description": "Mail seats of your room; it is delivered between a recipient's turns and kept in the project's mail store. Answer a mail with `reply_to`. Start a thread with `to`; a seat with no seat under it may leave `to` out and writes to its owner. A body past {{mail_chars}} characters is shown cut, with the path of the file that holds all of it. A CANDIDATE, REVIEW or DONE to your owner is your turn's report: it is delivered when your turn ends, and your final message is not mailed again. `STOP`, to one seat you launched or one below it, ends its running turn and every running turn under it at once, and each reads your text next; use it when the work must not go on. `action` `wake` has the room mail you a WAKE at a set time, which starts your turn though nobody writes: to look at a run again, to read a number later. Give `at` (an ISO time with its zone) or `in_minutes`, and a short `note`; `to` wakes a seat you may mail instead of you. `wakes` lists the wake-ups waiting for you or set by you, `unwake` with `id` cancels one. The room checks for due wake-ups each minute, so one can come a minute late. The answer is JSON; a refusal is {\"error\": {code, message, retryable, fix}}.",
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -12,7 +12,7 @@
             "items": {
               "type": "string"
             },
-            "description": "`owner`, a seat you launched (its id, the start of its id, or its title), several of them, or `team`: every open seat under you, which reads it with its next mail. Omit with reply_to."
+            "description": "`owner`, a seat you launched (its id, the start of its id, or its title), several of them, or `team`: every open seat under you, which reads it with its next mail. Omit with reply_to. With `wake`: the one seat to wake."
           },
           "cc": {
             "type": "array",
@@ -52,9 +52,30 @@
           "key": {
             "type": "string",
             "description": "Your own name for this mail: sent again with the same key and text, it stays one mail."
+          },
+          "action": {
+            "type": "string",
+            "enum": ["send", "wake", "wakes", "unwake"],
+            "description": "`send` is the default and needs `subject` and `body`; `wake`, `wakes` and `unwake` need neither."
+          },
+          "at": {
+            "type": "string",
+            "description": "wake: when, an ISO time with its zone, such as 2026-10-16T09:00:00Z."
+          },
+          "in_minutes": {
+            "type": "number",
+            "description": "wake: minutes from now, instead of `at`."
+          },
+          "note": {
+            "type": "string",
+            "description": "wake: what you do when it comes, short; it is the body of the WAKE mail."
+          },
+          "id": {
+            "type": ["string", "integer"],
+            "description": "unwake: the wake-up's id, from the answer that set it or from `wakes`."
           }
         },
-        "required": ["subject", "body"]
+        "required": []
       }
     },
     "seatwork_inbox": {
@@ -247,7 +268,7 @@
     },
     "seatwork_work": {
       "callers": "any",
-      "description": "The project's work store: issues, what each waits for, who holds it. `do` names the one thing a call does. create: one issue, or a whole plan in `issues`, written all or none; each may carry a `key` and name its `parent` and `deps` by another's key. ready: open issues nothing holds back (no open blocker, blocked parent or open child), highest priority first. claim: take an issue; refused when another seat holds it or an open blocker of its own waits. blocked_by: a bare id blocks; `:parent-blocked` and `:child-open` only hold back from ready. note: a dated line of progress. depend: `id` waits for `on`. close: with `reason`, once its blockers and children are closed; the seat that holds an issue does not close it, its Owner does. show: an issue with its newest comments and `older_comments`, the count of the rest; comments: the rest, `limit` of them after `skip` of the newest. Also list, update, comment, undepend, reopen. Answers are JSON; a refusal is {\"error\": {code, message, retryable}}.",
+      "description": "The project's work store: issues, what each waits for, who holds it. `do` names the one thing a call does. create: one issue, or a whole plan in `issues`, written all or none; each may carry a `key` and name its `parent` and `deps` by another's key. ready: open issues nothing holds back (no open blocker, blocked parent or open child), highest priority first. claim: take an issue; refused when another seat holds it or an open blocker of its own waits; the room opens it again, with a comment, if the seat that holds it is gone. blocked_by: a bare id blocks; `:parent-blocked` and `:child-open` only hold back from ready. note: a dated line of progress. depend: `id` waits for `on`. close: with `reason`, once its blockers and children are closed; the seat that holds an issue does not close it, its Owner does. show: an issue with its newest comments and `older_comments`, the count of the rest; comments: the rest, `limit` of them after `skip` of the newest. Also list, update, comment, undepend, reopen. Answers are JSON; a refusal is {\"error\": {code, message, retryable}}.",
       "inputSchema": {
         "type": "object",
         "properties": {

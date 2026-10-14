@@ -67,6 +67,16 @@ export interface PostedLine {
   subject: string;
 }
 
+/** A wake-up not yet due: `by` asked at `at` for `seat` to be woken at `due`, a UTC ISO time, with `note`. */
+export interface WakeUp {
+  id: number;
+  seat: string;
+  by: string;
+  at: string;
+  due: string;
+  note: string;
+}
+
 export interface Hit {
   id: number;
   at: string;
@@ -93,6 +103,7 @@ const MESSAGE = `m.id, m.at, m.thread, m.reply_to, m.sender, m.sender_role, m.si
   m.file, m.files, m.needs, m.why, m.answered_at, m.answered_by`;
 const DELIVERY = `d.seat, d.kind, d.priority, d.state, d.quiet, d.progress, d.urgent, d.round, d.held_until,
   d.delivered_at, d.how`;
+const WAKEUP = "id, seat, by, at, due, note";
 const RECLAIM_PAGES = 4000;
 const MAX_ID = Number.MAX_SAFE_INTEGER;
 const LIVE = `EXISTS (SELECT 1 FROM deliveries l WHERE l.message_id = m.id AND l.state NOT IN ('replaced', 'withdrawn', 'bounced'))`;
@@ -133,6 +144,15 @@ const toDelivery = (row: Row): Delivery => ({
 });
 
 const toHeld = (row: Row): Held => ({ ...toMessage(row), ...toDelivery(row) });
+
+const toWakeUp = (row: Row): WakeUp => ({
+  id: Number(row.id),
+  seat: String(row.seat),
+  by: String(row.by),
+  at: String(row.at),
+  due: String(row.due),
+  note: String(row.note),
+});
 
 /** A search safe to hand to FTS5: the first `searchWords` words, each quoted, the last open to a longer word; a query's cost grows with the square of its words. */
 function ftsQuery(text: string): string {
@@ -566,9 +586,15 @@ export class MailStore extends Sqlite {
     );
   }
 
-  /** What waits for one seat waits for another: a successor takes its mail. */
+  /** What waits for one seat waits for another: a successor takes its mail, and the wake-ups it holds or set; returns how many mails moved. */
   readdress(from: string, to: string): number {
     return this.transaction("write", () => {
+      const woken = this.run(
+        `UPDATE wakeups SET seat = CASE WHEN seat = ?1 THEN ?2 ELSE seat END, by = CASE WHEN by = ?1 THEN ?2 ELSE by END
+         WHERE seat = ?1 OR by = ?1`,
+        from,
+        to,
+      ).changes;
       const moved = this.run(
         `UPDATE deliveries SET seat = ?2 WHERE seat = ?1
            AND (state IN ('queued', 'kept', 'sending') OR (state IN ('delivered', 'read') AND kind = 'to' AND EXISTS (
@@ -577,8 +603,58 @@ export class MailStore extends Sqlite {
         from,
         to,
       ).changes;
-      if (moved > 0) this.event("readdressed", null, to, { from, moved });
+      if (moved + woken > 0) this.event("readdressed", null, to, { from, moved, woken });
       return moved;
+    });
+  }
+
+  /** Keeps a wake-up; null when `seat` already has `most` waiting. */
+  addWakeUp(input: Omit<WakeUp, "id">, most: number): WakeUp | null {
+    return this.transaction("write", () => {
+      const held = this.row<{ n: number }>("SELECT count(*) AS n FROM wakeups WHERE seat = ?", input.seat);
+      if (Number(held?.n ?? 0) >= most) return null;
+      const { lastInsertRowid: id } = this.run(
+        "INSERT INTO wakeups (seat, by, at, due, note) VALUES (?, ?, ?, ?, ?)",
+        input.seat,
+        input.by,
+        input.at,
+        input.due,
+        input.note,
+      );
+      this.event("wakeup-set", null, input.seat, { id, by: input.by, due: input.due });
+      return { id, ...input };
+    });
+  }
+
+  /** One waiting wake-up by id. */
+  wakeUp(id: number): WakeUp | null {
+    const row = this.row(`SELECT ${WAKEUP} FROM wakeups WHERE id = ?`, id);
+    return row ? toWakeUp(row) : null;
+  }
+
+  /** The wake-ups waiting for a seat or set by it, soonest first. */
+  wakeUpsOf(seat: string, limit: number): WakeUp[] {
+    return this.rows(
+      `SELECT ${WAKEUP} FROM wakeups WHERE seat = ?1 UNION SELECT ${WAKEUP} FROM wakeups WHERE by = ?1
+       ORDER BY due, id LIMIT ?2`,
+      seat,
+      limit,
+    ).map(toWakeUp);
+  }
+
+  /** The wake-ups due at `now` or before, oldest first. */
+  dueWakeUps(now: string, limit: number): WakeUp[] {
+    return this.rows(`SELECT ${WAKEUP} FROM wakeups WHERE due <= ? ORDER BY due, id LIMIT ?`, now, limit).map(toWakeUp);
+  }
+
+  /** A wake-up is over: it fired, was dropped with its seat, or was canceled; false when it was over already. */
+  closeWakeUp(id: number, outcome: "fired" | "dropped" | "canceled"): boolean {
+    return this.transaction("write", () => {
+      const wake = this.wakeUp(id);
+      if (!wake) return false;
+      this.run("DELETE FROM wakeups WHERE id = ?", id);
+      this.event(`wakeup-${outcome}`, null, wake.seat, { id, by: wake.by, due: wake.due });
+      return true;
     });
   }
 

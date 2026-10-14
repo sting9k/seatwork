@@ -3,6 +3,7 @@ import type { Host, SeatUsage } from "../host";
 import type { Jev } from "../jev/index";
 import type { Forks } from "../orchestration/forks";
 import type { Knowledge } from "../knowledge/index";
+import { clip } from "../orchestration/forks";
 import type { Operations } from "../operations/index";
 import type { Recovery } from "../orchestration/recovery";
 import type { ReviewGate } from "../orchestration/review-gate";
@@ -12,6 +13,7 @@ import type { TaskKeys } from "../orchestration/task-keys";
 import type { RuntimePolicy } from "../policy";
 import type { Safety } from "../safety/index";
 import type { OwedList } from "./status";
+import type { Lapsed, Seating } from "../tasks/store";
 import type { WorkStores } from "../tasks/stores";
 import type { Callers } from "./callers";
 
@@ -45,6 +47,8 @@ export interface RoomContext {
 }
 
 const HELD_MOST = 8;
+const TITLE_SHOWN = 80;
+const SETTLED = new Set(["idle", "running", "error", "closed"]);
 
 /** The issues a seat holds in progress in its project's work store; none when the store cannot be read. */
 function held(room: RoomContext, seat: string): string[] {
@@ -68,6 +72,54 @@ export function releaseWork(room: RoomContext, from: string, to: string | null):
   const store = room.works.existing(room.engine.projectOf(from));
   const moved = store?.release(from, to, "room") ?? [];
   if (moved.length > 0) room.log(`work: ${moved.join(", ")} of ${from} ${to ? `now held by ${to}` : "open again"}`);
+}
+
+/** The seats the app lists, by whether their state is known; null, said in the log, when the list cannot be read. */
+async function seatingOf(room: RoomContext): Promise<Seating | null> {
+  try {
+    const live = await room.host.live();
+    // an empty list is the app still loading its agents, not a room with none
+    if (live.size === 0) throw new Error("the app lists no seat at all");
+    const alive: string[] = [];
+    const unsure: string[] = [];
+    for (const [id, seat] of live) (SETTLED.has(seat.status) ? alive : unsure).push(id);
+    return { alive, unsure };
+  } catch (error) {
+    room.log(
+      `work: the seats could not be listed, so no lease changes: ${error instanceof Error ? error.message : String(error)}`,
+    );
+    return null;
+  }
+}
+
+/** The minute's pass over the leases of claimed issues: those of a seat the app no longer lists go back to the board, and the seat's Owner is told once. */
+export async function sweepLeases(room: RoomContext): Promise<void> {
+  const { engine, log } = room;
+  const byOwner = new Map<string, Lapsed[]>();
+  for (const { lapsed } of await room.works.leases(engine.projects(), () => seatingOf(room))) {
+    log(`work: ${lapsed.map((issue) => issue.id).join(", ")} went back to the board, their seats gone`);
+    for (const issue of lapsed) {
+      const owner = engine.parentOf(issue.holder);
+      if (owner) byOwner.set(owner, [...(byOwner.get(owner) ?? []), issue]);
+    }
+  }
+  for (const [owner, issues] of byOwner) {
+    const lines = issues.map(
+      (issue) =>
+        `- ${issue.id} "${clip(issue.title, TITLE_SHOWN)}" (held by ${engine.seat(issue.holder)?.title ?? issue.holder})`,
+    );
+    await engine
+      .post({
+        from: fromRoom,
+        to: owner,
+        priority: "action",
+        subject: `LEASE: ${issues.length} claimed issue${issues.length === 1 ? "" : "s"} went back to the board`,
+        body: `The seat that held each issue below is gone. Each is back on the board with no holder, and carries a comment saying so.\n${lines.join("\n")}\nBrief a new seat for each, or claim it yourself with seatwork_work do=claim.`,
+        needs: "nothing",
+        why: "a seat under you is gone and its claimed work went back to the board",
+      })
+      .catch((error) => log(`work: ${owner} was not told of the issues given back: ${String(error)}`));
+  }
 }
 
 export const fromRoom = { agentId: "room", role: "system" } as const;

@@ -17,7 +17,7 @@ const ORDERING = Object.entries(config.dependencyTypes as Record<string, { order
   .filter(([, rule]) => rule.orders)
   .map(([type]) => type);
 
-/** One issue as the store keeps it. */
+/** One issue as the store keeps it; `lease_until` is when its holder's claim lapses, null where it holds no lease. */
 export interface Issue {
   id: string;
   title: string;
@@ -39,6 +39,7 @@ export interface Issue {
   close_reason: string | null;
   closed_by: string | null;
   defer_until: string | null;
+  lease_until: string | null;
 }
 
 /** An edge: `issue_id` depends on `depends_on_id` in the way `type` says. */
@@ -53,6 +54,19 @@ export interface Comment {
   author: string;
   text: string;
   created_at: string;
+}
+
+/** The seats the app lists: those it shows at work or at rest, and those it lists but cannot tell the state of. */
+export interface Seating {
+  alive: readonly string[];
+  unsure: readonly string[];
+}
+
+/** An issue that went back to the board because the seat that held it is gone. */
+export interface Lapsed {
+  id: string;
+  title: string;
+  holder: string;
 }
 
 /** What a seat gives to make an issue; `parent` and `deps` name issues that exist. */
@@ -130,6 +144,7 @@ const NAMED_EVENT: Partial<Record<Editable, string>> = {
 const TEXT_FIELDS = ["description", "design", "acceptance_criteria", "write_scope"] as const;
 const ORDERED = "priority, created_at, id";
 const EXPIRE_BATCH = 500;
+const LEASE_MS = config.leaseMinutes * 60_000;
 const ID_PREFIX = new RegExp(`^${config.idPrefix}-?`);
 export const PARENT_BLOCKED = ":parent-blocked";
 export const CHILD_OPEN = ":child-open";
@@ -187,7 +202,7 @@ SELECT d.issue_id || '${CHILD_OPEN}' FROM dependencies d JOIN issues c ON c.id =
   WHERE d.depends_on_id = ?1 AND d.type = 'parent-child' AND c.status != 'closed'
 ORDER BY ref`;
 const INSERT_ISSUE =
-  "INSERT INTO issues (id, title, description, design, acceptance_criteria, notes, write_scope, status, priority, issue_type, assignee, labels, revision, created_at, created_by, updated_at, closed_at, close_reason, closed_by, defer_until) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
+  "INSERT INTO issues (id, title, description, design, acceptance_criteria, notes, write_scope, status, priority, issue_type, assignee, labels, revision, created_at, created_by, updated_at, closed_at, close_reason, closed_by, defer_until, lease_until) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
 
 /** Throws when a text is longer than the vocabulary allows an issue to hold in a field. */
 function fit(field: string, text: string | undefined): void {
@@ -207,7 +222,7 @@ function databaseIn(dir: string): string {
   return join(keptOutOfGit(dir), "work.db");
 }
 
-/** A project's work store: `dir` holds its database and `issues.jsonl`, the text copy it is read back from. */
+/** A project's work store: `dir` holds its database and `issues.jsonl`, the text copy it is read back from; `leased` says which holders are seats of the room, whose claims carry a lease. */
 export class WorkStore extends Sqlite {
   private readonly jsonl: string;
   private pending: NodeJS.Timeout | undefined;
@@ -217,6 +232,7 @@ export class WorkStore extends Sqlite {
     private readonly policy: Pick<WorkPolicy, "busyTimeoutMs" | "flushAfterMs">,
     private readonly now: () => Date = () => new Date(),
     scripts: string = join(SQL_DIR, "work"),
+    private readonly leased: (holder: string) => boolean = () => true,
   ) {
     super(databaseIn(dir), {
       busyTimeoutMs: policy.busyTimeoutMs,
@@ -327,6 +343,7 @@ export class WorkStore extends Sqlite {
               one.close_reason ?? null,
               one.closed_by ?? null,
               one.defer_until ?? null,
+              one.lease_until ?? (one.status === "closed" ? null : this.lease(one.assignee ?? null)),
             ),
           )
         )
@@ -373,6 +390,24 @@ export class WorkStore extends Sqlite {
 
   private stamp(): string {
     return this.now().toISOString();
+  }
+
+  /** The end of a lease that starts now, for a holder that is a seat of the room; null for any other. */
+  private lease(holder: string | null): string | null {
+    return holder && this.leased(holder) ? this.leaseFrom(1) : null;
+  }
+
+  /** The time `share` of a lease from now, as a stamp. */
+  private leaseFrom(share: number): string {
+    return new Date(this.now().getTime() + LEASE_MS * share).toISOString();
+  }
+
+  /** The lease an update leaves: cleared when no one holds the issue, started when it changes hands or its holder acts, else undefined, as it was. */
+  private leaseAfter(issue: Issue, assignee: string | null | undefined, actor: string): string | null | undefined {
+    const holder = assignee === undefined ? issue.assignee : assignee;
+    if (issue.status === "closed") return undefined;
+    if (holder === null) return null;
+    return holder !== issue.assignee || holder === actor ? this.lease(holder) : undefined;
   }
 
   private event(id: string, type: string, actor: string, from: string | null, to: string | null): void {
@@ -517,6 +552,7 @@ export class WorkStore extends Sqlite {
       at,
       actor,
       at,
+      null,
       null,
       null,
       null,
@@ -687,17 +723,23 @@ export class WorkStore extends Sqlite {
     )?.id;
   }
 
-  /** Changes one issue row and counts its revision up; a stale `if_revision` is refused. */
-  private touch(issue: Issue, set: Record<string, Param>, ifRevision?: number): void {
+  /** Changes one issue row and counts its revision up; a stale `if_revision` is refused, and a `lease` other than undefined replaces its lease. */
+  private touch(
+    issue: Pick<Issue, "id" | "revision">,
+    set: Record<string, Param>,
+    ifRevision?: number,
+    lease?: string | null,
+  ): void {
     if (ifRevision !== undefined && ifRevision !== issue.revision)
       throw new WorkError(
         "UPDATE_PRECONDITION_FAILED",
         `${issue.id} is at revision ${issue.revision}, not ${ifRevision}: read it again`,
       );
-    const assignments = Object.keys(set).map((field) => `${field} = ?, `);
+    const changes = lease === undefined ? set : { ...set, lease_until: lease };
+    const assignments = Object.keys(changes).map((field) => `${field} = ?, `);
     this.run(
       `UPDATE issues SET ${assignments.join("")}revision = revision + 1, updated_at = ? WHERE id = ?`,
-      ...Object.values(set),
+      ...Object.values(changes),
       this.stamp(),
       issue.id,
     );
@@ -715,7 +757,7 @@ export class WorkStore extends Sqlite {
         throw new WorkError("BLOCKED", `${issue.id} is put off until ${issue.defer_until}`);
       const blockers = this.startBlockers(issue.id);
       if (blockers.length > 0) throw new WorkError("BLOCKED", `${issue.id} waits for ${blockers.join(", ")}`);
-      this.touch(issue, { assignee: actor, status: "in_progress" });
+      this.touch(issue, { assignee: actor, status: "in_progress" }, undefined, this.lease(actor));
       if (issue.status !== "in_progress") this.event(issue.id, "status_changed", actor, issue.status, "in_progress");
       if (issue.assignee !== actor) this.event(issue.id, "assignee_changed", actor, issue.assignee, actor);
       return this.find(issue.id)!;
@@ -775,7 +817,7 @@ export class WorkStore extends Sqlite {
         set.notes = `${issue.notes}${issue.notes ? "\n" : ""}[${this.stamp()} ${actor}] ${patch.append_notes.trim()}`;
         fit("notes", set.notes);
       }
-      this.touch(issue, set, patch.if_revision);
+      this.touch(issue, set, patch.if_revision, this.leaseAfter(issue, patch.assignee, actor));
       for (const [field, value] of Object.entries(set)) {
         const before = field === "notes" ? null : String((issue as unknown as Row)[field] ?? "");
         const after = field === "notes" ? "notes" : String(value ?? "");
@@ -837,7 +879,12 @@ export class WorkStore extends Sqlite {
         issue.id,
         issue.id,
       );
-      this.touch(issue, { status: "closed", closed_at: this.stamp(), close_reason: reason.trim(), closed_by: actor });
+      this.touch(
+        issue,
+        { status: "closed", closed_at: this.stamp(), close_reason: reason.trim(), closed_by: actor },
+        undefined,
+        null,
+      );
       this.event(issue.id, "closed", actor, issue.status, reason.trim());
       return {
         issue: this.find(issue.id)!,
@@ -851,7 +898,12 @@ export class WorkStore extends Sqlite {
     return this.write(() => {
       const issue = this.get(id);
       if (issue.status !== "closed") throw new WorkError("VALIDATION_FAILED", `${issue.id} is not closed`);
-      this.touch(issue, { status: "open", closed_at: null, close_reason: null, closed_by: null });
+      this.touch(
+        issue,
+        { status: "open", closed_at: null, close_reason: null, closed_by: null },
+        undefined,
+        this.lease(issue.assignee),
+      );
       this.event(issue.id, "reopened", actor, "closed", "open");
       return this.find(issue.id)!;
     });
@@ -889,15 +941,71 @@ export class WorkStore extends Sqlite {
   release(actor: string, successor: string | null, by: string): string[] {
     return this.write(() => {
       const held = this.rows("SELECT * FROM issues WHERE assignee = ? AND status != 'closed'", actor).map(toIssue);
-      for (const issue of held) {
-        this.touch(issue, {
-          assignee: successor,
-          status: successor || issue.status !== "in_progress" ? issue.status : "open",
-        });
-        this.event(issue.id, "assignee_changed", by, actor, successor);
-      }
+      for (const issue of held) this.handOver(issue, successor, by);
       return held.map((issue) => issue.id);
     });
+  }
+
+  /** Gives an issue its holder let go of to `successor`, or opens it again; the caller holds the write. */
+  private handOver(
+    issue: Pick<Issue, "id" | "revision" | "status" | "assignee">,
+    successor: string | null,
+    by: string,
+  ): void {
+    this.touch(
+      issue,
+      { assignee: successor, status: successor || issue.status !== "in_progress" ? issue.status : "open" },
+      undefined,
+      this.lease(successor),
+    );
+    this.event(issue.id, "assignee_changed", by, issue.assignee, successor);
+  }
+
+  /** Whether any lease has less than half its time left, which is when a pass has work to do. */
+  leaseDue(): boolean {
+    const due = this.row(
+      "SELECT 1 AS due FROM issues INDEXED BY issues_by_lease WHERE lease_until < ?1 LIMIT 1",
+      this.leaseFrom(0.5),
+    );
+    return due !== undefined;
+  }
+
+  /** Pushes on, in one statement, the leases of the issues these seats hold that have less than half their time left; the issue itself is left as it is, so a renewal is no progress. Returns how many. */
+  renewLeases(seats: readonly string[]): number {
+    if (seats.length === 0) return 0;
+    return this.transaction(
+      "write",
+      () =>
+        this.run(
+          "UPDATE issues INDEXED BY issues_by_lease SET lease_until = ?1 WHERE lease_until < ?2 AND assignee IN (SELECT value FROM json_each(?3))",
+          this.leaseFrom(1),
+          this.leaseFrom(0.5),
+          JSON.stringify(seats),
+        ).changes,
+    );
+  }
+
+  /** Gives back to the board, at most `most`, the longest lapsed first, the issues whose lease has passed and whose holder is not in `listed`: open again, unassigned, with a comment saying why. Returns what went back. */
+  expireLeases(listed: readonly string[], most: number): Lapsed[] {
+    const gone = this.transaction("write", () =>
+      this.rows<Lapsed & Pick<Issue, "status" | "revision">>(
+        `SELECT id, title, status, revision, assignee AS holder FROM issues INDEXED BY issues_by_lease
+         WHERE lease_until < ?1 AND assignee NOT IN (SELECT value FROM json_each(?2)) ORDER BY lease_until LIMIT ?3`,
+        this.stamp(),
+        JSON.stringify(listed),
+        most,
+      ).map((issue) => {
+        this.handOver({ ...issue, assignee: issue.holder }, null, "room");
+        this.comment(
+          issue.id,
+          "room",
+          `${issue.holder} is gone, so this issue is back on the board with no holder. Claim it, or brief a new seat for it.`,
+        );
+        return { id: issue.id, title: issue.title, holder: issue.holder };
+      }),
+    );
+    if (gone.length > 0) this.followed();
+    return gone;
   }
 
   /** An issue's comments, oldest first: the newest `limit` after passing over the `skip` newest, and how many it has in all. */

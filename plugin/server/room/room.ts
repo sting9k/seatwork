@@ -43,7 +43,7 @@ import { Safety } from "../safety/index";
 import { render, type Cli } from "../safety/hooks";
 import { WorkStores } from "../tasks/stores";
 import { Callers, serverToken } from "./callers";
-import { fromRoom, releaseWork, taskOf, type RoomContext } from "./context";
+import { fromRoom, releaseWork, sweepLeases, taskOf, type RoomContext } from "./context";
 import { lookAtRunningTurns } from "./council";
 import { launch, type Launched, type SeatLaunch } from "./launch";
 import { mailHealth, registerTools } from "./tools";
@@ -328,6 +328,7 @@ function startTimers(room: RoomContext, gc: Collector): { touch(): void; stop():
     void room.operations.tick();
     if (touched && (minutes += 1) % OPERATOR_EVERY_MINUTES === 1) keep();
     void engine.sweep().catch((error) => log(`the mail sweep failed: ${String(error)}`));
+    if (touched) void sweepLeases(room).catch((error) => log(`work: the lease pass failed: ${String(error)}`));
     try {
       room.knowledge.tick();
     } catch (error) {
@@ -555,7 +556,7 @@ export function startRoom(input: {
     version,
     log,
     engine,
-    works: new WorkStores(policy.room.work, log),
+    works: new WorkStores(policy.room.work, log, (holder) => engine.seat(holder) !== undefined),
     rounds: new Rounds(join(ROOM_HOME, "rounds.json")),
     taskKeys: new TaskKeys(join(ROOM_HOME, "task-keys.json"), log),
     gate: new ReviewGate(),

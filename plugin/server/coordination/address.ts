@@ -38,6 +38,8 @@ export type MailErrorCode =
   | "TEAM_ASKS_NOTHING"
   | "MISSING_FILE"
   | "KEY_REUSED"
+  | "WAKE_LIMIT"
+  | "UNKNOWN_WAKE"
   | "INVALID_ARGUMENT"
   | "STORE_UNAVAILABLE";
 

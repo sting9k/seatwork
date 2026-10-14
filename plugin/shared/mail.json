@@ -6,5 +6,7 @@
   "namedMost": 50,
   "settled": ["delivered", "read", "bounced", "replaced", "withdrawn"],
   "owner": ["owner", "parent", "human"],
-  "team": ["team"]
+  "team": ["team"],
+  "$comment_wake": "Timed wake-ups. minMinutes: the soonest one may be set, as a pass runs each minute. maxDays: the farthest ahead. perSeat: how many may wait for one seat. noteChars: the longest note. perPass: how many that fell due one pass of one store sends; the rest go in the next.",
+  "wake": { "minMinutes": 1, "maxDays": 7, "perSeat": 8, "noteChars": 300, "perPass": 50 }
 }

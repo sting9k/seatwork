@@ -804,11 +804,17 @@ test("a work store made before the order index is brought to it when it opens, w
   const earlier = join(ROOM_HOME, `work-layout-${stores_("old")}`);
   mkdirSync(earlier, { recursive: true });
   const shipped = join(ROOM_HOME, "room", "sql", "work");
-  for (const name of readdirSync(shipped).filter((script) => !script.startsWith("V3__")))
+  for (const name of readdirSync(shipped).filter((script) => !/^V[34]__/.test(script)))
     copyFileSync(join(shipped, name), join(earlier, name));
-  const old = new WorkStore(dir, TIMING, undefined, earlier);
-  for (const title of ["a", "b", "c"]) old.create({ title, priority: title === "b" ? 0 : 2 }, "lead");
-  old.close();
+  new WorkStore(dir, TIMING, undefined, earlier).close();
+  // the store of today writes the lease column: the issues of the older layout are written under it
+  const raw = new DatabaseSync(join(dir, "work.db"));
+  const insert = raw.prepare(
+    "INSERT INTO issues (id, title, status, priority, issue_type, created_at, created_by, updated_at) VALUES (?, ?, 'open', ?, 'task', ?, 'lead', ?)",
+  );
+  for (const title of ["a", "b", "c"])
+    insert.run(`sw-${title}`, title, title === "b" ? 0 : 2, "2026-10-14T09:00:00.000Z", "2026-10-14T09:00:00.000Z");
+  raw.close();
 
   const back = new WorkStore(dir, TIMING);
   assert.deepEqual(

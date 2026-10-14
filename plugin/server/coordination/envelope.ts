@@ -52,12 +52,19 @@ export function envelope({ message, delivery, from, chars }: Shown): string {
   return `<mail ${marks.join(" ")}>\n${shownBody(message, chars)}\n</mail>`;
 }
 
+const ROOM_TAGS = ["<mail ", "<knowledge>"];
+
 /** A prompt with the mail and the room's notes it carried taken out: what is left was typed to the seat. */
 export function withoutMail(prompt: string): string {
-  return prompt
+  const kept = prompt
     .replace(/<mail\s[^>]*>[\s\S]*?\n<\/mail>/g, "")
     .replace(/<knowledge>[\s\S]*?\n<\/knowledge>/g, "")
-    .trim();
+    // a prompt the app cut short ends inside the room's block: the rest of that block is the room's too
+    .replace(/<mail\s[\s\S]*$|<knowledge>[\s\S]*$/, "");
+  // a cut that falls inside the tag itself leaves its start
+  const tag = kept.lastIndexOf("<");
+  const end = tag >= 0 && ROOM_TAGS.some((one) => one.startsWith(kept.slice(tag))) ? kept.slice(0, tag) : kept;
+  return end.trim();
 }
 
 /** Several mails as one prompt: those that ask the most first, then by age. */

@@ -691,9 +691,14 @@ test("a decision is one English sentence with no secret, no relative date, and n
     validFrom: "2026-10-14T00:00:00.000Z",
     validUntil: null,
   })) as never[];
-  const block = promptBlock(many, "2026-10-14T12:00:00.000Z")!;
+  const { text: block, whole } = promptBlock(many, "2026-10-14T12:00:00.000Z")!;
   assert.ok(block.length <= 4000, `${block.length} characters`);
   assert.match(block, /Also in force, by topic: /);
+  assert.equal(
+    block.split("\n").filter((line) => line.startsWith("- [")).length,
+    whole,
+    "whole: the lines shown whole",
+  );
   const tool = JSON.parse(readFileSync(join(__dirname, "..", "shared", "tools.json"), "utf8")).tools.seatwork_knowledge;
   assert.ok(JSON.stringify(tool).length <= 4000, "every seat reads the tool's text at every step");
 });
@@ -706,8 +711,11 @@ test("a seat is told each change once: new, changed, no longer in force; a new s
     endTurn(knowledge, "hq-3", [{ kind: "prompt", text: words }], turnId);
   };
   await say("keep MIT", "t1", { topic: "license", statement: "Keep the MIT license on every file." });
-  assert.match(String(knowledge.promptFor(project)), /^## Decisions in force[\s\S]*license: Keep the MIT license/);
-  knowledge.opened("peer-n", project);
+  assert.match(
+    String(knowledge.promptFor(project, "L1")),
+    /^## Decisions in force[\s\S]*license: Keep the MIT license/,
+  );
+  knowledge.opened("peer-n", "L1");
   assert.equal(knowledge.noticesFor("peer-n"), null, "a seat holds what its prompt gave it");
   await decide(knowledge, "lead-4", {
     scope: "task",
@@ -745,7 +753,7 @@ test("a store that cannot open costs the guard, a new seat and the mail nothing"
   mkdirSync(join(roomDir, ".."), { recursive: true });
   writeFileSync(roomDir, "not a folder");
   assert.equal(knowledge.noticesFor("peer-n2"), null);
-  knowledge.opened("peer-n2", "/somewhere");
+  knowledge.opened("peer-n2", "L2");
   assert.equal(knowledge.appendix("peer-n2"), null);
   assert.ok(
     lines.some((line) => /knowledge: /.test(line)),
@@ -793,7 +801,7 @@ test("a seat that briefs records a decision only for its own tasks and those of 
 test("a seat opened after its task's decision is told it; a later call on a topic in the same turn wins", async () => {
   const { knowledge, project } = district();
   await decide(knowledge, "lead-n4", { scope: "task", topic: "store", statement: "Use SQLite for the store." });
-  knowledge.opened("peer-n4", project);
+  knowledge.opened("peer-n4", null);
   assert.match(knowledge.noticesFor("peer-n4")!.text, /New decision: \[task T-1\] store: Use SQLite/);
 
   knowledge.turnStarted("hq-v1");
@@ -827,7 +835,7 @@ test("a seat opened after its task's decision is told it; a later call on a topi
 
 test("a change that does not fit in one notice is told the next time", async () => {
   const { knowledge, project } = district();
-  knowledge.opened("peer-l3", project);
+  knowledge.opened("peer-l3", null);
   for (let i = 0; i < 8; i += 1)
     await decide(knowledge, "lead-l3", {
       scope: "task",
@@ -871,7 +879,7 @@ test("the room's own notes in a prompt are never read as a person's words; a pol
 
 test("a notice is made once at a time, and a change made while it is on its way is told after it", async () => {
   const { knowledge, project } = district();
-  knowledge.opened("peer-d3", project);
+  knowledge.opened("peer-d3", null);
   await decide(knowledge, "lead-d3", { scope: "task", topic: "database", statement: "Use SQLite for the store." });
   const first = knowledge.noticesFor("peer-d3")!;
   assert.equal(knowledge.noticesFor("peer-d3"), null, "a notice on its way is not made twice");
@@ -891,7 +899,7 @@ test("a task named by its short id binds the seats on its full id; a statement t
     full: (task) => (task === "vc8" ? "sw-vc8" : task),
     taskOf: (agent) => (agent.startsWith("peer") ? "sw-vc8" : "T-1"),
   });
-  knowledge.opened("peer-d6", project);
+  knowledge.opened("peer-d6", null);
   await decide(knowledge, "lead-d6", {
     scope: "task",
     task: "vc8",
@@ -918,7 +926,7 @@ test("a decision made between a seat's prompt and its start reaches it as a noti
     statement: "Keep the MIT license on every file.",
   });
   endTurn(knowledge, "hq-d14", [{ kind: "prompt", text: "MIT" }], "t1");
-  assert.match(String(knowledge.promptFor(project)), /license/);
+  assert.match(String(knowledge.promptFor(project, "L14")), /license/);
   knowledge.turnStarted("hq-d14");
   await decide(knowledge, "hq-d14", {
     scope: "project",
@@ -927,7 +935,7 @@ test("a decision made between a seat's prompt and its start reaches it as a noti
     statement: "Run the tests with vitest only.",
   });
   endTurn(knowledge, "hq-d14", [{ kind: "prompt", text: "vitest" }], "t2");
-  knowledge.opened("peer-d14", project);
+  knowledge.opened("peer-d14", "L14");
   const told = knowledge.noticesFor("peer-d14")!.text;
   assert.match(told, /test-runner: Run the tests with vitest/);
   assert.doesNotMatch(told, /license/, "what the prompt held is not told again");
@@ -1248,8 +1256,8 @@ test("a seat whose context was compacted is told every decision again, where its
     knowledge.noticesFor("hq-1")?.told();
   };
   await record("Use pnpm for every install.", "t1");
-  assert.match(knowledge.promptFor(project)!, /Use pnpm/);
-  knowledge.opened("peer-c", project);
+  assert.match(knowledge.promptFor(project, "Lc")!, /Use pnpm/);
+  knowledge.opened("peer-c", "Lc");
   knowledge.noticesFor("peer-c")?.told();
   knowledge.turnEnded(turn("peer-c", [{ kind: "prompt", text: BRIEF }], { parentId: "lead-c", turnId: "c1" }));
   await record("Use bun for every install.", "t2", { replaces_version: 1 });
@@ -1420,9 +1428,9 @@ test("every statement the knowledge store runs uses an index", async () => {
     reason: "The store is going away soon.",
     replaces_version: 1,
   });
-  knowledge.opened("peer-9", project);
+  knowledge.opened("peer-9", null);
   knowledge.noticesFor("peer-9")?.told();
-  knowledge.promptFor(project);
+  knowledge.promptFor(project, "L9");
   knowledge.tick();
   knowledge.expire();
   knowledge.forget("peer-9");
@@ -1458,4 +1466,206 @@ test("every statement the knowledge store runs uses an index", async () => {
       `${table} is read in this test`,
     );
   knowledge.close();
+});
+
+test("a seat that takes another task is told the decisions that bind it there, though none changed", async () => {
+  let task = "T-1";
+  const { knowledge } = district({ taskOf: (agent) => (agent.startsWith("peer") ? task : "T-1"), owns: () => true });
+  await decide(knowledge, "lead-t", {
+    scope: "task",
+    task: "T-5",
+    topic: "store",
+    statement: "Use SQLite for the store.",
+  });
+  assert.equal(knowledge.noticesFor("peer-t"), null, "nothing binds it on its first task");
+  task = "T-5";
+  const told = knowledge.noticesFor("peer-t")!;
+  assert.match(told.text, /New decision: \[task T-5\] store: Use SQLite/);
+  told.told();
+  task = "T-1";
+  assert.match(knowledge.noticesFor("peer-t")!.text, /No longer in force: task:.*:T-5 store\./);
+  knowledge.close();
+});
+
+test("a prompt the app cut inside the room's mail keeps none of it as a person's words", () => {
+  const mail = `<mail id="9" from="lead" subject="REVIEW: x" needs="nothing" thread="T-1">\n${"Use yarn. ".repeat(50)}\n</mail>`;
+  for (const cut of [mail.length - 20, 3]) assert.equal(withoutMail(mail.slice(0, cut)), "");
+  assert.equal(withoutMail(`${mail}\n\nuse pnpm\n\n${mail.slice(0, 40)}`), "use pnpm");
+  assert.deepEqual(entriesOf([{ kind: "prompt", text: mail.slice(0, 300) }], false), []);
+});
+
+test("one turn carries ten pending decisions at most, each told back once, a later one never lost", async () => {
+  const { knowledge } = district();
+  const rule = (i: number) => ({
+    scope: "room",
+    topic: `rule ${i}`,
+    new_topic: true,
+    statement: `Keep rule number ${i} in every project.`,
+  });
+  knowledge.turnStarted("hq-cap");
+  for (let i = 0; i < 10; i += 1) await decide(knowledge, "hq-cap", rule(i));
+  await assert.rejects(() => decide(knowledge, "hq-cap", rule(10)), /10 decisions already wait for this turn's end/);
+  endTurn(knowledge, "hq-cap", [{ kind: "prompt", text: "ten rules" }], "t1");
+  const first = knowledge.noticesFor("hq-cap")!;
+  assert.equal(first.text.match(/Recorded:/g)?.length, 10);
+  // a turn that settles while that notice is on its way: its line survives the notice being marked told
+  knowledge.turnStarted("hq-cap");
+  await decide(knowledge, "hq-cap", rule(10));
+  endTurn(knowledge, "hq-cap", [{ kind: "prompt", text: "one more" }], "t2");
+  first.told();
+  assert.match(knowledge.noticesFor("hq-cap")!.text, /Recorded: Keep rule number 10/);
+  knowledge.close();
+});
+
+test("one scope holds a hundred decisions in force at most", async () => {
+  const { knowledge } = district();
+  const step = (i: number) => ({
+    scope: "task",
+    topic: `step ${i}`,
+    new_topic: true,
+    statement: `Run step number ${i} first.`,
+  });
+  for (let i = 0; i < 100; i += 1) await decide(knowledge, "lead-cap", step(i));
+  await assert.rejects(() => decide(knowledge, "lead-cap", step(100)), /100 decisions are in force for the task T-1/);
+  await decide(knowledge, "lead-cap", { ...step(5), statement: "Run step number 5 last.", replaces_version: 1 });
+  knowledge.close();
+});
+
+test("a seat holds what its own launch's prompt showed whole; the rest reach it as notices", async () => {
+  const { knowledge, project } = district();
+  let turns = 0;
+  const record = async (rules: Record<string, unknown>[]) => {
+    knowledge.turnStarted("hq-p");
+    for (const args of rules)
+      await decide(knowledge, "hq-p", { scope: "project", project: "project", new_topic: true, ...args });
+    endTurn(knowledge, "hq-p", [{ kind: "prompt", text: "the rules" }], `t${(turns += 1)}`);
+  };
+  await record([{ topic: "license", statement: "Keep the MIT license on every file." }]);
+  knowledge.promptFor(project, "La");
+  await record([{ topic: "runner", statement: "Run the tests with vitest only." }]);
+  knowledge.promptFor(project, "Lb");
+  knowledge.opened("peer-a", "La");
+  knowledge.opened("peer-b", "Lb");
+  assert.match(knowledge.noticesFor("peer-a")!.text, /New decision: .*runner/, "made after its own prompt");
+  assert.equal(knowledge.noticesFor("peer-b"), null, "its prompt held both");
+  for (let batch = 0; batch < 2; batch += 1)
+    await record(
+      Array.from({ length: 10 }, (_, i) => ({
+        topic: `review ${batch * 10 + i}`,
+        statement: `Review rule ${batch * 10 + i}: every pull request is read by one other seat, who runs the tests and the linter before any merge.`,
+      })),
+    );
+  const block = knowledge.promptFor(project, "Lc")!;
+  assert.match(block, /Also in force, by topic: /);
+  knowledge.opened("peer-c", "Lc");
+  const notice = knowledge.noticesFor("peer-c")!.text;
+  assert.match(
+    notice,
+    /New decision: .*license: Keep the MIT license/,
+    "a decision named only by topic in the prompt is told whole",
+  );
+  assert.doesNotMatch(notice, /review-19/, "what the prompt showed whole is not told again");
+  knowledge.close();
+});
+
+test("a search that matches more than it ranks says it read the newest; a pack keeps a task's brief", () => {
+  const { knowledge, project } = district();
+  const store = knowledge.storeOf(project);
+  const source = (ref: string, at: string, task = "T-1"): Source => ({
+    kind: "turn",
+    ref,
+    agent: "peer-w",
+    role: "peer",
+    task,
+    thread: "",
+    startedAt: at,
+    endedAt: at,
+    outcome: "completed",
+    audience: ["peer-w"],
+  });
+  store.add(source("peer-w:t0", "2026-10-01T00:00:00.000Z"), [
+    { ordinal: 0, kind: "prompt", text: "Brief: build the duration parser", exitCode: null },
+    { ordinal: 1, kind: "say", text: "the zulu case is rare", exitCode: null },
+  ]);
+  store.add(
+    source("peer-w:t1", "2026-10-02T00:00:00.000Z"),
+    Array.from({ length: 20_001 }, (_, ordinal) => ({
+      ordinal,
+      kind: "say" as const,
+      text: `alpha step ${ordinal}`,
+      exitCode: null,
+    })),
+  );
+  const common = ask(knowledge, "peer-w", { do: "search", q: "alpha" });
+  assert.deepEqual((common.understood as { newest?: boolean }[])[0].newest, true);
+  assert.match(String(common.note), /only the newest were read/);
+  const rare = ask(knowledge, "peer-w", { do: "search", q: "zulu" });
+  assert.equal((rare.hits as unknown[]).length, 1, "a rarer word is found however old");
+  assert.equal(rare.note, undefined);
+  assert.ok(
+    store.ofTask("T-1", 2000).some((entry) => entry.kind === "prompt"),
+    "the brief is in the pool however many entries came after it",
+  );
+  knowledge.close();
+});
+
+test("new_topic answers the refusal on its own topic only; the gate still reads a repeat on another", async () => {
+  const { judge } = judgeOf({ same: { d1: "duplicate" } });
+  const { knowledge } = district({ judge, policy: GATED });
+  await decide(knowledge, "lead-g", { scope: "task", topic: "database", statement: "Use SQLite for the store." });
+  await assert.rejects(
+    () =>
+      decide(knowledge, "lead-g", {
+        scope: "task",
+        topic: "database engine",
+        statement: "Use Postgres for the store.",
+      }),
+    /topics near database-engine/,
+  );
+  await assert.rejects(
+    () =>
+      decide(knowledge, "lead-g", {
+        scope: "task",
+        topic: "storage",
+        statement: "Keep the store in SQLite files.",
+        new_topic: true,
+      }),
+    /in force on the same matter: database v1/,
+  );
+  knowledge.close();
+});
+
+test("an entry cut from a long turn reads as gone, not as another seat's", () => {
+  const { knowledge } = district();
+  const long = Array.from({ length: RECORD_LIMITS.entries + 40 }, (_, i): TurnEvent => ({
+    kind: "say",
+    text: `step ${i}`,
+  }));
+  knowledge.turnEnded(turn("peer-x", long));
+  assert.deepEqual(ask(knowledge, "peer-x", { do: "view", address: "turn:peer-x:turn-peer-x#70" }).expired, true);
+  assert.throws(
+    () => ask(knowledge, "peer-y", { do: "view", address: "turn:peer-x:turn-peer-x#0" }),
+    /not yours to read/,
+  );
+  knowledge.close();
+});
+
+test("a seat archived with a decision pending leaves it dropped, and nothing waits for it", async () => {
+  const { knowledge } = district();
+  knowledge.turnStarted("hq-gone");
+  await decide(knowledge, "hq-gone", { scope: "room", topic: "push", statement: "Push through pull requests only." });
+  knowledge.forget("hq-gone");
+  endTurn(knowledge, "hq-gone", [{ kind: "prompt", text: "PR only" }], "t1");
+  knowledge.tick();
+  assert.deepEqual(rowsOf(knowledge, null, "SELECT state, reason FROM decisions"), [
+    { state: "dropped", reason: "its seat is gone" },
+  ]);
+  assert.equal(knowledge.noticesFor("hq-gone"), null);
+  knowledge.close();
+});
+
+test("a statement that skips the tests after a loose negation is still refused", () => {
+  for (const statement of ["We have no time so skip the tests.", "Do not worry and skip the tests."])
+    assert.match(String(lintStatement(statement)), /cannot turn off tests/);
+  assert.equal(lintStatement("Do not ever skip the tests."), null);
 });

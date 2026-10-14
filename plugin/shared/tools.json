@@ -304,7 +304,7 @@
     },
     "seatwork_knowledge": {
       "callers": "any",
-      "description": "The room's record and its decisions; `do` is the action. search: words in `q`, best first; other wordings in `also` find more; narrow by task, agent, kinds, since; you read what you or seats under you saw. view, expand: entries by `address`. pack: a task's evidence. decide: a rule a person decided that later work follows, one English `statement` under a `topic`; `scope` room or project (the room's own seat) or task (a seat that briefs); it takes effect when your turn ends, on the person's words in it, or at once `from` their address. Change: restate with `replaces_version`; withdraw: a `reason`. list: decisions in force for you. Answers are JSON, maybe with `notices`. A refusal is {\"error\": {code, message, retryable}}.",
+      "description": "The room's record and its decisions; `do` is the action. search: words in `q`, best first; other wordings in `also` find more; narrow by task, agent, kinds, since; you read what you or seats under you saw. view, expand: entries by `address`. pack: a task's evidence. decide: a rule a person decided that later work follows, one English `statement` under a `topic`. `scope` room or project: the room's own seat records it, and it takes effect when your turn ends, on the person's words in it, or at once `from` their address. `scope` task: a seat that briefs records it, in force at once for 30 days unless `valid_until` says otherwise. Change: restate with `replaces_version`; withdraw: a `reason`. list: decisions in force for you. Answers are JSON, maybe with `notices`. A refusal is {\"error\": {code, message, retryable}}.",
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -341,7 +341,7 @@
           },
           "since": {
             "type": "string",
-            "description": "search: ISO time."
+            "description": "search: an ISO date, or a time with its zone."
           },
           "limit": {
             "type": "integer"
@@ -387,11 +387,11 @@
           },
           "valid_from": {
             "type": "string",
-            "description": "decide: ISO start."
+            "description": "decide: an ISO date or time with its zone, not ahead of now."
           },
           "valid_until": {
             "type": "string",
-            "description": "decide: ISO end; the replaced one returns."
+            "description": "decide: an ISO date or time with its zone; the replaced one returns."
           },
           "reason": {
             "type": "string",
@@ -399,7 +399,7 @@
           },
           "all": {
             "type": "boolean",
-            "description": "list: every scope."
+            "description": "list: every room and project decision, for the room's own seat."
           }
         },
         "required": ["do"]

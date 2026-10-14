@@ -385,11 +385,11 @@ export function startRoom(input: {
           `seatwork: the room's server could not listen on 127.0.0.1:${port} (${unbound}); no seat starts until the room is started again`,
         );
       const launched = launch(request, policy, log);
-      // the decisions in force reach every seat at its start, whoever opens it
-      const decisions = knowledge.promptFor(request.cwd);
-      if (decisions) launched.systemPrompt = `${launched.systemPrompt}\n\n${decisions}`;
       // agent.session_open ties this nonce to the agent id
       const nonce = room.callers.issue();
+      // the decisions in force reach every seat at its start, whoever opens it; the nonce names the launch they were shown in
+      const decisions = knowledge.promptFor(request.cwd, nonce);
+      if (decisions) launched.systemPrompt = `${launched.systemPrompt}\n\n${decisions}`;
       return { ...launched, env: { SEATWORK_NONCE: nonce }, mcpUrl: mcp.urlFor(port, nonce) };
     },
     opened(agentId, provider, nonce, created) {
@@ -397,6 +397,8 @@ export function startRoom(input: {
       touch();
       const seat = parseSeat(provider);
       if (!seat) return null;
+      // the seat holds the decisions its launch's prompt showed
+      knowledge.opened(agentId, nonce ?? null);
       // the app saves no env with an agent: a reopened seat would start on the user's own home
       ensureRuntime(seat, policy);
       // a temporary directory per seat: one seat's cleanup cannot take another seat's files
@@ -445,7 +447,6 @@ export function startRoom(input: {
         version,
       };
       engine.rememberSeat(record);
-      knowledge.opened(agent.id, agent.cwd);
       void safety
         .started(agent.id, agent.cwd)
         .catch((error) => console.error("seatwork: the guard did not note where a seat starts", error));

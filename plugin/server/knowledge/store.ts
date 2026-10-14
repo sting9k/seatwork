@@ -152,6 +152,9 @@ const SLICE = 2000;
 const MERGE_PAGES = 500;
 const RECLAIM_PAGES = 4000;
 const ERRORS_KEPT = 200;
+const SCANNED = 20_000;
+const SEEN = `(? IS NULL OR EXISTS (SELECT 1 FROM json_each(?) j WHERE instr(',' || s.audience || ',', ',' || j.value || ',') > 0))`;
+const BRIEFED = "('owner', 'prompt', 'mail')";
 const FOUND = `e.id, e.kind, e.ordinal, e.text, e.exit_code AS exitCode,
   s.kind AS skind, s.ref, s.agent, s.role, s.task, s.started_at AS startedAt, s.outcome, s.audience`;
 
@@ -249,17 +252,29 @@ export class KnowledgeStore extends Sqlite {
     return this.row<{ last: number }>("SELECT last FROM cursors WHERE name = ?", name)?.last ?? 0;
   }
 
-  /** Entries matching a full-text query, best first by BM25, within the filters. */
-  search(match: string, filters: Filters, limit: number): (Found & { snippet: string; rank: number })[] {
+  /** Entries matching a full-text query, best first by BM25, within the filters; past `SCANNED` matches, the newest are read. */
+  search(
+    match: string,
+    filters: Filters,
+    limit: number,
+  ): { hits: (Found & { snippet: string; rank: number })[]; capped: boolean } {
+    // ranking scores every match: a query that matches most of the store ranks only its newest matches
+    const newest = this.row<{ floor: number | null; n: number }>(
+      "SELECT min(rowid) AS floor, count(*) AS n FROM (SELECT rowid FROM entries_fts WHERE entries_fts MATCH ? ORDER BY rowid DESC LIMIT ?)",
+      match,
+      SCANNED,
+    )!;
+    const capped = newest.n === SCANNED;
     const kinds = filters.kinds?.length ? filters.kinds.join(",") : "";
-    return this.rows<Record<string, unknown>>(
-      `SELECT ${FOUND}, snippet(entries_fts, 0, '[', ']', '…', 24) AS snippet, bm25(entries_fts) AS rank
+    const ranked = this.rows<{ id: number; rank: number }>(
+      `SELECT e.id AS id, bm25(entries_fts) AS rank
          FROM entries_fts JOIN entries e ON e.id = entries_fts.rowid JOIN sources s ON s.id = e.source_id
-         WHERE entries_fts MATCH ?
+         WHERE entries_fts MATCH ? AND entries_fts.rowid >= ?
            AND (? = '' OR s.task = ?) AND (? = '' OR s.agent = ?) AND (? = '' OR instr(',' || ? || ',', ',' || e.kind || ','))
-           AND s.started_at >= ? AND (? IS NULL OR EXISTS (SELECT 1 FROM json_each(?) j WHERE instr(',' || s.audience || ',', ',' || j.value || ',') > 0))
+           AND s.started_at >= ? AND ${SEEN}
          ORDER BY rank, e.id LIMIT ?`,
       match,
+      capped ? newest.floor : 0,
       filters.task ?? "",
       filters.task ?? "",
       filters.agent ?? "",
@@ -269,14 +284,37 @@ export class KnowledgeStore extends Sqlite {
       filters.since ?? "",
       ...seenParams(filters.seen),
       limit,
-    ).map((row) => ({ ...toFound(row), snippet: String(row.snippet), rank: Number(row.rank) }));
+    );
+    if (ranked.length === 0) return { hits: [], capped };
+    const ids = JSON.stringify(ranked.map((one) => one.id));
+    // what is shown is read for the hits alone, never for every match
+    const found = new Map(
+      this.rows<Record<string, unknown>>(
+        `SELECT ${FOUND} FROM entries e JOIN sources s ON s.id = e.source_id WHERE e.id IN (SELECT value FROM json_each(?))`,
+        ids,
+      ).map((row) => [Number(row.id), toFound(row)]),
+    );
+    const snippets = new Map(
+      this.rows<{ id: number; snippet: string }>(
+        "SELECT rowid AS id, snippet(entries_fts, 0, '[', ']', '…', 24) AS snippet FROM entries_fts WHERE entries_fts MATCH ? AND rowid IN (SELECT value FROM json_each(?))",
+        match,
+        ids,
+      ).map((row) => [Number(row.id), String(row.snippet)]),
+    );
+    return {
+      hits: ranked.flatMap(({ id, rank }) => {
+        const one = found.get(Number(id));
+        return one ? [{ ...one, snippet: snippets.get(one.id) ?? one.text.slice(0, 200), rank: Number(rank) }] : [];
+      }),
+      capped,
+    };
   }
 
   /** The entries of one source from `from` to `to` in its order that the reader may see; empty when none are kept. */
   slice(kind: SourceKind, ref: string, from: number, to: number, seen: readonly string[] | null = null): Found[] {
     return this.rows<Record<string, unknown>>(
       `SELECT ${FOUND} FROM sources s CROSS JOIN entries e ON e.source_id = s.id
-         WHERE s.kind = ? AND s.ref = ? AND e.ordinal BETWEEN ? AND ? AND (? IS NULL OR EXISTS (SELECT 1 FROM json_each(?) j WHERE instr(',' || s.audience || ',', ',' || j.value || ',') > 0)) ORDER BY e.ordinal`,
+         WHERE s.kind = ? AND s.ref = ? AND e.ordinal BETWEEN ? AND ? AND ${SEEN} ORDER BY e.ordinal`,
       kind,
       ref,
       from,
@@ -311,20 +349,19 @@ export class KnowledgeStore extends Sqlite {
     ).map((row) => row.ref);
   }
 
-  /** Whether a source is still kept. */
-  kept(kind: SourceKind, ref: string): boolean {
-    return !!this.row("SELECT 1 AS kept FROM sources WHERE kind = ? AND ref = ?", kind, ref);
-  }
-
-  /** A task's entries the reader may see, newest sources first, at most `limit`: what a pack chooses from. */
+  /** A task's entries the reader may see, at most `limit`: a person's words, briefs and mail first, then the newest of the rest. */
   ofTask(task: string, limit: number, seen: readonly string[] | null = null): Found[] {
-    return this.rows<Record<string, unknown>>(
-      `SELECT ${FOUND} FROM sources s CROSS JOIN entries e ON e.source_id = s.id
-         WHERE s.task = ? AND (? IS NULL OR EXISTS (SELECT 1 FROM json_each(?) j WHERE instr(',' || s.audience || ',', ',' || j.value || ',') > 0)) ORDER BY s.started_at DESC, s.id DESC, e.ordinal LIMIT ?`,
-      task,
-      ...seenParams(seen),
-      limit,
-    ).map(toFound);
+    // on a long task the newest entries alone would leave out the brief and the words it started on
+    const read = (kinds: "IN" | "NOT IN", most: number) =>
+      this.rows<Record<string, unknown>>(
+        `SELECT ${FOUND} FROM sources s CROSS JOIN entries e ON e.source_id = s.id
+           WHERE s.task = ? AND e.kind ${kinds} ${BRIEFED} AND ${SEEN} ORDER BY s.started_at DESC, s.id DESC, e.ordinal LIMIT ?`,
+        task,
+        ...seenParams(seen),
+        most,
+      ).map(toFound);
+    const first = read("IN", limit);
+    return first.length < limit ? [...first, ...read("NOT IN", limit - first.length)] : first;
   }
 
   /** One decision by its id. */
@@ -392,6 +429,24 @@ export class KnowledgeStore extends Sqlite {
       `SELECT ${DECISION} FROM decisions WHERE recorded_by = ? AND state = 'pending' ORDER BY created_at, id`,
       agent,
     ).map(toDecision);
+  }
+
+  /** How many decisions are in force in a scope. */
+  countActive(scopeKey: string): number {
+    return this.row<{ n: number }>(
+      "SELECT count(*) AS n FROM decisions WHERE state = 'active' AND scope_key = ?",
+      scopeKey,
+    )!.n;
+  }
+
+  /** Drops every decision a seat left pending, with the reason. */
+  dropPendingOf(agent: string, why: string): number {
+    return this.run(
+      "UPDATE decisions SET state = 'dropped', reason = ?, closed_at = ? WHERE recorded_by = ? AND state = 'pending'",
+      why,
+      this.now().toISOString(),
+      agent,
+    ).changes;
   }
 
   /** Pending decisions older than `before`, whatever seat recorded them. */

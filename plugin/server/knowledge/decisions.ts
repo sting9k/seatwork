@@ -16,6 +16,8 @@ export const DECISION_LIMITS = {
   notices: 5,
   fromTurns: 3,
   held: 10,
+  pending: 10,
+  inForce: 100,
   taskDays: 30,
   years: 2,
   pendingHours: 6,
@@ -60,8 +62,8 @@ export function lineOf(decision: Decision): string {
   return `- [${scopeLabel(decision.scopeKey)}] ${decision.topic}: ${decision.statement} (since ${decision.validFrom.slice(0, 10)}${until}; v${decision.version})`;
 }
 
-/** The decisions in force for a seat's start, whole while they fit, then by topic, then counted. */
-export function promptBlock(decisions: readonly Decision[], asOf: string): string | null {
+/** The decisions in force for a seat's start, whole while they fit, then by topic, then counted; `whole`: how many lead it whole. */
+export function promptBlock(decisions: readonly Decision[], asOf: string): { text: string; whole: number } | null {
   if (decisions.length === 0) return null;
   const head = [
     `## Decisions in force (as of ${asOf.slice(0, 16).replace("T", " ")} UTC)`,
@@ -84,12 +86,15 @@ export function promptBlock(decisions: readonly Decision[], asOf: string): strin
     used += topic.length + 2;
   }
   const rest = decisions.length - lines.length - topics.length;
-  return [
-    ...head,
-    ...lines,
-    ...(topics.length ? [`Also in force, by topic: ${topics.join(", ")}.`] : []),
-    ...(rest > 0 ? [`${rest} more: seatwork_knowledge do=list.`] : []),
-  ].join("\n");
+  return {
+    text: [
+      ...head,
+      ...lines,
+      ...(topics.length ? [`Also in force, by topic: ${topics.join(", ")}.`] : []),
+      ...(rest > 0 ? [`${rest} more: seatwork_knowledge do=list.`] : []),
+    ].join("\n"),
+    whole: lines.length,
+  };
 }
 
 export interface DecisionDeps {
@@ -107,24 +112,25 @@ export interface DecisionDeps {
   now(): Date;
 }
 
-/** A notice as it was made for a seat: its text, the changes it holds, and how many of the seat's own notes. */
+/** A notice as it was made for a seat: its text, the changes it holds, what it was made against, and its last own note. */
 export interface Told {
   text: string;
   seen: { note: string; version: number }[];
   complete: boolean;
-  generation: number;
-  own: number;
+  stamp: string;
+  upTo: number;
   retold: boolean;
 }
 
 /** The decisions of the room: recorded by seats, settled on a person's words, and shown to the seats they bind. */
 export class DecisionBook {
-  private readonly waiting = new Map<string, string[]>();
-  private readonly checked = new Map<string, number>();
+  private readonly waiting = new Map<string, { seq: number; line: string }[]>();
+  private readonly checked = new Map<string, string>();
   private readonly prompted = new Map<string, { at: number; held: { note: string; version: number }[] }>();
-  private readonly nearShown = new Map<string, { key: string; near: Decision[] }>();
+  private readonly nearShown = new Map<string, { key: string; topic: string; near: Decision[] }>();
   private readonly retelling = new Set<string>();
   private generation = 0;
+  private seq = 0;
 
   constructor(private readonly deps: DecisionDeps) {}
 
@@ -150,9 +156,14 @@ export class DecisionBook {
     return decision.validFrom <= at && (decision.validUntil === null || decision.validUntil > at);
   }
 
+  /** What a seat's notices were made against: the book's changes, and the scopes that bind it now. */
+  private stampOf(scopes: readonly string[]): string {
+    return `${this.generation}|${scopes.join(" ")}`;
+  }
+
   private queue(agent: string, line: string): void {
     const lines = this.waiting.get(agent) ?? [];
-    lines.push(line);
+    lines.push({ seq: (this.seq += 1), line });
     // a seat that never calls back keeps its newest notes, not every one
     this.waiting.set(agent, lines.slice(-DECISION_LIMITS.held));
   }
@@ -243,6 +254,10 @@ export class DecisionBook {
           : `nothing is in force on ${topic}; leave replaces_version out`,
       );
     if (action === "withdraw" && !current) throw new KnowledgeRefused(`nothing is in force on ${topic} to withdraw`);
+    if (action === "decide" && !current && book.countActive(key) >= DECISION_LIMITS.inForce)
+      throw new KnowledgeRefused(
+        `${DECISION_LIMITS.inForce} decisions are in force for the ${scopeLabel(key)}, the most one scope holds: replace or withdraw one first`,
+      );
     if (action === "decide" && !current && args.new_topic !== true) {
       const words = topic
         .split("-")
@@ -250,7 +265,7 @@ export class DecisionBook {
         .map((word) => `"${word}"`)
         .join(" OR ");
       const near = words ? book.nearby(key, words, topic, DECISION_LIMITS.nearby) : [];
-      if (near.length) this.refuseNear(agent, key, `topics near ${topic} are in force`, near);
+      if (near.length) this.refuseNear(agent, key, topic, `topics near ${topic} are in force`, near);
     }
     const scopeIsTask = key.startsWith("task:");
     const validFrom = this.dateOf(args.valid_from, "valid_from", this.now())!;
@@ -271,6 +286,10 @@ export class DecisionBook {
     for (const earlier of book.pendingOf(agent))
       if (earlier.scopeKey === key && earlier.topic === topic)
         book.dropPending(earlier.id, "replaced in the same turn");
+    if (needsPerson && !source && book.pendingOf(agent).length >= DECISION_LIMITS.pending)
+      throw new KnowledgeRefused(
+        `${DECISION_LIMITS.pending} decisions already wait for this turn's end, the most one turn carries: record the rest next turn with \`from\``,
+      );
     const pending = book.addDecision({
       action,
       scopeKey: key,
@@ -300,10 +319,11 @@ export class DecisionBook {
     return { ...this.view(settled), now: this.now() };
   }
 
-  /** Refuses a decision for the ones in force it may be; what the seat does next says what it made of them. */
-  private refuseNear(agent: string, key: string, said: string, near: readonly Decision[]): never {
+  /** Refuses a decision for the ones in force it may be; what the seat does next on that topic says what it made of them. */
+  private refuseNear(agent: string, key: string, topic: string, said: string, near: readonly Decision[]): never {
     const seen = this.nearShown.get(agent);
-    this.nearShown.set(agent, { key, near: [...(seen?.key === key ? seen.near : []), ...near].slice(-2 * GATE.most) });
+    const same = seen?.key === key && seen.topic === topic;
+    this.nearShown.set(agent, { key, topic, near: [...(same ? seen.near : []), ...near].slice(-2 * GATE.most) });
     throw new KnowledgeRefused(
       `${said}: ${near.map((one) => `${one.topic} v${one.version} "${one.statement}"`).join("; ")}. Replace one with its topic and replaces_version, or give new_topic true.`,
     );
@@ -326,7 +346,9 @@ export class DecisionBook {
     };
     if (current) add(current, "replaces");
     const seen = this.nearShown.get(agent);
-    if (newTopic && seen?.key === key) for (const one of seen.near) add(one, "independent");
+    // the seat's new_topic answers the refusal on this topic, never one on another
+    if (newTopic && seen?.key === key && seen.topic === decision.topic)
+      for (const one of seen.near) add(one, "independent");
     const queries = ftsQueries(decision.statement);
     if (queries) for (const one of this.deps.book().nearby(key, queries.any, decision.topic, GATE.most)) add(one, null);
     return { olds, byId };
@@ -356,6 +378,7 @@ export class DecisionBook {
       this.refuseNear(
         agent,
         key,
+        decision.topic,
         "in force on the same matter",
         verdict.repeats.map((id) => byId.get(id)!),
       );
@@ -419,9 +442,12 @@ export class DecisionBook {
   /** What a seat should read now: its own settled decisions, and every change to what binds it. */
   notices(agent: string): Told | null {
     const own = this.waiting.get(agent) ?? [];
-    const changes = this.checked.get(agent) === this.generation ? [] : this.changesFor(agent);
+    // a seat that takes another task is bound by other decisions, though none changed
+    const scopes = this.scopesOf(agent);
+    const stamp = this.stampOf(scopes);
+    const changes = this.checked.get(agent) === stamp ? [] : this.changesFor(agent, scopes);
     if (own.length === 0 && changes.length === 0) {
-      this.checked.set(agent, this.generation);
+      this.checked.set(agent, stamp);
       this.retelling.delete(agent);
       return null;
     }
@@ -429,14 +455,14 @@ export class DecisionBook {
     const told = changes.slice(0, Math.max(0, DECISION_LIMITS.notices - own.length));
     const left = changes.length - told.length;
     const retold = this.retelling.has(agent) && told.length > 0;
-    const lines = [...(retold ? [RETOLD] : []), ...own, ...told.map((change) => change.line)];
+    const lines = [...(retold ? [RETOLD] : []), ...own.map((one) => one.line), ...told.map((change) => change.line)];
     if (left > 0) lines.push(`${left} more changes follow; seatwork_knowledge do=list shows them all.`);
     return {
       text: `[knowledge] ${lines.join("\n[knowledge] ")}`,
       seen: told.map(({ note, version }) => ({ note, version })),
       complete: left === 0,
-      generation: this.generation,
-      own: own.length,
+      stamp,
+      upTo: own.at(-1)?.seq ?? 0,
       retold,
     };
   }
@@ -451,11 +477,11 @@ export class DecisionBook {
   }
 
   /** The changes a seat has not seen: decisions new or changed since it was shown them, and ones no longer in force. */
-  private changesFor(agent: string): { note: string; version: number; line: string }[] {
+  private changesFor(agent: string, scopes: readonly string[]): { note: string; version: number; line: string }[] {
     const book = this.deps.book();
     const at = this.now();
     const shown = book.shownTo(agent);
-    const active = book.activeIn(this.scopesOf(agent)).filter((decision) => this.inDate(decision, at));
+    const active = book.activeIn(scopes).filter((decision) => this.inDate(decision, at));
     const live = new Set(active.map(noteOf));
     // a seat holds the id of the decision it was shown: a restored older one is a change too
     const changes = active
@@ -473,32 +499,37 @@ export class DecisionBook {
 
   /** What a seat was given is now seen: only the own notes it held, and changes up to when it was made, never later ones. */
   delivered(agent: string, told: Told): void {
-    const left = (this.waiting.get(agent) ?? []).slice(told.own);
+    // own notes go by number: one queued while the notice was on its way stays, wherever the queue moved it
+    const left = (this.waiting.get(agent) ?? []).filter((one) => one.seq > told.upTo);
     if (left.length) this.waiting.set(agent, left);
     else this.waiting.delete(agent);
     if (told.seen.length) this.deps.book().markShown(agent, told.seen);
-    if (told.complete && told.generation === this.generation) this.checked.set(agent, told.generation);
+    if (told.complete && told.stamp === this.stampOf(this.scopesOf(agent))) this.checked.set(agent, told.stamp);
     else this.checked.delete(agent);
     if (told.retold) this.retelling.delete(agent);
   }
 
-  /** The block a seat starting in `cwd` is given in its system prompt; what it held is kept for `opened`. */
-  promptFor(cwd: string): string | null {
+  /** The block a seat starting in `cwd` is given in its system prompt; what it showed whole is kept for that `launch`. */
+  promptFor(cwd: string, launch: string): string | null {
     const at = this.now();
     const active = this.deps
       .book()
       .activeIn(this.scopesAt(cwd))
       .filter((decision) => this.inDate(decision, at));
     const now = this.deps.now().getTime();
-    for (const [place, held] of this.prompted) if (now - held.at > PROMPT_HOLD_MS) this.prompted.delete(place);
-    this.prompted.set(cwd, { at: now, held: active.map((one) => ({ note: noteOf(one), version: one.id })) });
-    return promptBlock(active, at);
+    for (const [key, held] of this.prompted) if (now - held.at > PROMPT_HOLD_MS) this.prompted.delete(key);
+    const block = promptBlock(active, at);
+    if (!block) return null;
+    // a decision named only by its topic, or only counted, still reaches the seat as a notice
+    const held = active.slice(0, block.whole).map((one) => ({ note: noteOf(one), version: one.id }));
+    this.prompted.set(launch, { at: now, held });
+    return block.text;
   }
 
-  /** A seat just started on the block of `promptFor`: what that block held counts as shown, nothing made after it. */
-  opened(agent: string, cwd: string): void {
-    const kept = this.prompted.get(cwd);
-    this.prompted.delete(cwd);
+  /** A seat just started on the block of `promptFor` for its launch: what that block showed counts as shown, nothing made after it. */
+  opened(agent: string, launch: string | null): void {
+    const kept = launch === null ? undefined : this.prompted.get(launch);
+    if (launch !== null) this.prompted.delete(launch);
     if (kept?.held.length) this.deps.book().markShown(agent, kept.held);
     // its task's decisions are not in its prompt: its first notice looks at everything that binds it
     this.checked.delete(agent);
@@ -533,12 +564,15 @@ export class DecisionBook {
     if (book.expireDue().length) this.generation += 1;
   }
 
-  /** A seat that is gone: nothing waits for it, and nothing it was shown is kept. */
+  /** A seat that is gone: what it left pending drops, nothing waits for it, and nothing it was shown is kept. */
   forget(agent: string): void {
     this.nearShown.delete(agent);
     this.retelling.delete(agent);
     this.waiting.delete(agent);
     this.checked.delete(agent);
-    this.deps.book().forgetShown(agent);
+    const book = this.deps.book();
+    // a turn end or a sweep after this finds nothing of the seat to settle, so nothing comes back for it
+    book.dropPendingOf(agent, "its seat is gone");
+    book.forgetShown(agent);
   }
 }

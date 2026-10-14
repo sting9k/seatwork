@@ -224,22 +224,22 @@ export class Knowledge {
     }
   }
 
-  /** The block of decisions a seat starting in `cwd` is given in its system prompt; null when there is none. */
-  promptFor(cwd: string): string | null {
+  /** The block of decisions a seat starting in `cwd` is given in its system prompt, held for its `launch`; null when there is none. */
+  promptFor(cwd: string, launch: string): string | null {
     if (!this.on) return null;
     try {
-      return this.decisions.promptFor(cwd);
+      return this.decisions.promptFor(cwd, launch);
     } catch (error) {
       this.deps.log(`knowledge: no decisions for a new seat: ${(error as Error).message}`);
       return null;
     }
   }
 
-  /** A new seat holds the decisions its prompt gave it; a store that fails costs the seat nothing but the mark. */
-  opened(agent: string, cwd: string): void {
+  /** A new seat holds the decisions the prompt of its `launch` gave it; a store that fails costs the seat nothing but the mark. */
+  opened(agent: string, launch: string | null): void {
     if (!this.on) return;
     try {
-      this.decisions.opened(agent, cwd);
+      this.decisions.opened(agent, launch);
     } catch (error) {
       this.deps.log(`knowledge: a new seat's decisions were not marked: ${(error as Error).message}`);
     }
@@ -474,7 +474,7 @@ export class Knowledge {
       ...(since ? { since: since.toISOString() } : {}),
     };
     const limit = bounded(args.limit, SEARCH.limit, SEARCH.most);
-    const understood: { phrase: string; query: string | null; matched: "all" | "any" | "none" }[] = [];
+    const understood: { phrase: string; query: string | null; matched: "all" | "any" | "none"; newest?: true }[] = [];
     const lists: (Found & { snippet: string })[][] = [];
     for (const phrase of phrases) {
       const queries = ftsQueries(phrase);
@@ -482,19 +482,30 @@ export class Knowledge {
         understood.push({ phrase, query: queries?.all ?? null, matched: "none" });
         continue;
       }
-      let hits = store.search(queries.all, filters, SEARCH.pool);
+      let found = store.search(queries.all, filters, SEARCH.pool);
       let matched: "all" | "any" | "none" = "all";
-      if (hits.length === 0 && queries.any !== queries.all) {
-        hits = store.search(queries.any, filters, SEARCH.pool);
+      if (found.hits.length === 0 && queries.any !== queries.all) {
+        found = store.search(queries.any, filters, SEARCH.pool);
         matched = "any";
       }
-      if (hits.length === 0) matched = "none";
-      understood.push({ phrase, query: matched === "any" ? queries.any : queries.all, matched });
-      lists.push(hits);
+      if (found.hits.length === 0) matched = "none";
+      const query = matched === "any" ? queries.any : queries.all;
+      understood.push({ phrase, query, matched, ...(found.capped ? { newest: true as const } : {}) });
+      lists.push(found.hits);
     }
     const found = fuse(lists, SEARCH.most).map((hit) => shown(hit, hit.snippet));
     if (store) this.logSearch(agent, store, understood, found, limit);
-    return { store: store ? "kept" : "none yet", understood, hits: found.slice(0, limit) };
+    const capped = understood.some((one) => one.newest);
+    return {
+      store: store ? "kept" : "none yet",
+      understood,
+      hits: found.slice(0, limit),
+      ...(capped
+        ? {
+            note: "Some wordings match more entries than one search ranks: only the newest were read. Add a telling word.",
+          }
+        : {}),
+    };
   }
 
   /** Keeps a search with every hit it ranked, so what the seat opens next tells which served it. */
@@ -532,9 +543,12 @@ export class Knowledge {
     if (!at)
       throw new KnowledgeRefused(`${action}: give an \`address\` as a search returned it, like turn:<seat>:<turn>#3`);
     const around = action === "expand" ? bounded(args.around, AROUND.default, AROUND.most) : 0;
-    const entries = store?.slice(at.kind, at.ref, at.ordinal - around, at.ordinal + around, seen) ?? [];
+    const [from, to] = [at.ordinal - around, at.ordinal + around];
+    const entries = store?.slice(at.kind, at.ref, from, to, seen) ?? [];
     if (entries.length === 0) {
-      if (store?.kept(at.kind, at.ref)) throw new KnowledgeRefused(`${action}: ${address} is not yours to read`);
+      // entries cut from a long turn or past the store's size are gone for every reader, not hidden from this one
+      if (seen && store?.slice(at.kind, at.ref, from, to).length)
+        throw new KnowledgeRefused(`${action}: ${address} is not yours to read`);
       return { address, expired: true, entries: [] };
     }
     return { address, entries: entries.map((found) => shown(found, found.text)) };

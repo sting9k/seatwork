@@ -7,7 +7,7 @@ const RELATIVE =
   /\b(today|tonight|tomorrow|yesterday|from now on|next (week|month|year|monday|tuesday|wednesday|thursday|friday|saturday|sunday)|this (week|month|year|weekend)|in \d+ (days?|weeks?|months?))\b/i;
 const OVERRIDE =
   /\b(skip(ping)?|disable|bypass|ignore|turn off|without running)\b[^.]{0,40}\b(tests?|checks?|guard|safety|hooks?|reviews?|rules?)\b|--no-verify|\btests? (may|can) be skipped\b/gi;
-const KEEPS = /\b(never|not|no|don't|do not|must not)\s+(\w+\s+){0,2}$/i;
+const KEEPS = /\b(never|not|no|don't|do not|must not)\s+(\w+\s+)?$/i;
 const LITERAL = /`[^`\n]*`/g;
 
 /** Why a sentence cannot be kept, or null; a product's own words may stay as they are, quoted in backticks. */

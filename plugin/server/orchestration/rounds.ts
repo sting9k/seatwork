@@ -13,7 +13,7 @@ interface Task {
 
 type Stored = Omit<Task, "at"> & { at?: number };
 
-/** Where each task stands since its last ACCEPT, kept on disk; a task is the issue a seat holds, else the seat itself. */
+/** Where each task stands since its last ACCEPT, kept on disk, by the task key a seat works under (TaskKeys). */
 export class Rounds {
   private readonly tasks = new Map<string, Task>();
 
@@ -80,15 +80,6 @@ export class Rounds {
 
   forget(key: string): void {
     if (this.tasks.delete(key)) this.save();
-  }
-
-  /** A successor takes the task over as it stands. */
-  move(from: string, to: string): void {
-    const task = this.tasks.get(from);
-    if (!task) return;
-    this.tasks.delete(from);
-    this.tasks.set(to, task);
-    this.save();
   }
 
   /** Drops the tasks untouched since `before`: a task nobody finished leaves its rounds behind. */

@@ -4,11 +4,10 @@ import { merge } from "../../../shared/model-choices";
 import { allowed, layModels, tiersOf, type Models } from "../../orchestration/models";
 import { claudeDisallowed } from "../../policy";
 import { HARNESSES, parseSeat, type Harness } from "../../orchestration/seats";
-import { inRoom, ROLES, traits } from "../../../shared/workflow";
+import { inRoom, ROLES, ROOM_ROLE, traits } from "../../../shared/workflow";
 
-/** This machine's own choices, kept in ROOM_HOME/setup.json and never in the repo; `hq` is the seat at home in the room. */
+/** This machine's own choices, kept in ROOM_HOME/setup.json and never in the repo; the room's own seat is in `models` like any seat. */
 export interface Setup {
-  hq?: "default" | { provider: string; thinking?: string };
   seats?: string[];
   models?: Record<string, unknown>;
   chime?: boolean;
@@ -82,11 +81,28 @@ function readJson(file: string): any {
   return JSON.parse(readFileSync(file, "utf8"));
 }
 
-/** setup.json, checked: it may have been edited by hand. */
+/** The room's own seat on one harness and model, laid into a machine's model choices; null takes it out, back to the table's. */
+export function withOwnSeat(
+  models: Record<string, unknown> | undefined,
+  seat: { provider: string; thinking?: string } | null,
+): Record<string, unknown> | undefined {
+  if (!ROOM_ROLE) return models;
+  const next = { ...(models ?? {}) };
+  const seats = { ...((next.seats as Record<string, unknown> | undefined) ?? {}) };
+  // a model without thinking options carries none: "default" tells the prompts to leave it out
+  if (seat) seats[ROOM_ROLE] = { thinking: "default", ...seat };
+  else delete seats[ROOM_ROLE];
+  if (Object.keys(seats).length) next.seats = seats;
+  else delete next.seats;
+  return Object.keys(next).length ? next : undefined;
+}
+
+/** setup.json, checked: it may have been edited by hand; an `hq` an earlier version wrote moves into `models`. */
 export function checkSetup(setup: unknown, where: string): Setup {
   if (typeof setup !== "object" || setup === null || Array.isArray(setup))
     throw new Error(`${where} must hold an object`);
-  const { hq = "default", seats = [], models, chime, mailPort } = setup as Record<string, unknown>;
+  const { hq = "default", ...rest } = setup as Record<string, unknown>;
+  const { seats = [], models, chime, mailPort } = rest;
   if (hq !== "default") {
     const provider = typeof hq === "object" && hq !== null ? String((hq as { provider?: unknown }).provider ?? "") : "";
     const slash = provider.indexOf("/");
@@ -109,7 +125,12 @@ export function checkSetup(setup: unknown, where: string): Setup {
     !(Number.isInteger(mailPort) && (mailPort as number) >= 0 && (mailPort as number) <= 65535)
   )
     throw new Error(`${where}: "mailPort" must be a port number`);
-  return setup as Setup;
+  if (typeof hq !== "object") return rest as Setup;
+  // the room's own seat was once chosen apart from the table: it is one seat of the table now, unless the table names it
+  const own = models as { seats?: Record<string, unknown> } | undefined;
+  return ROOM_ROLE && own?.seats?.[ROOM_ROLE] !== undefined
+    ? (rest as Setup)
+    : ({ ...rest, models: withOwnSeat(own, hq as { provider: string; thinking?: string }) } as Setup);
 }
 
 /** The room's model table as the plugin ships it. */
@@ -117,17 +138,11 @@ export function roomModels(pluginDir: string): Models {
   return readJson(join(pluginDir, "room", "models.json")) as Models;
 }
 
-/** The table this machine runs on: the room's, its own seat on the one chosen, then the machine's own differences. */
+/** The table this machine runs on: the room's, with the machine's own differences, its own seat among them. */
 function machineModels(base: Models, setup: Setup): Models {
-  let models = base;
-  if (typeof setup.hq === "object") {
-    const role = parseSeat(setup.hq.provider.split("/")[0])!.role;
-    // a model without thinking options carries none: "default" tells the prompts to leave it out
-    models = merge(models, { seats: { [role]: { thinking: "default", ...setup.hq } } }) as Models;
-  }
   return setup.models === undefined
-    ? layModels(models, {}, "the model table")
-    : layModels(models, setup.models, "this machine's model choices");
+    ? layModels(base, {}, "the model table")
+    : layModels(base, setup.models, "this machine's model choices");
 }
 
 const splitModel = (entry: string): [provider: string, model: string] => {

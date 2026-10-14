@@ -247,7 +247,7 @@
     },
     "seatwork_work": {
       "callers": "any",
-      "description": "The project's work store: issues, what each waits for, who holds it. `do` names the one thing a call does. create: one issue, or a whole plan in `issues`, written all or none; each may carry a `key` and name its `parent` and `deps` by another's key. ready: open issues nothing holds back (no open blocker, blocked parent or open child), highest priority first. claim: take an issue; refused when another seat holds it or an open blocker of its own waits. blocked_by: a bare id blocks; `:parent-blocked` and `:child-open` only hold back from ready. note: a dated line of progress. depend: `id` waits for `on`. close: with `reason`, once its blockers and children are closed; the seat that holds an issue does not close it, its Owner does. Also show, list, update, comment, undepend, reopen. Answers are JSON; a refusal is {\"error\": {code, message, retryable}}.",
+      "description": "The project's work store: issues, what each waits for, who holds it. `do` names the one thing a call does. create: one issue, or a whole plan in `issues`, written all or none; each may carry a `key` and name its `parent` and `deps` by another's key. ready: open issues nothing holds back (no open blocker, blocked parent or open child), highest priority first. claim: take an issue; refused when another seat holds it or an open blocker of its own waits. blocked_by: a bare id blocks; `:parent-blocked` and `:child-open` only hold back from ready. note: a dated line of progress. depend: `id` waits for `on`. close: with `reason`, once its blockers and children are closed; the seat that holds an issue does not close it, its Owner does. show: an issue with its newest comments and `older_comments`, the count of the rest; comments: the rest, `limit` of them after `skip` of the newest. Also list, update, comment, undepend, reopen. Answers are JSON; a refusal is {\"error\": {code, message, retryable}}.",
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -256,6 +256,7 @@
             "enum": [
               "create",
               "show",
+              "comments",
               "list",
               "ready",
               "claim",
@@ -362,6 +363,10 @@
             "type": "boolean",
             "description": "close: close over open blockers or children."
           },
+          "skip": {
+            "type": "integer",
+            "description": "comments: how many of the newest comments to pass over."
+          },
           "limit": {
             "type": "integer"
           }
@@ -393,13 +398,13 @@
     },
     "seatwork_safety": {
       "callers": "any",
-      "description": "The room's guard. Every shell command and file write of yours is checked before it runs; a blocked one comes with a six-digit code. check: what the guard would make of `command`, without running it. grant: let a blocked command of a seat under you run once, by its `code` (codes marked for the person only the person grants). waiting: the codes of the seats under you that wait for a grant. ack: when the room sends your candidate back after its hand-in check, keep one finding on purpose: its `id` and the `reason`; your Owner reads both. council: how each member of the room's council has read turns over the last `days`. label: say whether a `[council]` finding about a seat under you was right: its `id` (the number after the member), `value` right or wrong, and the `reason`.",
+      "description": "The room's guard. Every shell command and file write of yours is checked before it runs; a blocked one comes with a six-digit code. check: what the guard would make of `command`, without running it. grant: let a blocked command of a seat under you run once, by its `code` (codes marked for the person only the person grants). waiting: the codes of the seats under you that wait for a grant. ack: when the room sends your candidate back after its hand-in check, keep one finding on purpose: its `id` and the `reason`; your Owner reads both. council: how each member of the room's council has read turns over the last `days`. label: say whether a `[council]` finding about a seat under you was right: its `id` (the number after the member), `value` right or wrong, and the `reason`. rule: only the room's own seat; rules on an APPEAL mail, its `id`, `send_back` true to return the candidate to its seat or false to leave it, and the `reason`.",
       "inputSchema": {
         "type": "object",
         "properties": {
           "action": {
             "type": "string",
-            "enum": ["check", "grant", "waiting", "ack", "council", "label"]
+            "enum": ["check", "grant", "waiting", "ack", "council", "label", "rule"]
           },
           "command": {
             "type": "string",
@@ -411,11 +416,15 @@
           },
           "id": {
             "type": "string",
-            "description": "ack: the finding's id from the returned candidate. label: the council finding's number."
+            "description": "ack: the finding's id from the returned candidate. label: the council finding's number. rule: the appeal's number."
           },
           "reason": {
             "type": "string",
-            "description": "ack: why the finding stays. label: why the finding was right or wrong."
+            "description": "ack: why the finding stays. label: why the finding was right or wrong. rule: why the candidate goes back or stays."
+          },
+          "send_back": {
+            "type": "boolean",
+            "description": "rule: true returns the candidate to its seat."
           },
           "value": {
             "type": "string",
@@ -441,7 +450,7 @@
     },
     "seatwork_rotate": {
       "callers": "spawners",
-      "description": "Replace a seat under you whose context has grown large (seatwork_seats marks it) with a fresh one that continues its work. At the seat's next rest the room asks it for a handoff, starts a successor on the same model with the brief in force and that handoff, hands it the seat's own open seats, and archives the old seat. You get one notice with the new seat's id; a seat that writes no usable handoff stays, and you are told.",
+      "description": "Replace a seat under you whose context has grown large (seatwork_seats marks it) with a fresh one that continues its work. At the seat's next rest the room asks it for a handoff, starts a successor on the same model with the brief in force, that handoff (exact strings the seat marked VERBATIM reach it as written), the decisions in force for the seat's task and where the old seat's record is read, hands it the seat's own open seats, and archives the old seat. You get one notice with the new seat's id; a seat that writes no usable handoff stays, and you are told.",
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -473,7 +482,7 @@
     },
     "seatwork_knowledge": {
       "callers": "any",
-      "description": "The room's record and its decisions; `do` is the action. search: words in `q`, best first; other wordings in `also` find more; narrow by task, agent, kinds, since; you read what you or seats under you saw. view, expand: entries by `address`. pack: a task's evidence. decide: a rule a person decided that later work follows, one English `statement` under a `topic`. `scope` room or project: the room's own seat records it, and it takes effect when your turn ends, on the person's words in it, or at once `from` their address. `scope` task: a seat that briefs records it, in force at once for 30 days unless `valid_until` says otherwise. Change: restate with `replaces_version`; withdraw: a `reason`. list: decisions in force for you. Answers are JSON, maybe with `notices`. A refusal is {\"error\": {code, message, retryable}}.",
+      "description": "The room's record and its decisions; `do` is the action. search: words in `q`, best first; other wordings in `also` find more; narrow by task, agent, kinds, since; you read what you or seats under you saw. view, expand: entries by `address`, in at most 30000 characters; the entries farthest from it are left out, and the answer says which. pack: a task's evidence. decide: a rule a person decided that later work follows, one English `statement` under a `topic`. `scope` room or project: the room's own seat records it, and it takes effect when your turn ends, on the person's words in it, or at once `from` their address. `scope` task: a seat that briefs records it, in force at once for 30 days unless `valid_until` says otherwise. Change: restate with `replaces_version`; withdraw: a `reason`. list: decisions in force for you. Answers are JSON, maybe with `notices`. A refusal is {\"error\": {code, message, retryable}}.",
       "inputSchema": {
         "type": "object",
         "properties": {

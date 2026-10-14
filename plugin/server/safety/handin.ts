@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 import { lstatSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import table from "../../shared/safety/handin.json";
+import { ASSERTION, gamingOf, type GamingEvidence } from "./council/gaming";
 import { evaluate, type GateConfig, type Tools } from "./gate/evaluate";
 import type { Place } from "./gate/types";
 import type { FindingRow, SafetyStore } from "./store";
@@ -21,7 +22,7 @@ interface Found {
   hint: string;
 }
 
-/** The check's result for a seat; `partial` means it could not finish and is never read as clean. */
+/** The check's result for a seat; `partial` means it could not finish and is never read as clean; `gaming` is what its diff shows of tests bent to pass. */
 export interface HandIn {
   state: "clean" | "blocked" | "partial" | "empty";
   files: number;
@@ -29,6 +30,7 @@ export interface HandIn {
   acknowledged: FindingRow[];
   warnings: FindingRow[];
   why: string | null;
+  gaming?: GamingEvidence | null;
 }
 
 /** A rule of the table: a pattern read on one part of an added line (`in`) of the files of a language and kind. */
@@ -38,6 +40,7 @@ interface Rule {
   languages: string[];
   in: "code" | "comment" | "string" | "line";
   files: "test" | "source" | "any";
+  path?: string;
   pattern: string;
   flags?: string;
   hint: string;
@@ -55,7 +58,11 @@ interface Change {
 type Gate = { place: Place; config: GateConfig; tools: Tools };
 type Layer = "code" | "string" | "comment";
 
-const RULES = (table.rules as Rule[]).map((r) => ({ ...r, test: new RegExp(r.pattern, r.flags ?? "") }));
+const RULES = (table.rules as Rule[]).map((r) => ({
+  ...r,
+  test: new RegExp(r.pattern, r.flags ?? ""),
+  where: r.path ? new RegExp(r.path) : null,
+}));
 const SKIP = table.skip.map((p) => new RegExp(p));
 const TESTS = table.tests.map((p) => new RegExp(p));
 const EXTENSIONS = new Map(
@@ -68,8 +75,6 @@ const MAX_FILES = 2000;
 const MAX_BYTES = 32 * 1024 * 1024;
 const GIT_MS = 15_000;
 const SHOWN = 20;
-const ASSERTION =
-  /\b(expect|assert\w*|should|require\.\w+|t\.(?:Error|Errorf|Fatal|Fatalf|Fail)|XCTAssert\w*|assertThat|verify)\s*[(.]|^\s*assert\s/;
 const SECRET_SHAPES =
   /(AKIA[0-9A-Z]{16}|\bsk-(?:or-|ant-|proj-)?[A-Za-z0-9_-]{20,}|\bgh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|\bxox[abprs]-[A-Za-z0-9-]{10,}|AIza[0-9A-Za-z_-]{35}|glpat-[A-Za-z0-9_-]{20}|-----BEGIN [A-Z ]*PRIVATE KEY-----)/;
 const SECRET_NAME =
@@ -268,6 +273,7 @@ export async function inspectHandIn(seat: string, store: SafetyStore, gate: Gate
     }),
   );
   const open = rows.filter((r) => r.severity === "block" && !r.ack);
+  const skipped = found.filter((f) => f.rule === "test-skipped" || f.rule === "test-focused").length;
   return {
     state: open.length ? "blocked" : "clean",
     files: changes.length,
@@ -275,6 +281,16 @@ export async function inspectHandIn(seat: string, store: SafetyStore, gate: Gate
     acknowledged: rows.filter((r) => r.severity === "block" && r.ack),
     warnings: rows.filter((r) => r.severity === "warn"),
     why: null,
+    gaming: gamingOf(
+      changes.map((change) => ({
+        path: change.path,
+        test: TESTS.some((p) => p.test(change.path)),
+        deleted: change.deleted,
+        added: change.added.map(([, line]) => line),
+        removed: change.removed,
+      })),
+      skipped,
+    ),
   };
 }
 
@@ -319,7 +335,8 @@ function lineFindings(change: Change, text: string, language: string | null, isT
     (rule) =>
       (rule.languages.includes("*") || (language !== null && rule.languages.includes(language))) &&
       !(rule.files === "test" && !isTest) &&
-      !(rule.files === "source" && isTest),
+      !(rule.files === "source" && isTest) &&
+      (rule.where === null || rule.where.test(path)),
   );
   const masked = language !== null && text.length > 0 && change.added.length > 0 && rules.some((r) => r.in !== "line");
   const mask = masked ? maskOf(language, text) : null;

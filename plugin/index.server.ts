@@ -18,10 +18,9 @@ import { keptAt, roomFolders, takeRoomFiles, type ProjectFiles } from "./server/
 import { isSetUp, moveRoomHomeAside, readSetup } from "./server/paseo/setup/room-home";
 import { PASEO_HOME, ROOM_HOME } from "./server/paths";
 import { startRoom, type Room } from "./server/room/room";
-import { merge } from "./shared/model-choices";
 import { roomStatus, roomWaiting } from "./shared/room";
 import { roomSettings, setupInit, setupProject, setupRemove, setupState } from "./shared/setup";
-import { ROOM_PROJECT, ROOM_ROLE } from "./shared/workflow";
+import { ROOM_PROJECT } from "./shared/workflow";
 
 const VERSION = "0.29.0";
 const PLUGIN_ID = "seatwork";
@@ -301,7 +300,5 @@ async function ownFolder(paseo: PaseoApi): Promise<string> {
 
 /** The model choices the room was set up with, in the screen's shape. */
 function appliedModels(setup: Setup): Record<string, never> {
-  const own =
-    typeof setup.hq === "object" && ROOM_ROLE ? { seats: { [ROOM_ROLE]: { thinking: "default", ...setup.hq } } } : {};
-  return merge(own, setup.models ?? {}) as Record<string, never>;
+  return (setup.models ?? {}) as Record<string, never>;
 }

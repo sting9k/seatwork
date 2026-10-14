@@ -9,12 +9,14 @@ import { CopyTrail } from "./rules/copies";
 import { databaseHits, scanDeletesKeys } from "./rules/databases";
 import { fileRules, forkBomb, guardedWrites, type FileTools } from "./rules/files";
 import { gitRules, type GitTools } from "./rules/git";
+import { paseoCommand } from "./rules/paseo";
 import { rmRules, wouldBlockAsRm, type RmTools } from "./rules/rm";
 import { execFlags, runners } from "./runners";
 import {
   literal,
   parseShell,
   type Command,
+  type Compound,
   type Part,
   type Script,
   type Sequence,
@@ -154,8 +156,7 @@ class Walk implements Reader {
     const fed =
       command.redirects.some((r) => r.op === "<" || r.op === "<<" || r.op === "<<-" || r.op === "<<<") ||
       state.stdinFed;
-    for (const body of command.bodies)
-      await this.script(body, { ...inner, stdinFed: fed }, { ...ctx, pipeline: null, stage: 0 });
+    await this.bodies(command, inner, fed, { ...ctx, pipeline: null, stage: 0 });
     if (command.redirects.length) {
       const simple: Simple = {
         kind: "simple",
@@ -167,6 +168,31 @@ class Walk implements Reader {
       };
       await this.judge(this.scene(simple, invocationOf(simple), state, ctx), state, ctx);
     }
+  }
+
+  /** The bodies of a compound command; a `cd` in one carries on to what follows only as far as the shell would carry it. */
+  private async bodies(command: Compound, state: State, fed: boolean, ctx: Context): Promise<void> {
+    const flow: State = { ...state, stdinFed: fed };
+    // an `if` tries its conditions in turn: each later one, and each branch, starts where the ones before left the folder
+    let tried: State = flow;
+    let maybeMoved = false;
+    for (const [index, body] of command.bodies.entries()) {
+      if (alwaysRuns(command, index)) {
+        await this.script(body, flow, ctx);
+        tried = { ...flow };
+        continue;
+      }
+      const branch: State = command.kind === "if" && isCondition(command, index) ? tried : { ...tried };
+      await this.script(body, branch, ctx);
+      if (branch.cwd === flow.cwd) continue;
+      maybeMoved = true;
+      // a loop's next turn starts where this one ended: the body is read again from a folder not known
+      if (command.kind !== "if" && command.kind !== "case" && flow.cwd !== null)
+        await this.script(body, { ...flow, cwd: null, moved: true }, ctx);
+    }
+    if (maybeMoved) Object.assign(flow, { cwd: null, moved: true });
+    state.cwd = flow.cwd;
+    state.moved = flow.moved;
   }
 
   /** The command substitutions in some word parts, run first as the shell would. */
@@ -350,6 +376,10 @@ class Walk implements Reader {
       if (redirectsGuarded && hit.rule.startsWith("redirect-")) continue;
       this.out.add(hit.pack, hit.rule, scene.text, hit.detail);
     }
+    if (name === "paseo") {
+      const used = paseoCommand(scene);
+      if (used !== null) this.out.add("room.guard", "paseo-cli", scene.text, used);
+    }
     this.copies.note(scene);
     for (const hit of declaredHits(scene, this.config.packs)) this.out.add(hit.pack, hit.rule, scene.text);
     // files written earlier on the line are not read for a client, so its input stays unverified
@@ -382,11 +412,25 @@ function knownCommand(name: string): boolean {
   return (
     name === "rm" ||
     name === "git" ||
+    name === "paseo" ||
     SHELLS.has(name) ||
     DECLARED_COMMANDS.has(name) ||
     languageOf(name) !== null ||
     ["dd", "mv", "find", "unlink", "truncate", "shred", "tar", "rsync", "eval", "xargs"].includes(name)
   );
+}
+
+/** Whether a body of a compound command always runs before the one after it, so its `cd` carries on to that one. */
+function alwaysRuns(command: Compound, index: number): boolean {
+  const { kind } = command;
+  if (kind === "group" || kind === "subshell") return true;
+  return (kind === "while" || kind === "until" || kind === "if") && index === 0;
+}
+
+/** Whether a body of an `if` is a condition: they alternate with branches, and a last body with nothing to pair with is the `else`. */
+function isCondition(command: Compound, index: number): boolean {
+  const last = command.bodies.length - 1;
+  return index % 2 === 0 && !(last % 2 === 0 && index === last);
 }
 
 function lineStart(src: string, at: number): number {

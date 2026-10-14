@@ -2,7 +2,7 @@ import { existsSync } from "node:fs";
 import mailConfig from "../../shared/mail.json";
 import { isAbsolute, join } from "node:path";
 import { note, owns } from "../../shared/workflow";
-import { MailError, namesTeam, reachable, resolve, shown } from "../coordination/address";
+import { exactSeat, MailError, namesTeam, reachable, resolve, shown } from "../coordination/address";
 import { refusal } from "../refusal";
 import type { Mail, MailEngine, NewMail, Needs, SeatRecord } from "../coordination/engine";
 import { inbox } from "../coordination/reader";
@@ -15,7 +15,6 @@ import { fromRoom, taskOf, type RoomContext } from "./context";
 /** The room's two mail tools: what a seat sends is checked, routed and posted; its inbox is read. */
 
 const INFORMS = new Set(["FYI", "HANDOFF"]);
-const MOST_NAMED = 50;
 const MOST_THREAD_CHARS = 255;
 
 /** A mail tool's refusal as JSON a seat can act on. */
@@ -38,11 +37,14 @@ function isReceipt(subject: string, needs: unknown, toWorker: boolean, endedWith
   );
 }
 
-/** The words of a tool argument given as a string or a list, at most MOST_NAMED of them. */
+/** The words of a tool argument given as a string or a list, at most `namedMost` of them. */
 function words(name: string, value: unknown): string[] {
   const list = Array.isArray(value) ? value.map(String) : typeof value === "string" && value.trim() ? [value] : [];
-  if (list.length > MOST_NAMED)
-    throw new MailError("INVALID_ARGUMENT", `\`${name}\` names ${list.length} entries; ${MOST_NAMED} at most`);
+  if (list.length > mailConfig.namedMost)
+    throw new MailError(
+      "INVALID_ARGUMENT",
+      `\`${name}\` names ${list.length} entries; ${mailConfig.namedMost} at most`,
+    );
   return list;
 }
 
@@ -54,14 +56,50 @@ const replyOf = (args: Record<string, unknown>): number =>
       .replace(/^#/, ""),
   ) || 0;
 
+/** The app's list of open seats, fetched on first use: the list itself, a test of one seat against it, and the seats a refusal names. */
+interface OpenSeats {
+  live(): Promise<Map<string, LiveSeat>>;
+  open(): Promise<(agentId: string) => boolean>;
+  whom(): Promise<{ to: string[] }>;
+}
+
+/** The open seats for one mail from `from`, listed at most once; an app that lists none, or fails, leaves every seat open. */
+function openSeats(room: RoomContext, from: string): OpenSeats {
+  const eng = room.engine;
+  let listed: Promise<Map<string, LiveSeat>> | undefined;
+  const live = () => (listed ??= room.host.live().catch(() => new Map<string, LiveSeat>()));
+  const open = async () => {
+    const seats = await live();
+    return (agentId: string) => seats.size === 0 || seats.has(agentId);
+  };
+  const whom = async () => {
+    const isOpen = await open();
+    return {
+      to: shown(
+        eng,
+        from,
+        reachable(eng, from).filter((seat) => isOpen(seat.agentId)),
+      ),
+    };
+  };
+  return { live, open, whom };
+}
+
+/** The seats a list of words names, each once; an exact id or `owner` needs no list of open seats. */
+async function resolved(room: RoomContext, from: string, list: string[], seats: OpenSeats): Promise<string[]> {
+  const found: string[] = [];
+  for (const word of list)
+    found.push(exactSeat(room.engine, from, word) ?? resolve(room.engine, from, word, await seats.open()));
+  return [...new Set(found)];
+}
+
 /** Who a mail goes to, and the thread it joins: the sender of the mail answered, the team, or the seats named. */
-function addressed(
+async function addressed(
   room: RoomContext,
   from: string,
   args: Record<string, unknown>,
-  open: (id: string) => boolean,
-  whom: () => { to: string[] },
-): { to: string[]; viaReply: boolean; team: boolean; thread: string | undefined } {
+  seats: OpenSeats,
+): Promise<{ to: string[]; viaReply: boolean; team: boolean; thread: string | undefined }> {
   const eng = room.engine;
   const replyTo = replyOf(args);
   let thread = typeof args.thread === "string" && args.thread.trim() ? args.thread.trim() : undefined;
@@ -81,25 +119,27 @@ function addressed(
     return { to: [ref.from], viaReply: true, team: false, thread };
   }
   const named = words("to", args.to);
-  const below = reachable(eng, from).filter((seat) => eng.isAncestor(from, seat.agentId) && open(seat.agentId));
+  // a sender with no seat under it needs no list of open seats to know that none is open
+  const below = async () => {
+    const under = reachable(eng, from).filter((seat) => eng.isAncestor(from, seat.agentId));
+    if (under.length === 0) return under;
+    const open = await seats.open();
+    return under.filter((seat) => open(seat.agentId));
+  };
   if (named.some(namesTeam)) {
-    const to = below.filter((seat) => eng.canWrite(from, seat.agentId).ok).map((seat) => seat.agentId);
-    if (to.length === 0) throw new MailError("NO_RECIPIENT", "no open seat under you takes your mail", whom());
+    const to = (await below()).filter((seat) => eng.canWrite(from, seat.agentId).ok).map((seat) => seat.agentId);
+    if (to.length === 0)
+      throw new MailError("NO_RECIPIENT", "no open seat under you takes your mail", await seats.whom());
     return { to, viaReply: false, team: true, thread };
   }
   if (named.length === 0) {
     // a seat with no seat under it has one place to write to
     const owner = eng.parentOf(from);
-    if (below.length > 0 || !owner)
-      throw new MailError("NO_RECIPIENT", "give `to`, or `reply_to` to answer a mail", whom());
+    if ((await below()).length > 0 || !owner)
+      throw new MailError("NO_RECIPIENT", "give `to`, or `reply_to` to answer a mail", await seats.whom());
     return { to: [owner], viaReply: false, team: false, thread };
   }
-  return {
-    to: [...new Set(named.map((word) => resolve(eng, from, word, open)))],
-    viaReply: false,
-    team: false,
-    thread,
-  };
+  return { to: await resolved(room, from, named, seats), viaReply: false, team: false, thread };
 }
 
 /** The files a mail points at, each by its whole path; a file that does not exist is refused. */
@@ -119,30 +159,20 @@ export async function sendMail(room: RoomContext, from: string, args: Record<str
   const eng = room.engine;
   const sender = eng.seat(from);
   if (!sender) throw new MailError("NOT_A_SEAT", "this session is not a registered room seat");
-  const live = await room.host.live().catch(() => new Map<string, LiveSeat>());
-  const open = (id: string) => live.size === 0 || live.has(id);
-  const whom = () => ({
-    to: shown(
-      eng,
-      from,
-      reachable(eng, from).filter((seat) => open(seat.agentId)),
-    ),
-  });
-  const { to, viaReply, team, thread } = addressed(room, from, args, open, whom);
+  const seats = openSeats(room, from);
+  const { to, viaReply, team, thread } = await addressed(room, from, args, seats);
   const replyTo = replyOf(args);
-  const cc = [...new Set(words("cc", args.cc).map((word) => resolve(eng, from, word, open)))].filter(
-    (seat) => !to.includes(seat),
-  );
+  const cc = (await resolved(room, from, words("cc", args.cc), seats)).filter((seat) => !to.includes(seat));
   for (const seat of [...to, ...cc]) {
     const check = eng.canWrite(from, seat, viaReply);
-    if (!check.ok) throw new MailError("ROUTE_REFUSED", check.reason, whom());
+    if (!check.ok) throw new MailError("ROUTE_REFUSED", check.reason, await seats.whom());
   }
   const everyone = [...to, ...cc];
   const states = await Promise.all(everyone.map((seat) => eng.recipientStatus(seat)));
   const found = new Map(everyone.map((seat, index) => [seat, states[index]]));
   for (const seat of everyone)
     if (found.get(seat) === "gone")
-      throw new MailError("RECIPIENT_GONE", `${seat} is archived or gone; nothing was sent`, whom());
+      throw new MailError("RECIPIENT_GONE", `${seat} is archived or gone; nothing was sent`, await seats.whom());
   const subject = String(args.subject ?? "").trim() || "(no subject)";
   const opening = subjectOpening(subject);
   if (!opening)
@@ -222,8 +252,8 @@ export async function sendMail(room: RoomContext, from: string, args: Record<str
     urgent: stops,
   });
   const sentTo = to.map((seat) => (eng.isAncestor(seat, from) ? "owner" : `${eng.seat(seat)?.role ?? "seat"} ${seat}`));
-  if (stops) return stopBelow(room, mail, to[0], subject, found.get(to[0]), sentTo, live);
-  const held = eng.held(to[0]).some((m) => m.id === mail.id);
+  if (stops) return stopBelow(room, mail, to[0], subject, found.get(to[0]), sentTo, await seats.live());
+  const held = mail.state === "queued" || mail.state === "sending";
   // the rounds of repair a task allows: the one past them is said where its Owner sends it
   let round: string | undefined;
   if (to.length === 1 && eng.parentOf(to[0]) === from) {

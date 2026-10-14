@@ -10,7 +10,7 @@ import { parseSeat } from "../server/orchestration/seats";
 import { choose, type ChoiceFlags, type Terminal } from "../server/paseo/setup/choices";
 import { addSeats, setUpRoom } from "../server/paseo/setup/init";
 import { applyToConfigFile, applyWithSdk } from "../server/paseo/setup/paseo-config";
-import { planRoom, roomModels, type Catalog, type Setup } from "../server/paseo/setup/plan";
+import { checkSetup, planRoom, roomModels, type Catalog, type Setup } from "../server/paseo/setup/plan";
 import { sweepRemoved } from "../server/gc";
 import { isSetUp, readSetup } from "../server/paseo/setup/room-home";
 import {
@@ -55,15 +55,36 @@ beforeEach(() => rmSync(ROOM_HOME, { recursive: true, force: true }));
 const tierUse = (table: Table, role: string, tier: string) =>
   (table[role] as { tiers: Record<string, { use?: string }> }).tiers[tier].use;
 
-test("the installer's question: the room's HQ seat, or the user's own agent CLI and model for it", async () => {
-  const cases: [typed: string, hq: unknown][] = [
-    ["\n", "default"],
-    ["", "default"], // no terminal to answer
+/** The room's own seat among a machine's model choices, if they name it. */
+const ownSeat = (setup: Setup) => (setup.models as { seats?: Record<string, unknown> } | undefined)?.seats?.hq;
+
+test("the installer's question: the room's HQ seat as the table has it, or the user's own agent CLI and model, kept in the model choices", async () => {
+  const cases: [typed: string, seat: unknown][] = [
+    ["\n", undefined],
+    ["", undefined], // no terminal to answer
     ["2\n3\n1\n\n", { provider: "pi-hq/m-one", thinking: "medium" }],
-    ["custom\nopencode\nvendor/m-two\n", { provider: "opencode-hq/vendor/m-two" }], // a model without thinking options
+    ["custom\nopencode\nvendor/m-two\n", { provider: "opencode-hq/vendor/m-two", thinking: "default" }], // a model without thinking options
     ["2\ncodex\nnope\n1\nhigh\n", { provider: "codex-hq/m-one", thinking: "high" }], // a wrong answer is asked again
   ];
-  for (const [text, hq] of cases) assert.deepEqual((await chosen({ hq: "ask" }, text)).hq, hq, JSON.stringify(text));
+  for (const [text, seat] of cases)
+    assert.deepEqual(ownSeat(await chosen({ hq: "ask" }, text)), seat, JSON.stringify(text));
+  // default takes the table's seat back, and leaves the machine's other choices
+  const before: Setup = { models: { seats: { hq: { provider: "pi-hq/m-one" }, lead: { provider: "pi-lead/m-one" } } } };
+  assert.deepEqual((await chosen({ hq: "default" }, "", before)).models, {
+    seats: { lead: { provider: "pi-lead/m-one" } },
+  });
+});
+
+test("an hq an earlier version wrote into setup.json becomes the room's seat among the model choices", () => {
+  const moved = checkSetup({ hq: { provider: "codex-hq/m-one", thinking: "high" }, chime: true }, "setup.json");
+  assert.deepEqual(moved, { chime: true, models: { seats: { hq: { provider: "codex-hq/m-one", thinking: "high" } } } });
+  assert.deepEqual(checkSetup({ hq: "default", seats: [] }, "setup.json"), { seats: [] });
+  const named = { hq: { provider: "codex-hq/m-one" }, models: { seats: { hq: { provider: "pi-hq/m-one" } } } };
+  assert.deepEqual(checkSetup(named, "setup.json"), { models: named.models }, "the table's own choice stands");
+  assert.throws(
+    () => checkSetup({ hq: { provider: "codex-lead/m-one" } }, "setup.json"),
+    /for a role at home in the room/,
+  );
 });
 
 test("a choice the installer cannot honour is refused by name", async () => {
@@ -98,8 +119,12 @@ test("the provider written for a seat starts it as the plugin does: the same env
 
 test("a role's seat and profile follow the model this machine chose for it", async () => {
   const { providers, profiles, models } = await plan({
-    hq: { provider: "opencode-hq/vendor/m-two" },
-    models: { seats: { supervisor: { provider: "pi-supervisor/m-one", thinking: "high" } } },
+    models: {
+      seats: {
+        hq: { provider: "opencode-hq/vendor/m-two", thinking: "default" },
+        supervisor: { provider: "pi-supervisor/m-one", thinking: "high" },
+      },
+    },
   });
   const profile = (id: string) => {
     const { provider, model, modeId, thinkingOptionId } = profiles.find((p) => p.id === id)!;

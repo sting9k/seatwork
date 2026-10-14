@@ -6,7 +6,7 @@ import type { Scene, Value } from "../types";
 
 /** The files a write must not reach (DCG's credential table), and the room's own files. */
 
-export type GuardRule = "credential-file-write" | "git-internals-write" | "room-file-write";
+export type GuardRule = "credential-file-write" | "git-internals-write" | "git-config-write" | "room-file-write";
 
 /** A protected path a write reaches, with the pack and rule that judge it. */
 export interface Guarded {
@@ -35,6 +35,17 @@ const ANCHORS = table.anchors.map(lower);
 const ANCHOR_FILES = table.anchorFiles.map(lower);
 const ROOM_HOME_FILES = table.roomHomeFiles.map(lower);
 const ENV_ROOTS = table.envRoots as Record<string, string>;
+const GIT_RUNS = table.gitRuns.map((pattern) => new RegExp(pattern));
+
+/** The guard for a path with a `.git` folder in it: what git reads programs from is the room's, the rest of the repository is the owner's. */
+function gitGuard(parts: string[], path: string): Guarded | null {
+  const at = parts.findIndex((c) => lower(c) === ".git");
+  if (at < 0) return null;
+  const inside = lower(parts.slice(at + 1).join("/"));
+  return GIT_RUNS.some((test) => test.test(inside))
+    ? { pack: "room.guard", rule: "git-config-write", path }
+    : { pack: "core.filesystem", rule: "git-internals-write", path };
+}
 
 /** What guards an absolute path, if anything. */
 function guardOfPath(path: string, mode: WriteMode, scene: Pick<Scene, "place">): Guarded | null {
@@ -49,8 +60,8 @@ function guardOfPath(path: string, mode: WriteMode, scene: Pick<Scene, "place">)
   const parts = norm.split("/").filter(Boolean);
   if (place.roomFolder && parts.includes(place.roomFolder))
     return { pack: "room.guard", rule: "room-file-write", path: norm };
-  if (parts.some((c) => lower(c) === ".git"))
-    return { pack: "core.filesystem", rule: "git-internals-write", path: norm };
+  const git = gitGuard(parts, norm);
+  if (git) return git;
   const home = lower(place.home);
   if (within(low, home)) {
     const rel = low.slice(home.length + 1);
@@ -83,7 +94,7 @@ function anchored(rel: string, mode: WriteMode, scene: Pick<Scene, "place">): Gu
     return guardOfPath(posix.join(scene.place.home, parts[0]), mode, scene);
   const at = parts.findIndex((c, i) => ANCHORS.includes(lower(c)) && i < parts.length - 1);
   if (at < 0) return null;
-  if (lower(parts[at]) === ".git") return { pack: "core.filesystem", rule: "git-internals-write", path: rel };
+  if (lower(parts[at]) === ".git") return gitGuard(parts.slice(at), rel);
   return guardOfPath(posix.join(scene.place.home, ...parts.slice(at)), mode, scene);
 }
 

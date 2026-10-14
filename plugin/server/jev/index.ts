@@ -287,12 +287,12 @@ export class Jev {
     return { month, usd: this.existing()?.spent(month) ?? 0, capUsd: this.deps.policy()?.monthlyCapUsd ?? 0 };
   }
 
-  /** Asks the provider in force; every call is logged, a failed one with its error. */
+  /** Asks the provider in force; every call is logged, a failed one with its error; `fresh` asks again what was answered lately. */
   async decide(
     caller: string,
     state: State,
     questions: Questions,
-    options: { signal?: AbortSignal; deadlineMs?: number } = {},
+    options: { signal?: AbortSignal; deadlineMs?: number; fresh?: boolean } = {},
   ): Promise<Decision> {
     const found = this.provider();
     if ("why" in found) throw new DecisionError(found.why.startsWith("no key") ? "NO_KEY" : "OFF", found.why);
@@ -314,7 +314,7 @@ export class Jev {
     const memo = createHash("sha256")
       .update(`${caller}\u0000${name}\u0000${settings.model}\u0000${text}\u0000${JSON.stringify(asked)}`)
       .digest("hex");
-    const again = this.remembered(memo);
+    const again = options.fresh ? null : this.remembered(memo);
     if (again) return again;
     const deadline = Date.now() + (options.deadlineMs ?? DEADLINE_MS);
     const probing = this.probe() === true;

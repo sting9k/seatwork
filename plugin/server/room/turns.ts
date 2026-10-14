@@ -1,6 +1,7 @@
 import { REVIEW_STALL, routeOpen, traits } from "../../shared/workflow";
 import type { Mail, NewMail, Needs, Priority, SeatRecord } from "../coordination/engine";
 import type { TurnEvent, TurnOutcome } from "../host";
+import { contextFell } from "../orchestration/compaction";
 import { clip } from "../orchestration/forks";
 import { classify, type FailureKind } from "../orchestration/recovery";
 import { nextTitle, parseHandoff, rotate } from "../orchestration/rotation";
@@ -161,6 +162,7 @@ async function answerRotation(
     room.rotations.starting(id);
     eng.pause(id);
     let next: Awaited<ReturnType<typeof rotate>> | undefined;
+    const given = room.knowledge.forSuccessor(id);
     try {
       next = await rotate(
         {
@@ -170,13 +172,17 @@ async function answerRotation(
           fit: fitAt,
           handOver: (from, to) => {
             room.knowledge.briefed(to);
-            room.rounds.move(from, to);
+            if (given) room.knowledge.inherited(to, given);
+            // the key is read from the work store first, so a task the old seat claimed is the successor's too
+            taskOf(room, from);
+            room.taskKeys.succeed(from, to);
             releaseWork(room, from, to);
             room.safety.inherit(from, to);
           },
         },
         record,
         handoff,
+        given?.lines,
       );
     } catch (error) {
       eng.unpause(id);
@@ -316,7 +322,13 @@ export async function turnEnded(room: RoomContext, end: TurnEnd): Promise<void> 
   const mailed = room.mailedUp.get(id) ?? new Set<string>();
   room.mailedUp.delete(id);
   const usage = role ? noteUsage(await room.host.seat(id).catch(() => null), role) : null;
-  if (usage) room.lastUsage.set(id, usage);
+  if (usage) {
+    const before = room.lastUsage.get(id);
+    room.lastUsage.set(id, { ...usage });
+    // a compaction the timeline did not show is read from the seat's context falling; one it showed is not told twice
+    if (contextFell(before, usage) && !end.events.some((event) => event.kind === "compaction"))
+      room.knowledge.compacted(id);
+  }
   const reportsTo = role ? readerOf(room, seat, role) : null;
   const canceled = outcome.kind === "canceled";
   // a failed turn is the room's to mend first: a quota is waited out, a service error tried again

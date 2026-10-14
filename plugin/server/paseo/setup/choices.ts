@@ -1,6 +1,6 @@
 import { HARNESSES, parseSeat, type Harness } from "../../orchestration/seats";
 import { ROLES, ROOM_ROLE, traits } from "../../../shared/workflow";
-import type { Catalog, Setup } from "./plan";
+import { withOwnSeat, type Catalog, type Setup } from "./plan";
 
 /** The installer's flags that are this machine's choices: --hq default|ask|<harness>/<model>, --seat. */
 export interface ChoiceFlags {
@@ -29,7 +29,7 @@ async function pick(io: Terminal, prompt: string, options: string[], fallback?: 
   }
 }
 
-/** The setup.json entry for the room's own seat on this harness and model, checked against the harness's catalog. */
+/** The room's own seat on this harness and model, checked against the harness's catalog. */
 async function hqSeat(
   harness: string,
   model: string,
@@ -50,16 +50,16 @@ async function hqSeat(
   return { provider: `${harness}-${ROOM_ROLE}/${model}`, ...(thinking ? { thinking } : {}) };
 }
 
-/** Asks on the terminal: the room's own seat as the table has it, or the user's own harness and model for it. */
+/** Asks on the terminal: the room's own seat as the table has it (null), or the user's own harness and model for it. */
 async function askHq(
   io: Terminal,
   catalog: Catalog,
   roomHq: { provider: string; thinking: string },
-): Promise<Setup["hq"]> {
-  io.say(`${traits(ROOM_ROLE).label} is the seat you talk to about every project. What should it run on?`);
+): Promise<{ provider: string; thinking?: string } | null> {
+  io.say(`${traits(ROOM_ROLE).label} is the room's own seat: it runs the room. What should it run on?`);
   io.say(`  1) default: ${roomHq.provider}, thinking ${roomHq.thinking}`);
   io.say("  2) custom: you choose the agent CLI and the model");
-  if ((await pick(io, "Choice", ["default", "custom"], "default")) === "default") return "default";
+  if ((await pick(io, "Choice", ["default", "custom"], "default")) === "default") return null;
   HARNESSES.forEach((harness, i) => io.say(`  ${i + 1}) ${harness}`));
   const harness = (await pick(io, "Agent CLI", [...HARNESSES])) as Harness;
   const cat = await catalog(harness);
@@ -96,13 +96,15 @@ export async function choose(
   let hq = flags.hq;
   if (hq === undefined && flags.hqThinking) throw new Error("--hq-thinking goes with --hq <harness>/<model>");
   if (hq !== undefined && !ROOM_ROLE) throw new Error("--hq: the room's workflow has no role at home in the room");
-  // a first install: the one question the installer has
-  if (hq === undefined && setup.hq === undefined && io.isTTY && room.hq) hq = "ask";
-  if (hq === "ask") setup.hq = room.hq ? await askHq(io, room.catalog, room.hq) : "default";
-  else if (hq === "default") setup.hq = "default";
-  else if (hq !== undefined) {
+  // a first install, from a room never set up here: the one question the installer has
+  if (hq === undefined && before.version === undefined && io.isTTY && room.hq) hq = "ask";
+  if (hq === undefined) return setup;
+  // the room's own seat is one seat of the machine's model choices: default takes the table's back
+  let seat: { provider: string; thinking?: string } | null = null;
+  if (hq === "ask") seat = room.hq ? await askHq(io, room.catalog, room.hq) : null;
+  else if (hq !== "default") {
     const slash = hq.indexOf("/");
-    setup.hq = await hqSeat(
+    seat = await hqSeat(
       slash < 0 ? hq : hq.slice(0, slash),
       slash < 0 ? "" : hq.slice(slash + 1),
       flags.hqThinking,
@@ -110,5 +112,8 @@ export async function choose(
       io,
     );
   }
+  const models = withOwnSeat(setup.models, seat);
+  if (models) setup.models = models;
+  else delete setup.models;
   return setup;
 }

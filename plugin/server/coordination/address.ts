@@ -65,6 +65,9 @@ const bare = (title: string | null) =>
     .trim()
     .toLowerCase();
 
+/** A word of `to` without a role tag before it. */
+const plain = (word: string) => word.trim().replace(ROLE_TAG, "");
+
 /** Whether a word of `to` names the sender's whole team. */
 export const namesTeam = (word: string) => TEAM.has(word.trim().toLowerCase());
 
@@ -86,16 +89,23 @@ export function shown(directory: Directory, from: string, seats: readonly SeatRe
   );
 }
 
-/** The seat a word names for this sender: `owner`, an id, the start of one, or a title. */
-export function resolve(directory: Directory, from: string, word: string, open: (agentId: string) => boolean): string {
-  const name = word.trim().replace(ROLE_TAG, "");
+/** The seat a word names without the list of open seats: `owner` or a whole id; null for the start of an id or a title. */
+export function exactSeat(directory: Directory, from: string, word: string): string | null {
+  const name = plain(word);
   if (OWNER.has(name.toLowerCase())) {
     const owner = directory.parentOf(from);
     if (!owner)
       throw new MailError("NO_OWNER", "you have no Owner seat: the Owner reads your final message, no mail is needed");
     return owner;
   }
-  if (directory.seat(name)) return name;
+  return directory.seat(name) ? name : null;
+}
+
+/** The seat a word names for this sender: `owner`, an id, the start of one, or a title. */
+export function resolve(directory: Directory, from: string, word: string, open: (agentId: string) => boolean): string {
+  const exact = exactSeat(directory, from, word);
+  if (exact) return exact;
+  const name = plain(word);
   const near = reachable(directory, from).filter((seat) => open(seat.agentId));
   const lower = name.toLowerCase();
   const matches = near.filter(

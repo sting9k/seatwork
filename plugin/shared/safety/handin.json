@@ -1,5 +1,5 @@
 {
-  "$comment": "Hand-in rules on added lines. level: block sends the candidate back, warn rides up with it. in: the part of the line a pattern reads (code, comment, string, or the whole line). files: test, source or any. languages: ids from `languages`, or `*`. skip: paths never read. tests: paths of test files.",
+  "$comment": "Hand-in rules on added lines. level: block sends the candidate back, warn rides up with it. in: the part of the line a pattern reads (code, comment, string, or the whole line). files: test, source or any. languages: ids from `languages`, or `*`. path: only the files whose path it matches. skip: paths never read. tests: paths of test files.",
   "languages": {
     "javascript": [".js", ".jsx", ".mjs", ".cjs", ".ts", ".tsx", ".mts", ".cts", ".vue", ".svelte"],
     "python": [".py"],
@@ -305,6 +305,16 @@
       "files": "any",
       "pattern": "nolint",
       "hint": "Fix the lint instead of hiding it."
+    },
+    {
+      "id": "attributes-driver",
+      "level": "block",
+      "languages": ["*"],
+      "in": "line",
+      "files": "any",
+      "path": "(^|/)\\.gitattributes$",
+      "pattern": "(^|\\s)filter=(?!lfs(\\s|$))\\S|(^|\\s)(diff|merge)=(?!(lfs|union|text|binary|ada|bash|bibtex|cpp|csharp|css|dts|elixir|fortran|fountain|golang|html|ini|java|javascript|kotlin|markdown|matlab|objc|pascal|perl|php|python|ruby|rust|scheme|tex)(\\s|$))\\S",
+      "hint": "Name no filter or driver of your own in .gitattributes: git runs the program the repository's config gives it, on the room's calls too."
     },
     {
       "id": "tls-off",

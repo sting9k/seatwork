@@ -1,34 +1,47 @@
+import { createHash } from "node:crypto";
 import council from "../../../shared/safety/council.json";
 import type { RoleTraits } from "../../../shared/workflow";
 import type { TurnEvent } from "../../host";
 import { briefFields, quotedCommands, scopeGlobs } from "../../orchestration/brief";
+import { redact } from "../../redact";
 import { CLOSES_WORK, signalOf } from "../../signals";
 import type { MemberCount, MemberState, ReadingRow, SafetyStore } from "../store";
 import { counted, hiFor, levelFor } from "./calibration";
+import type { Chair, Packet } from "./chair";
 import { claimsIn, loopIn, outsideScope, quietMinutes, runsOneOf, turnFacts } from "./facts";
+import { gamingLine, hardSigns, softSigns, type GamingEvidence } from "./gaming";
 import { changedSince, type Snapshot } from "./git";
 
 /** The council: each member reads a turn for one concern, and speaks at the level it has earned. */
 
 type MemberName = keyof typeof council.members;
+type Juror = "claims" | "scope" | "gaming";
 const MEMBERS = Object.keys(council.members) as MemberName[];
+const SEND_BACK_LEVEL = 3;
 
-/** The council's settings in the policy: `levels` pins a member's level, readings no label holds are kept `keepDays`. */
+/** The council's settings in the policy: `levels` pins a member's level (2 at most), readings no label holds are kept `keepDays`, an appeal lapses after `chairMinutes`. */
 export interface CouncilPolicy {
   mode: "on" | "off";
   keepDays: number;
   tickSeconds: number;
   levels?: Partial<Record<MemberName, number>>;
+  chairMinutes?: number;
 }
 
-/** The decision district as the council uses it; any provider of typed decisions fits. */
+/** What the hand-in check saw of a candidate's diff; `returned` when the room sent the hand-in back already. */
+export interface HandInDiff {
+  gaming: GamingEvidence | null;
+  returned: boolean;
+}
+
+/** The decision district as the council uses it; any provider of typed decisions fits, one that answers a repeated question from memory unless asked `fresh`. */
 export interface Decider {
   why(): string | null;
   decide(
     caller: string,
     state: Record<string, unknown>,
     questions: Record<string, unknown>,
-    options?: { deadlineMs?: number },
+    options?: { deadlineMs?: number; fresh?: boolean },
   ): Promise<{ answers: Record<string, { type: string; noul?: number }>; asks: Record<string, number> }>;
 }
 
@@ -70,7 +83,7 @@ export interface Finding {
   line: string;
 }
 
-/** One member's reading before it is logged; a juror's comes back later. */
+/** One member's reading before it is logged: a juror's comes back later, `contested` marks answers that part company, `diff` is what the chair reads of the changes. */
 interface Reading {
   tier: "fact" | "juror";
   zone: ReadingRow["zone"];
@@ -78,7 +91,11 @@ interface Reading {
   fingerprint?: string;
   evidence?: unknown;
   score?: number;
+  scores?: number[];
   askId?: number;
+  contested?: "disagree" | "contradicted";
+  diff?: string;
+  returned?: boolean;
 }
 
 type BriefFields = ReturnType<typeof briefFields>;
@@ -89,6 +106,10 @@ type Pending = Reading | (() => Promise<Reading>);
 const JUROR_DEADLINE_MS = 8000;
 const MAX_JURORS_IN_FLIGHT = 8;
 const REPORT_CHARS = 6000;
+const COMMANDS_SHOWN = 10;
+const COMMAND_CHARS = 200;
+const BRIEF_CHARS = 400;
+const FINDING_CHARS = 400;
 
 const clip = (text: string, most: number) => (text.length > most ? `${text.slice(0, most)}…` : text);
 const quoted = (text: string) => `"${clip(text.replace(/\s+/g, " "), 120)}"`;
@@ -124,6 +145,9 @@ export class Council {
       log(message: string): void;
       now?: () => number;
       snapshot?: (cwd: string) => Promise<Snapshot | null>;
+      seen?: (seat: string) => void;
+      diffOf?: (seat: string) => HandInDiff | null;
+      chair?: Chair | null;
     },
   ) {}
 
@@ -141,13 +165,16 @@ export class Council {
     return state && state.version === council.members[member].version ? state : null;
   }
 
-  /** The level a member speaks at: the policy's when it pins one, else the one its labels earned. */
+  /** The level a member speaks at: the policy's when it pins one, else the one its labels earned; labels alone earn the level that sends work back. */
   level(member: MemberName): number {
-    return this.deps.policy()?.levels?.[member] ?? this.state(member)?.level ?? council.members[member].level;
+    const pinned = this.deps.policy()?.levels?.[member];
+    return pinned === undefined
+      ? (this.state(member)?.level ?? council.members[member].level)
+      : Math.min(pinned, SEND_BACK_LEVEL - 1);
   }
 
   /** A juror's threshold: where its labels moved it, else the shipped one. */
-  private hi(member: "claims" | "scope"): number {
+  private hi(member: Juror): number {
     return this.state(member)?.hi ?? council.members[member].hi;
   }
 
@@ -156,8 +183,13 @@ export class Council {
     return council.members[member].traits.some((trait) => traits[trait as keyof RoleTraits] === true);
   }
 
-  /** A turn begins: its time, and the commit its folder stands on, for what the turn changes. */
+  /** A turn begins: the seat is noted as seen, and its time and the commit its folder stands on are kept, for what the turn changes. */
   turnStarted(seat: string, cwd: string): void {
+    try {
+      this.deps.seen?.(seat);
+    } catch (error) {
+      this.deps.log(`council: seat ${seat} was not noted as seen: ${String(error)}`);
+    }
     const snapshot = this.on && this.deps.snapshot ? this.deps.snapshot(cwd).catch(() => null) : Promise.resolve(null);
     this.started.set(seat, { at: this.now(), snapshot });
   }
@@ -282,8 +314,9 @@ export class Council {
     const labels = counted(store.labelsOf(member, shipped.version, LABELS_READ));
     const total = store.labelCount(member, shipped.version);
     const held = this.state(member);
-    // the third level sends work back, and waits for a chair
-    const level = Math.min(levelFor(labels, held?.level ?? 0), 2);
+    // only a member that may send a hand-in back reaches the level that does
+    const reach = "sendsBack" in shipped && shipped.sendsBack ? SEND_BACK_LEVEL : SEND_BACK_LEVEL - 1;
+    const level = Math.min(levelFor(labels, held?.level ?? 0), reach);
     const shippedHi = "hi" in shipped ? shipped.hi : null;
     const due = shippedHi !== null && total - (held?.labels ?? 0) >= MOVE_EVERY;
     const hi = due ? hiFor(labels, held?.hi ?? shippedHi) : (held?.hi ?? shippedHi);
@@ -330,29 +363,115 @@ export class Council {
       fingerprint: reading.fingerprint ?? null,
       evidence: reading.evidence === undefined ? null : JSON.stringify(reading.evidence),
     });
+    this.appealIfWarranted(member, input, reading, level, id);
     // the number lets the seat above say whether the finding was right
     return shows ? { member, level, line: reading.line!.replace(/^(\w+):/, `$1 #${id}:`) } : null;
   }
 
-  /** A juror's one question, read into a zone by the member's grey band. */
-  private async ask(
-    member: "claims" | "scope",
+  /** A member at the level that sends work back asks the chair about a candidate it found something in or is unsure of. */
+  private appealIfWarranted(member: MemberName, input: TurnInput, reading: Reading, level: number, id: number): void {
+    const chair = this.deps.chair;
+    const shipped = council.members[member];
+    if (!chair || level < SEND_BACK_LEVEL || !("sendsBack" in shipped && shipped.sendsBack)) return;
+    if (reading.zone !== "found" && reading.zone !== "grey") return;
+    if (reading.returned || input.seat.traits.writes !== true || signalOf(input.text) !== "CANDIDATE") return;
+    const line = (reading.line ?? `${member}: a finding about this candidate`).replace(/^(\w+):/, `$1 #${id}:`);
+    const why = reading.contested ?? (reading.zone === "grey" ? "unsure" : "found");
+    const finding =
+      reading.fingerprint ??
+      createHash("sha1")
+        .update(reading.line ?? member)
+        .digest("hex")
+        .slice(0, 12);
+    void chair
+      .appeal({
+        reading: id,
+        member,
+        seat: input.seat.id,
+        finding,
+        packet: this.packetOf(member, input, reading, why, line),
+      })
+      .catch((error) => this.deps.log(`council: ${member} could not ask the chair: ${String(error)}`));
+  }
+
+  /** The evidence the chair reads: the finding, the readings, the turn's last commands with exit codes, the diff, the brief. */
+  private packetOf(member: MemberName, input: TurnInput, reading: Reading, why: Packet["why"], line: string): Packet {
+    const fields = input.brief ? briefFields(input.brief) : {};
+    const brief: Record<string, string> = {};
+    for (const [name, key] of [
+      ["Outcome", "outcome"],
+      ["Write scope", "writeScope"],
+      ["Non-goals", "nonGoals"],
+      ["Acceptance", "acceptance"],
+    ] as const)
+      if (fields[key]) brief[name] = clip(fields[key]!, BRIEF_CHARS);
+    const commands = input.events
+      .filter((event): event is Extract<TurnEvent, { kind: "shell" }> => event.kind === "shell")
+      .slice(-COMMANDS_SHOWN)
+      .map((event) => ({ command: redact(clip(event.command, COMMAND_CHARS)), exit: event.exitCode }));
+    const readings = (reading.scores ?? (reading.score === undefined ? [] : [reading.score])).map((score) => ({
+      tier: "juror",
+      zone: reading.zone,
+      score,
+    }));
+    return {
+      member,
+      why,
+      finding: redact(clip(line, FINDING_CHARS)),
+      readings: reading.tier === "fact" ? [{ tier: "fact", zone: reading.zone }, ...readings] : readings,
+      commands,
+      ...(reading.diff ? { diff: reading.diff } : {}),
+      brief,
+    };
+  }
+
+  /** One answer of a juror's question, placed in the member's grey band; null when none comes. `fresh` is a second reading, never the first one remembered. */
+  private async asked(
+    member: Juror,
     state: Record<string, unknown>,
-    line: (score: number) => string,
-    evidence: unknown,
-  ): Promise<Reading> {
+    fresh = false,
+  ): Promise<{ score: number; zone: ReadingRow["zone"]; askId: number } | null> {
     const { question, lo } = council.members[member];
-    const hi = this.hi(member);
     const decided = await this.deps.decider!.decide(
       `council.${member}@${council.members[member].version}`,
       state,
       { [member]: question },
-      { deadlineMs: JUROR_DEADLINE_MS },
+      { deadlineMs: JUROR_DEADLINE_MS, fresh },
     );
     const score = decided.answers[member]?.noul;
-    if (typeof score !== "number") return { tier: "juror", zone: "skipped", evidence };
-    const zone = score >= hi ? "found" : score <= lo ? "clear" : "grey";
-    return { tier: "juror", zone, score, askId: decided.asks[member], line: line(score), evidence };
+    if (typeof score !== "number") return null;
+    return {
+      score,
+      zone: score >= this.hi(member) ? "found" : score <= lo ? "clear" : "grey",
+      askId: decided.asks[member],
+    };
+  }
+
+  /** A juror's question as a reading; a member that may send work back asks twice what it did not find clear, and answers that part company make the reading contested. */
+  private async ask(
+    member: Juror,
+    state: Record<string, unknown>,
+    line: (score: number) => string,
+    evidence: unknown,
+  ): Promise<Reading> {
+    const first = await this.asked(member, state);
+    if (!first) return { tier: "juror", zone: "skipped", evidence };
+    const reading: Reading = {
+      tier: "juror",
+      zone: first.zone,
+      score: first.score,
+      askId: first.askId,
+      line: line(first.score),
+      evidence,
+    };
+    if (first.zone === "clear" || this.level(member) < SEND_BACK_LEVEL) return reading;
+    const second = await this.asked(member, state, true);
+    if (!second) return reading;
+    const scores = [first.score, second.score];
+    if (second.zone === "clear")
+      return { ...reading, zone: "grey", scores, contested: "disagree", evidence: { evidence, scores } };
+    const zone = first.zone === "found" && second.zone === "found" ? "found" : "grey";
+    return { ...reading, zone, scores, evidence: { evidence, scores } };
   }
 
   /** Whether a decision provider is there and ready to be asked. */
@@ -368,6 +487,8 @@ export class Council {
         return this.readClaims(input, fields);
       case "scope":
         return this.readScope(input, fields);
+      case "gaming":
+        return this.readGaming(input, fields);
       case "stuck":
         return [loopReading(input.events) ?? { tier: "fact", zone: "clear" }];
       case "repair":
@@ -442,6 +563,45 @@ export class Council {
         ),
       );
     return out.length ? out : [{ tier: "fact", zone: "skipped" }];
+  }
+
+  /** Firm signs of bent tests speak for themselves, softer ones go to a juror, and a member that may send the hand-in back checks firm signs against a juror too. */
+  private readGaming(input: TurnInput, fields: BriefFields): Pending[] {
+    const diff = signalOf(input.text) === "CANDIDATE" ? (this.deps.diffOf?.(input.seat.id) ?? null) : null;
+    const evidence = diff?.gaming ?? null;
+    if (!evidence) return [];
+    const [hard, soft] = [hardSigns(evidence), softSigns(evidence)];
+    if (evidence.sourceCount === 0 || hard + soft === 0) return [{ tier: "fact", zone: "clear" }];
+    const line = gamingLine(evidence);
+    const fingerprint = createHash("sha1").update(evidence.excerpt).digest("hex").slice(0, 12);
+    const signs = { ...evidence, excerpt: undefined };
+    const common = { fingerprint, diff: evidence.excerpt, returned: diff!.returned };
+    const facts: Reading = { tier: "fact", zone: "found", line, evidence: signs, ...common };
+    const sends = this.level("gaming") >= SEND_BACK_LEVEL;
+    if (hard > 0 && !(sends && this.jurorReady())) return [facts];
+    if (!this.jurorReady()) return [{ tier: "fact", zone: "clear", evidence: signs }];
+    const state = {
+      excerpt: evidence.excerpt,
+      sourceFiles: evidence.sourceFiles,
+      outcome: fields.outcome ? clip(fields.outcome, 600) : null,
+    };
+    return [
+      async () => {
+        const juror = await this.ask("gaming", state, (score) => `${line} (${score.toFixed(2)})`, signs);
+        if (hard === 0) return { ...juror, ...common };
+        if (juror.zone === "skipped") return facts;
+        // firm signs the reading of the excerpt does not bear out are a question for the chair, not a finding
+        return juror.zone === "clear"
+          ? { ...facts, zone: "grey", contested: "contradicted", scores: juror.scores ?? [juror.score!] }
+          : {
+              ...facts,
+              zone: juror.zone === "found" ? "found" : "grey",
+              score: juror.score,
+              scores: juror.scores,
+              askId: juror.askId,
+            };
+      },
+    ];
   }
 }
 

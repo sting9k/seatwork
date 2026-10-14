@@ -19,7 +19,8 @@ export function eventOf(item: unknown, at?: string): TurnEvent | null {
   if (entry.type === "user_message") return { kind: "prompt", text: text(entry.text, TEXT_CHARS), ...dated };
   if (entry.type === "assistant_message") return { kind: "say", text: text(entry.text, TEXT_CHARS), ...dated };
   if (entry.type === "reasoning") return { kind: "think", text: text(entry.text, TEXT_CHARS), ...dated };
-  if (entry.type === "compaction") return { kind: "compaction", ...dated };
+  // Claude, Codex, Pi and OpenCode mark a compaction's start `loading` and its end `completed`: only the end is one
+  if (entry.type === "compaction") return entry.status === "loading" ? null : { kind: "compaction", ...dated };
   if (entry.type !== "tool_call") return null;
   const status = STATUSES.includes(entry.status as ToolStatus) ? (entry.status as ToolStatus) : "completed";
   const detail = (entry.detail ?? {}) as Record<string, unknown>;

@@ -4,7 +4,8 @@ import { dirname, join } from "node:path";
 import { Guard, type SafetyPolicy, type SeatRef } from "./guard";
 import type { Place } from "./gate/types";
 import { inspectHandIn, type HandIn } from "./handin";
-import { Council, type Decider } from "./council/council";
+import { Chair, type ChairDeps } from "./council/chair";
+import { Council, type Decider, type HandInDiff } from "./council/council";
 import { snapshot } from "./council/git";
 import { answerHook, claudePlugin, GATE_ENV, type Cli } from "./hooks";
 import { databaseIn, SafetyStore, type CodeRow } from "./store";
@@ -12,7 +13,7 @@ import { machineTools } from "./system";
 
 /** The Safety district: the command guard, the hand-in check, the council and the codes. */
 
-/** What the district needs of the room: a folder for its store and hooks, the room's own files no seat writes, and a way to tell an Owner of a rule its seat keeps hitting. */
+/** What the district needs of the room: a folder for its store and hooks, the room's own files no seat writes, a way to tell an Owner of a rule its seat keeps hitting, and the seat that rules on appeals. */
 export interface SafetyDeps {
   dir: string;
   userHome: string;
@@ -26,16 +27,20 @@ export interface SafetyDeps {
   repeated(seat: string, rule: string, count: number, command: string): void;
   decider: Decider | null;
   log(message: string): void;
+  chair?: ChairDeps;
 }
 
 const BUSY_MS = 2000;
+const DIFFS_KEPT = 64;
 
 export class Safety {
   private storeHandle: SafetyStore | null = null;
   readonly guard: Guard;
   readonly council: Council;
+  private readonly chair: Chair | null;
   private readonly starts = new Map<string, number>();
   private readonly noted = new Map<string, string>();
+  private readonly diffs = new Map<string, HandInDiff>();
 
   constructor(private readonly deps: SafetyDeps) {
     this.guard = new Guard({
@@ -45,12 +50,23 @@ export class Safety {
       place: (seat) => this.placeOf(seat),
       repeated: (seat, rule, count, command) => deps.repeated(seat.id, rule, count, command),
     });
+    this.chair = deps.chair
+      ? new Chair({
+          room: deps.chair,
+          store: () => this.store(),
+          minutes: () => deps.policy()?.council?.chairMinutes,
+          log: deps.log,
+        })
+      : null;
     this.council = new Council({
       store: () => this.store(),
       decider: deps.decider,
       policy: () => deps.policy()?.council,
       log: deps.log,
       snapshot,
+      seen: (seat) => void this.existing()?.seen(seat),
+      diffOf: (seat) => this.takeDiff(seat),
+      chair: this.chair,
     });
   }
 
@@ -107,15 +123,27 @@ export class Safety {
     this.store().inherit(from, to);
   }
 
-  /** The hand-in check of a seat's candidate; null when the check is off. */
+  /** The hand-in check of a seat's candidate, its diff kept for the council's reading of the same turn; null when the check is off. */
   async handIn(agentId: string): Promise<HandIn | null> {
+    this.diffs.delete(agentId);
     if (!this.on || this.deps.policy()?.handin?.mode === "off") return null;
     const place = this.placeOf(this.seatRef(agentId));
-    return inspectHandIn(agentId, this.store(), {
+    const result = await inspectHandIn(agentId, this.store(), {
       place,
       config: this.guard.gateConfig(place),
       tools: machineTools(() => this.startedAt(agentId)),
     });
+    if (this.council.on)
+      this.keepDiff(agentId, {
+        gaming: result.gaming ?? null,
+        returned: result.state === "blocked" && this.handInBlocks,
+      });
+    return result;
+  }
+
+  /** The chair's word on an appeal of the council's: the candidate goes back to its seat, or stays. */
+  async rule(by: string, id: number, sendBack: boolean, reason: string): Promise<string> {
+    return this.chair ? this.chair.rule(by, id, sendBack, reason) : "This room has no chair: nothing to rule on.";
   }
 
   /** Whether a hand-in check's findings send the candidate back, or only ride up with it. */
@@ -172,6 +200,7 @@ export class Safety {
   forget(agentId: string): void {
     this.starts.delete(agentId);
     this.noted.delete(agentId);
+    this.diffs.delete(agentId);
     this.council.forget(agentId);
     this.existing()?.forgetSeat(agentId);
   }
@@ -210,6 +239,20 @@ export class Safety {
   close(): void {
     this.storeHandle?.close();
     this.storeHandle = null;
+  }
+
+  /** What the hand-in check saw of a candidate's diff, kept for the council's reading of that turn; the oldest goes past the limit. */
+  private keepDiff(agentId: string, diff: HandInDiff): void {
+    this.diffs.delete(agentId);
+    if (this.diffs.size >= DIFFS_KEPT) this.diffs.delete(this.diffs.keys().next().value!);
+    this.diffs.set(agentId, diff);
+  }
+
+  /** The diff kept for a seat's candidate, given once. */
+  private takeDiff(agentId: string): HandInDiff | null {
+    const diff = this.diffs.get(agentId) ?? null;
+    this.diffs.delete(agentId);
+    return diff;
   }
 
   /** The store when the room has one; a look or a sweep never makes an empty one. */

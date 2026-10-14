@@ -249,8 +249,25 @@ test("the council's log keeps what a label holds and lets the rest go; every sta
   store.labelCount("claims", 1);
   store.setMemberState({ member: "claims", version: 1, level: 0, hi: 0.9, labels: 1 });
   store.memberState("claims");
+  const appeal = store.addAppeal({
+    readingId: id,
+    member: "gaming",
+    seat: "s",
+    finding: "f",
+    chair: "hq",
+    packet: "{}",
+    dueInMs: 60_000,
+  });
+  store.appeal(appeal);
+  store.openAppeals();
+  store.appealed("s", "gaming", "f");
+  store.rule(appeal, "upheld", "hq", "the tests are fine");
   council.counts(30);
-  assert.equal(store.expireCouncil(new Date(Date.now() + 86_400_000)), 1);
+  assert.equal(
+    store.expireCouncil(new Date(Date.now() + 86_400_000)),
+    2,
+    "the reading no label holds and the appeal go; the labelled reading stays",
+  );
   assert.deepEqual(
     store.councilCounts("2000-01-01").map(({ member, right }) => [member, right]),
     [["claims", 1]],

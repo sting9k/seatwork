@@ -12,6 +12,7 @@ import { ReviewGate } from "../orchestration/review-gate";
 import { Rotations } from "../orchestration/rotation";
 import { keepOperator } from "../orchestration/operator";
 import { Rounds } from "../orchestration/rounds";
+import { TaskKeys } from "../orchestration/task-keys";
 import { describeIsolation, ensureRuntime, envFor } from "../orchestration/runtimes";
 import { enabledSeats, parseSeat } from "../orchestration/seats";
 import {
@@ -113,6 +114,8 @@ function startKnowledge(
         ? null
         : [
             reader,
+            // the seats it replaced kept the record of its task
+            ...room().taskKeys.before(reader),
             ...engine.allSeats().flatMap((seat) => (engine.isAncestor(reader, seat.agentId) ? [seat.agentId] : [])),
           ],
     ownedTask: (id, task) => {
@@ -179,6 +182,15 @@ function startSafety(engine: MailEngine, jev: Jev, policy: RuntimePolicy, log: (
     },
     decider: jev,
     log,
+    chair: {
+      seat: () => engine.allSeats().findLast((seat) => inRoom(seat.role))?.agentId ?? null,
+      isChair: (id) => inRoom(engine.seat(id)?.role),
+      ownerOf: (id) => engine.parentOf(id),
+      titleOf: (id) => engine.seat(id)?.title ?? id,
+      tell: async (to, mail) => {
+        if (engine.seat(to)) await engine.post({ from: fromRoom, to, priority: "action", ...mail });
+      },
+    },
   });
   if (safety.on) safety.install();
   return safety;
@@ -545,6 +557,7 @@ export function startRoom(input: {
     engine,
     works: new WorkStores(policy.room.work, log),
     rounds: new Rounds(join(ROOM_HOME, "rounds.json")),
+    taskKeys: new TaskKeys(join(ROOM_HOME, "task-keys.json"), log),
     gate: new ReviewGate(),
     recovery: new Recovery(join(ROOM_HOME, "recovery.json"), policy.room.recovery),
     rotations: new Rotations(join(ROOM_HOME, "rotations.json")),
@@ -565,7 +578,9 @@ export function startRoom(input: {
   };
   /** An archived seat can never call the room's tools again. */
   const forget = (agentId: string) => {
-    room.rounds.forget(agentId);
+    // the rounds of a task go with its last seat, not with one that a successor replaced
+    const task = room.taskKeys.forget(agentId);
+    if (task) room.rounds.forget(task);
     room.lastUsage.delete(agentId);
     room.callers.forget(agentId);
     room.briefs.delete(agentId);
@@ -580,6 +595,7 @@ export function startRoom(input: {
     { what: "council readings", expire: () => safety.expireCouncil() },
     { what: "knowledge record", expire: () => knowledge.expire() },
     { what: "task rounds", expire: (before) => room.rounds.expire(before) },
+    { what: "task keys", expire: () => room.taskKeys.expire((seat) => engine.seat(seat) !== undefined) },
     // a closed issue lives as long as the finished mail about it
     { what: "closed issues", expire: (before) => room.works.expire(before, engine.projects()) },
     { what: "operations log lines", expire: () => operations.expire() },

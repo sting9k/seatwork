@@ -573,20 +573,22 @@ export class MailEngine implements Directory {
     return this.heldBy(store, message.id, to[0])!;
   }
 
-  /** Writes a mail's file and its thread's; the store stands when a file cannot be written. */
+  /** Writes a mail's file and, the first time only, its entry in its thread's; the store stands when a file cannot be written. */
   private file(store: MailStore, dir: string, id: number): void {
     const message = store.get(id);
     if (!message) return;
     const deliveries = store.deliveries(id);
     try {
       const file = writeMessage(dir, { message, deliveries });
+      if (!message.file) {
+        const to = deliveries.map((d) =>
+          this.label(d.seat, message.sender) === "owner"
+            ? "owner"
+            : seatLabel(this.seats.get(d.seat) ?? { role: "seat", agentId: d.seat, title: null }),
+        );
+        appendThread(dir, { ...message, file }, this.label(message.sender, deliveries[0]?.seat ?? ""), to.join(", "));
+      }
       store.revise(id, { file });
-      const to = deliveries.map((d) =>
-        this.label(d.seat, message.sender) === "owner"
-          ? "owner"
-          : seatLabel(this.seats.get(d.seat) ?? { role: "seat", agentId: d.seat, title: null }),
-      );
-      appendThread(dir, { ...message, file }, this.label(message.sender, deliveries[0]?.seat ?? ""), to.join(", "));
     } catch (error) {
       this.log(`mail: #${id} has no file: ${error instanceof Error ? error.message : String(error)}`);
     }
@@ -717,15 +719,16 @@ export class MailEngine implements Directory {
     return mails;
   }
 
-  /** Mail held for a seat, without delivering it. */
-  held(agentId: string): Mail[] {
-    return this.storeOf(agentId, false)?.queued(agentId) ?? [];
+  /** How many mails are held for a seat and since when the oldest has been; undefined when none is. Reads no body. */
+  holding(agentId: string): { mails: number; oldestAt: string } | undefined {
+    const waiting = this.storeOf(agentId, false)?.waitingFor(agentId);
+    return waiting && { mails: waiting.count, oldestAt: waiting.since };
   }
 
-  /** The asks that reached a seat and still wait for its answer; undefined when it owes none. */
+  /** The asks that reached a seat and still wait for its answer; undefined when it owes none. Reads no body. */
   owes(agentId: string): { asks: number; oldestAt: string } | undefined {
-    const owed = this.storeOf(agentId, false)?.owedBy(agentId) ?? [];
-    return owed.length > 0 ? { asks: owed.length, oldestAt: owed[0].at } : undefined;
+    const owed = this.storeOf(agentId, false)?.owedCount(agentId);
+    return owed && { asks: owed.count, oldestAt: owed.since };
   }
 
   /** Hands a seat its held mail; mail on its way out is left alone. */

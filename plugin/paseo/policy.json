@@ -317,7 +317,7 @@
     "repeat": { "count": 3, "minutes": 30 },
     "handin": { "mode": "block" },
     "council": {
-      "$comment": "The council that reads each turn of a briefed, writing or reviewing seat (shared/safety/council.json). levels: a member's level on this machine, over the shipped one. Readings no label holds are kept keepDays; tickSeconds paces the look at running turns.",
+      "$comment": "The council that reads each turn of a briefed, writing or reviewing seat (shared/safety/council.json). levels: a member's level on this machine, over the shipped one, at most 2 (labels alone earn the level that sends a hand-in back). Readings no label holds are kept keepDays; tickSeconds paces the look at running turns. chairMinutes: how long an appeal waits for the chair's ruling before it lapses, 30 when not set.",
       "mode": "on",
       "keepDays": 90,
       "tickSeconds": 60,

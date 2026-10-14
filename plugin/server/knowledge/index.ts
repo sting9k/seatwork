@@ -55,11 +55,18 @@ export interface EndedTurn {
   events: readonly TurnEvent[];
 }
 
+/** What a seat that takes another's place is given: lines for its prompt, and the decisions they already told. */
+export interface Inheritance {
+  lines: string[];
+  shown: { note: string; version: number }[];
+}
+
 const PROJECT_DIR = join(".seatwork", ".knowledge");
 
 const MAIL = { batch: 500, batches: 5, chars: 20_000 } as const;
 const SEARCH = { pool: 50, limit: 10, most: 50, phrases: 4 } as const;
 const AROUND = { default: 5, most: 20 } as const;
+const ANSWER_CHARS = 30_000;
 const PACK = { default: 6000, most: 20_000, pool: 2000 } as const;
 const MAX_ENTRIES = 300_000;
 const DECISIONS_KEPT_DAYS = 365;
@@ -68,6 +75,7 @@ const FOLLOWED_CALLS = 3;
 const ADDRESS_CHARS = 500;
 const COMMAND = /^\/[\w:-]+(\s|$)/;
 const TELLING_MS = 30_000;
+const SUCCESSOR_CHARS = 2500;
 const KINDS: readonly EntryKind[] = ["owner", "prompt", "say", "shell", "change", "read", "tool", "mail"];
 
 /** A found entry as a seat reads it: where it is, when, whose, and the words. */
@@ -82,6 +90,39 @@ function shown(found: Found, text: string) {
     ...(found.exitCode !== null ? { exitCode: found.exitCode } : {}),
     text,
   };
+}
+
+/** The entries of one source nearest `ordinal` that fit `chars` together, in order; the nearest stays whatever its size. */
+function nearest(entries: readonly Found[], ordinal: number, chars: number): { kept: Found[]; left: Found[] } {
+  const away = (found: Found) => Math.abs(found.ordinal - ordinal);
+  const byDistance = [...entries].sort((a, b) => away(a) - away(b) || a.ordinal - b.ordinal);
+  let used = 0;
+  let count = 0;
+  while (count < byDistance.length && (count === 0 || used + byDistance[count].text.length <= chars)) {
+    used += byDistance[count].text.length;
+    count += 1;
+  }
+  const inOrder = (a: Found, b: Found) => a.ordinal - b.ordinal;
+  return { kept: byDistance.slice(0, count).sort(inOrder), left: byDistance.slice(count).sort(inOrder) };
+}
+
+/** What a seat is told about entries left out of a view: how many, where they were, and how to read them. */
+function cutNote(left: readonly Found[], ordinal: number, address: string): string {
+  const side = (found: readonly Found[], word: string) =>
+    found.length === 0
+      ? []
+      : [`${found.length} ${word} it (#${found[0].ordinal}${found.length > 1 ? ` to #${found.at(-1)!.ordinal}` : ""})`];
+  const spans = [
+    ...side(
+      left.filter((found) => found.ordinal < ordinal),
+      "before",
+    ),
+    ...side(
+      left.filter((found) => found.ordinal > ordinal),
+      "after",
+    ),
+  ];
+  return `To hold the answer to ${ANSWER_CHARS} characters, the entries farthest from ${address} were left out: ${spans.join(" and ")}. do=view with the address of one reads it alone; do=expand with a smaller \`around\` reads fewer.`;
 }
 
 /** The first number of the policy the district could not run with, by its name; null when all are in range. */
@@ -136,7 +177,7 @@ export class Knowledge {
   private readonly briefedSeats = new Set<string>();
   private refused: string | null = null;
   private readonly notes = new Map<string, { key: string; line: string }[]>();
-  private readonly telling = new Map<string, number>();
+  private readonly telling = new Map<string, { at: number; lost: boolean }>();
   private readonly searched = new Map<string, { store: KnowledgeStore; id: number; hits: string[]; left: number }>();
   readonly decisions: DecisionBook;
   readonly gate: Gate;
@@ -249,14 +290,57 @@ export class Knowledge {
       } catch (error) {
         this.deps.log(`knowledge: the decisions of ${ref} did not settle: ${(error as Error).message}`);
       }
-      if (turn.events.some((event) => event.kind === "compaction"))
-        try {
-          this.decisions.compacted(turn.agent);
-          this.retell(turn.agent, store);
-        } catch (error) {
-          this.deps.log(`knowledge: ${turn.agent} is not told again after its compaction: ${(error as Error).message}`);
-        }
+      if (turn.events.some((event) => event.kind === "compaction")) this.compacted(turn.agent);
     }
+  }
+
+  /** A seat's context was compacted, as its timeline or its reported context size shows: what it was told may be gone, so it is told again. */
+  compacted(agent: string): void {
+    if (!this.on) return;
+    try {
+      this.decisions.compacted(agent);
+      // a notice on its way may have reached the seat before the compaction, so it says nothing of the new context
+      const flight = this.telling.get(agent);
+      if (flight) flight.lost = true;
+      this.retell(agent, this.existing(this.deps.projectOf(agent)));
+    } catch (error) {
+      this.deps.log(`knowledge: ${agent} is not told again after its compaction: ${(error as Error).message}`);
+    }
+  }
+
+  /** What the seat that takes `agent`'s place is given: the decisions in force for the task, and where the old seat's record is read; null when there is nothing to give. */
+  forSuccessor(agent: string): Inheritance | null {
+    if (!this.on) return null;
+    try {
+      const block = this.decisions.forSuccessor(agent, SUCCESSOR_CHARS);
+      const record = this.recordPointer(agent);
+      if (!block && record.length === 0) return null;
+      return { lines: [...(block ? [block.text, ""] : []), ...record], shown: block?.held ?? [] };
+    } catch (error) {
+      this.deps.log(`knowledge: nothing could be kept for the successor of ${agent}: ${(error as Error).message}`);
+      return null;
+    }
+  }
+
+  /** The successor stands: what its prompt told it of the decisions is marked told. */
+  inherited(agent: string, kept: Inheritance): void {
+    if (!this.on) return;
+    try {
+      this.decisions.givenInPrompt(agent, kept.shown);
+    } catch (error) {
+      this.deps.log(`knowledge: what ${agent} was given at its start was not marked: ${(error as Error).message}`);
+    }
+  }
+
+  /** Where the turns of a seat and the evidence of its task are read; none when the record holds no turn of it. */
+  private recordPointer(agent: string): string[] {
+    const store = this.existing(this.deps.projectOf(agent));
+    if (!store?.hasTurnOf(agent)) return [];
+    const brief = store.briefOf(agent);
+    return [
+      "## The old seat's record",
+      `Its turns and the mail it was in are kept in the room's record: seatwork_knowledge do=pack task=${this.deps.taskOf(agent)} packs the evidence of the task, and do=search agent=${agent} q=<words> searches the old seat's own turns${brief ? `; its brief is at ${brief}, read with do=view` : ""}.`,
+    ];
   }
 
   /** The block of decisions a seat starting in `cwd` is given in its system prompt, held for its `launch`; null when there is none. */
@@ -285,17 +369,20 @@ export class Knowledge {
     if (!this.on) return null;
     const now = this.now().getTime();
     // a notice already on its way is not made again until it is told, or until it is surely lost
-    const since = this.telling.get(agent);
-    if (since !== undefined && now - since < TELLING_MS) return null;
+    const flight = this.telling.get(agent);
+    if (flight && !flight.lost && now - flight.at < TELLING_MS) return null;
     try {
       const notices = this.decisions.notices(agent);
       const notes = [...(this.notes.get(agent) ?? [])];
       if (!notices && notes.length === 0) return null;
-      this.telling.set(agent, now);
+      const sent = { at: now, lost: false };
+      this.telling.set(agent, sent);
       return {
         text: [notices?.text, ...notes.map((note) => `[knowledge] ${note.line}`)].filter(Boolean).join("\n"),
         told: () => {
-          this.telling.delete(agent);
+          if (this.telling.get(agent) === sent) this.telling.delete(agent);
+          // a compaction came while it was on its way: what it held may be gone, so nothing is marked told
+          if (sent.lost) return;
           try {
             if (notices) this.decisions.delivered(agent, notices);
             // only what this notice held is told: a note made while it was on its way waits for the next
@@ -542,7 +629,7 @@ export class Knowledge {
     }
   }
 
-  /** The entries at an address and around it, or that they are gone. */
+  /** The entries at an address and around it, held to ANSWER_CHARS, or that they are gone. */
   private read(
     store: KnowledgeStore | null,
     action: "view" | "expand",
@@ -562,7 +649,12 @@ export class Knowledge {
         throw new KnowledgeRefused(`${action}: ${address} is not yours to read`);
       return { address, expired: true, entries: [] };
     }
-    return { address, entries: entries.map((found) => shown(found, found.text)) };
+    const { kept, left } = nearest(entries, at.ordinal, ANSWER_CHARS);
+    return {
+      address,
+      entries: kept.map((found) => shown(found, found.text)),
+      ...(left.length ? { cut: { entries: left.length, note: cutNote(left, at.ordinal, address) } } : {}),
+    };
   }
 
   /** Drops what is past the policy's days or size from every store of the room, a bounded part a pass; the GC calls it. */

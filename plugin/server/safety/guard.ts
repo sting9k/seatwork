@@ -82,6 +82,7 @@ const DEFAULTS = { budgetMs: 1000, maxBytes: 64 * 1024, codeHours: 24, repeat: {
 const CHAIN = /[;&|`\n<>]|\$\(/;
 const RANK: Record<Mode, number> = { log: 0, warn: 1, ask: 2, deny: 3 };
 const RULES_LOOKED_MS = 3000;
+const SHOWN_CHARS = 4000;
 const NO_RULES: ProjectRules = { add: [], rules: {} };
 
 /** Judges each shell command and file write of a seat by the packs in force, the owner's exceptions and granted codes. */
@@ -172,10 +173,11 @@ export class Guard {
     const decided = blocks[0]?.f ?? null;
     const grantor: Grantor = blocks.some((b) => ruleOf(b.f.pack, b.f.rule)?.grant === "human") ? "human" : "owner";
     const hours = policy.codeHours ?? DEFAULTS.codeHours;
+    const shown = shownOf(command);
     if (call.dry)
       return {
         allow: false,
-        message: blocked(decided, doubts, "(none: a check gives no code)", grantor, command, 0),
+        message: blocked(decided, doubts, "(none: a check gives no code)", grantor, shown, 0),
         finding: decided,
         code: null,
         grantor,
@@ -186,7 +188,7 @@ export class Guard {
       hash: codeHash(seat?.id ?? null, cwd, command),
       seat: seat?.id ?? null,
       cwd,
-      shown: redact(command),
+      shown,
       pack,
       rule,
       grantor,
@@ -198,11 +200,11 @@ export class Guard {
       const since = new Date(Date.now() - repeat.minutes * 60_000);
       const count = store.denials(seat.id, decided.rule, since);
       if (count >= repeat.count && store.escalate(seat.id, decided.rule, since))
-        this.deps.repeated(seat, `${decided.pack}:${decided.rule}`, count, redact(command));
+        this.deps.repeated(seat, `${decided.pack}:${decided.rule}`, count, shown);
     }
     return {
       allow: false,
-      message: blocked(decided, doubts, code, grantor, command, hours),
+      message: blocked(decided, doubts, code, grantor, shown, hours),
       finding: decided,
       code,
       grantor,
@@ -226,7 +228,7 @@ export class Guard {
       role: seat?.role ?? null,
       cli: call.cli,
       cwd: call.cwd,
-      command: redact(call.command),
+      command: shownOf(call.command),
       ...what,
       elapsedUs: Number(process.hrtime.bigint() - call.began) / 1000,
     });
@@ -335,7 +337,7 @@ function blocked(
   doubts: Doubt[],
   code: string,
   grantor: Grantor,
-  command: string,
+  shown: string,
   hours: number,
 ): string {
   const lines: string[] = [];
@@ -355,9 +357,16 @@ function blocked(
       ? `Only the person can let it run: tell your Owner why you need it and give code ${code}.`
       : `If you need it, ask your Owner to allow it once with code ${code}: this exact command, in this folder, within ${hours} hours.`,
   );
-  const shown = redact(command);
   lines.push(`Command: ${shown.length > 400 ? `${shown.slice(0, 400)}...` : shown}`);
   return lines.join("\n");
+}
+
+/** A command as the room keeps and shows it: its start, cut between words so no secret is cut in half, with secrets hidden. */
+function shownOf(command: string): string {
+  if (command.length <= SHOWN_CHARS) return redact(command);
+  const start = command.slice(0, SHOWN_CHARS);
+  const space = start.search(/\s\S*$/);
+  return redact(space > SHOWN_CHARS / 2 ? start.slice(0, space) : start);
 }
 
 /** The note that rides on a call the guard let run. */

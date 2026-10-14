@@ -1762,3 +1762,203 @@ test("a project's seat records its own project's decisions only, and the room's 
   );
   knowledge.close();
 });
+
+test("a seat that replaces another is given the decisions in force for the task and where the old seat's record is read, and is not told them again", async () => {
+  const { knowledge } = district({ taskOf: () => "T-1" });
+  await decide(knowledge, "lead-old", { scope: "task", topic: "store", statement: "Use SQLite for the store." });
+  await decide(knowledge, "lead-old", {
+    scope: "task",
+    topic: "cache",
+    statement: "Never cache a row between two requests.",
+  });
+  knowledge.turnEnded({
+    ...turn("lead-old", [{ kind: "prompt", text: BRIEF }], { turnId: "o1", parentId: "sup-1" }),
+    role: "lead",
+  });
+  const kit = knowledge.forSuccessor("lead-old")!;
+  const text = kit.lines.join("\n");
+  assert.match(text, /^## Decisions in force for your task \(as of /);
+  assert.match(text, /- \[task T-1\] cache: Never cache a row between two requests\./);
+  assert.match(text, /- \[task T-1\] store: Use SQLite for the store\./);
+  assert.match(text, /seatwork_knowledge do=pack task=T-1/);
+  assert.match(text, /do=search agent=lead-old/);
+  assert.match(text, /brief is at turn:lead-old:o1#0/);
+  assert.equal(kit.shown.length, 2);
+
+  knowledge.opened("lead-new", null);
+  knowledge.inherited("lead-new", kit);
+  assert.equal(knowledge.noticesFor("lead-new"), null, "the decisions its prompt held are not news");
+  // a decision made after the kit was made is still news to the successor
+  await decide(knowledge, "lead-old", { scope: "task", topic: "queue", statement: "Run the queue in one process." });
+  assert.match(knowledge.noticesFor("lead-new")!.text, /New decision: \[task T-1\] queue: Run the queue/);
+  knowledge.close();
+});
+
+test("what a successor is given about its task has a size; with nothing to give, or the district off, it is given nothing", async () => {
+  const { knowledge } = district({ taskOf: () => "T-1" });
+  assert.equal(knowledge.forSuccessor("lead-none"), null, "no decision and no turn kept");
+  for (let i = 0; i < 40; i += 1)
+    await decide(knowledge, "lead-old", {
+      scope: "task",
+      topic: `step ${i}`,
+      new_topic: true,
+      statement: `Run step number ${i} before every other step of the checkout.`,
+    });
+  const kit = knowledge.forSuccessor("lead-old")!;
+  const text = kit.lines.join("\n");
+  assert.ok(text.length <= 3000, `${text.length} characters`);
+  assert.match(text, /Also in force, by topic: step-\d+ \(task T-1\)/);
+  assert.ok(kit.shown.length < 40 && kit.shown.length > 5, "only the decisions shown whole count as told");
+  knowledge.close();
+
+  const off = district({ policy: { mode: "off", keepDays: 60 } });
+  assert.equal(off.knowledge.forSuccessor("lead-old"), null);
+  off.knowledge.close();
+});
+
+/** A district with a project decision in force and a seat that started on a brief, as after its first compaction test. */
+async function compactable() {
+  const made = district({
+    threadsOf: (agent) =>
+      agent === "peer-c" ? ['- T-1: 2 mails, the last #4 "REVIEW: checkout" from your Lead.'] : [],
+  });
+  const { knowledge, project } = made;
+  knowledge.turnStarted("sup-1");
+  await decide(knowledge, "sup-1", {
+    scope: "project",
+    project: "project",
+    topic: "package manager",
+    statement: "Use pnpm for every install.",
+  });
+  knowledge.turnEnded({
+    ...turn("sup-1", [{ kind: "prompt", text: "the package manager" }], { turnId: "t1" }),
+    role: "supervisor",
+  });
+  knowledge.noticesFor("sup-1")?.told();
+  assert.match(knowledge.promptFor(project, "Lc")!, /Use pnpm/);
+  knowledge.opened("peer-c", "Lc");
+  knowledge.noticesFor("peer-c")?.told();
+  knowledge.turnEnded(turn("peer-c", [{ kind: "prompt", text: BRIEF }], { parentId: "lead-c", turnId: "c1" }));
+  return made;
+}
+
+const compactionTurn = (knowledge: Knowledge, id: string) =>
+  knowledge.turnEnded(
+    turn(
+      "peer-c",
+      [{ kind: "say", text: "Still on the checkout." }, eventOf({ type: "compaction", status: "completed" })!],
+      {
+        turnId: id,
+      },
+    ),
+  );
+
+const TOLD_AGAIN = [
+  "[knowledge] Your context was compacted: the decisions in force are told again; they stand over any older version in your prompt.",
+  `[knowledge] New decision: [project] package-manager: Use pnpm for every install. (since ${new Date().toISOString().slice(0, 10)}; v1)`,
+  "[knowledge] Your brief stands, kept at turn:peer-c:c1#0: seatwork_knowledge do=view reads it.",
+  "[knowledge] The mail threads you are in, newest first:",
+  '- T-1: 2 mails, the last #4 "REVIEW: checkout" from your Lead.',
+].join("\n");
+
+test("a seat is told its decisions, its brief and its threads again after every compaction, the second and third as the first", async () => {
+  const { knowledge } = await compactable();
+  for (const [round, id] of ["c2", "c3", "c4"].entries()) {
+    assert.equal(knowledge.noticesFor("peer-c"), null, `nothing to tell before compaction ${round + 1}`);
+    compactionTurn(knowledge, id);
+    const again = knowledge.noticesFor("peer-c")!;
+    assert.equal(again.text, TOLD_AGAIN, `compaction ${round + 1}`);
+    again.told();
+  }
+  assert.equal(knowledge.noticesFor("peer-c"), null);
+  assert.equal(knowledge.storeOf(null).tallies("2000-01-01")["seat-compacted"], 3);
+  knowledge.close();
+});
+
+test("a compaction while a notice is on its way: that notice proves nothing about the new context, so everything is told again", async () => {
+  const { knowledge } = await compactable();
+  compactionTurn(knowledge, "c2");
+  const onItsWay = knowledge.noticesFor("peer-c")!;
+  assert.equal(onItsWay.text, TOLD_AGAIN);
+  // the seat's context was compacted again before the notice was marked told
+  compactionTurn(knowledge, "c3");
+  onItsWay.told();
+  const again = knowledge.noticesFor("peer-c")!;
+  assert.ok(again, "a notice made before a compaction marked the seat told after it");
+  assert.equal(again.text, TOLD_AGAIN);
+  again.told();
+  assert.equal(knowledge.noticesFor("peer-c"), null);
+  knowledge.close();
+});
+
+test("a notice that arrives after a compaction does not stop the next one from being made, and one made after it is marked told as usual", async () => {
+  const { knowledge } = await compactable();
+  compactionTurn(knowledge, "c2");
+  const first = knowledge.noticesFor("peer-c")!;
+  compactionTurn(knowledge, "c3");
+  // the compaction frees the seat to be told: the notice on its way is not waited for
+  const second = knowledge.noticesFor("peer-c")!;
+  assert.equal(second.text, TOLD_AGAIN);
+  first.told();
+  assert.equal(knowledge.noticesFor("peer-c"), null, "the second notice is still on its way");
+  second.told();
+  assert.equal(knowledge.noticesFor("peer-c"), null);
+  knowledge.close();
+});
+
+test("a compaction the room learns of from the seat's reported context is told as one the timeline showed, once", async () => {
+  const { knowledge } = await compactable();
+  knowledge.compacted("peer-c");
+  assert.equal(knowledge.noticesFor("peer-c")!.text, TOLD_AGAIN);
+  knowledge.close();
+});
+
+/** Says of the given sizes in characters, each opening with its place. */
+const longTurn = (sizes: readonly number[]) =>
+  sizes.map((size, i): TurnEvent => ({ kind: "say", text: `#${i} `.padEnd(size, "x") }));
+
+test("view and expand hold one answer to a size, leaving out the entries farthest from the address and saying which", () => {
+  const { knowledge } = district();
+  knowledge.turnStarted("peer-w");
+  knowledge.turnEnded(turn("peer-w", longTurn(Array(41).fill(1000))));
+  const address = "turn:peer-w:turn-peer-w#20";
+  const answer = ask(knowledge, "peer-w", { do: "expand", address, around: 20 }) as {
+    entries: { address: string; text: string }[];
+    cut?: { entries: number; note: string };
+  };
+  const ordinals = answer.entries.map((entry) => Number(entry.address.split("#")[1]));
+  assert.deepEqual(
+    ordinals,
+    Array.from({ length: 30 }, (_, i) => i + 5),
+    "the window nearest the address that fits, in order",
+  );
+  assert.ok(answer.entries.reduce((sum, entry) => sum + entry.text.length, 0) <= 30_000);
+  assert.equal(answer.cut?.entries, 11);
+  assert.match(answer.cut!.note, /5 before it \(#0 to #4\) and 6 after it \(#35 to #40\)/);
+  assert.match(answer.cut!.note, /30000 characters/);
+  assert.match(answer.cut!.note, /do=view[^.]*address[^.]*do=expand[^.]*smaller `around`/);
+
+  // what fits whole comes whole, with nothing said
+  const small = ask(knowledge, "peer-w", { do: "expand", address, around: 10 });
+  assert.equal((small.entries as unknown[]).length, 21);
+  assert.equal("cut" in small, false);
+  knowledge.close();
+});
+
+test("an entry that alone is past the size is still answered whole when it is the one asked for", () => {
+  const { knowledge } = district();
+  knowledge.turnStarted("peer-w");
+  knowledge.turnEnded(turn("peer-w", longTurn([20_000, 45_000, 20_000])));
+  const answer = ask(knowledge, "peer-w", { do: "expand", address: "turn:peer-w:turn-peer-w#1", around: 1 }) as {
+    entries: { address: string; text: string }[];
+    cut?: { entries: number; note: string };
+  };
+  assert.deepEqual(
+    answer.entries.map((entry) => entry.address),
+    ["turn:peer-w:turn-peer-w#1"],
+  );
+  assert.equal(answer.entries[0].text.length, 45_000);
+  assert.equal(answer.cut?.entries, 2);
+  assert.match(answer.cut!.note, /1 before it \(#0\) and 1 after it \(#2\)/);
+  knowledge.close();
+});

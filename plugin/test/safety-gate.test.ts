@@ -185,8 +185,10 @@ const cases: [string, string[]][] = [
   ["echo hi > ~/notes-new.txt", []],
   ["echo hi > out.txt", []],
   ["echo hi > $OUT", ["core.filesystem:redirect-truncate-dynamic-path"]],
-  ["echo x > .git/config", ["core.filesystem:git-internals-write"]],
-  ["echo x >> sub/.git/hooks/pre-commit", ["core.filesystem:git-internals-write"]],
+  ["echo x > .git/HEAD", ["core.filesystem:git-internals-write"]],
+  ["echo x >> sub/.git/info/exclude", ["core.filesystem:git-internals-write"]],
+  ["echo x > .git/config", ["room.guard:git-config-write"]],
+  ["echo x >> sub/.git/hooks/pre-commit", ["room.guard:git-config-write"]],
   ["ls > /dev/null 2>&1", []],
   // credentials: the table of protected files
   ["echo k > ~/.ssh/authorized_keys", ["core.filesystem:credential-file-write"]],

@@ -632,7 +632,7 @@ test("at most eight calls are in flight: more wait their turn, and past the queu
   jev.close();
 });
 
-test("the same question about the same state is answered from memory for ten minutes, with the ids it was logged under", async () => {
+test("the same question about the same state is answered from memory for ten minutes, with the ids it was logged under, unless asked fresh", async () => {
   let now = new Date("2026-10-15T10:00:00Z");
   const reply = () => json({ model: "m", answers: SYSTEM_ONE, usage: { input_tokens: 10, cost: 0.001 } });
   const replies = provider(reply, reply);
@@ -642,6 +642,11 @@ test("the same question about the same state is answered from memory for ten min
   assert.deepEqual([again.cached, again.usd, again.asks], [true, 0, first.asks]);
   await jev.decide("other", { said: "done" }, QUESTIONS);
   assert.equal(replies.sent.length, 2, "another caller asks for itself");
+  await assert.rejects(
+    jev.decide("t", { said: "done" }, QUESTIONS, { fresh: true }),
+    { code: "HTTP" },
+    "a fresh ask goes to the provider",
+  );
   now = new Date("2026-10-15T10:11:00Z");
   await assert.rejects(
     jev.decide("t", { said: "done" }, QUESTIONS),

@@ -1,5 +1,6 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import config from "../../shared/work.json";
 import { alerts, blockerChain, next, plan, triage } from "./graph";
 import {
   WorkError,
@@ -56,9 +57,9 @@ const need = (args: Args, field: string): string => {
   if (!value) throw new WorkError("VALIDATION_FAILED", `give \`${field}\``);
   return value;
 };
-/** The `limit` argument, from 1 to 1000, else the fallback. */
-const limitOf = (args: Args, fallback: number) =>
-  Number(args.limit) >= 1 ? Math.min(Math.trunc(Number(args.limit)), 1000) : fallback;
+/** The `limit` argument, from 1 to `most`, else the fallback. */
+const limitOf = (args: Args, fallback: number, most = 1000) =>
+  Number(args.limit) >= 1 ? Math.min(Math.trunc(Number(args.limit)), most) : fallback;
 /** A whole number from a number or its text; refused when it is anything else. */
 function whole(value: unknown, field: string): number | undefined {
   if (value === undefined || value === null) return undefined;
@@ -128,11 +129,22 @@ export function work(store: WorkStore, policy: WorkPolicy, caller: Caller, args:
         : brief(store.create(newIssue(args), actor));
     case "show": {
       const issue = store.get(need(args, "id"));
+      const { total, comments } = store.comments(issue.id, config.commentsShown);
       return {
         ...issue,
         blocked_by: store.blockers(issue.id),
-        comments: store.comments(issue.id),
+        comments,
+        ...(total > comments.length ? { older_comments: total - comments.length } : {}),
         events: store.events(issue.id, limitOf(args, 10)),
+      };
+    }
+    case "comments": {
+      const issue = store.get(need(args, "id"));
+      const skip = Math.max(0, whole(args.skip, "skip") ?? 0);
+      return {
+        id: issue.id,
+        skip,
+        ...store.comments(issue.id, limitOf(args, config.commentsMost, config.commentsMost), skip),
       };
     }
     case "list": {
@@ -208,7 +220,7 @@ export function work(store: WorkStore, policy: WorkPolicy, caller: Caller, args:
     default:
       throw new WorkError(
         "VALIDATION_FAILED",
-        `\`do\` is one of create, show, list, ready, claim, update, note, comment, depend, undepend, close, reopen`,
+        `\`do\` is one of create, show, comments, list, ready, claim, update, note, comment, depend, undepend, close, reopen`,
       );
   }
 }

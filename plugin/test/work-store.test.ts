@@ -2,7 +2,17 @@ import { ROOM_HOME, shipSql } from "./support/room";
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { execFileSync } from "node:child_process";
-import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  copyFileSync,
+  existsSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
 import { DatabaseSync } from "node:sqlite";
 import { basename, dirname, join } from "node:path";
 import { test } from "node:test";
@@ -118,7 +128,7 @@ test("a seat that is gone holds nothing: its work is open again, or its successo
   assert.deepEqual([store.get(one.id).assignee, store.get(one.id).status], [null, "open"]);
   assert.match(store.get(one.id).notes, /^\[2026-10-14T09:\d\d:\d\d\.000Z peer-a\] half of the index is written$/);
   assert.deepEqual(
-    store.comments(one.id).map((comment) => [comment.author, comment.text]),
+    store.comments(one.id).comments.map((comment) => [comment.author, comment.text]),
     [["lead", "keep the v2 reader"]],
   );
   assert.deepEqual(
@@ -232,7 +242,7 @@ test("a store whose database is lost or damaged comes back from its text copy, a
   const back = new WorkStore(dir, TIMING);
   assert.deepEqual([back.count(), back.get(one.id).assignee, back.blockers(two.id)], [2, "peer-a", [one.id]]);
   assert.deepEqual(
-    back.comments(one.id).map((comment) => comment.text),
+    back.comments(one.id).comments.map((comment) => comment.text),
     ["keep the v2 reader"],
   );
   assert.equal(back.events(one.id, 1)[0].event_type, "restored");
@@ -258,9 +268,11 @@ test("every query the store runs is served by an index, but the whole-store ones
   store.ready({ parent: a.id });
   store.list({ assignee: "p1", status: "in_progress", limit: 1 });
   store.list({ status: "open" });
+  store.list({ limit: 5 });
+  store.heldBy("p1");
   store.get(b.id.slice(0, 6));
   store.blockers(c.id);
-  store.comments(b.id);
+  store.comments(b.id, 5, 1);
   store.events(b.id, 10);
   store.openWork();
   store.release("p1", null, "room");
@@ -673,4 +685,143 @@ test("a store whose text copy cannot be written is closed all the same", () => {
   mkdirSync(join(dir, "issues.jsonl", "in-the-way"), { recursive: true });
   assert.throws(() => store.close());
   assert.throws(() => store.count(), /not open/);
+});
+
+test("the issue a seat holds is read as one row by its assignee, the first the list would give", () => {
+  const { store } = fresh();
+  const low = store.create({ title: "low", priority: 3 }, "lead");
+  const high = store.create({ title: "high", priority: 1 }, "lead");
+  store.create({ title: "idle" }, "lead");
+  assert.equal(store.heldBy("p1"), undefined);
+  store.claim(low.id, "p1");
+  store.claim(high.id, "p1");
+  store.claim(store.create({ title: "other seat's" }, "lead").id, "p2");
+  assert.equal(store.heldBy("p1"), high.id);
+  assert.equal(store.heldBy("p1"), store.list({ assignee: "p1", status: "in_progress", limit: 1 }).issues[0].id);
+  store.update(high.id, { assignee: null }, "p1");
+  assert.equal(store.heldBy("p1"), low.id);
+  store.closeIssue(low.id, "done in 4f2a91c, tests green", "lead", { ...POLICY, forbidSelfClose: false });
+  assert.equal(store.heldBy("p1"), undefined);
+  assert.match(
+    store
+      .plans()
+      .filter(({ sql }) => sql.includes("INDEXED BY issues_by_assignee"))
+      .map(({ plan }) => plan)
+      .join(" | "),
+    /SEARCH issues USING INDEX issues_by_assignee \(assignee=\? AND status=\?\)/,
+  );
+});
+
+test("a list counts the issues that match only when its page is full", () => {
+  const { store } = fresh();
+  for (const title of ["a", "b", "c"]) store.create({ title }, "lead");
+  const counted: string[] = [];
+  const row = (store as unknown as { row: (sql: string, ...params: unknown[]) => unknown }).row.bind(store);
+  (store as unknown as { row: unknown }).row = (sql: string, ...params: unknown[]) => (
+    sql.includes("COUNT(*)") && counted.push(sql),
+    row(sql, ...params)
+  );
+  assert.deepEqual(
+    [store.list({ limit: 50 }), store.list()].map(({ issues, total }) => [issues.length, total]),
+    [
+      [3, 3],
+      [3, 3],
+    ],
+  );
+  assert.deepEqual(counted, [], "a page with room to spare is the whole answer");
+  assert.deepEqual(
+    [store.list({ limit: 2 })].map(({ issues, total }) => [issues.length, total]),
+    [[2, 3]],
+  );
+  assert.deepEqual(
+    [store.list({ limit: 3 })].map(({ issues, total }) => [issues.length, total]),
+    [[3, 3]],
+  );
+  assert.equal(counted.length, 2);
+});
+
+test("a list of the issues with no filter, or of one status, is read in index order, not sorted", () => {
+  const { store } = fresh();
+  for (const title of ["a", "b", "c"]) store.create({ title, priority: title === "b" ? 0 : 2 }, "lead");
+  assert.deepEqual(
+    store.list({ limit: 2 }).issues.map((issue) => issue.title),
+    ["b", "a"],
+  );
+  store.list({ status: "open", limit: 2 });
+  const sorted = store
+    .plans()
+    .filter(({ sql }) => sql.startsWith("SELECT * FROM issues") && sql.includes("ORDER BY priority"))
+    .filter(({ plan }) => plan.includes("USE TEMP B-TREE FOR ORDER BY"));
+  assert.deepEqual(sorted, []);
+});
+
+test("a call to show returns the newest few comments with a count of the rest, and comments pages back through them", () => {
+  const { store } = fresh();
+  const rules = { busyTimeoutMs: 5000, flushAfterMs: 60_000, staleClaimMinutes: 120, close: POLICY };
+  const lead = { id: "lead", owner: true };
+  const issue = store.create({ title: "schema" }, "lead");
+  type Shown = { comments: { text: string }[]; older_comments?: number };
+  const shown = () => work(store, rules, lead, { do: "show", id: issue.id }) as Shown;
+  for (let i = 1; i <= 3; i += 1) store.comment(issue.id, "p1", `comment ${i}`);
+  assert.deepEqual(
+    shown().comments.map((one) => one.text),
+    ["comment 1", "comment 2", "comment 3"],
+  );
+  assert.equal(shown().older_comments, undefined);
+
+  for (let i = 4; i <= 12; i += 1) store.comment(issue.id, "p1", `comment ${i}`);
+  const few = vocabulary.commentsShown;
+  assert.equal(few, 5);
+  assert.deepEqual(
+    shown().comments.map((one) => one.text),
+    ["comment 8", "comment 9", "comment 10", "comment 11", "comment 12"],
+  );
+  assert.equal(shown().older_comments, 7);
+
+  const page = (args: object) =>
+    work(store, rules, lead, { do: "comments", id: issue.id, ...args }) as {
+      total: number;
+      skip: number;
+      comments: { text: string }[];
+    };
+  const older = page({ skip: 5, limit: 4 });
+  assert.deepEqual(
+    older.comments.map((one) => one.text),
+    ["comment 4", "comment 5", "comment 6", "comment 7"],
+  );
+  assert.deepEqual([older.total, older.skip], [12, 5]);
+  assert.equal(page({ skip: 9, limit: 4 }).comments.length, 3, "the last page holds what is left");
+  assert.equal(page({}).comments.length, 12, "all of them when they are fewer than the most a call returns");
+
+  for (let i = 13; i <= vocabulary.commentsMost + 20; i += 1) store.comment(issue.id, "p1", `comment ${i}`);
+  assert.equal(page({}).comments.length, vocabulary.commentsMost);
+  assert.equal(page({ limit: 100000 }).comments.length, vocabulary.commentsMost);
+  assert.equal(page({}).comments.at(-1)?.text, `comment ${vocabulary.commentsMost + 20}`, "the newest come first");
+});
+
+test("a work store made before the order index is brought to it when it opens, with its issues as they were", () => {
+  const dir = join(ROOM_HOME, `work-test-${stores_("layout")}`);
+  const earlier = join(ROOM_HOME, `work-layout-${stores_("old")}`);
+  mkdirSync(earlier, { recursive: true });
+  const shipped = join(ROOM_HOME, "room", "sql", "work");
+  for (const name of readdirSync(shipped).filter((script) => !script.startsWith("V3__")))
+    copyFileSync(join(shipped, name), join(earlier, name));
+  const old = new WorkStore(dir, TIMING, undefined, earlier);
+  for (const title of ["a", "b", "c"]) old.create({ title, priority: title === "b" ? 0 : 2 }, "lead");
+  old.close();
+
+  const back = new WorkStore(dir, TIMING);
+  assert.deepEqual(
+    back.list({ limit: 3 }).issues.map((issue) => issue.title),
+    ["b", "a", "c"],
+  );
+  assert.match(
+    back
+      .plans()
+      .filter(({ sql }) => sql.includes("INDEXED BY issues_by_order"))
+      .map(({ plan }) => plan)
+      .join(" | "),
+    /SCAN issues USING INDEX issues_by_order/,
+  );
+  back.close();
 });

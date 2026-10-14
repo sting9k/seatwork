@@ -24,6 +24,9 @@ function engineFor(handles: Record<string, Partial<Handle>>, options: EngineOpti
   return new MailEngine(hostOf(paseo), MAIL_POLICY, () => {}, options);
 }
 
+/** The mail held for a seat, as the store lists it. */
+const held = (engine: MailEngine, agentId: string) => engine.storeOf(agentId, false)?.queued(agentId) ?? [];
+
 let cases = 0;
 /** Seat ids no other test of this file uses: every engine here shares the room home's store. */
 function names<T extends string>(...roles: T[]): Record<T, string> {
@@ -79,7 +82,7 @@ test("a mail reaches a seat at rest as one tagged block, and the store remembers
   );
   assert.equal(sent.state, "delivered");
   assert.equal(sent.how, "idle");
-  assert.deepEqual(engine.held(id.lead), []);
+  assert.deepEqual(held(engine, id.lead), []);
   assert.equal(engine.takeWake(id.lead)[0].id, sent.id);
 });
 
@@ -102,7 +105,7 @@ test("mail posted while a delivery waits for the recipient's status is not lost"
   await Promise.all([first, second]);
   await engine.deliver(id.lead);
   assert.match(got.join("\n"), /FYI: one[\s\S]*FYI: two/);
-  assert.deepEqual(engine.held(id.lead), []);
+  assert.deepEqual(held(engine, id.lead), []);
 });
 
 test("mail to a seat the daemon no longer has is bounced, and a sender that waited is told", async () => {
@@ -119,8 +122,8 @@ test("mail to a seat the daemon no longer has is bounced, and a sender that wait
   // one that asked nothing reads the notice with its next mail
   await engine.post(mail(id.gone, "FYI: nothing to do", { from: { agentId: id.lead, role: "lead" } }));
   assert.equal(lead.got.length, 1);
-  assert.equal(engine.held(id.lead).length, 1);
-  assert.equal(engine.held(id.lead)[0].quiet, true);
+  assert.equal(held(engine, id.lead).length, 1);
+  assert.equal(held(engine, id.lead)[0].quiet, true);
 });
 
 test("a failed status read, or a seat still opening, holds the mail; any seat a message can start takes it", async () => {
@@ -135,8 +138,8 @@ test("a failed status read, or a seat still opening, holds the mail; any seat a 
   });
   for (const agent of Object.values(id)) engine.rememberSeat(seat(agent, "lead"));
   for (const agent of Object.values(id)) await engine.post(mail(agent, "FYI: hello"));
-  assert.equal(engine.held(id.lost).length, 1);
-  assert.equal(engine.held(id.opening).length, 1);
+  assert.equal(held(engine, id.lost).length, 1);
+  assert.equal(held(engine, id.opening).length, 1);
   assert.equal(closed.got.length, 1);
   assert.equal(failed.got.length, 1);
 });
@@ -286,7 +289,7 @@ test("mail whose delivery was cut off is still there for the next engine, marked
   const { handle, got } = listener();
   const next = engineFor({ [id.lead]: handle });
   next.rememberSeat(seat(id.lead, "lead"));
-  assert.equal(next.held(id.lead)[0].state, "sending");
+  assert.equal(held(next, id.lead)[0].state, "sending");
   assert.equal(
     inbox(next, id.lead, { peek: true }, Date.now()),
     "inbox empty",
@@ -306,7 +309,7 @@ test("a refused delivery keeps the mail for the next attempt, as a first deliver
   });
   engine.rememberSeat(seat(id.lead, "lead"));
   await engine.post(mail(id.lead, "FYI: later"));
-  assert.equal(engine.held(id.lead)[0].state, "queued");
+  assert.equal(held(engine, id.lead)[0].state, "queued");
   assert.deepEqual(engine.takeWake(id.lead), []);
   refuse = false;
   await engine.sweep();
@@ -487,9 +490,9 @@ test("a handover holds for the engine that starts after a reload, and held mail 
   reloaded.rememberSeat(seat(id.peer, "peer", id.lead));
   assert.equal(reloaded.parentOf(id.peer), id.next);
   await engine.post(mail(id.peer, "ANSWER: use v2"));
-  assert.equal(engine.held(id.peer).length, 1);
+  assert.equal(held(engine, id.peer).length, 1);
   await engine.move(id.peer, id.heir);
-  assert.equal(engine.held(id.peer).length, 0);
+  assert.equal(held(engine, id.peer).length, 0);
   assert.match(heir.got[0], /subject="ANSWER: use v2"/);
 });
 
@@ -589,7 +592,7 @@ test("a PERMISSION mail is owed until Paseo resolves the permission, and a bounc
   const before = lead.got.length;
   await engine.post(mail(id.peer, "INSTRUCTION: go", { from: { agentId: id.lead, role: "lead" }, cc: [id.gone] }));
   await engine.deliver(id.gone);
-  assert.equal(engine.held(id.lead).length + lead.got.length, before, "no UNDELIVERABLE for a copy");
+  assert.equal(held(engine, id.lead).length + lead.got.length, before, "no UNDELIVERABLE for a copy");
 });
 
 test("a seat that reads every project searches another project's mail, or all of them; a project seat reads its own", async () => {
@@ -687,7 +690,7 @@ test("a seat whose delivery fails does not hold up the other seats of the sweep,
   await engine.sweep();
   assert.equal(a.got.length, 0);
   assert.equal(
-    engine.held(id.aa).length,
+    held(engine, id.aa).length,
     2,
     "the mail and the report that could not go out are held for the next pass",
   );

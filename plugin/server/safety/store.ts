@@ -5,7 +5,7 @@ import { SQL_DIR } from "../paths";
 import { Sqlite, type SqliteFailure } from "../sqlite";
 import type { Label } from "./council/calibration";
 
-/** The safety store in the room home: decisions, codes, start commits, hand-in findings and the council's log. */
+/** The safety store in the room home: decisions, codes, start commits, hand-in findings, the council's log and its appeals to the chair. */
 
 /** A failure of the store itself: the file is held by another process, or its layout does not fit this plugin. */
 export class SafetyError extends Error {
@@ -120,7 +120,25 @@ export interface MemberCount {
   wrong: number;
 }
 
+/** One appeal to the chair: who it is about, what was appealed, the evidence sent, and how it stands. */
+export interface AppealRow {
+  id: number;
+  at: string;
+  due_at: string;
+  reading_id: number;
+  member: string;
+  seat: string;
+  finding: string;
+  chair: string;
+  status: "open" | "upheld" | "sent_back" | "lapsed";
+  ruled_at: string | null;
+  ruled_by: string | null;
+  reason: string | null;
+  packet: string;
+}
+
 const PRUNE_BATCH = 2000;
+const SEEN_EVERY_MS = 86_400_000;
 const FINGERPRINT = /^[0-9a-f]{6,64}$/;
 
 /** The Safety district's SQLite store; every statement it runs has an index. */
@@ -288,12 +306,27 @@ export class SafetyStore extends Sqlite {
   noteStart(agentId: string, cwd: string, head: string | null): void {
     this.transaction("write", () =>
       this.run(
-        "INSERT OR IGNORE INTO seats (agent_id, cwd, start_head, started_at) VALUES (?, ?, ?, ?)",
+        "INSERT OR IGNORE INTO seats (agent_id, cwd, start_head, started_at, seen_at) VALUES (?, ?, ?, ?, ?)",
         agentId,
         cwd,
         head,
         this.stamp(),
+        this.stamp(),
       ),
+    );
+  }
+
+  /** Notes that a seat is still there, at most once a day; false when it was noted lately or is unknown. */
+  seen(agentId: string): boolean {
+    return this.transaction(
+      "write",
+      () =>
+        this.run(
+          "UPDATE seats SET seen_at = ? WHERE agent_id = ? AND seen_at < ?",
+          this.stamp(),
+          agentId,
+          this.stamp(-SEEN_EVERY_MS),
+        ).changes > 0,
     );
   }
 
@@ -306,11 +339,12 @@ export class SafetyStore extends Sqlite {
       );
       if (was)
         this.run(
-          "INSERT OR REPLACE INTO seats (agent_id, cwd, start_head, started_at) VALUES (?, ?, ?, ?)",
+          "INSERT OR REPLACE INTO seats (agent_id, cwd, start_head, started_at, seen_at) VALUES (?, ?, ?, ?, ?)",
           to,
           was.cwd,
           was.start_head,
           was.started_at,
+          this.stamp(),
         );
     });
   }
@@ -371,7 +405,7 @@ export class SafetyStore extends Sqlite {
     });
   }
 
-  /** Drops decisions, escalations and findings older than `before`, and codes that ran out by then; decisions a slice at a time. */
+  /** Drops decisions, escalations and findings older than `before`, codes that ran out by then and seats not seen since; decisions a slice at a time. */
   expire(before: Date): number {
     const at = before.toISOString();
     let gone = 0;
@@ -392,6 +426,7 @@ export class SafetyStore extends Sqlite {
           this.run("DELETE FROM codes WHERE expires_at < ?", at),
           this.run("DELETE FROM escalations WHERE at < ?", at),
           this.run("DELETE FROM findings WHERE last_at < ?", at),
+          this.run("DELETE FROM seats WHERE seen_at < ?", at),
         ].reduce((n, done) => n + done.changes, 0),
       )
     );
@@ -559,9 +594,81 @@ export class SafetyStore extends Sqlite {
     );
   }
 
-  /** Drops readings before `before` that no label holds, a slice at a time. */
+  /** Keeps one appeal to the chair, open until `dueInMs` pass; returns its id. */
+  addAppeal(a: {
+    readingId: number;
+    member: string;
+    seat: string;
+    finding: string;
+    chair: string;
+    packet: string;
+    dueInMs: number;
+  }): number {
+    return this.transaction("write", () =>
+      this.run(
+        "INSERT INTO council_appeals (at, due_at, reading_id, member, seat, finding, chair, status, packet) VALUES (?, ?, ?, ?, ?, ?, ?, 'open', ?)",
+        this.stamp(),
+        this.stamp(a.dueInMs),
+        a.readingId,
+        a.member,
+        a.seat,
+        a.finding,
+        a.chair,
+        a.packet,
+      ),
+    ).lastInsertRowid;
+  }
+
+  /** One appeal, as it stands. */
+  appeal(id: number): AppealRow | null {
+    return this.row<AppealRow>("SELECT * FROM council_appeals WHERE id = ?", id) ?? null;
+  }
+
+  /** How many appeals wait for a ruling now. */
+  openAppeals(): number {
+    return (
+      this.row<{ n: number }>(
+        "SELECT count(*) AS n FROM council_appeals WHERE status = 'open' AND due_at > ?",
+        this.stamp(),
+      )?.n ?? 0
+    );
+  }
+
+  /** Whether this finding about this seat is waiting for a ruling or was upheld: one that was sent back or lapsed may be asked again. */
+  appealed(seat: string, member: string, finding: string): boolean {
+    return !!this.row(
+      `SELECT 1 AS found FROM council_appeals WHERE seat = ? AND member = ? AND finding = ?
+         AND (status = 'upheld' OR (status = 'open' AND due_at > ?)) LIMIT 1`,
+      seat,
+      member,
+      finding,
+      this.stamp(),
+    );
+  }
+
+  /** Records a ruling on an open appeal; false when it was ruled on already or ran out. */
+  rule(id: number, status: "upheld" | "sent_back", by: string, reason: string): boolean {
+    return this.transaction(
+      "write",
+      () =>
+        this.run(
+          "UPDATE council_appeals SET status = ?, ruled_at = ?, ruled_by = ?, reason = ? WHERE id = ? AND status = 'open' AND due_at > ?",
+          status,
+          this.stamp(),
+          by,
+          reason,
+          id,
+          this.stamp(),
+        ).changes > 0,
+    );
+  }
+
+  /** Drops readings before `before` that no label holds, a slice at a time, and the appeals before it; an appeal whose time is up is marked lapsed first. */
   expireCouncil(before: Date): number {
-    let gone = 0;
+    let gone = this.transaction("write", () => {
+      this.run("UPDATE council_appeals SET status = 'lapsed' WHERE status = 'open' AND due_at <= ?", this.stamp());
+      return this.run("DELETE FROM council_appeals WHERE at < ?", before.toISOString()).changes;
+    });
     for (;;) {
       const slice = this.transaction(
         "write",

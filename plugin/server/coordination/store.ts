@@ -370,6 +370,16 @@ export class MailStore extends Sqlite {
     return new Map(rows.map((row) => [row.seat, { count: Number(row.n), since: row.since }]));
   }
 
+  /** How many mails wait for one seat, and since when the oldest does; undefined when none does. Reads no body. */
+  waitingFor(seat: string): { count: number; since: string } | undefined {
+    const row = this.row<{ n: number; since: string | null }>(
+      `SELECT count(*) AS n, min(m.at) AS since FROM deliveries d CROSS JOIN messages m ON m.id = d.message_id
+       WHERE d.seat = ? AND d.state IN ('queued', 'sending')`,
+      seat,
+    );
+    return row && row.n > 0 ? { count: Number(row.n), since: String(row.since) } : undefined;
+  }
+
   /** Withdraws as expired mail sent only to be read and unread before `before`; never an ask. */
   expire(before: string): number {
     const stale = this.rows<{ message_id: number; seat: string }>(
@@ -628,6 +638,18 @@ export class MailStore extends Sqlite {
          AND m.needs <> 'nothing' AND m.answered_at IS NULL AND m.sender_role <> 'system' ORDER BY m.id`,
       seat,
     ).map(toMessage);
+  }
+
+  /** How many asks `owedBy` lists for a seat, and since when the oldest of them has waited; undefined when none. Reads no body, and from the open asks, so the seat's mail already read costs nothing. */
+  owedCount(seat: string): { count: number; since: string } | undefined {
+    const row = this.row<{ n: number; since: string | null }>(
+      `SELECT count(*) AS n, min(m.at) AS since FROM messages m INDEXED BY messages_owed
+         CROSS JOIN deliveries d ON d.message_id = m.id AND d.seat = ?
+       WHERE m.needs <> 'nothing' AND m.answered_at IS NULL AND m.sender_role <> 'system'
+         AND d.kind = 'to' AND d.state IN ('delivered', 'read')`,
+      seat,
+    );
+    return row && row.n > 0 ? { count: Number(row.n), since: String(row.since) } : undefined;
   }
 
   /** Asks a seat sent that nobody answered yet, oldest first. */

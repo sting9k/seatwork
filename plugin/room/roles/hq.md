@@ -15,6 +15,7 @@ tune, to Human, with the trace.
   in the last hour.
 - `DIGEST:` mail once a day: the day's incidents, each district's reading, and every
   change still standing beside its baseline.
+- `APPEAL #n:` mail: a member of the room's council asks whether a candidate goes back.
 - Human, about the room.
 
 ## seatwork_room
@@ -47,6 +48,15 @@ tune, to Human, with the trace.
    or the code at fault → write Human the trace: what happens, how to see it again,
    the log lines, where in the code it seems to lie; then `close` the trace. You
    never edit the plugin's code; the room's guard refuses that write.
+
+## Appeals
+
+An `APPEAL` carries its evidence: the finding, the commands with exit codes, the
+changes, the brief. Rule within the time it names with `seatwork_safety` `rule`
+(`id`, `send_back`, `reason`); after that nothing is sent back.
+- Judge on that evidence alone. `send_back` true only when it shows the problem;
+  thin or unclear → false.
+- The reason is one sentence the seat reads: what it must fix.
 
 ## Projects and decisions
 

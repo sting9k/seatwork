@@ -424,3 +424,63 @@ test("a subject longer than the store keeps is cut in its search and in the reco
   assert.equal(store.posted("2026")[0].subject.length, config.subjectChars);
   assert.deepEqual(store.search("beyond", null, { limit: 5 }), [], "the cut part is not searched");
 });
+
+test("what waits for a seat and what it owes are counted, with the age of the oldest, as the lists they stand for read them", () => {
+  const { store } = fresh();
+  const to = (seat: string) => [{ seat, kind: "to" as const, priority: "action" as const }];
+  assert.equal(store.waitingFor("lead"), undefined);
+  assert.equal(store.owedCount("lead"), undefined);
+
+  const first = store.insert(mail("p1", "QUESTION: which unit", { needs: "reply" }), to("lead"));
+  const second = store.insert(mail("p2", "QUESTION: which rounding", { needs: "decision" }), to("lead"));
+  const info = store.insert(mail("p1", "FYI: moved"), to("lead"));
+  // a copy, an ask from the room, an answered ask and an ask for another seat are not owed to the lead
+  store.insert(mail("p1", "QUESTION: copy", { needs: "reply" }), [{ seat: "lead", kind: "cc", priority: "fyi" }]);
+  store.insert(mail("room", "QUESTION: notice", { needs: "reply", senderRole: "system" }), to("lead"));
+  const closed = store.insert(mail("p3", "QUESTION: closed", { needs: "reply" }), to("lead"));
+  store.insert(mail("p3", "QUESTION: another seat", { needs: "reply" }), to("p9"));
+  store.answer(closed.id, info.id);
+
+  // nothing is delivered yet: all of it waits and none of it is owed
+  const waiting = store.queued("lead");
+  assert.equal(waiting.length, 6);
+  assert.deepEqual(store.waitingFor("lead"), { count: 6, since: waiting[0].at });
+  assert.equal(store.owedCount("lead"), undefined);
+
+  store.mark("lead", [first.id, second.id, closed.id], "delivered", "idle");
+  store.mark("lead", [info.id], "sending");
+  store.mark("lead", [second.id], "read", "inbox");
+  assert.deepEqual(store.waitingFor("lead"), { count: 3, since: store.queued("lead")[0].at });
+  const owed = store.owedBy("lead");
+  assert.equal(owed.length, 2);
+  assert.deepEqual(store.owedCount("lead"), { count: 2, since: owed[0].at });
+  assert.equal(store.waitingFor("p9")?.count, 1);
+  assert.equal(store.owedCount("p9"), undefined);
+
+  store.answer(first.id, closed.id);
+  assert.deepEqual(store.owedCount("lead"), { count: 1, since: store.get(second.id)!.at });
+});
+
+test("a seat's owed asks are counted from the open asks of the project, not from every mail the seat has read", () => {
+  const { store } = fresh();
+  for (let i = 0; i < 30; i += 1) {
+    const read = store.insert(mail("p1", `FYI: item ${i}`, { fingerprint: `f${i}` }), [
+      { seat: "lead", kind: "to", priority: "fyi" },
+    ]);
+    store.mark("lead", [read.id], "read", "inbox");
+  }
+  store.insert(mail("p1", "QUESTION: which unit", { needs: "reply" }), [
+    { seat: "lead", kind: "to", priority: "action" },
+  ]);
+  store.waitingFor("lead");
+  store.owedCount("lead");
+  const planOf = (needle: string) =>
+    store
+      .plans()
+      .filter(({ sql }) => sql.includes(needle))
+      .map(({ plan }) => plan)
+      .join(" | ");
+  assert.match(planOf("min(m.at) AS since FROM messages m"), /SCAN m USING INDEX messages_owed/);
+  assert.doesNotMatch(planOf("min(m.at) AS since FROM messages m"), /deliveries_by_seat/);
+  assert.match(planOf("min(m.at) AS since FROM deliveries d"), /SEARCH d USING COVERING INDEX deliveries_by_state/);
+});

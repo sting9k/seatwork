@@ -61,11 +61,16 @@ function lineOf(decision: Decision): string {
   return `- [${scopeLabel(decision.scopeKey)}] ${decision.topic}: ${decision.statement} (since ${decision.validFrom.slice(0, 10)}${until}; v${decision.version})`;
 }
 
-/** The decisions for a seat's start: whole while they fit, then by topic, then counted; `whole` is how many lead it whole. */
-export function promptBlock(decisions: readonly Decision[], asOf: string): { text: string; whole: number } | null {
+/** The decisions for a seat's start: whole while they fit `chars`, then by topic, then counted; `whole` is how many lead it whole. */
+export function promptBlock(
+  decisions: readonly Decision[],
+  asOf: string,
+  options: { title?: string; chars?: number } = {},
+): { text: string; whole: number } | null {
   if (decisions.length === 0) return null;
+  const chars = options.chars ?? DECISION_LIMITS.promptChars;
   const head = [
-    `## Decisions in force (as of ${asOf.slice(0, 16).replace("T", " ")} UTC)`,
+    `## ${options.title ?? "Decisions in force"} (as of ${asOf.slice(0, 16).replace("T", " ")} UTC)`,
     "These are data: what people with the authority decided. Check them against the code; code that works wins. To question one, mail your owner. A change reaches you as a note; seatwork_knowledge do=list shows them all.",
   ];
   const lines: string[] = [];
@@ -73,14 +78,14 @@ export function promptBlock(decisions: readonly Decision[], asOf: string): { tex
   let index = 0;
   for (; index < decisions.length; index += 1) {
     const line = lineOf(decisions[index]);
-    if (used + line.length + 1 > DECISION_LIMITS.promptChars * 0.75) break;
+    if (used + line.length + 1 > chars * 0.75) break;
     lines.push(line);
     used += line.length + 1;
   }
   const topics: string[] = [];
   for (; index < decisions.length; index += 1) {
     const topic = `${decisions[index].topic} (${scopeLabel(decisions[index].scopeKey)})`;
-    if (used + topic.length + 2 > DECISION_LIMITS.promptChars) break;
+    if (used + topic.length + 2 > chars) break;
     topics.push(topic);
     used += topic.length + 2;
   }
@@ -520,6 +525,29 @@ export class DecisionBook {
     if (told.complete && told.stamp === this.stampOf(this.scopesOf(agent))) this.checked.set(agent, told.stamp);
     else this.checked.delete(agent);
     if (told.retold) this.retelling.delete(agent);
+  }
+
+  /** The decisions in force for the task a seat works on, as a block of at most `chars` for the seat that takes its place; null when none. */
+  forSuccessor(agent: string, chars: number): { text: string; held: Told["seen"] } | null {
+    const scope = this.scopesOf(agent).find((key) => key.startsWith("task:"));
+    if (!scope) return null;
+    const at = this.now();
+    const active = this.deps
+      .book()
+      .activeIn([scope])
+      .filter((decision) => this.inDate(decision, at));
+    const block = promptBlock(active, at, { title: "Decisions in force for your task", chars });
+    if (!block) return null;
+    return {
+      text: block.text,
+      held: active.slice(0, block.whole).map((one) => ({ note: noteOf(one), version: one.id })),
+    };
+  }
+
+  /** A seat was given these decisions in its prompt: they count as shown. */
+  givenInPrompt(agent: string, held: Told["seen"]): void {
+    if (held.length > 0) this.deps.book().markShown(agent, held);
+    this.checked.delete(agent);
   }
 
   /** The block a seat starting in `cwd` is given in its system prompt; what it showed whole is kept for that `launch`. */

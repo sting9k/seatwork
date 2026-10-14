@@ -1220,6 +1220,81 @@ test("the council reads a seat's ended turn from the app's timeline and logs eac
   );
 });
 
+test("a council member that has earned the level that sends work back asks the room's own seat, whose ruling returns the candidate", async () => {
+  const repo = join(PROJECT, "..", "chair-repo");
+  rmSync(repo, { recursive: true, force: true });
+  mkdirSync(join(repo, "src"), { recursive: true });
+  mkdirSync(join(repo, "test"), { recursive: true });
+  writeFileSync(join(repo, "src", "sum.ts"), "export const sum = (a: number, b: number) => a + b;\n");
+  writeFileSync(
+    join(repo, "test", "sum.test.ts"),
+    'test("sum", () => {\n  expect(sum(1, 2)).toBe(3);\n  expect(sum(2, 2)).toBe(4);\n  expect(sum(3, 3)).toBe(6);\n});\n',
+  );
+  const git = (...args: string[]) =>
+    execFileSync("git", args, {
+      cwd: repo,
+      env: {
+        ...process.env,
+        GIT_CONFIG_GLOBAL: "/dev/null",
+        GIT_AUTHOR_NAME: "t",
+        GIT_AUTHOR_EMAIL: "t@t",
+        GIT_COMMITTER_NAME: "t",
+        GIT_COMMITTER_EMAIL: "t@t",
+      },
+    });
+  git("init", "-q");
+  git("add", "-A");
+  git("commit", "-qm", "start");
+  const hq = await seat("hq-chair", "claude-hq", null, "[HQ] the room", join(ROOM_HOME, "hq-seatwork"));
+  const lead = await seat("lead-chair", "claude-lead", null, "[Lead] stream", repo);
+  const peer = await seat("peer-chair", "claude-peer", lead.agent.id, "[Peer] chair", repo);
+  await new Promise((resolve) => setTimeout(resolve, 300));
+  const db = new DatabaseSync(join(ROOM_HOME, "safety", "safety.db"));
+  db.prepare(
+    "INSERT OR REPLACE INTO council_members (member, version, level, hi, labels, moved_at) VALUES ('gaming', 1, 3, 0.9, 60, ?)",
+  ).run(new Date().toISOString());
+  db.close();
+
+  // the Peer bends its tests: the room's own check returns the hand-in, the Peer keeps the finding on purpose
+  writeFileSync(join(repo, "src", "sum.ts"), "export const sum = (a: number, b: number) => a + b + 0;\n");
+  writeFileSync(join(repo, "test", "sum.test.ts"), 'test("sum", () => {\n  expect(sum(1, 2)).toBe(3);\n});\n');
+  let id: string | undefined;
+  for (let tries = 0; tries < 3 && !id; tries += 1) {
+    await turnEnds(peer, "CANDIDATE: sum fixed");
+    id = /- ([0-9a-f]{12}) assertions-removed/.exec(peer.inbox.at(-1) ?? "")?.[1];
+  }
+  assert.ok(id, "the room's check returns the hand-in");
+  await peer.call("seatwork_safety", {
+    action: "ack",
+    id,
+    reason: "the checks removed covered a case that no longer exists",
+  });
+  await turnEnds(peer, "CANDIDATE: sum fixed");
+  await new Promise((resolve) => setTimeout(resolve, 100));
+
+  const appeal = hq.inbox.find((text) => /subject="APPEAL #\d+: gaming on \[Peer\] chair's candidate"/.test(text));
+  assert.ok(appeal, `the room's own seat is asked: ${hq.inbox.join("\n").slice(0, 400)}`);
+  assert.match(appeal, /2 assertion\(s\) removed/);
+  const number = /APPEAL #(\d+)/.exec(appeal)![1];
+  const ruling = {
+    action: "rule",
+    id: number,
+    send_back: true,
+    reason: "Two checks went while the code changed, and the outcome does not call for it.",
+  };
+  assert.equal(await lead.call("seatwork_safety", ruling), "Only the room's own seat rules on appeals.");
+  assert.match(
+    await hq.call("seatwork_safety", { ...ruling, send_back: "yes" }).catch((e: Error) => e.message),
+    /`send_back` true or false/,
+  );
+  peer.inbox.length = 0;
+  lead.inbox.length = 0;
+  assert.match(await hq.call("seatwork_safety", ruling), /Sent back: \[Peer\] chair is told/);
+  assert.match(peer.inbox.join("\n"), /subject="HAND-IN RETURNED: the chair sent your candidate back \(gaming\)"/);
+  assert.match(peer.inbox.join("\n"), /The chair's reason: Two checks went/);
+  assert.match(lead.inbox.join("\n"), /subject="COUNCIL: the chair sent \[Peer\] chair's hand-in back"/);
+});
+
 test("a seat's ended turn is kept in the record: another seat finds it and reads around it", async () => {
   const lead = await seat("lead-record", "claude-lead", null, "[Lead] record");
   const peer = await seat("peer-record", "claude-peer", lead.agent.id, "[Peer] record");

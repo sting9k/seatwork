@@ -651,7 +651,7 @@ export class WorkStore extends Sqlite {
     ).map(toIssue);
   }
 
-  /** The issues that match the filters given, best first, at most `limit`, and how many match in all. */
+  /** The issues that match the filters given, best first, at most `limit`, and how many match in all; the count is read only when the page is full. */
   list(filter: { status?: Status; assignee?: string; type?: IssueType; limit?: number } = {}): {
     issues: Issue[];
     total: number;
@@ -663,12 +663,28 @@ export class WorkStore extends Sqlite {
     });
     const where = given.length ? `WHERE ${given.map(({ column }) => `${column} = ?`).join(" AND ")}` : "";
     const params = given.map(({ value }) => value);
-    return this.transaction("read", () => ({
-      issues: this.rows(`SELECT * FROM issues ${where} ORDER BY ${ORDERED} LIMIT ?`, ...params, filter.limit ?? -1).map(
+    const limit = filter.limit ?? -1;
+    // with no filter the order comes from the index; left to itself the planner may sort the whole set
+    const from = given.length ? "issues" : "issues INDEXED BY issues_by_order";
+    return this.transaction("read", () => {
+      const issues = this.rows(`SELECT * FROM ${from} ${where} ORDER BY ${ORDERED} LIMIT ?`, ...params, limit).map(
         toIssue,
-      ),
-      total: this.row<{ n: number }>(`SELECT COUNT(*) AS n FROM issues ${where}`, ...params)!.n,
-    }));
+      );
+      const total =
+        limit < 0 || issues.length < limit
+          ? issues.length
+          : this.row<{ n: number }>(`SELECT COUNT(*) AS n FROM issues ${where}`, ...params)!.n;
+      return { issues, total };
+    });
+  }
+
+  /** The id of the issue in progress a seat holds, the first `list` would give; undefined when it holds none. Reads one row. */
+  heldBy(seat: string): string | undefined {
+    return this.row<{ id: string }>(
+      `SELECT id FROM issues INDEXED BY issues_by_assignee WHERE assignee = ? AND status = 'in_progress'
+       ORDER BY ${ORDERED} LIMIT 1`,
+      seat,
+    )?.id;
   }
 
   /** Changes one issue row and counts its revision up; a stale `if_revision` is refused. */
@@ -884,12 +900,18 @@ export class WorkStore extends Sqlite {
     });
   }
 
-  /** The comments on an issue, oldest first. */
-  comments(id: string): Comment[] {
-    return this.rows<Comment>(
-      "SELECT author, text, created_at FROM comments WHERE issue_id = ? ORDER BY id",
-      this.get(id).id,
-    );
+  /** An issue's comments, oldest first: the newest `limit` after passing over the `skip` newest, and how many it has in all. */
+  comments(id: string, limit = -1, skip = 0): { total: number; comments: Comment[] } {
+    const issue = this.get(id).id;
+    return this.transaction("read", () => ({
+      total: this.row<{ n: number }>("SELECT count(*) AS n FROM comments WHERE issue_id = ?", issue)!.n,
+      comments: this.rows<Comment>(
+        "SELECT author, text, created_at FROM comments WHERE issue_id = ? ORDER BY id DESC LIMIT ? OFFSET ?",
+        issue,
+        limit,
+        skip,
+      ).reverse(),
+    }));
   }
 
   /** The latest events of an issue's trail, newest first. */

@@ -28,7 +28,7 @@ interface JsonRpcRequest {
 }
 
 const PROTOCOL_VERSION = "2025-06-18";
-const MAX_BODY = 32 * 1024 * 1024;
+const MAX_BODY = 4 * 1024 * 1024;
 
 /** A request's body as text, whole; null when it passes the cap or the client goes away before it ends. */
 async function bodyOf(req: IncomingMessage): Promise<string | null> {

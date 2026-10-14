@@ -110,7 +110,7 @@ function treeOf(members: readonly SeatRecord[], live: ReadonlyMap<string, LiveSe
         role: seat.role,
         title: seat.title,
         status: agent.waiting ? "waiting" : agent.status,
-        held: engine.held(seat.agentId).length,
+        held: engine.holding(seat.agentId)?.mails ?? 0,
         depth,
       });
       walk(seat.agentId, depth + 1);

@@ -143,7 +143,18 @@ async function safetyTool(room: RoomContext, me: string, args: Record<string, un
       );
     return room.safety.label(me, id, value, reason);
   }
-  throw new Error("seatwork_safety: `action` is check, grant, waiting, ack, council or label");
+  if (action === "rule") {
+    const id = Number(String(args.id ?? "").replace(/^#/, ""));
+    const reason = String(args.reason ?? "")
+      .trim()
+      .slice(0, MOST_REASON_CHARS);
+    if (!Number.isInteger(id) || typeof args.send_back !== "boolean" || reason.length < 10)
+      throw new Error(
+        "seatwork_safety rule: give the appeal's `id`, `send_back` true or false, and a `reason` of a sentence",
+      );
+    return room.safety.rule(me, id, args.send_back, reason);
+  }
+  throw new Error("seatwork_safety: `action` is check, grant, waiting, ack, council, label or rule");
 }
 
 /** The open seats under `me`, each below its Owner, in the order the room registered them. */
@@ -162,7 +173,7 @@ function seatRows(room: RoomContext, me: string, live: ReadonlyMap<string, LiveS
       const now = live.get(seat.agentId)!;
       const usage = now.usage ?? room.lastUsage.get(seat.agentId);
       const retry = room.recovery.pending(seat.agentId);
-      const mails = engine.held(seat.agentId);
+      const held = engine.holding(seat.agentId);
       rows.push({
         agentId: seat.agentId,
         role: seat.role,
@@ -172,8 +183,8 @@ function seatRows(room: RoomContext, me: string, live: ReadonlyMap<string, LiveS
         waiting: now.waiting,
         updatedAt: now.updatedAt || null,
         turnStartedAt: now.turnStartedAt,
-        heldMail: mails.length,
-        ...(mails.length > 0 ? { heldSince: mails[0].at } : {}),
+        heldMail: held?.mails ?? 0,
+        ...(held ? { heldSince: held.oldestAt } : {}),
         owes: engine.owes(seat.agentId),
         retry: retry ? retryNote(retry) : null,
         error: now.status === "error" ? (now.error ?? "").slice(0, 160) || null : null,

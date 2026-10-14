@@ -1,11 +1,12 @@
-import { installRoom, PROJECT } from "./support/room";
+import { installRoom, PROJECT, ROOM_HOME } from "./support/room";
 import assert from "node:assert/strict";
-import { mkdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { after, before, test } from "node:test";
 import contribute from "../index.server";
 import { briefFields } from "../server/orchestration/brief";
 import { parseHandoff } from "../server/orchestration/rotation";
+import { TaskKeys } from "../server/orchestration/task-keys";
 import { MailEngine } from "../server/coordination/engine";
 import type { LiveSeat } from "../server/host";
 import { lookAtRunningTurns } from "../server/room/council";
@@ -179,6 +180,7 @@ test("the council's look at running turns goes on to the next seat when one cann
       turn: async () => [],
     },
     works: { existing: () => null },
+    taskKeys: new TaskKeys(join(ROOM_HOME, "council-keys.json")),
     engine: {
       seat: () => ({ role: "peer" }),
       projectOf: () => PROJECT,
@@ -299,4 +301,247 @@ test("a final message of many empty or ruled lines is read in time that grows wi
 test("a brief line of a label and many spaces is read in time that grows with its length", () => {
   const [small, large] = BIG.map((n) => fastest(() => briefFields(`a${" ".repeat(n)}x`)));
   assert.ok(large < small * 8, `4 times the spaces took ${(large / small).toFixed(1)} times as long`);
+});
+
+/** A folder the room reads as a project of its own, so its seats share one work store. */
+function projectFolder(name: string): string {
+  const folder = join(PROJECT, "..", name);
+  mkdirSync(join(folder, ".seatwork"), { recursive: true });
+  writeFileSync(join(folder, ".seatwork", "room.json"), "{}");
+  return folder;
+}
+
+/** `owner` asks `old` for its handoff, `old` answers with `handoff`, and the successor is the seat the room made. */
+async function rotated(
+  owner: TestSeat,
+  old: TestSeat,
+  project: string,
+  handoff: string,
+  on = { provider: "claude-lead", model: "claude-opus-5-5" },
+): Promise<{ successor: TestSeat; prompt: string; archived: string[] }> {
+  let made: { successor: TestSeat; prompt: string; archived: string[] } | undefined;
+  const archived: string[] = [];
+  Object.assign(context.paseo.agents, {
+    create: async (options: { parent?: string; title?: string; prompt?: string }) => {
+      const successor = await seat(
+        `${old.agent.id}-2`,
+        on.provider,
+        options.parent ?? null,
+        options.title ?? "",
+        project,
+      );
+      made = { successor, prompt: options.prompt ?? "", archived };
+      return { id: successor.agent.id };
+    },
+  });
+  Object.assign(agents[old.agent.id], {
+    current: () => ({ status: "idle", ...on, cwd: project }),
+    archive: async () => void archived.push(old.agent.id),
+    timeline: { refetch: async () => ({ entries: [], agent: { pendingPermissions: [] } }) },
+  });
+  await owner.call("seatwork_rotate", { agent_id: old.agent.id });
+  await turnEnds(old, handoff);
+  assert.ok(made, "the room started no successor");
+  return made;
+}
+
+const HANDOFF = "HANDOFF\nCURRENT TASK: the store\nPROGRESS: done 2ea3368\nBLOCKERS: none";
+
+const inForce = async (who: TestSeat): Promise<string[]> =>
+  (JSON.parse(await who.call("seatwork_knowledge", { do: "list" })) as { inForce: string[] }).inForce;
+
+test("the decisions of a task stay with it when its issue is closed and follow the seat that takes the seat over; another claim leaves them", async () => {
+  const project = projectFolder("keys-project");
+  const supervisor = await seat("sup-keys", "claude-supervisor", null, "[Supervisor] keys", project);
+  const lead = await seat("lead-keys", "claude-lead", supervisor.agent.id, "[Lead] keys", project);
+  const made = (title: string) =>
+    supervisor
+      .call("seatwork_work", { do: "create", title })
+      .then((answer) => (JSON.parse(answer) as { id: string }).id);
+  const [first, second] = [await made("the store"), await made("the cache")];
+  await lead.call("seatwork_work", { do: "claim", id: first });
+  await lead.call("seatwork_knowledge", {
+    do: "decide",
+    scope: "task",
+    topic: "store engine",
+    statement: "Keep the store in SQLite.",
+  });
+  assert.match((await inForce(lead)).join("\n"), /Keep the store in SQLite/);
+
+  // the Owner closes the issue while the seat is still at work on the task
+  await supervisor.call("seatwork_work", { do: "close", id: first, reason: "merged with the tests green at abc1234" });
+  assert.match((await inForce(lead)).join("\n"), /Keep the store in SQLite/, "closing the issue changed the task");
+
+  const { successor } = await rotated(supervisor, lead, project, HANDOFF);
+  assert.match((await inForce(successor)).join("\n"), /Keep the store in SQLite/, "the successor lost the task");
+
+  await successor.call("seatwork_work", { do: "claim", id: second });
+  assert.doesNotMatch((await inForce(successor)).join("\n"), /Keep the store in SQLite/);
+});
+
+test("a seat that never held an issue is replaced by one that works on the same task", async () => {
+  const project = projectFolder("keys-chain");
+  const supervisor = await seat("sup-chain", "claude-supervisor", null, "[Supervisor] chain", project);
+  const lead = await seat("lead-chain", "claude-lead", supervisor.agent.id, "[Lead] chain", project);
+  await lead.call("seatwork_knowledge", {
+    do: "decide",
+    scope: "task",
+    topic: "index kind",
+    statement: "Use a covering index for the lookup.",
+  });
+  const { successor } = await rotated(supervisor, lead, project, HANDOFF);
+  assert.match((await inForce(successor)).join("\n"), /\[task lead-chain\] index-kind: Use a covering index/);
+  const kept = JSON.parse(readFileSync(join(ROOM_HOME, "task-keys.json"), "utf8")) as Record<string, unknown>;
+  assert.deepEqual(kept["lead-chain-2"], { key: "lead-chain", issue: false, before: ["lead-chain"] });
+});
+
+test("the rejections a task has met go with it to the seat that takes the seat over", async () => {
+  const project = projectFolder("keys-rounds");
+  const lead = await seat("lead-rounds", "claude-lead", null, "[Lead] rounds", project);
+  const peer = await seat("peer-rounds", "claude-peer", lead.agent.id, "[Peer] rounds", project);
+  // a first hand-in goes back once for a pass with fresh eyes; the next goes up
+  await turnEnds(peer, "CANDIDATE abc1\nfirst");
+  await turnEnds(peer, "CANDIDATE abc1\nFresh eyes: nothing");
+  await lead.call("seatwork_mail", {
+    to: peer.agent.id,
+    subject: "REJECT abc1: the cost of small ingests",
+    body: "Repair it.",
+    needs: "nothing",
+  });
+  const { successor } = await rotated(lead, peer, project, HANDOFF, {
+    provider: "claude-peer",
+    model: "claude-sonnet-5-5",
+  });
+  // the app reports the old seat archived: its rounds are the successor's, and stay
+  await call("on agent.archived", { agent: peer.agent }, context);
+  await turnEnds(successor, "CANDIDATE abc2\nsecond");
+  await turnEnds(successor, "CANDIDATE abc2\nFresh eyes: nothing");
+  assert.match(lead.inbox.at(-1)!, /\[room\] Second candidate of this task: one rejection/);
+});
+
+test("a successor is given the old seat's exact strings, the decisions in force for its task and where the old seat's record is read, and can read it", async () => {
+  const project = projectFolder("keys-record");
+  const supervisor = await seat("sup-record", "claude-supervisor", null, "[Supervisor] record", project);
+  const lead = await seat("lead-record", "claude-lead", supervisor.agent.id, "[Lead] record", project);
+  await lead.call("seatwork_knowledge", {
+    do: "decide",
+    scope: "task",
+    topic: "store engine",
+    statement: "Keep the store in SQLite.",
+  });
+  // the old seat's turns are kept as the room sees them end
+  await call(
+    "on agent.turn_ended",
+    {
+      agent: lead.agent,
+      turnId: "t1",
+      outcome: { kind: "completed" },
+      timeline: [
+        { type: "user_message", text: "Fix the flaky migration in the store." },
+        { type: "assistant_message", text: "The migration fails with ERR_CHECKSUM_MISMATCH at step four." },
+      ],
+    },
+    context,
+  );
+  const exact = "$ npm run migrate -- --step 4\nError: ERR_CHECKSUM_MISMATCH 0x7fff_ffff";
+  const { successor, prompt } = await rotated(supervisor, lead, project, `${HANDOFF}\nVERBATIM:\n${exact}`);
+
+  assert.ok(prompt.includes(`\n\`\`\`\n${exact}\n\`\`\`\n`), "the strings reach the successor as the seat wrote them");
+  assert.match(
+    prompt,
+    /## Decisions in force for your task[^\n]*\n[^\n]*\n- \[task lead-record\] store-engine: Keep the store in SQLite/,
+  );
+  assert.match(prompt, /seatwork_knowledge do=pack task=lead-record/);
+  assert.match(prompt, /do=search agent=lead-record/);
+  const [file] = readdirSync(join(project, ".seatwork", "handoffs")).filter((name) => name.endsWith(".md"));
+  assert.ok(
+    readFileSync(join(project, ".seatwork", "handoffs", file), "utf8").includes(`\n\`\`\`\n${exact}\n\`\`\`\n`),
+    "the copy for people holds them too",
+  );
+  assert.ok(prompt.indexOf("## Exact strings") < prompt.indexOf("## Decisions in force for your task"));
+  assert.doesNotMatch(prompt.slice(prompt.indexOf("## The handoff"), prompt.indexOf("## Exact strings")), /CHECKSUM/);
+
+  // the successor is not told again what its prompt held, and reads what the old seat did
+  const answer = JSON.parse(
+    await successor.call("seatwork_knowledge", { do: "search", q: "ERR_CHECKSUM_MISMATCH", agent: lead.agent.id }),
+  ) as { hits: { agent: string; text: string }[]; notices?: string[] };
+  assert.ok(answer.hits.length > 0 && answer.hits.every((hit) => hit.agent === lead.agent.id));
+  assert.equal(answer.notices, undefined);
+  const packed = JSON.parse(await successor.call("seatwork_knowledge", { do: "pack", task: "lead-record" })) as {
+    items: { agent: string }[];
+  };
+  assert.ok(packed.items.some((item) => item.agent === lead.agent.id));
+  // a seat of another line of work does not
+  const other = await seat("lead-other", "claude-lead", supervisor.agent.id, "[Lead] other", project);
+  assert.equal(
+    (
+      JSON.parse(await other.call("seatwork_knowledge", { do: "search", q: "ERR_CHECKSUM_MISMATCH" })) as {
+        hits: unknown[];
+      }
+    ).hits.length,
+    0,
+  );
+});
+
+/** Gives a seat the context its agent CLI reports at the end of its next turn. */
+const holds = (who: TestSeat, tokens: number) =>
+  Object.assign(agents[who.agent.id], {
+    current: () => ({ status: "idle", lastUsage: { contextWindowUsedTokens: tokens } }),
+  });
+
+const told = async (who: TestSeat): Promise<string[] | undefined> =>
+  (JSON.parse(await who.call("seatwork_knowledge", { do: "list" })) as { notices?: string[] }).notices;
+
+test("a context that falls between two turns is read as a compaction: the seat is told its decisions again, once", async () => {
+  const project = projectFolder("keys-fall");
+  const lead = await seat("lead-fall", "claude-lead", null, "[Lead] fall", project);
+  await lead.call("seatwork_knowledge", {
+    do: "decide",
+    scope: "task",
+    topic: "store engine",
+    statement: "Keep the store in SQLite.",
+  });
+  assert.equal(await told(lead), undefined, "the seat that records a decision is not told it as news");
+
+  holds(lead, 150_000);
+  await turnEnds(lead, "STATUS\nstill working");
+  assert.equal(await told(lead), undefined, "the first reading has nothing to fall from");
+  holds(lead, 190_000);
+  await turnEnds(lead, "STATUS\nstill working");
+  holds(lead, 120_000);
+  await turnEnds(lead, "STATUS\nstill working");
+  assert.equal(await told(lead), undefined, "a smaller context is not a compaction");
+
+  holds(lead, 25_000);
+  await turnEnds(lead, "STATUS\nstill working");
+  const again = await told(lead);
+  assert.match(
+    again?.join("\n") ?? "",
+    /Your context was compacted[\s\S]*New decision: \[task lead-fall\] store-engine/,
+  );
+  assert.equal(await told(lead), undefined, "told once");
+  holds(lead, 30_000);
+  await turnEnds(lead, "STATUS\nstill working");
+  assert.equal(await told(lead), undefined, "growth after a compaction is not another");
+
+  // the timeline showed this compaction: the context falling with it is the same one
+  holds(lead, 190_000);
+  await turnEnds(lead, "STATUS\nstill working");
+  holds(lead, 20_000);
+  await call(
+    "on agent.turn_ended",
+    {
+      agent: lead.agent,
+      turnId: null,
+      outcome: { kind: "completed" },
+      timeline: [
+        { type: "compaction", status: "completed" },
+        { type: "assistant_message", text: "STATUS\nstill working" },
+      ],
+    },
+    context,
+  );
+  const shown = (await told(lead))?.filter((line) => line.includes("Your context was compacted"));
+  assert.equal(shown?.length, 1);
+  assert.equal(await told(lead), undefined);
 });

@@ -18,14 +18,20 @@ interface Call {
   shell: string | null;
   writes: string[];
   cwd: string | null;
+  tooMuch: string | null;
 }
+
+const MOST_FILES = 200;
+const MOST_PATCH_CHARS = 2 * 1024 * 1024;
+const MOST_PATH_CHARS = 4096;
+const TOO_MUCH = `The room's guard checks at most ${MOST_FILES} files and ${MOST_PATCH_CHARS >> 20} MB in one patch, and a path of at most ${MOST_PATH_CHARS} characters; this call is larger, so it does not run. Split it into smaller calls.`;
 
 /** The tool call inside a hook's payload: the shell line it runs, or the files it writes. */
 function callOf(body: Record<string, unknown>): Call {
   const input = (body.tool_input ?? body.input ?? {}) as Record<string, unknown>;
   const tool = String(body.tool_name ?? body.tool ?? "");
   const cwd = typeof body.cwd === "string" ? body.cwd : null;
-  const call: Call = { shell: null, writes: [], cwd };
+  const call: Call = { shell: null, writes: [], cwd, tooMuch: null };
   if (SHELL_TOOLS.has(tool) && typeof input.command === "string") call.shell = input.command;
   else if (tool === "apply_patch" && typeof input.command === "string") call.writes = patchTargets(input.command);
   else if (tool === "patch" && typeof input.patchText === "string") call.writes = patchTargets(input.patchText);
@@ -33,15 +39,26 @@ function callOf(body: Record<string, unknown>): Call {
     const path = input.file_path ?? input.notebook_path ?? input.path;
     if (typeof path === "string") call.writes = [path];
   }
+  // a patch longer than the guard reads, or one with more files than it checks, is refused rather than read in part
+  const patch = tool === "apply_patch" ? input.command : tool === "patch" ? input.patchText : null;
+  if (
+    (typeof patch === "string" && patch.length > MOST_PATCH_CHARS) ||
+    call.writes.length > MOST_FILES ||
+    call.writes.some((path) => path.length > MOST_PATH_CHARS)
+  )
+    call.tooMuch = TOO_MUCH;
   return call;
 }
 
-/** The files an apply_patch body adds, updates, deletes or moves to. */
+/** The files an apply_patch body adds, updates, deletes or moves to; the reading stops one file past what the guard checks. */
 function patchTargets(patch: string): string[] {
-  const out: string[] = [];
-  for (const m of patch.matchAll(/^\*\*\* (?:Add|Update|Delete) File: (.+)$|^\*\*\* Move to: (.+)$/gm))
-    out.push((m[1] ?? m[2]).trim());
-  return out;
+  if (patch.length > MOST_PATCH_CHARS) return [];
+  const out = new Set<string>();
+  for (const m of patch.matchAll(/^\*\*\* (?:Add|Update|Delete) File: (.+)$|^\*\*\* Move to: (.+)$/gm)) {
+    out.add((m[1] ?? m[2]).trim());
+    if (out.size > MOST_FILES) break;
+  }
+  return [...out];
 }
 
 /** Checks one hook payload and answers in the shape that CLI reads. */
@@ -53,6 +70,11 @@ export async function answerHook(
   note?: string,
 ): Promise<{ type: string; text: string; noted: boolean }> {
   const call = callOf(body);
+  if (call.tooMuch)
+    return {
+      ...render(cli, { allow: false, message: call.tooMuch, finding: null, code: null, grantor: null }),
+      noted: false,
+    };
   let ruling: Ruling | null = null;
   if (call.shell !== null) ruling = await guard.check(seat, cli, call.shell, call.cwd);
   for (const path of call.writes) {

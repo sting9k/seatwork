@@ -193,7 +193,13 @@ const RUNNERS: Record<string, { sub?: string[]; spec: Spec }> = {
   },
 };
 
+const PACKAGE_PROGRAMS: Record<string, string> = { "@getpaseo/cli": "paseo" };
+
 const MAX_WRAPPERS = 32;
+
+/** A table's entry for a name the seat typed; a name like `constructor` finds nothing. */
+const own = <T>(table: Record<string, T>, name: string | null): T | undefined =>
+  name !== null && Object.hasOwn(table, name) ? table[name] : undefined;
 
 /** The last path component of a command word, lower case. */
 export const baseName = (text: string): string => text.slice(text.lastIndexOf("/") + 1).toLowerCase();
@@ -224,7 +230,7 @@ export function invocationOf(simple: Simple): Invocation {
       words = words.slice(1);
       continue;
     }
-    const runner = name ? RUNNERS[name] : undefined;
+    const runner = own(RUNNERS, name);
     if (runner) {
       const sub = runner.sub ? (literal(words[1] ?? words[0]) ?? "").toLowerCase() : null;
       if (!runner.sub || (words.length > 1 && runner.sub.includes(sub!))) {
@@ -237,7 +243,7 @@ export function invocationOf(simple: Simple): Invocation {
         continue;
       }
     }
-    const spec = name ? WRAPPERS[name] : undefined;
+    const spec = own(WRAPPERS, name);
     if (!spec || words.length < 2) break;
     const rest = readOptions(words.slice(1), spec, out);
     if (rest === null) break;
@@ -254,8 +260,15 @@ function finish(out: Invocation, words: Word[]): Invocation {
   out.command = words[0] ?? null;
   out.args = words.slice(1);
   const head = out.command ? literal(out.command) : null;
-  out.name = head === null ? null : baseName(head);
+  const viaRunner = out.wrappers.some((wrapper) => own(RUNNERS, wrapper.split(" ")[0]));
+  out.name = head === null ? null : baseName(viaRunner ? packageProgram(head) : head);
   return out;
+}
+
+/** The program a package runner starts for a package spec: `paseo@1.2` is `paseo`, and `@getpaseo/cli` is the `paseo` it ships. */
+function packageProgram(spec: string): string {
+  const bare = spec.replace(/^(@?[^@/]+(?:\/[^@/]+)?)@[^/]*$/, "$1");
+  return own(PACKAGE_PROGRAMS, bare) ?? bare;
 }
 
 /** A wrapper's options; the words left start with its program. Null for an unknown option. */

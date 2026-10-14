@@ -8,6 +8,7 @@ import type { Recovery } from "../orchestration/recovery";
 import type { ReviewGate } from "../orchestration/review-gate";
 import type { Rotations } from "../orchestration/rotation";
 import type { Rounds } from "../orchestration/rounds";
+import type { TaskKeys } from "../orchestration/task-keys";
 import type { RuntimePolicy } from "../policy";
 import type { Safety } from "../safety/index";
 import type { OwedList } from "./status";
@@ -23,6 +24,7 @@ export interface RoomContext {
   engine: MailEngine;
   works: WorkStores;
   rounds: Rounds;
+  taskKeys: TaskKeys;
   gate: ReviewGate;
   recovery: Recovery;
   rotations: Rotations;
@@ -42,14 +44,23 @@ export interface RoomContext {
   addSeats(providers: string[]): Promise<void>;
 }
 
-/** The task a seat works on: the issue it holds in its project's work store, else the seat itself. */
-export function taskOf(room: RoomContext, seat: string): string {
+const HELD_MOST = 8;
+
+/** The issues a seat holds in progress in its project's work store; none when the store cannot be read. */
+function held(room: RoomContext, seat: string): string[] {
   try {
     const store = room.works.existing(room.engine.projectOf(seat));
-    return store?.list({ assignee: seat, status: "in_progress", limit: 1 }).issues[0]?.id ?? seat;
+    return (
+      store?.list({ assignee: seat, status: "in_progress", limit: HELD_MOST }).issues.map((issue) => issue.id) ?? []
+    );
   } catch {
-    return seat;
+    return [];
   }
+}
+
+/** The task a seat works on, as a key that stays through its issue's states and its rotations. */
+export function taskOf(room: RoomContext, seat: string): string {
+  return room.taskKeys.of(seat, held(room, seat));
 }
 
 /** What a seat held goes to the seat that follows it, or is open again. */

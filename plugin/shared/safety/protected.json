@@ -1,5 +1,5 @@
 {
-  "$comment": "Files whose writing gives a foothold; paths under home are relative to it, names compare without case. append and free: still writable (appended to, or by glob); envRoots: the folder under home a variable names; anchors and anchorFiles: names read as under home; roomHomeFiles: the room's own.",
+  "$comment": "Files whose writing gives a foothold; paths under home are relative to it, names compare without case. append and free: still writable (appended to, or by glob); envRoots: the folder under home a variable names; anchors and anchorFiles: names read as under home; roomHomeFiles: the room's own; gitRuns: patterns of the paths inside a .git folder that git reads programs from.",
   "homeDirs": [".ssh", ".gnupg", ".bashrc.d", ".zshrc.d", ".password-store", ".config/gcloud/legacy_credentials"],
   "homeFiles": [
     ".aws/credentials",
@@ -53,5 +53,12 @@
   },
   "anchors": [".ssh", ".gnupg", ".aws", ".kube", ".docker", ".bashrc.d", ".zshrc.d", ".git"],
   "anchorFiles": [".bashrc", ".bash_profile", ".bash_login", ".profile", ".zshrc", ".zshenv", ".zprofile", ".zlogin"],
-  "roomHomeFiles": [".gitconfig", ".config/git/config"]
+  "roomHomeFiles": [".gitconfig", ".config/git/config"],
+  "gitRuns": [
+    "^$",
+    "^config(\\.worktree)?$",
+    "^hooks(/|$)",
+    "^info/attributes$",
+    "^(modules|worktrees)/.+/(config(\\.worktree)?|hooks(/.*)?|info/attributes)$"
+  ]
 }

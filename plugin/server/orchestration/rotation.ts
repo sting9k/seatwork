@@ -12,43 +12,77 @@ import type { SeatFit } from "./models";
 const HANDOFF_HEADINGS = ["CURRENT TASK", "PROGRESS", "KEY DECISIONS", "ACTIVE FILES", "BLOCKERS"] as const;
 type Heading = (typeof HANDOFF_HEADINGS)[number];
 
+const VERBATIM = "VERBATIM";
 const HANDOFF_CHARS = 6000;
+const VERBATIM_CHARS = 4000;
 const BRIEF_CHARS = 12_000;
 
 /** The mail that asks a seat for its handoff. */
 export function handoffRequest(why: string): string {
   return [
     `A fresh seat will continue your work${why ? ` (${why})` : ""}: every step a seat takes reads its whole context again, and yours has grown large. Nothing about the work changes, and nothing you did is lost.`,
-    "Write the handoff as your whole final message, 500 words at most: first line `HANDOFF`, then these five headings, each on a line of its own:",
+    "Write the handoff as your whole final message, 500 words at most: first line `HANDOFF`, then these headings, each on a line of its own:",
     "CURRENT TASK: what you are doing, in a sentence or two",
     "PROGRESS: what is done (commit ids, paths) and what is still to do",
-    "KEY DECISIONS: what you decided and why, and what you ruled out",
+    "KEY DECISIONS: what you chose yourself and what you ruled out, with why; the decisions people made and recorded (seatwork_knowledge do=list) go to your successor on their own, so name one only to point at it",
     "ACTIVE FILES: what you were changing or reading, and what is uncommitted",
     "BLOCKERS: what you wait for, and from whom; `none` when nothing",
+    `${VERBATIM} (optional): the exact strings your successor needs unchanged: commands, error messages, ids, constants, paths, one per line, ${VERBATIM_CHARS} characters at most and outside the 500 words; the room carries them as written, where a summary would lose them`,
     "Start no new work for it. When your turn ends the room starts your successor on your brief and this handoff, hands it the seats you launched, and archives you.",
   ].join("\n");
 }
 
+/** A handoff read from a seat's reply: its headed sections, the summary as one text, and the exact strings as written with the lines the size cut. */
 interface Handoff {
   sections: Record<Heading, string>;
   text: string;
+  verbatim: { text: string; left: number };
 }
 
 /** A heading at the start of a line, behind whatever list or emphasis marks the writer put there on that line. */
-const headingAt = (heading: string) => new RegExp(`^[ \\t#>*_\\-\\d.)]*${heading}\\b[*_]*\\s*[:—-]?[ \\t]*`, "im");
+const headingAt = (heading: string) => new RegExp(`^[ \\t#>*_\\-\\d.)]*${heading}\\b[*_]*[ \\t]*[:—-]?[ \\t]*`, "im");
 
 /** The handoff in a seat's reply; null when it does not say what it was doing and how far it got. */
 export function parseHandoff(message: string): Handoff | null {
-  const found = HANDOFF_HEADINGS.flatMap((heading) => {
-    const match = headingAt(heading).exec(message);
-    return match ? [{ heading, from: match.index, body: match.index + match[0].length }] : [];
-  }).sort((a, b) => a.from - b.from);
+  const found = [...HANDOFF_HEADINGS, VERBATIM]
+    .flatMap((heading) => {
+      const match = headingAt(heading).exec(message);
+      return match ? [{ heading, from: match.index, body: match.index + match[0].length }] : [];
+    })
+    .sort((a, b) => a.from - b.from);
   const sections = Object.fromEntries(HANDOFF_HEADINGS.map((heading) => [heading, ""])) as Record<Heading, string>;
+  let exact = "";
+  const summary: string[] = [];
   found.forEach((at, index) => {
-    sections[at.heading] = message.slice(at.body, found[index + 1]?.from ?? message.length).trim();
+    const end = found[index + 1]?.from ?? message.length;
+    if (at.heading === VERBATIM) {
+      // blank lines before the first string go, the first string's own indentation stays
+      exact = message
+        .slice(at.body, end)
+        .replace(/^(?:[ \t]*\n)+/, "")
+        .trimEnd();
+      return;
+    }
+    sections[at.heading as Heading] = message.slice(at.body, end).trim();
+    summary.push(message.slice(at.from, end));
   });
   if (!sections["CURRENT TASK"] || !sections.PROGRESS) return null;
-  return { sections, text: cut(message.slice(found[0].from).trim()) };
+  return { sections, text: cut(summary.join("").trim()), verbatim: capped(exact) };
+}
+
+/** Exact strings held to VERBATIM_CHARS at whole lines; a first line past the size is cut in the line. */
+function capped(exact: string): Handoff["verbatim"] {
+  if (exact.length <= VERBATIM_CHARS) return { text: exact, left: 0 };
+  const lines = exact.split("\n");
+  const kept: string[] = [];
+  let used = 0;
+  for (const line of lines) {
+    if (used + line.length + (kept.length ? 1 : 0) > VERBATIM_CHARS) break;
+    used += line.length + (kept.length ? 1 : 0);
+    kept.push(line);
+  }
+  if (kept.length === 0) return { text: lines[0].slice(0, VERBATIM_CHARS), left: lines.length };
+  return { text: kept.join("\n"), left: lines.length - kept.length };
 }
 
 /** A handoff past HANDOFF_CHARS ends at the last line or sentence before it, and says it was cut. */
@@ -65,11 +99,31 @@ export function briefInForce(received: readonly string[]): string | null {
   return brief ? brief.slice(0, BRIEF_CHARS) : null;
 }
 
-/** What the successor reads first: the brief in force, the handoff, and the threads the old seat was in. */
+/** The exact strings in a fence they cannot close, and how many lines the size cut. */
+function exactBlock(verbatim: Handoff["verbatim"]): string[] {
+  const longest = Math.max(0, ...[...verbatim.text.matchAll(/`+/g)].map((run) => run[0].length));
+  const fence = "`".repeat(Math.max(3, longest + 1));
+  return [
+    "## Exact strings the old seat kept (the room changed nothing inside the fence)",
+    fence,
+    verbatim.text,
+    fence,
+    ...(verbatim.left > 0
+      ? [
+          `${verbatim.left} more lines were left out to hold the strings to ${VERBATIM_CHARS} characters; the old seat's last turn in the room's record has them.`,
+        ]
+      : []),
+    "",
+  ];
+}
+
+/** What the successor reads first: the brief in force, the handoff, its exact strings, what the room kept for the task, and the threads the old seat was in. */
 export function successorPrompt(input: {
   brief: string | null;
   handoff: string;
   file: string;
+  verbatim?: Handoff["verbatim"];
+  kept?: readonly string[];
   threads?: readonly string[];
 }): string {
   return [
@@ -81,6 +135,8 @@ export function successorPrompt(input: {
     `## The handoff (kept at ${input.file})`,
     input.handoff,
     "",
+    ...(input.verbatim?.text ? exactBlock(input.verbatim) : []),
+    ...(input.kept?.length ? [...input.kept, ""] : []),
     ...(input.threads?.length
       ? ["## The mail threads it was in, newest first (seatwork_inbox reads a thread whole)", ...input.threads, ""]
       : []),
@@ -161,11 +217,12 @@ interface RotateDeps {
   handOver(from: string, to: string): void;
 }
 
-/** Starts a seat's successor on its brief and handoff, hands it over, archives the seat. */
+/** Starts a seat's successor on its brief, its handoff and the lines of `kept`, hands it over, archives the seat. */
 export async function rotate(
   deps: RotateDeps,
   old: SeatRecord,
   handoff: Handoff,
+  kept: readonly string[] = [],
 ): Promise<{ id: string; file: string; model: string; left: string[] }> {
   const { host, engine } = deps;
   const now = await host.seat(old.agentId);
@@ -179,7 +236,8 @@ export async function rotate(
   const received = await host.prompts(old.agentId, 4000);
   const stamp = new Date().toISOString().slice(0, 16).replace(/[T:]/g, "-");
   const file = join(keptOutOfGit(join(now.cwd, ".seatwork", "handoffs")), `${stamp}_${old.agentId.slice(0, 8)}.md`);
-  writeFileSync(file, `# Handoff of ${old.title ?? old.agentId}\n\n${handoff.text}\n`);
+  const exact = handoff.verbatim.text ? `\n${exactBlock(handoff.verbatim).join("\n")}` : "";
+  writeFileSync(file, `# Handoff of ${old.title ?? old.agentId}\n\n${handoff.text}\n${exact}`);
   const owner = engine.parentOf(old.agentId);
   const title = nextTitle(old.title);
   const id = await host.create({
@@ -194,6 +252,8 @@ export async function rotate(
       brief: received ? briefInForce(received) : null,
       handoff: handoff.text,
       file,
+      verbatim: handoff.verbatim,
+      kept,
       threads: engine.threadsFor(old.agentId),
     }),
   });

@@ -4,7 +4,7 @@ import type { Scene } from "../types";
 /** git read as git reads its line: global options, subcommand, aliases, then DCG's git rules. */
 
 export interface GitHit {
-  pack: "core.git" | "strict_git";
+  pack: "core.git" | "strict_git" | "room.guard";
   rule: string;
   detail: string;
 }
@@ -74,6 +74,10 @@ const RECOVERY = new Set([
   "restore-worktree",
   "restore-worktree-explicit",
 ]);
+const EXEC_KEYS =
+  /^(core\.(fsmonitor|hookspath|sshcommand|pager|editor|askpass|gitproxy|attributesfile)|filter\..+|diff\.(external|.+\.(command|textconv|cachetextconv))|merge\..+\.(driver|recursivedriver)|(difftool|mergetool)\..+\.(cmd|path)|credential\.(.+\.)?helper|gpg\.(.+\.)?program|sequence\.editor|pager\..+|include\.path|includeif\..+\.path)$/;
+const CONFIG_VALUED = new Set(["-f", "--file", "--blob", "--type", "--default", "--comment"]);
+const CONFIG_READS = new Set(["get", "list", "unset", "edit", "remove-section", "rename-section"]);
 const MAX_ALIAS = 64;
 const PROTECTED_BRANCHES = (["master", "main"] as const).map((b) => [b, new RegExp(`(^|[:/+])${b}$`)] as const);
 
@@ -215,9 +219,15 @@ async function rules(line: Line, scene: Scene, tools: GitTools, strict: boolean)
   const hits: GitHit[] = [];
   const core = (rule: string, detail = `git ${line.sub}`) => hits.push({ pack: "core.git", rule, detail });
   const tight = (rule: string, detail = `git ${line.sub}`) => strict && hits.push({ pack: "strict_git", rule, detail });
+  const room = (rule: string, detail: string) => hits.push({ pack: "room.guard", rule, detail });
   const t = line.texts;
   const opts = beforeEnd(t);
   switch (line.sub) {
+    case "config": {
+      const key = programKey(t);
+      if (key !== null) room("git-config-exec", key);
+      break;
+    }
     case "checkout": {
       if (t[0] === "-b" || t[0] === "--orphan") break;
       if (
@@ -334,6 +344,29 @@ async function rules(line: Line, scene: Scene, tools: GitTools, strict: boolean)
   if (hits.some((h) => RECOVERY.has(h.rule)) && (await tools.rebasing(line.cwd)))
     return hits.filter((h) => !RECOVERY.has(h.rule));
   return hits;
+}
+
+/** The key a `git config` line sets when it names a program git runs later (`filter.x.clean`, `core.hooksPath`); null for a read, an unset, or any other key. */
+function programKey(texts: (string | null)[]): string | null {
+  const words: (string | null)[] = [];
+  let reads = false;
+  for (let i = 0; i < texts.length; i += 1) {
+    const text = texts[i];
+    if (text === "--") continue;
+    if (text !== null && text.startsWith("-")) {
+      reads ||= text === "-l" || text === "-e" || /^--(get|list|show|name|unset|remove|rename|edit)/.test(text);
+      if (CONFIG_VALUED.has(text)) i += 1;
+      continue;
+    }
+    words.push(text);
+  }
+  if (reads || CONFIG_READS.has(words[0] ?? "")) return null;
+  // `git config set key value` is the newer spelling of `git config key value`
+  const named = words[0] === "set" ? words.slice(1) : words;
+  if (named.length < 2) return null;
+  const key = named[0];
+  if (key === null) return "a key known only at run time";
+  return EXEC_KEYS.test(key.toLowerCase()) ? key.slice(0, 80) : null;
 }
 
 /** The rules for `git push`: force in its forms, mirror, delete, prune, and the protected branches. */

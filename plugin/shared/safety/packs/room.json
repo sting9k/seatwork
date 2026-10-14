@@ -55,6 +55,30 @@
             { "commands": ["opencode", "crush", "goose", "amp"], "first": ["run"] },
             { "commands": ["aider"], "flags": ["-m", "--message", "--message-file"] }
           ]
+        },
+        "git-config-write": {
+          "severity": "critical",
+          "grant": "human",
+          "reason": "a write into .git where git reads programs from: config, hooks or attributes",
+          "explanation": "A filter, hook or external diff named in these files runs on the room's own git calls too, outside the guard.",
+          "safer": ["Ask your Owner; the person changes a repository's git configuration"]
+        },
+        "git-config-exec": {
+          "severity": "critical",
+          "grant": "human",
+          "reason": "git config names a program git runs later: a filter, a text conversion, an external diff, a hook path",
+          "explanation": "What the repository's config names runs on every git call there, the room's own included, outside the guard.",
+          "safer": ["Ask your Owner; the person changes a repository's git configuration"]
+        },
+        "paseo-cli": {
+          "severity": "critical",
+          "grant": "human",
+          "reason": "a seat reaching other agents or the daemon through the Paseo CLI",
+          "explanation": "The Paseo CLI sends prompts to agents, starts, stops and schedules them, answers their permission requests and changes the daemon. What it sends arrives as if the person wrote it, and none of the room's checks stand between.",
+          "safer": [
+            "seatwork_mail writes to your Owner or to a seat you launched",
+            "Ask your Owner; the person runs the Paseo CLI"
+          ]
         }
       }
     },

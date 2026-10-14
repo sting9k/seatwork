@@ -3,7 +3,14 @@ import { BRIEF } from "./support/timeline";
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { join } from "node:path";
-import { briefInForce, nextTitle, parseHandoff, Rotations, successorPrompt } from "../server/orchestration/rotation";
+import {
+  briefInForce,
+  handoffRequest,
+  nextTitle,
+  parseHandoff,
+  Rotations,
+  successorPrompt,
+} from "../server/orchestration/rotation";
 
 test("a handoff is read by its headings, whatever marks the seat put on them; without task and progress it is none", () => {
   const handoff = parseHandoff(
@@ -84,4 +91,70 @@ test("a rotation asked for outlives a restart; one the room was starting is said
     ["lead-a"],
   );
   assert.equal(new Rotations(file).get("lead-a"), undefined);
+});
+
+const EXACT = [
+  "$ npm test -- --grep 'a  b'",
+  "Error: ENOENT: no such file or directory, open '/tmp/x y/z.json'",
+  '  indented: "quoted" `tick` ```fence',
+  "const LIMIT = 0x7fff_ffff; // 2147483647",
+].join("\n");
+
+test("a handoff may carry exact strings under VERBATIM: they are kept as written, apart from the summary", () => {
+  const handoff = parseHandoff(
+    `HANDOFF\nCURRENT TASK: the store\nPROGRESS: done\nVERBATIM:\n${EXACT}\nBLOCKERS: none`,
+  )!;
+  assert.equal(handoff.verbatim.text, EXACT);
+  assert.equal(handoff.verbatim.left, 0);
+  assert.doesNotMatch(handoff.text, /ENOENT|VERBATIM/);
+  assert.equal(handoff.sections.BLOCKERS, "none", "the heading after it still ends it");
+
+  // on the heading's own line, as the last heading, with the marks a writer puts on it
+  const last = parseHandoff("HANDOFF\nCURRENT TASK: a\nPROGRESS: b\n**VERBATIM** — npm run build:all  \n")!;
+  assert.equal(last.verbatim.text, "npm run build:all");
+  // it is optional
+  assert.deepEqual(parseHandoff("CURRENT TASK: a\nPROGRESS: b")!.verbatim, { text: "", left: 0 });
+});
+
+test("the exact strings of a handoff are held to a size at whole lines, and the room says how many it left out", () => {
+  const lines = Array.from({ length: 300 }, (_, i) => `id-${String(i).padStart(3, "0")} ${"x".repeat(30)}`);
+  const handoff = parseHandoff(`CURRENT TASK: a\nPROGRESS: b\nVERBATIM:\n${lines.join("\n")}`)!;
+  const kept = handoff.verbatim.text.split("\n");
+  assert.ok(handoff.verbatim.text.length <= 4000, `${handoff.verbatim.text.length} characters were kept`);
+  assert.deepEqual(kept, lines.slice(0, kept.length), "a kept line is whole and in its place");
+  assert.equal(handoff.verbatim.left, lines.length - kept.length);
+  assert.ok(kept.length > 50 && handoff.verbatim.left > 0);
+
+  const long = parseHandoff(`CURRENT TASK: a\nPROGRESS: b\nVERBATIM: ${"y".repeat(9000)}`)!;
+  assert.equal(long.verbatim.text.length, 4000, "one line past the size is cut in the line");
+  assert.equal(long.verbatim.left, 1);
+});
+
+test("the request for a handoff names the exact-strings heading and says the room carries it as written", () => {
+  const request = handoffRequest("");
+  assert.match(
+    request,
+    /\nVERBATIM \(optional\): [^\n]*commands, error messages, ids, constants, paths[^\n]*as written/,
+  );
+  assert.match(
+    request,
+    /\nKEY DECISIONS: [^\n]*recorded[^\n]*successor/,
+    "the decisions people made are carried by the room",
+  );
+});
+
+test("a successor is given the exact strings in a fence that cannot be closed from inside, then what the room kept for its task", () => {
+  const prompt = successorPrompt({
+    brief: "Outcome: x",
+    handoff: "CURRENT TASK: y",
+    file: "/p/h.md",
+    verbatim: { text: EXACT, left: 3 },
+    kept: ["## Decisions in force for your task", "- [task T-1] store: Keep SQLite."],
+  });
+  assert.ok(prompt.includes(`\n\`\`\`\`\n${EXACT}\n\`\`\`\`\n`), "four backticks fence a text that holds three");
+  assert.match(prompt, /3 more lines were left out/);
+  assert.ok(prompt.indexOf("## The handoff") < prompt.indexOf("Exact strings"));
+  assert.ok(prompt.indexOf("Exact strings") < prompt.indexOf("## Decisions in force for your task"));
+  assert.ok(prompt.indexOf("- [task T-1] store") < prompt.indexOf("trust the tree"));
+  assert.doesNotMatch(successorPrompt({ brief: null, handoff: "h", file: "f" }), /Exact strings|Decisions in force/);
 });

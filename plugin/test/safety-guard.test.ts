@@ -157,7 +157,7 @@ test("Claude and Codex read a deny as hook JSON and nothing for an allow; Pi and
   assert.match(write.hookSpecificOutput.permissionDecisionReason, /credential-file-write/);
   const patch = {
     tool_name: "apply_patch",
-    tool_input: { command: "*** Begin Patch\n*** Update File: .git/config\n*** End Patch" },
+    tool_input: { command: "*** Begin Patch\n*** Update File: .git/HEAD\n*** End Patch" },
     cwd: "/Users/u/proj",
   };
   assert.match(
@@ -193,6 +193,7 @@ test("every statement the safety store runs uses an index", async () => {
   const store = safety.store();
   store.noteStart("peer", "/x", "abc");
   store.inherit("peer", "peer9");
+  store.seen("peer9");
   store.startOf("peer9");
   store.noteFindings("peer", [
     { fingerprint: "f1", rule: "debugger", severity: "block", path: "a.ts", line: 1, text: "debugger" },

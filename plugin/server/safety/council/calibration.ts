@@ -1,3 +1,4 @@
+import council from "../../../shared/safety/council.json";
 import { lowerBound, upperBound } from "../../bounds";
 
 /** How labels move a council member: exact binomial bounds, the level they allow, a juror's threshold. */
@@ -13,10 +14,7 @@ export interface Label {
 }
 
 /** What a member needs to reach each level above 0: labels, tasks they span, and a lower bound on its right rate. */
-export const BARS: readonly { level: number; labels: number; tasks: number; lower: number }[] = [
-  { level: 1, labels: 15, tasks: 3, lower: 0.5 },
-  { level: 2, labels: 30, tasks: 5, lower: 0.7 },
-];
+export const BARS: readonly { level: number; labels: number; tasks: number; lower: number }[] = council.bars;
 const RECENT = 20;
 const AGREEMENT = { least: 10, rate: 0.8 };
 

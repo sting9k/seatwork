@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import assert from "node:assert/strict";
 import test from "node:test";
-import { Sqlite, readScripts, type Row, type SqliteFailure } from "../server/sqlite";
+import { Sqlite, readScripts, storeStats, type Row, type SqliteFailure } from "../server/sqlite";
 
 const base = mkdtempSync(join(tmpdir(), "seatwork-sqlite-"));
 process.on("exit", () => rmSync(base, { recursive: true, force: true }));
@@ -156,4 +156,22 @@ test("a store hands the disk back after a large write: its write-ahead log is cu
   );
   assert.ok(limit > 0 && limit <= 64 * 1024 * 1024, `journal_size_limit is ${limit}`);
   store.close();
+});
+
+test("an open store is counted call by call with its slowest and its write-ahead log, and leaves the count when closed", () => {
+  const { file, dir } = fresh({ "V1__t.sql": "CREATE TABLE t (x INTEGER);" });
+  const store = new Probe(file, dir);
+  // a recursive count long enough to be the slowest statement so far
+  store.ask("WITH RECURSIVE n(x) AS (SELECT 1 UNION ALL SELECT x + 1 FROM n WHERE x < 200000) SELECT count(*) FROM n");
+  store.ask("SELECT 1");
+  const stat = storeStats().find((one) => one.file === file)!;
+  assert.equal(stat.name, "the probe");
+  assert.ok(stat.calls >= 2);
+  assert.match(stat.slowest, /^WITH RECURSIVE n\(x\)/);
+  assert.ok(stat.walBytes > 0, "the layout's writes sit in the write-ahead log");
+  store.close();
+  assert.equal(
+    storeStats().some((one) => one.file === file),
+    false,
+  );
 });

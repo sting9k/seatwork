@@ -6,6 +6,8 @@ import { test } from "node:test";
 import { Operations, OperationsRefused } from "../server/operations/index";
 import { districtOf, incidentOf } from "../server/operations/lines";
 import { OperationsStore } from "../server/operations/store";
+import { Vitals } from "../server/operations/vitals";
+import type { StoreStat } from "../server/sqlite";
 
 shipSql();
 let homes = 0;
@@ -19,6 +21,7 @@ function operations(operators: string[] = ["hq-1"]) {
     jev: { monthlyCapUsd: 10, forks: ["report"] },
     knowledge: { keepDays: 60 },
   };
+  const spent = { today: 0.01 };
   const persisted: [string, unknown][] = [];
   const mailed: { to: string; subject: string; body: string }[] = [];
   const echoed: string[] = [];
@@ -29,29 +32,35 @@ function operations(operators: string[] = ["hq-1"]) {
     persist: (path, value) => persisted.push([path, value]),
     operators: () => operators,
     mail: async (to, subject, body) => mailed.push({ to, subject, body }),
-    readings: { jev: () => ({ spentToday: 0.01 }), knowledge: () => ({ gateNoise: 2 }) },
+    readings: { jev: () => ({ spentToday: spent.today }), knowledge: () => ({ gateNoise: 2 }) },
     echo: (line) => echoed.push(line),
     now: () => now,
   });
   const at = (iso: string) => (now = new Date(iso));
-  return { ops, policy, persisted, mailed, echoed, at };
+  return { ops, policy, persisted, mailed, echoed, at, spent };
 }
 
 const GROUNDS = {
   reason: "The forks cap ran out before noon three days in a row.",
   evidence: "jev reading: forks spent 0.25 of 0.25 by 11:40 UTC on each of the last three days.",
 };
+const LOCKED = (n: number) =>
+  `knowledge: the turn ${n}f2504e0-4f89-11d3-9a0c-0305e82c3301:t${n} was not kept: database is locked`;
+
+/** The operator reads jev and its log in this turn, as a change needs. */
+const readJev = (ops: Operations) => {
+  ops.act("hq-1", { do: "jev" });
+  ops.act("hq-1", { do: "log", district: "jev" });
+};
 
 test("a log line is read for its district, and lines that report the same fault share one incident key", () => {
   assert.equal(districtOf("knowledge: the turn peer-a:t1 was not kept: SQLITE_BUSY"), "knowledge");
   assert.equal(districtOf("fork report: nothing_new (0.95)"), "jev");
   assert.equal(districtOf("the guard failed on a claude call: timeout"), "room");
+  assert.equal(districtOf("sqlite: the mail store was slow 2 times in the last minute"), "sqlite");
   assert.equal(incidentOf("fork report: nothing_new (0.95)"), null);
   assert.equal(incidentOf("gc: deleted /tmp/a/b, a handoff older than 3 days"), null);
-  assert.equal(
-    incidentOf("knowledge: the turn 3f2504e0-4f89-11d3-9a0c-0305e82c3301:t1 was not kept: database is locked"),
-    incidentOf("knowledge: the turn 9b2504e0-4f89-11d3-9a0c-0305e82c3302:t7 was not kept: database is locked"),
-  );
+  assert.equal(incidentOf(LOCKED(1)), incidentOf(LOCKED(2)));
   assert.equal(
     incidentOf("mail: delivery to 3f2504e0-4f89-11d3-9a0c-0305e82c3301 failed: refused"),
     incidentOf("mail: delivery to 9b2504e0-4f89-11d3-9a0c-0305e82c3302 failed: refused"),
@@ -64,16 +73,16 @@ test("a log line is read for its district, and lines that report the same fault 
 
 test("incidents reach the operator in one mail at most every few minutes, again only when seen since and after an hour", async () => {
   const { ops, mailed, echoed, at } = operations();
-  ops.log("knowledge: the turn 3f2504e0-4f89-11d3-9a0c-0305e82c3301:t1 was not kept: database is locked");
-  ops.log("knowledge: the turn 9b2504e0-4f89-11d3-9a0c-0305e82c3302:t7 was not kept: database is locked");
+  ops.log(LOCKED(1));
+  ops.log(LOCKED(2));
   ops.log("fork report: nothing_new (0.95)");
   assert.equal(echoed.length, 3, "every line still reaches the app's log");
   await ops.tick();
   assert.equal(mailed.length, 1);
   assert.match(mailed[0].subject, /^INCIDENT: 1 in knowledge$/);
-  assert.match(mailed[0].body, /was not kept: database is locked \(2x/);
+  assert.match(mailed[0].body, /#1 \[knowledge\] .*was not kept: database is locked \(2x, 2 in the last hour/);
   at("2026-10-15T00:20:00.000Z");
-  ops.log("knowledge: the turn 1c2504e0-4f89-11d3-9a0c-0305e82c3303:t2 was not kept: database is locked");
+  ops.log(LOCKED(3));
   await ops.tick();
   assert.equal(mailed.length, 1, "seen again within the hour: not told again yet");
   at("2026-10-15T01:20:00.000Z");
@@ -83,6 +92,55 @@ test("incidents reach the operator in one mail at most every few minutes, again 
   at("2026-10-15T03:00:00.000Z");
   await ops.tick();
   assert.equal(mailed.length, 2, "not seen since: told once is enough");
+  ops.close();
+});
+
+test("an acknowledged incident is told again only when it comes twice as often; a snoozed one when its hours are up", async () => {
+  const { ops, mailed, at } = operations();
+  ops.log(LOCKED(1));
+  await ops.tick();
+  ops.act("hq-1", { do: "ack", id: 1, note: "Known: the backup job locks the store each night for a minute." });
+  at("2026-10-15T01:30:00.000Z");
+  ops.log(LOCKED(2));
+  await ops.tick();
+  assert.equal(mailed.length, 1, "as often as when it was acknowledged: not told");
+  for (let i = 3; i < 6; i += 1) ops.log(LOCKED(i));
+  at("2026-10-15T01:50:00.000Z");
+  await ops.tick();
+  assert.equal(mailed.length, 2, "four in the hour against one when acknowledged: told again");
+  assert.match(mailed[1].body, /4 in the last hour[^\n]*, acknowledged: Known/, "it says what it was acknowledged for");
+  assert.doesNotMatch(
+    (ops.act("hq-1", { do: "incidents" }).incidents as string[])[0],
+    /acknowledged/,
+    "told again, it is open",
+  );
+  assert.throws(
+    () => ops.act("hq-1", { do: "snooze", id: 1, hours: 100, note: "Waiting for the fix to ship." }),
+    /at most 72/,
+  );
+  ops.act("hq-1", { do: "snooze", id: 1, hours: 2, note: "Waiting for the fix to ship tonight." });
+  at("2026-10-15T03:00:00.000Z");
+  ops.log(LOCKED(6));
+  await ops.tick();
+  assert.equal(mailed.length, 2, "snoozed: not told");
+  at("2026-10-15T04:10:00.000Z");
+  await ops.tick();
+  assert.equal(mailed.length, 3, "its hours are up and it was seen meanwhile");
+  ops.close();
+});
+
+test("a resolved incident seen again opens as back and is told at once", async () => {
+  const { ops, mailed, at } = operations();
+  ops.log(LOCKED(1));
+  await ops.tick();
+  assert.throws(() => ops.act("hq-1", { do: "resolve", id: 1, note: "ok" }), /note \(the cause\): say it/);
+  ops.act("hq-1", { do: "resolve", id: 1, note: "The knowledge gate's busy timeout was raised to five seconds." });
+  at("2026-10-15T00:20:00.000Z");
+  ops.log(LOCKED(2));
+  await ops.tick();
+  assert.equal(mailed.length, 2);
+  assert.match(mailed[1].body, /#1 .*, back after it was resolved/);
+  assert.throws(() => ops.act("hq-1", { do: "ack", id: 99, note: "No such incident at all." }), /no incident #99/);
   ops.close();
 });
 
@@ -104,11 +162,13 @@ test("with no operator nothing is mailed and nothing is lost; the digest comes o
   ops.close();
 });
 
-test("a tune rests on a reading of its district in the same turn, stays in range, and can be reverted while nothing changed it since", () => {
+test("a tune rests on a reading and the log of its district in the same turn, stays in range, and can be reverted while nothing changed it since", () => {
   const { ops, policy, persisted } = operations();
   const tune = { do: "tune", path: "jev.dailyCapUsd.forks", value: 0.5, ...GROUNDS };
   assert.throws(() => ops.act("hq-1", tune), /read jev in this turn first/);
   ops.act("hq-1", { do: "jev" });
+  assert.throws(() => ops.act("hq-1", tune), /read the log of jev in this turn too/);
+  ops.act("hq-1", { do: "log", district: "jev" });
   assert.throws(() => ops.act("hq-1", { ...tune, value: 50 }), /from 0 to 10/);
   assert.throws(() => ops.act("hq-1", { ...tune, path: "safety.guard" }), /not one the room tunes on its own/);
   assert.throws(() => ops.act("hq-1", { ...tune, evidence: "đã đo rồi, ổn" }), /evidence: (say it|in English)/);
@@ -116,9 +176,10 @@ test("a tune rests on a reading of its district in the same turn, stays in range
   assert.deepEqual((policy.jev as { dailyCapUsd: object }).dailyCapUsd, { forks: 0.5 });
   assert.deepEqual(persisted, [["jev.dailyCapUsd.forks", 0.5]]);
   assert.match(String(done.line), /jev\.dailyCapUsd\.forks: unset -> 0\.5/);
+  assert.equal(done.baseline, '{"spentToday":0.01}', "the district's reading is kept with the change");
   ops.turnStarted("hq-1");
   assert.throws(() => ops.act("hq-1", { do: "revert", id: done.id, ...GROUNDS }), /read jev in this turn first/);
-  ops.act("hq-1", { do: "log", district: "jev" });
+  ops.act("hq-1", { do: "jev" });
   ops.act("hq-1", { do: "revert", id: done.id, ...GROUNDS });
   assert.equal((policy.jev as { dailyCapUsd: Record<string, unknown> }).dailyCapUsd.forks, undefined);
   assert.deepEqual(persisted.at(-1), ["jev.dailyCapUsd.forks", undefined]);
@@ -132,20 +193,125 @@ test("a tune rests on a reading of its district in the same turn, stays in range
   ops.close();
 });
 
-test("the log keeps its days and its size; incidents not seen within the days go", () => {
+test("the digest weighs each change still standing against its baseline; a key reverted twice needs evidence that answers why", async () => {
+  const { ops, mailed, at, spent } = operations();
+  readJev(ops);
+  const tune = { do: "tune", path: "jev.monthlyCapUsd", ...GROUNDS };
+  for (const value of [12, 14]) {
+    const done = ops.act("hq-1", { ...tune, value });
+    ops.act("hq-1", { do: "revert", id: done.id, ...GROUNDS });
+  }
+  assert.throws(() => ops.act("hq-1", { ...tune, value: 16 }), /reverted 2 times in 30 days: #\d+ .*revisit true/);
+  ops.act("hq-1", { ...tune, value: 16, revisit: true });
+  spent.today = 0.09;
+  at("2026-10-16T00:00:00.000Z");
+  await ops.tick();
+  assert.match(
+    mailed.at(-1)!.body,
+    /jev\.monthlyCapUsd: 10 -> 16[^\n]*\n {2}then: \{"spentToday":0\.01\}\n {2}now: \{"spentToday":0\.09\}/,
+  );
+  ops.close();
+});
+
+test("a trace keeps its hypothesis and what it learned; after three undone changes it sends the operator to Human", () => {
+  const { ops } = operations();
+  ops.log(LOCKED(1));
+  const opened = ops.act("hq-1", {
+    do: "trace",
+    incident: 1,
+    hypothesis: "The gate writes while the mail reader holds the lock.",
+  });
+  ops.act("hq-1", {
+    do: "trace",
+    id: opened.id,
+    kind: "evidence",
+    text: "The log shows the lock at each minute's pass.",
+  });
+  ops.act("hq-1", {
+    do: "trace",
+    id: opened.id,
+    kind: "hypothesis",
+    text: "The minute's pass and the GC run at the same moment.",
+  });
+  readJev(ops);
+  for (const value of [11, 12, 13]) {
+    const done = ops.act("hq-1", {
+      do: "tune",
+      path: "jev.monthlyCapUsd",
+      value,
+      trace: opened.id,
+      revisit: true,
+      ...GROUNDS,
+    });
+    ops.act("hq-1", { do: "revert", id: done.id, ...GROUNDS });
+  }
+  const [trace] = ops.act("hq-1", { do: "traces" }).traces as Record<string, unknown>[];
+  assert.equal(trace.hypothesis, "The minute's pass and the GC run at the same moment.");
+  assert.deepEqual(trace.notes, [
+    "evidence: The log shows the lock at each minute's pass.",
+    "hypothesis: The minute's pass and the GC run at the same moment.",
+  ]);
+  assert.equal(trace.undone, 3);
+  assert.match(String(trace.next), /Write Human the trace/);
+  assert.throws(
+    () =>
+      ops.act("hq-1", { do: "tune", path: "jev.monthlyCapUsd", value: 9, trace: opened.id, revisit: true, ...GROUNDS }),
+    /write Human the trace instead/,
+  );
+  ops.act("hq-1", { do: "close", id: opened.id, conclusion: "The fault is in the code; the trace went to Human." });
+  assert.deepEqual(ops.act("hq-1", { do: "traces" }).traces, []);
+  assert.throws(
+    () => ops.act("hq-1", { do: "close", id: opened.id, conclusion: "Closing it a second time." }),
+    /is closed/,
+  );
+  ops.close();
+});
+
+test("the log keeps its days and its size; incidents not seen within the days and old closed traces go", () => {
   const dir = join(ROOM_HOME, "operations-expire");
   rmSync(dir, { recursive: true, force: true });
   let now = new Date("2026-10-01T00:00:00.000Z");
   const store = new OperationsStore(dir, 1000, () => now);
   store.record("mail", "mail: delivery to x failed", "mail|old");
+  const trace = store.openTrace("hq-1", null, "An old hypothesis that was settled.");
+  store.closeTrace(trace.id, "Settled long ago.");
   now = new Date("2026-10-10T00:00:00.000Z");
   for (let i = 0; i < 8; i += 1) store.record("gc", `gc: deleted ${i}`, null);
-  assert.equal(store.expire(new Date("2026-10-05T00:00:00.000Z"), 5), 1 + 3 + 1);
+  assert.equal(
+    store.expire(new Date("2026-10-05T00:00:00.000Z"), 5, new Date("2026-10-05T00:00:00.000Z")),
+    1 + 3 + 1 + 1,
+  );
   assert.deepEqual(
     store.lines({}, 10).map((one) => one.line),
     ["gc: deleted 7", "gc: deleted 6", "gc: deleted 5", "gc: deleted 4", "gc: deleted 3"],
   );
   assert.deepEqual(store.incidents("2000-01-01", 10), []);
+  assert.equal(store.trace(trace.id), null);
   assert.deepEqual(store.lines({ district: "gc", words: "DELETED 7" }, 10).length, 1);
   store.close();
+});
+
+test("the vital signs say a store's new slow statements, a large write-ahead log, and an event loop held up", async () => {
+  const stats: StoreStat[] = [
+    { name: "the mail store", file: "/m.db", calls: 10, slow: 0, slowestMs: 40, slowest: "SELECT 1", walBytes: 0 },
+  ];
+  const vitals = new Vitals(() => stats);
+  assert.deepEqual(
+    vitals.minute().filter((line) => line.startsWith("sqlite")),
+    [],
+  );
+  stats[0] = { ...stats[0], slow: 2, slowestMs: 812, slowest: "DELETE FROM messages", walBytes: 80 * 1024 * 1024 };
+  const lines = vitals.minute().filter((line) => line.startsWith("sqlite"));
+  assert.match(lines[0], /^sqlite: the mail store was slow 2 times in the last minute, its slowest so far 812 ms/);
+  assert.match(lines[1], /write-ahead log of 80 MB not checkpointed/);
+  assert.ok(
+    lines.every((line) => incidentOf(line) !== null),
+    "each is trouble the operator hears of",
+  );
+  const until = Date.now() + 300;
+  while (Date.now() < until);
+  await new Promise((resolve) => setTimeout(resolve, 60));
+  assert.ok(vitals.minute().some((line) => /event loop was slow, held up to \d+ ms/.test(line)));
+  assert.equal((vitals.reading().stores as unknown[]).length, 1);
+  vitals.close();
 });

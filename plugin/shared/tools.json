@@ -158,13 +158,13 @@
     },
     "seatwork_room": {
       "callers": "room",
-      "description": "Run the room itself. `do` is the action. health: incidents of the last day by district, and the readings there are. A reading by its name (jev, knowledge, mail, safety, seats): that district's numbers of the last day. log: the room's log, newest first, narrowed by `district`, `since`, `q`. incidents: troubles the room met in the last `days`, each with how often. policy: the keys you may tune, their values and ranges, and the last changes. tune: set one key's `value`; it needs a reading of that key's district in this turn, a `reason` and the `evidence` you measured, in English. revert: undo change `id` the same way. Refused for seats that do not run the room.",
+      "description": "Run the room itself. `do` is the action. health: incidents of the last day by district, open traces, the readings there are. A reading by its name (jev, knowledge, mail, safety, seats, host): that district's numbers now. log: the room's log, newest first, narrowed by `district`, `since`, `q`. incidents: troubles of the last `days`, each with its id, how often, how often in the last hour, and where it stands. ack, snooze (`hours`), resolve: set where incident `id` stands, with a `note` (for resolve, its cause). trace: open one on an `incident` with a `hypothesis`, or add to trace `id` a note of `kind` evidence, eliminated or hypothesis with its `text`; traces: the open ones; close: end trace `id` with its `conclusion`. policy: the keys you may tune, their values and ranges, the last changes. tune: set one key's `value`; it needs the key's district read and its log read in this turn, a `reason` and the `evidence` you measured, in English, and may name the `trace` it serves; a key reverted twice lately also needs `revisit` true. revert: undo change `id`, its district read in this turn. Refused for seats that do not run the room.",
       "inputSchema": {
         "type": "object",
         "properties": {
           "do": {
             "type": "string",
-            "description": "health, a reading's name, log, incidents, policy, tune or revert."
+            "description": "health, a reading's name, log, incidents, ack, snooze, resolve, trace, traces, close, policy, tune or revert."
           },
           "district": {
             "type": "string",
@@ -185,6 +185,39 @@
             "type": "integer",
             "description": "incidents: the window, a few days at most."
           },
+          "id": {
+            "type": "integer",
+            "description": "ack, snooze, resolve: the incident; trace, close: the trace; revert: the change."
+          },
+          "note": {
+            "type": "string",
+            "description": "ack, snooze, resolve: why, in English."
+          },
+          "hours": {
+            "type": "number",
+            "description": "snooze: how long, 72 at most."
+          },
+          "incident": {
+            "type": "integer",
+            "description": "trace: the incident it follows."
+          },
+          "hypothesis": {
+            "type": "string",
+            "description": "trace: what you think the cause is, in English."
+          },
+          "kind": {
+            "type": "string",
+            "enum": ["evidence", "eliminated", "hypothesis"],
+            "description": "trace: what the note is."
+          },
+          "text": {
+            "type": "string",
+            "description": "trace: the note, in English."
+          },
+          "conclusion": {
+            "type": "string",
+            "description": "close: what the trace found, in English."
+          },
           "path": {
             "type": "string",
             "description": "tune: the key, as policy lists it."
@@ -192,9 +225,13 @@
           "value": {
             "description": "tune: the new value."
           },
-          "id": {
+          "trace": {
             "type": "integer",
-            "description": "revert: the change to undo."
+            "description": "tune: the trace the change serves."
+          },
+          "revisit": {
+            "type": "boolean",
+            "description": "tune: a key reverted twice lately, tuned again on new evidence."
           },
           "reason": {
             "type": "string",

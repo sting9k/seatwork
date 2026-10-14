@@ -13,9 +13,11 @@ const KNOWN = new Set([
   "spawn",
   "safety",
   "turn",
+  "sqlite",
+  "room",
 ]);
 const TROUBLE =
-  /\b(fail(?:ed|s|ure)?|not (?:kept|read|marked|expired|forgotten|told|logged|asked|mailed again|settle)|could not|cannot|did not|damaged|refused|out of range|is down)\b/i;
+  /\b(fail(?:ed|s|ure)?|not (?:kept|read|marked|expired|forgotten|told|logged|asked|mailed again|settle)|could not|cannot|did not|damaged|refused|out of range|is down|slow|not checkpointed)\b/i;
 const VARYING = [
   /"[^"]*"|'[^']*'|`[^`]*`/g,
   /\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/gi,

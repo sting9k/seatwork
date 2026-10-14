@@ -1,7 +1,8 @@
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { DatabaseSync, type StatementSync } from "node:sqlite";
+import { performance } from "node:perf_hooks";
 
 /** One SQLite file of the room: opened sound, brought to its layout by versioned scripts. */
 
@@ -9,6 +10,26 @@ export type Row = Record<string, unknown>;
 export type Param = string | number | null;
 
 export type SqliteFailure = "DATABASE_LOCKED" | "SCHEMA_TOO_NEW" | "MIGRATION_INVALID";
+
+/** How one open store has done: its statements, the slow ones and the slowest, and its write-ahead log on disk. */
+export interface StoreStat {
+  name: string;
+  file: string;
+  calls: number;
+  slow: number;
+  slowestMs: number;
+  slowest: string;
+  walBytes: number;
+}
+
+const SLOW_MS = 100;
+const SQL_SHOWN = 80;
+const OPEN = new Set<Sqlite>();
+
+/** How every store this process holds open has done since it opened. */
+export function storeStats(): StoreStat[] {
+  return [...OPEN].map((store) => store.stat());
+}
 
 /** One step of a store's layout, read from its file. */
 export interface Script {
@@ -78,6 +99,10 @@ export class Sqlite {
   readonly startedOver: boolean;
   private readonly statements = new Map<string, StatementSync>();
   private depth = 0;
+  private calls = 0;
+  private slow = 0;
+  private slowestMs = 0;
+  private slowest = "";
 
   constructor(
     protected readonly file: string,
@@ -91,6 +116,33 @@ export class Sqlite {
     } catch (error) {
       this.db.close();
       throw error;
+    }
+    OPEN.add(this);
+  }
+
+  /** How this store has done since it opened. */
+  stat(): StoreStat {
+    let walBytes = 0;
+    try {
+      walBytes = statSync(`${this.file}-wal`).size;
+    } catch {
+      // no write-ahead log on disk: nothing waits to be checkpointed
+    }
+    const { calls, slow, slowestMs, slowest } = this;
+    return { name: this.options.name, file: this.file, calls, slow, slowestMs, slowest, walBytes };
+  }
+
+  /** Runs one statement or lock, counted, and kept as the slowest when it is; a write stalls the whole process while it waits. */
+  private timed<T>(sql: string, work: () => T): T {
+    const started = performance.now();
+    try {
+      return work();
+    } finally {
+      const ms = performance.now() - started;
+      this.calls += 1;
+      if (ms >= SLOW_MS) this.slow += 1;
+      if (ms > this.slowestMs)
+        [this.slowestMs, this.slowest] = [Math.round(ms), sql.replace(/\s+/g, " ").slice(0, SQL_SHOWN)];
     }
   }
 
@@ -200,6 +252,7 @@ export class Sqlite {
 
   /** Lets SQLite refresh its statistics, then closes the file. */
   close(): void {
+    OPEN.delete(this);
     this.statements.clear();
     this.db.exec("PRAGMA optimize");
     this.db.close();
@@ -217,32 +270,34 @@ export class Sqlite {
 
   /** Runs a write; how many rows it changed and the last row id. */
   protected run(sql: string, ...params: Param[]): { changes: number; lastInsertRowid: number } {
-    const done = this.statement(sql).run(...params);
+    const done = this.timed(sql, () => this.statement(sql).run(...params));
     return { changes: Number(done.changes), lastInsertRowid: Number(done.lastInsertRowid) };
   }
 
   /** Every row a read returns. */
   protected rows<T = Row>(sql: string, ...params: Param[]): T[] {
-    return this.statement(sql).all(...params) as T[];
+    return this.timed(sql, () => this.statement(sql).all(...params)) as T[];
   }
 
   /** The first row a read returns, if any. */
   protected row<T = Row>(sql: string, ...params: Param[]): T | undefined {
-    return this.statement(sql).get(...params) as T | undefined;
+    return this.timed(sql, () => this.statement(sql).get(...params)) as T | undefined;
   }
 
   /** One unit of work; a write takes the write lock first, so nothing it read can change. */
   protected transaction<T>(mode: "read" | "write", work: () => T): T {
     if (this.depth > 0) return work();
     try {
-      this.db.exec(mode === "write" ? "BEGIN IMMEDIATE" : "BEGIN");
+      const begin = mode === "write" ? "BEGIN IMMEDIATE" : "BEGIN";
+      // a write that waits on another process's lock waits here
+      this.timed(begin, () => this.db.exec(begin));
     } catch (error) {
       throw isBusy(error) ? this.locked() : error;
     }
     this.depth += 1;
     try {
       const done = work();
-      this.db.exec("COMMIT");
+      this.timed("COMMIT", () => this.db.exec("COMMIT"));
       return done;
     } catch (error) {
       this.db.exec("ROLLBACK");

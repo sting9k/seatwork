@@ -34,6 +34,7 @@ import { readJson } from "../persisted";
 import { loadPolicy, POLICY_FILE, type RuntimePolicy } from "../policy";
 import { costLines, roomStats } from "../stats";
 import { Operations, writePolicyKey } from "../operations/index";
+import { Vitals } from "../operations/vitals";
 import { OwedList, roomStatus } from "./status";
 import { Jev } from "../jev/index";
 import { Knowledge } from "../knowledge/index";
@@ -488,6 +489,7 @@ function startOperations(policy: RuntimePolicy, operators: ReadonlySet<string>, 
       safety: () => room().safety.councilLines(1).split("\n"),
       seats: () => ({ retrying: room().recovery.due(Number.MAX_SAFE_INTEGER).length, cost: costLines(day()) }),
     },
+    vitals: new Vitals(),
     echo: (line) => console.log(`seatwork: ${line}`),
   });
 }

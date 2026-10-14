@@ -1,5 +1,5 @@
 {
-  "$comment": "The room's operations: what its operator seat is told and when, how long the room's log is kept, and the policy keys it may tune on its own, each with its range. A key not listed here is changed by the owner only.",
+  "$comment": "The room's operations: when its operator seat is told of incidents and gets its digest, how long the room's log and closed traces are kept, how a change is weighed (its baseline, the reverts it must answer, the undone changes after which a trace goes to the owner), and the policy keys the seat may tune on its own, each with its range. A key not listed here is changed by the owner only.",
   "incidentMinutes": 15,
   "retellHours": 1,
   "digestHours": 24,
@@ -7,6 +7,12 @@
   "logMost": 100000,
   "lineChars": 1000,
   "evidenceChars": 2000,
+  "baselineChars": 4000,
+  "snoozeMostHours": 72,
+  "traceKeepDays": 30,
+  "standingDays": 7,
+  "revertWindowDays": 30,
+  "undoneMost": 3,
   "tunables": {
     "knowledge.keepDays": {
       "district": "knowledge",

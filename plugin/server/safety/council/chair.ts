@@ -1,6 +1,7 @@
 import council from "../../../shared/safety/council.json";
 import { redact } from "../../redact";
 import type { SafetyStore } from "../store";
+import { clip } from "./facts";
 
 /** The chair: the room's own seat rules whether a council member's finding sends a candidate back. */
 
@@ -122,8 +123,6 @@ export class Chair {
     return `Sent back: ${title} is told, with your reason.`;
   }
 }
-
-const clip = (text: string, most: number) => (text.length > most ? `${text.slice(0, most)}…` : text);
 
 /** The packet as stored, whole JSON: past the limit the diff goes first, then the commands, then the rest. */
 function kept(packet: Packet): string {

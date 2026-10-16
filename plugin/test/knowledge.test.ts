@@ -94,6 +94,51 @@ const sourceAt = (ref: string, at: string, task = "T-1", agent = "peer"): Source
   audience: [agent],
 });
 
+/** A mail on T-1 as the mail store hands it to the reader; `extra` overrides any field. */
+const letter = (
+  id: number,
+  subject: string,
+  sender: string,
+  body: string,
+  extra: Partial<Message & { to: string[] }> = {},
+): Message & { to: string[] } => ({
+  id,
+  at: `2026-10-14T0${id}:00:00.000Z`,
+  thread: "T-1",
+  replyTo: null,
+  sender,
+  senderRole: "lead",
+  signal: subject.split(":")[0],
+  subject,
+  body,
+  file: null,
+  files: [],
+  needs: "nothing",
+  why: "",
+  answeredAt: null,
+  answeredBy: null,
+  to: ["peer-a"],
+  ...extra,
+});
+
+/** A record store in a folder of its own. */
+function storeIn(name: string, now?: () => Date): KnowledgeStore {
+  const dir = join(ROOM_HOME, `knowledge-${name}`);
+  rmSync(dir, { recursive: true, force: true });
+  return new KnowledgeStore(dir, 1000, now);
+}
+
+const dbOf = (store: KnowledgeStore) => (store as unknown as { db: DatabaseSync }).db;
+
+/** `count` says for the entries of a source, each "<word> <ordinal>". */
+const says = (count: number, word: string) =>
+  Array.from({ length: count }, (_, ordinal) => ({
+    ordinal,
+    kind: "say" as const,
+    text: `${word} ${ordinal}`,
+    exitCode: null,
+  }));
+
 test("a turn is kept once as entries: typed words, the start brief, mail taken out, secrets hidden", () => {
   const events: TurnEvent[] = [
     { kind: "prompt", text: "Add the login endpoint" },
@@ -277,38 +322,29 @@ test("a pack is chosen by a fixed formula into its budget, read in order, failur
 });
 
 test("mail is read once from where the reader stopped, each mail kept for its sender and readers, secrets hidden", () => {
-  const mail = (id: number, senderRole: string, subject: string, body: string): Message & { to: string[] } => ({
-    id,
-    at: `2026-10-14T0${id}:00:00.000Z`,
-    thread: "T-1",
-    replyTo: null,
-    sender: senderRole === "system" ? "room" : "lead-1",
-    senderRole,
-    signal: subject.split(":")[0],
-    subject,
-    body,
-    file: null,
-    files: [],
-    needs: "nothing",
-    why: "",
-    answeredAt: null,
-    answeredBy: null,
-    to: ["peer-d"],
-  });
+  const to = ["peer-d"];
   const box = [
-    mail(1, "lead", "REJECT: the login form", "The form posts the password in clear; token=Zx9Qw8Er7Ty6Ui5Op4 leaked"),
-    mail(2, "system", "COUNCIL: claims on Peer", "claims: the report says tests pass and no check passed"),
+    letter(
+      1,
+      "REJECT: the login form",
+      "lead-1",
+      "The form posts the password in clear; token=Zx9Qw8Er7Ty6Ui5Op4 leaked",
+      { to },
+    ),
+    letter(2, "COUNCIL: claims on Peer", "room", "claims: the report says tests pass and no check passed", {
+      senderRole: "system",
+      to,
+    }),
   ];
   const { knowledge, project } = district({ mail: box });
   assert.equal(knowledge.readMail(), 2);
   assert.equal(knowledge.readMail(), 0, "nothing is read twice");
-  box.push(mail(3, "lead", "ACCEPT: the login form", "Good"));
+  box.push(letter(3, "ACCEPT: the login form", "lead-1", "Good", { to }));
   assert.equal(knowledge.readMail(), 1);
   const hits = ask(knowledge, "peer-d", { do: "search", q: "login form", kinds: ["mail"] }).hits as { text: string }[];
   assert.equal(hits.length, 2);
   assert.ok(!JSON.stringify(hits).includes("Zx9Qw8Er7Ty6Ui5Op4"));
-  const db = (knowledge.storeOf(project) as unknown as { db: DatabaseSync }).db;
-  const kept = db.prepare("SELECT ref, audience FROM sources ORDER BY ref").all() as {
+  const kept = dbOf(knowledge.storeOf(project)).prepare("SELECT ref, audience FROM sources ORDER BY ref").all() as {
     ref: string;
     audience: string;
   }[];
@@ -320,22 +356,12 @@ test("mail is read once from where the reader stopped, each mail kept for its se
 });
 
 test("old entries go in slices with their sources, the full-text index follows, and freed pages go back", () => {
-  const dir = join(ROOM_HOME, "knowledge-expire");
-  rmSync(dir, { recursive: true, force: true });
-  const store = new KnowledgeStore(dir, 1000);
-  const entries = Array.from({ length: 4500 }, (_, ordinal) => ({
-    ordinal,
-    kind: "say" as const,
-    text: `old word ${ordinal}`,
-    exitCode: null,
-  }));
-  store.add(sourceAt("old", "2026-01-01T00:00:00.000Z"), entries);
-  store.add(sourceAt("new", "2026-10-01T00:00:00.000Z"), [
-    { ordinal: 0, kind: "say", text: "new word", exitCode: null },
-  ]);
+  const store = storeIn("expire");
+  store.add(sourceAt("old", "2026-01-01T00:00:00.000Z"), says(4500, "old word"));
+  store.add(sourceAt("new", "2026-10-01T00:00:00.000Z"), says(1, "new word"));
   const cut = new Date("2026-06-01T00:00:00Z");
   assert.equal(store.expire(cut), 4500);
-  const db = (store as unknown as { db: DatabaseSync }).db;
+  const db = dbOf(store);
   const count = (sql: string) => (db.prepare(sql).get() as { n: number }).n;
   assert.equal(count("SELECT count(*) AS n FROM entries"), 1);
   assert.equal(count("SELECT count(*) AS n FROM sources"), 1);
@@ -352,24 +378,10 @@ test("old entries go in slices with their sources, the full-text index follows, 
 test("a seat reads what it and the seats under it saw: a reviewer does not read the turns it reviews", () => {
   const { knowledge } = district({
     mail: [
-      {
-        id: 1,
-        at: "2026-10-14T01:00:00.000Z",
-        thread: "T-1",
-        replyTo: null,
-        sender: "lead-1",
-        senderRole: "lead",
-        signal: "REVIEW",
-        subject: "REVIEW: the cache layer",
-        body: "Read the cache layer with fresh eyes",
-        file: null,
-        files: [],
+      letter(1, "REVIEW: the cache layer", "lead-1", "Read the cache layer with fresh eyes", {
         needs: "reply",
-        why: "",
-        answeredAt: null,
-        answeredBy: null,
         to: ["lens-1"],
-      },
+      }),
     ],
   });
   knowledge.turnEnded(turn("peer-g", [{ kind: "say", text: "The cache layer keeps stale entries on purpose" }]));
@@ -386,26 +398,18 @@ test("a seat reads what it and the seats under it saw: a reviewer does not read 
 });
 
 test("past its entry cap a store gives up its oldest entries first, and no more than it is over", () => {
-  const dir = join(ROOM_HOME, "knowledge-cap");
-  rmSync(dir, { recursive: true, force: true });
-  const store = new KnowledgeStore(dir, 1000);
-  const many = Array.from({ length: 4500 }, (_, ordinal) => ({
-    ordinal,
-    kind: "say" as const,
-    text: `w ${ordinal}`,
-    exitCode: null,
-  }));
-  store.add(sourceAt("older", "2026-10-01T00:00:00.000Z"), many);
-  store.add(sourceAt("newer", "2026-10-02T00:00:00.000Z"), [{ ordinal: 0, kind: "say", text: "kept", exitCode: null }]);
+  const store = storeIn("cap");
+  store.add(sourceAt("older", "2026-10-01T00:00:00.000Z"), says(4500, "w"));
+  store.add(sourceAt("newer", "2026-10-02T00:00:00.000Z"), says(1, "kept"));
   const longAgo = new Date("2026-01-01T00:00:00Z");
   assert.equal(store.expire(longAgo, 3000), 1501);
-  const db = (store as unknown as { db: DatabaseSync }).db;
+  const db = dbOf(store);
   const older = db
     .prepare("SELECT min(e.ordinal) AS n FROM entries e JOIN sources s ON s.id = e.source_id WHERE s.ref = 'older'")
     .get() as { n: number };
   assert.equal(older.n, 1501, "the oldest went first");
   assert.equal((db.prepare("SELECT count(*) AS n FROM entries").get() as { n: number }).n, 3000, "no more than over");
-  assert.equal(store.slice("turn", "newer", 0, 0)[0].text, "kept");
+  assert.equal(store.slice("turn", "newer", 0, 0)[0].text, "kept 0");
   store.close();
 });
 
@@ -414,8 +418,9 @@ function endTurn(knowledge: Knowledge, agent: string, events: TurnEvent[], turnI
   knowledge.turnEnded({ ...turn(agent, events, { turnId }), role: agent.split("-")[0] });
 }
 
+/** A `decide` call, a task's decision unless `args` name another scope. */
 const decide = async (knowledge: Knowledge, agent: string, args: Record<string, unknown>) =>
-  (await knowledge.act(agent, { do: "decide", ...args })) as Record<string, unknown>;
+  (await knowledge.act(agent, { do: "decide", scope: "task", ...args })) as Record<string, unknown>;
 
 test("a person's decision recorded by the seat they speak to takes effect when its turn ends, on the person's words in it", async () => {
   const { knowledge } = district();
@@ -442,10 +447,9 @@ test("a person's decision recorded by the seat they speak to takes effect when i
   assert.deepEqual(list.inForce, [
     `- [project] package-manager: Use pnpm for every install; never npm. (since ${String(list.now).slice(0, 10)}; v1)`,
   ]);
-  const book = knowledge.storeOf(null) as unknown as { db: DatabaseSync };
   assert.deepEqual(
-    { ...(book.db.prepare("SELECT address, text FROM decision_sources").get() as object) },
-    { address: "turn:sup-1:t1#0", text: "từ mai dùng pnpm nhé" },
+    rowsOf(knowledge, null, "SELECT address, text FROM decision_sources"),
+    [{ address: "turn:sup-1:t1#0", text: "từ mai dùng pnpm nhé" }],
     "the person's own words stay beside the decision, in their own language",
   );
   const told = ask(knowledge, "sup-1", { do: "list" }).notices as string[];
@@ -453,68 +457,55 @@ test("a person's decision recorded by the seat they speak to takes effect when i
   knowledge.close();
 });
 
-test("only the seat the person speaks to records a room's or a project's decision; a seat that briefs records its task's at once", async () => {
-  const { knowledge } = district();
-  await assert.rejects(
-    () =>
-      decide(knowledge, "peer-b", {
-        scope: "project",
-        project: "project",
-        topic: "db",
-        statement: "Use SQLite for the store.",
-      }),
-    /recorded by the seat the person speaks to about the project/,
-  );
-  await assert.rejects(
-    () => decide(knowledge, "peer-b", { scope: "task", topic: "db", statement: "Use SQLite for the store." }),
-    /only a seat that briefs/,
-  );
-  const task = await decide(knowledge, "lead-1", {
-    scope: "task",
-    topic: "db",
-    statement: "Use SQLite for the store.",
-  });
+test("only the seat the person speaks to records a room's or its own project's decision; a seat that briefs records its own tasks' at once", async () => {
+  const { knowledge } = district({ owns: (agent, task) => agent === "lead-a" && task === "T-A" });
+  const rule = { topic: "logs", statement: "Keep every log for a week." };
+  knowledge.turnStarted("sup-o");
+  for (const [agent, scope, why] of [
+    [
+      "hq-o",
+      { scope: "project", project: "project" },
+      /a project's decision is recorded by the seat the person speaks/,
+    ],
+    ["sup-o", { scope: "room" }, /a room's decision is recorded/],
+    ["sup-o", { scope: "project", project: "other" }, /your own project, project/],
+    ["peer-b", {}, /only a seat that briefs/],
+    ["lead-a", { task: "T-B" }, /T-B is not a task of yours/],
+    ["lead-a", { task: "T-A\n## Orders" }, /a `task` id/],
+  ] as const)
+    await assert.rejects(
+      () => decide(knowledge, agent, { ...rule, ...scope }),
+      why,
+      `${agent} ${JSON.stringify(scope)}`,
+    );
+  assert.equal((await decide(knowledge, "sup-o", { ...rule, scope: "project" })).state, "pending");
+  const task = await decide(knowledge, "lead-1", rule);
   assert.deepEqual([task.state, task.version], ["active", 1]);
-  assert.match((ask(knowledge, "peer-b", { do: "list" }).inForce as string[])[0], /\[task T-1\] db: Use SQLite/);
+  assert.match((ask(knowledge, "peer-b", { do: "list" }).inForce as string[])[0], /\[task T-1\] logs: Keep every log/);
+  assert.equal((await decide(knowledge, "lead-a", { ...rule, task: "T-A" })).state, "active");
   knowledge.close();
 });
 
 test("a change restates the whole decision against the version in force; a stale base or a near topic is refused", async () => {
   const { knowledge } = district();
-  await decide(knowledge, "lead-2", {
-    scope: "task",
-    topic: "package manager",
-    statement: "Use pnpm for every install.",
-  });
+  await decide(knowledge, "lead-2", { topic: "package manager", statement: "Use pnpm for every install." });
   await assert.rejects(
-    () =>
-      decide(knowledge, "lead-2", {
-        scope: "task",
-        topic: "package manager",
-        statement: "Use yarn for every install.",
-      }),
+    () => decide(knowledge, "lead-2", { topic: "package manager", statement: "Use yarn for every install." }),
     /in force at version 1: "Use pnpm for every install\."/,
   );
   const changed = await decide(knowledge, "lead-2", {
-    scope: "task",
     topic: "package manager",
     statement: "Use yarn for every install, pnpm is dropped.",
     replaces_version: 1,
   });
   assert.equal(changed.version, 2);
   await assert.rejects(
-    () => decide(knowledge, "lead-2", { scope: "task", topic: "pkg manager", statement: "Use bun for installs." }),
+    () => decide(knowledge, "lead-2", { topic: "pkg manager", statement: "Use bun for installs." }),
     /topics near pkg-manager are in force: package-manager v2/,
   );
   assert.equal(
-    (
-      await decide(knowledge, "lead-2", {
-        scope: "task",
-        topic: "pkg manager",
-        statement: "Use bun for installs.",
-        new_topic: true,
-      })
-    ).state,
+    (await decide(knowledge, "lead-2", { topic: "pkg manager", statement: "Use bun for installs.", new_topic: true }))
+      .state,
     "active",
   );
   knowledge.close();
@@ -523,13 +514,8 @@ test("a change restates the whole decision against the version in force; a stale
 test("a temporary decision ends on its date and gives the topic back; a withdrawal gives it back too", async () => {
   let now = new Date("2026-10-14T10:00:00Z");
   const { knowledge } = district({ now: () => now });
-  await decide(knowledge, "lead-3", {
-    scope: "task",
-    topic: "slow tests",
-    statement: "Run the slow tests on every push.",
-  });
+  await decide(knowledge, "lead-3", { topic: "slow tests", statement: "Run the slow tests on every push." });
   const temporary = await decide(knowledge, "lead-3", {
-    scope: "task",
     topic: "slow tests",
     statement: "Run the slow tests only at night until the release.",
     replaces_version: 1,
@@ -540,7 +526,6 @@ test("a temporary decision ends on its date and gives the topic back; a withdraw
   knowledge.tick();
   assert.match((ask(knowledge, "lead-3", { do: "list" }).inForce as string[])[0], /Run the slow tests on every push\./);
   await decide(knowledge, "lead-3", {
-    scope: "task",
     topic: "slow tests",
     statement: "Run the slow tests twice a day.",
     replaces_version: 1,
@@ -559,7 +544,6 @@ test("a temporary decision ends on its date and gives the topic back; a withdraw
   await assert.rejects(
     () =>
       decide(knowledge, "lead-3", {
-        scope: "task",
         topic: "deadline",
         statement: "Ship the release candidate.",
         valid_until: "2026-01-01",
@@ -569,7 +553,7 @@ test("a temporary decision ends on its date and gives the topic back; a withdraw
   // a day its month does not have, a time with no zone and a date in words would each land on another day
   for (const valid_until of ["2026-11-31", "2026-11-01T09:00", "November 1 2026"])
     await assert.rejects(
-      () => decide(knowledge, "lead-3", { scope: "task", topic: "freeze", statement: "Freeze the API.", valid_until }),
+      () => decide(knowledge, "lead-3", { topic: "freeze", statement: "Freeze the API.", valid_until }),
       /valid_until is not an ISO date like 2026-11-01/,
     );
   assert.throws(() => ask(knowledge, "lead-3", { do: "search", q: "slow tests", since: "yesterday" }), /`since` is/);
@@ -617,6 +601,15 @@ test("no person's words, no decision; words of an earlier turn carry a decision 
   );
   assert.equal((ask(knowledge, "hq-2", { do: "list" }).inForce as string[]).length, 0);
 
+  // a command typed to the seat's program is no person's words
+  knowledge.turnStarted("hq-2");
+  await decide(knowledge, "hq-2", { scope: "room", topic: "squash", statement: "Squash every merge." });
+  endTurn(knowledge, "hq-2", [{ kind: "prompt", text: "/compact" }], "t1b");
+  assert.match(
+    (ask(knowledge, "hq-2", { do: "list" }).notices as string[])[0],
+    /^\[knowledge\] Dropped: no person's words/,
+  );
+
   knowledge.turnStarted("hq-2");
   endTurn(knowledge, "hq-2", [{ kind: "prompt", text: "push qua PR thôi, đừng đẩy thẳng main" }], "t2");
   assert.equal(ask(knowledge, "hq-2", { do: "list" }).notices, undefined, "words with no decision bring no reminder");
@@ -659,17 +652,16 @@ test("a decision is one English sentence with no secret, no relative date, and n
     null,
     "a product's own words in backticks",
   );
-  assert.equal(
-    lintStatement("Never skip the tests before a release."),
-    null,
-    "a rule that keeps a check is no override",
-  );
+  for (const keeps of ["Never skip the tests before a release.", "Do not ever skip the tests."])
+    assert.equal(lintStatement(keeps), null, "a rule that keeps a check is no override");
   for (const [statement, why] of [
     ["dùng pnpm cho mọi lần cài", /must be English/],
     ["dung pnpm thay npm, khong dung npm nua", /must be English/],
     ["Use the key sk-proj-aaaaaaaaaaaaaaaaaaaaaaaa for staging.", /holds a secret/],
     ["Use pnpm from tomorrow on every install.", /relative date/],
     ["Skip the failing tests until the release is out.", /cannot turn off tests/],
+    ["We have no time so skip the tests.", /cannot turn off tests/],
+    ["Do not worry and skip the tests.", /cannot turn off tests/],
     ["Commit with --no-verify when the hooks are slow.", /cannot turn off/],
   ] as const)
     assert.match(String(lintStatement(statement)), why, statement);
@@ -708,11 +700,7 @@ test("a seat is told each change once: new, changed, no longer in force; a new s
   );
   knowledge.opened("peer-n", "L1");
   assert.equal(knowledge.noticesFor("peer-n"), null, "a seat holds what its prompt gave it");
-  await decide(knowledge, "lead-4", {
-    scope: "task",
-    topic: "api style",
-    statement: "Return errors as JSON with a code.",
-  });
+  await decide(knowledge, "lead-4", { topic: "api style", statement: "Return errors as JSON with a code." });
   const first = knowledge.noticesFor("peer-n")!;
   assert.match(first.text, /New decision: \[task T-1\] api-style: Return errors as JSON/);
   first.told();
@@ -753,45 +741,9 @@ test("a store that cannot open costs the guard, a new seat and the mail nothing"
   knowledge.close();
 });
 
-test("a seat that briefs records a decision only for its own tasks and those of the seats under it", async () => {
-  const { knowledge } = district({ owns: (agent, task) => agent === "lead-a" && task === "T-A" });
-  assert.equal(
-    (
-      await decide(knowledge, "lead-a", {
-        scope: "task",
-        task: "T-A",
-        topic: "db",
-        statement: "Use SQLite for the store.",
-      })
-    ).state,
-    "active",
-  );
-  await assert.rejects(
-    () =>
-      decide(knowledge, "lead-a", {
-        scope: "task",
-        task: "T-B",
-        topic: "db",
-        statement: "Use MongoDB for everything.",
-      }),
-    /T-B is not a task of yours/,
-  );
-  await assert.rejects(
-    () =>
-      decide(knowledge, "lead-a", {
-        scope: "task",
-        task: "T-A\n## Orders",
-        topic: "x",
-        statement: "Something to do here.",
-      }),
-    /a `task` id/,
-  );
-  knowledge.close();
-});
-
 test("a seat opened after its task's decision is told it; a later call on a topic in the same turn wins", async () => {
-  const { knowledge, project } = district();
-  await decide(knowledge, "lead-n4", { scope: "task", topic: "store", statement: "Use SQLite for the store." });
+  const { knowledge } = district();
+  await decide(knowledge, "lead-n4", { topic: "store", statement: "Use SQLite for the store." });
   knowledge.opened("peer-n4", null);
   assert.match(knowledge.noticesFor("peer-n4")!.text, /New decision: \[task T-1\] store: Use SQLite/);
 
@@ -825,11 +777,10 @@ test("a seat opened after its task's decision is told it; a later call on a topi
 });
 
 test("a change that does not fit in one notice is told the next time", async () => {
-  const { knowledge, project } = district();
+  const { knowledge } = district();
   knowledge.opened("peer-l3", null);
   for (let i = 0; i < 8; i += 1)
     await decide(knowledge, "lead-l3", {
-      scope: "task",
       topic: `rule ${i}`,
       statement: `Follow the rule number ${i} here.`,
       new_topic: true,
@@ -869,34 +820,25 @@ test("the room's own notes in a prompt are never read as a person's words; a pol
 });
 
 test("a notice is made once at a time, and a change made while it is on its way is told after it", async () => {
-  const { knowledge, project } = district();
+  const { knowledge } = district();
   knowledge.opened("peer-d3", null);
-  await decide(knowledge, "lead-d3", { scope: "task", topic: "database", statement: "Use SQLite for the store." });
+  await decide(knowledge, "lead-d3", { topic: "database", statement: "Use SQLite for the store." });
   const first = knowledge.noticesFor("peer-d3")!;
   assert.equal(knowledge.noticesFor("peer-d3"), null, "a notice on its way is not made twice");
-  await decide(knowledge, "lead-d3", {
-    scope: "task",
-    topic: "logging",
-    statement: "Log every request as one JSON line.",
-  });
+  await decide(knowledge, "lead-d3", { topic: "logging", statement: "Log every request as one JSON line." });
   first.told();
   assert.match(knowledge.noticesFor("peer-d3")!.text, /New decision: \[task T-1\] logging/);
   knowledge.close();
 });
 
 test("a task named by its short id binds the seats on its full id; a statement that is not English is refused", async () => {
-  const { knowledge, project } = district({
+  const { knowledge } = district({
     owns: (_, task) => task === "vc8",
     full: (task) => (task === "vc8" ? "sw-vc8" : task),
     taskOf: (agent) => (agent.startsWith("peer") ? "sw-vc8" : "T-1"),
   });
   knowledge.opened("peer-d6", null);
-  await decide(knowledge, "lead-d6", {
-    scope: "task",
-    task: "vc8",
-    topic: "cache",
-    statement: "Keep the cache in memory only.",
-  });
+  await decide(knowledge, "lead-d6", { task: "vc8", topic: "cache", statement: "Keep the cache in memory only." });
   assert.match(knowledge.noticesFor("peer-d6")!.text, /\[task sw-vc8\] cache/);
 
   knowledge.turnStarted("hq-d10");
@@ -938,26 +880,6 @@ test("the district is silent when the policy turns it off", () => {
   assert.equal(knowledge.turnEnded(turn("peer-e", [{ kind: "say", text: "hello" }])), false);
   assert.equal(knowledge.readMail(), 0);
   assert.throws(() => knowledge.recall("peer-e", { do: "search", q: "hello" }), /off in this room's policy/);
-});
-
-/** A mail on a task as the mail store hands it to the reader. */
-const letter = (id: number, signal: string, thread: string, sender: string, body: string) => ({
-  id,
-  at: `2026-10-14T0${id}:00:00.000Z`,
-  thread,
-  replyTo: null,
-  sender,
-  senderRole: "lead",
-  signal,
-  subject: `${signal}: ${thread}`,
-  body,
-  file: null,
-  files: [],
-  needs: "nothing" as const,
-  why: "",
-  answeredAt: null,
-  answeredBy: null,
-  to: ["peer-a"],
 });
 
 /** A decision model that reads a decision as `kind` and a pair as `same`, keeping what it was asked and the labels given. */
@@ -1004,7 +926,7 @@ const gateTallies = (knowledge: Knowledge, root: string | null) =>
   );
 
 const rowsOf = (knowledge: Knowledge, root: string | null, sql: string) =>
-  (knowledge.storeOf(root) as unknown as { db: DatabaseSync }).db
+  dbOf(knowledge.storeOf(root))
     .prepare(sql)
     .all()
     .map((row) => ({ ...row }));
@@ -1062,11 +984,7 @@ test("the gate reads a decision before it is kept: noise and repeats are refused
   const quiet = district({ judge: noise.judge, policy: GATED });
   await assert.rejects(
     () =>
-      decide(quiet.knowledge, "lead-1", {
-        scope: "task",
-        topic: "login bug",
-        statement: "Fix the login bug on the settings page.",
-      }),
+      decide(quiet.knowledge, "lead-1", { topic: "login bug", statement: "Fix the login bug on the settings page." }),
     /not recorded: it reads as request, a request for one piece of work/,
   );
   assert.deepEqual(ask(quiet.knowledge, "lead-1", { do: "list" }).inForce, [], "noise is not kept");
@@ -1075,7 +993,7 @@ test("the gate reads a decision before it is kept: noise and repeats are refused
 
   const { judge, asked, labels } = judgeOf({ same: { d1: "duplicate" } });
   const { knowledge } = district({ judge, policy: GATED });
-  await decide(knowledge, "lead-1", { scope: "task", topic: "database", statement: "Use SQLite for the store." });
+  await decide(knowledge, "lead-1", { topic: "database", statement: "Use SQLite for the store." });
   const storage = { scope: "task", topic: "storage", statement: "Keep the store in SQLite files." };
   await assert.rejects(
     () => decide(knowledge, "lead-1", storage),
@@ -1083,7 +1001,6 @@ test("the gate reads a decision before it is kept: noise and repeats are refused
   );
   await decide(knowledge, "lead-1", { ...storage, new_topic: true });
   await decide(knowledge, "lead-1", {
-    scope: "task",
     topic: "database",
     statement: "Use SQLite in WAL mode for the store.",
     replaces_version: 1,
@@ -1142,11 +1059,7 @@ test("the gate reads a decision before it is kept: noise and repeats are refused
   ] as const) {
     const off = judgeOf({ kind: "request", ...options });
     const room = district({ judge: off.judge, policy });
-    const kept = await decide(room.knowledge, "lead-1", {
-      scope: "task",
-      topic: "db",
-      statement: "Use SQLite for the store.",
-    });
+    const kept = await decide(room.knowledge, "lead-1", { topic: "db", statement: "Use SQLite for the store." });
     assert.equal(kept.state, "active", "with no reading, the decision is kept");
     assert.equal(
       off.asked.length,
@@ -1203,9 +1116,8 @@ test("the gate's call goes to the Jev district as it takes it: English, one call
     }),
   });
   const { knowledge } = district({ judge: jev, policy: GATED });
-  await decide(knowledge, "lead-1", { scope: "task", topic: "database", statement: "Use SQLite for the store." });
+  await decide(knowledge, "lead-1", { topic: "database", statement: "Use SQLite for the store." });
   await decide(knowledge, "lead-1", {
-    scope: "task",
     topic: "database",
     statement: "Use SQLite in WAL mode for the store.",
     replaces_version: 1,
@@ -1227,71 +1139,6 @@ test("the gate's call goes to the Jev district as it takes it: English, one call
   assert.deepEqual(jev.today(), [{ district: "knowledge", calls: 2, failed: 0 }]);
   knowledge.close();
   jev.close();
-});
-
-test("a seat whose context was compacted is told every decision again, where its brief is kept and the threads it is in", async () => {
-  const { knowledge, project } = district({
-    threadsOf: (agent) =>
-      agent === "peer-c" ? ['- T-1: 2 mails, the last #4 "REVIEW: checkout" from your Lead.'] : [],
-  });
-  const record = async (statement: string, turnId: string, extra: Record<string, unknown> = {}) => {
-    knowledge.turnStarted("sup-1");
-    await decide(knowledge, "sup-1", {
-      scope: "project",
-      project: "project",
-      topic: "package manager",
-      statement,
-      ...extra,
-    });
-    knowledge.turnEnded({
-      ...turn("sup-1", [{ kind: "prompt", text: "the package manager" }], { turnId }),
-      role: "supervisor",
-    });
-    knowledge.noticesFor("sup-1")?.told();
-  };
-  await record("Use pnpm for every install.", "t1");
-  assert.match(knowledge.promptFor(project, "Lc")!, /Use pnpm/);
-  knowledge.opened("peer-c", "Lc");
-  knowledge.noticesFor("peer-c")?.told();
-  knowledge.turnEnded(turn("peer-c", [{ kind: "prompt", text: BRIEF }], { parentId: "lead-c", turnId: "c1" }));
-  await record("Use bun for every install.", "t2", { replaces_version: 1 });
-  const changed = knowledge.noticesFor("peer-c")!;
-  assert.match(changed.text, /Decision changed: .*Use bun/);
-  changed.told();
-  assert.equal(knowledge.noticesFor("peer-c"), null, "a change is told once");
-  const compaction = eventOf({ type: "compaction", status: "completed", trigger: "auto", preTokens: 180_000 })!;
-  knowledge.turnEnded(turn("peer-c", [{ kind: "say", text: "Still on the checkout." }, compaction], { turnId: "c2" }));
-  const again = knowledge.noticesFor("peer-c")!;
-  assert.equal(
-    again.text,
-    [
-      "[knowledge] Your context was compacted: the decisions in force are told again; they stand over any older version in your prompt.",
-      `[knowledge] New decision: [project] package-manager: Use bun for every install. (since ${new Date().toISOString().slice(0, 10)}; v2)`,
-      "[knowledge] Your brief stands, kept at turn:peer-c:c1#0: seatwork_knowledge do=view reads it.",
-      "[knowledge] The mail threads you are in, newest first:",
-      '- T-1: 2 mails, the last #4 "REVIEW: checkout" from your Lead.',
-    ].join("\n"),
-  );
-  again.told();
-  assert.equal(knowledge.noticesFor("peer-c"), null, "told again once");
-  assert.deepEqual(knowledge.storeOf(null).tallies("2000-01-01")["seat-compacted"], 1);
-  knowledge.turnStarted("sup-1");
-  await decide(knowledge, "sup-1", {
-    scope: "project",
-    project: "project",
-    topic: "linter",
-    statement: "Run the linter before each commit.",
-  });
-  knowledge.turnEnded({
-    ...turn("sup-1", [{ kind: "prompt", text: "/compact" }], { turnId: "t3" }),
-    role: "supervisor",
-  });
-  assert.match(
-    knowledge.noticesFor("sup-1")!.text,
-    /Dropped: no person's words/,
-    "a command typed to the seat's program is no person's words",
-  );
-  knowledge.close();
 });
 
 test("the seat that records a decision reads it in its own answer and is not told it again as news", async () => {
@@ -1357,27 +1204,7 @@ test("every statement the knowledge store runs uses an index", async () => {
   const { knowledge, project } = district({
     judge: judgeOf().judge,
     policy: GATED,
-    mail: [
-      {
-        id: 1,
-        at: "2026-10-14T01:00:00.000Z",
-        thread: "T-1",
-        replyTo: null,
-        sender: "lead-1",
-        senderRole: "lead",
-        signal: "REJECT",
-        subject: "REJECT: x",
-        body: "y",
-        file: null,
-        files: [],
-        needs: "nothing",
-        why: "",
-        answeredAt: null,
-        answeredBy: null,
-        to: ["peer-f"],
-      },
-      letter(2, "ACCEPT", "T-1", "lead-1", "Done."),
-    ],
+    mail: [letter(1, "REJECT: x", "lead-1", "y", { to: ["peer-f"] }), letter(2, "ACCEPT: T-1", "lead-1", "Done.")],
   });
   knowledge.turnEnded(turn("peer-f", [{ kind: "say", text: "the login works" }], { parentId: "lead" }));
   knowledge.readMail();
@@ -1391,29 +1218,13 @@ test("every statement the knowledge store runs uses an index", async () => {
   knowledge.turnStarted("hq-9");
   await decide(knowledge, "hq-9", { scope: "room", topic: "push", statement: "Push through a pull request only." });
   knowledge.turnEnded({ ...turn("hq-9", [{ kind: "prompt", text: "PR only" }], { turnId: "t1" }), role: "hq" });
-  await decide(knowledge, "lead-9", {
-    scope: "task",
-    topic: "db",
-    statement: "Use SQLite for the store.",
-    valid_until: "2027-06-01",
-  });
-  await decide(knowledge, "lead-9", {
-    scope: "task",
-    topic: "database",
-    statement: "Use SQLite for the store.",
-    new_topic: true,
-  });
+  await decide(knowledge, "lead-9", { topic: "db", statement: "Use SQLite for the store.", valid_until: "2027-06-01" });
+  await decide(knowledge, "lead-9", { topic: "database", statement: "Use SQLite for the store.", new_topic: true });
   await assert.rejects(
-    () =>
-      decide(knowledge, "lead-9", {
-        scope: "task",
-        topic: "database engine",
-        statement: "Use Postgres for the store.",
-      }),
+    () => decide(knowledge, "lead-9", { topic: "database engine", statement: "Use Postgres for the store." }),
     /near/,
   );
   await decide(knowledge, "lead-9", {
-    scope: "task",
     topic: "database engine",
     statement: "Use Postgres for the store.",
     new_topic: true,
@@ -1479,12 +1290,7 @@ test("every statement the knowledge store runs uses an index", async () => {
 test("a seat that takes another task is told the decisions that bind it there, though none changed", async () => {
   let task = "T-1";
   const { knowledge } = district({ taskOf: (agent) => (agent.startsWith("peer") ? task : "T-1"), owns: () => true });
-  await decide(knowledge, "lead-t", {
-    scope: "task",
-    task: "T-5",
-    topic: "store",
-    statement: "Use SQLite for the store.",
-  });
+  await decide(knowledge, "lead-t", { task: "T-5", topic: "store", statement: "Use SQLite for the store." });
   assert.equal(knowledge.noticesFor("peer-t"), null, "nothing binds it on its first task");
   task = "T-5";
   const told = knowledge.noticesFor("peer-t")!;
@@ -1583,15 +1389,7 @@ test("a search that matches more than it ranks says it read the newest; a pack k
     { ordinal: 0, kind: "prompt", text: "Brief: build the duration parser", exitCode: null },
     { ordinal: 1, kind: "say", text: "the zulu case is rare", exitCode: null },
   ]);
-  store.add(
-    sourceAt("peer-w:t1", "2026-10-02T00:00:00.000Z", "T-1", "peer-w"),
-    Array.from({ length: 20_001 }, (_, ordinal) => ({
-      ordinal,
-      kind: "say" as const,
-      text: `alpha step ${ordinal}`,
-      exitCode: null,
-    })),
-  );
+  store.add(sourceAt("peer-w:t1", "2026-10-02T00:00:00.000Z", "T-1", "peer-w"), says(20_001, "alpha step"));
   const common = ask(knowledge, "peer-w", { do: "search", q: "alpha" });
   assert.deepEqual((common.understood as { newest?: boolean }[])[0].newest, true);
   assert.match(String(common.note), /only the newest were read/);
@@ -1608,24 +1406,14 @@ test("a search that matches more than it ranks says it read the newest; a pack k
 test("new_topic answers the refusal on its own topic only; the gate still reads a repeat on another", async () => {
   const { judge } = judgeOf({ same: { d1: "duplicate" } });
   const { knowledge } = district({ judge, policy: GATED });
-  await decide(knowledge, "lead-g", { scope: "task", topic: "database", statement: "Use SQLite for the store." });
+  await decide(knowledge, "lead-g", { topic: "database", statement: "Use SQLite for the store." });
   await assert.rejects(
-    () =>
-      decide(knowledge, "lead-g", {
-        scope: "task",
-        topic: "database engine",
-        statement: "Use Postgres for the store.",
-      }),
+    () => decide(knowledge, "lead-g", { topic: "database engine", statement: "Use Postgres for the store." }),
     /topics near database-engine/,
   );
   await assert.rejects(
     () =>
-      decide(knowledge, "lead-g", {
-        scope: "task",
-        topic: "storage",
-        statement: "Keep the store in SQLite files.",
-        new_topic: true,
-      }),
+      decide(knowledge, "lead-g", { topic: "storage", statement: "Keep the store in SQLite files.", new_topic: true }),
     /in force on the same matter: database v1/,
   );
   knowledge.close();
@@ -1660,18 +1448,10 @@ test("a seat archived with a decision pending leaves it dropped, and nothing wai
   knowledge.close();
 });
 
-test("a statement that skips the tests after a loose negation is still refused", () => {
-  for (const statement of ["We have no time so skip the tests.", "Do not worry and skip the tests."])
-    assert.match(String(lintStatement(statement)), /cannot turn off tests/);
-  assert.equal(lintStatement("Do not ever skip the tests."), null);
-});
-
 test("a pass takes at most forty thousand old entries, then leaves the rest for the next one", () => {
-  const dir = join(ROOM_HOME, "knowledge-pass");
-  rmSync(dir, { recursive: true, force: true });
-  const store = new KnowledgeStore(dir, 1000);
+  const store = storeIn("pass");
   store.add(sourceAt("old", "2026-01-01T00:00:00.000Z"), []);
-  const db = (store as unknown as { db: DatabaseSync }).db;
+  const db = dbOf(store);
   db.exec(`WITH RECURSIVE n(i) AS (SELECT 0 UNION ALL SELECT i + 1 FROM n WHERE i < 40999)
     INSERT INTO entries (source_id, ordinal, kind, text) SELECT 1, i, 'say', 'word ' || i FROM n`);
   const cut = new Date("2026-06-01T00:00:00Z");
@@ -1697,9 +1477,7 @@ test("a search phrase and an address a seat sends are held to a size in the answ
 
 test("decisions that come due end in one write, each giving its topic back", () => {
   let now = new Date("2026-10-14T10:00:00Z");
-  const dir = join(ROOM_HOME, "knowledge-due");
-  rmSync(dir, { recursive: true, force: true });
-  const store = new KnowledgeStore(dir, 1000, () => now);
+  const store = storeIn("due", () => now);
   for (let i = 0; i < 50; i += 1) {
     const draft = (statement: string, validUntil: string | null) =>
       store.addDecision({
@@ -1717,7 +1495,7 @@ test("decisions that come due end in one write, each giving its topic back", () 
     store.settle(draft("Use the second way until the release.", "2026-10-16T00:00:00.000Z").id, null);
   }
   now = new Date("2026-10-17T00:00:00Z");
-  const db = (store as unknown as { db: DatabaseSync }).db;
+  const db = dbOf(store);
   const exec = db.exec.bind(db);
   let commits = 0;
   db.exec = (sql: string) => {
@@ -1733,9 +1511,7 @@ test("decisions that come due end in one write, each giving its topic back", () 
 
 test("what a seat was shown goes after a year, whether or not its seat was archived", () => {
   let now = new Date("2026-10-14T10:00:00Z");
-  const dir = join(ROOM_HOME, "knowledge-shown");
-  rmSync(dir, { recursive: true, force: true });
-  const store = new KnowledgeStore(dir, 1000, () => now);
+  const store = storeIn("shown", () => now);
   store.markShown("seat-gone", [{ note: "d:room|a", version: 1 }]);
   now = new Date("2027-10-01T00:00:00Z");
   store.markShown("seat-here", [{ note: "d:room|a", version: 1 }]);
@@ -1746,31 +1522,10 @@ test("what a seat was shown goes after a year, whether or not its seat was archi
   store.close();
 });
 
-test("a project's seat records its own project's decisions only, and the room's seat the room's", async () => {
-  const { knowledge } = district();
-  const rule = { topic: "logs", statement: "Keep every log for a week." };
-  knowledge.turnStarted("sup-o");
-  await assert.rejects(() => decide(knowledge, "sup-o", { scope: "room", ...rule }), /a room's decision is recorded/);
-  await assert.rejects(
-    () => decide(knowledge, "sup-o", { scope: "project", project: "other", ...rule }),
-    /your own project, project/,
-  );
-  assert.equal((await decide(knowledge, "sup-o", { scope: "project", ...rule })).state, "pending");
-  await assert.rejects(
-    () => decide(knowledge, "hq-o", { scope: "project", project: "project", ...rule }),
-    /a project's decision is recorded/,
-  );
-  knowledge.close();
-});
-
 test("a seat that replaces another is given the decisions in force for the task and where the old seat's record is read, and is not told them again", async () => {
   const { knowledge } = district({ taskOf: () => "T-1" });
-  await decide(knowledge, "lead-old", { scope: "task", topic: "store", statement: "Use SQLite for the store." });
-  await decide(knowledge, "lead-old", {
-    scope: "task",
-    topic: "cache",
-    statement: "Never cache a row between two requests.",
-  });
+  await decide(knowledge, "lead-old", { topic: "store", statement: "Use SQLite for the store." });
+  await decide(knowledge, "lead-old", { topic: "cache", statement: "Never cache a row between two requests." });
   knowledge.turnEnded({
     ...turn("lead-old", [{ kind: "prompt", text: BRIEF }], { turnId: "o1", parentId: "sup-1" }),
     role: "lead",
@@ -1789,7 +1544,7 @@ test("a seat that replaces another is given the decisions in force for the task 
   knowledge.inherited("lead-new", kit);
   assert.equal(knowledge.noticesFor("lead-new"), null, "the decisions its prompt held are not news");
   // a decision made after the kit was made is still news to the successor
-  await decide(knowledge, "lead-old", { scope: "task", topic: "queue", statement: "Run the queue in one process." });
+  await decide(knowledge, "lead-old", { topic: "queue", statement: "Run the queue in one process." });
   assert.match(knowledge.noticesFor("lead-new")!.text, /New decision: \[task T-1\] queue: Run the queue/);
   knowledge.close();
 });
@@ -1799,7 +1554,6 @@ test("what a successor is given about its task has a size; with nothing to give,
   assert.equal(knowledge.forSuccessor("lead-none"), null, "no decision and no turn kept");
   for (let i = 0; i < 40; i += 1)
     await decide(knowledge, "lead-old", {
-      scope: "task",
       topic: `step ${i}`,
       new_topic: true,
       statement: `Run step number ${i} before every other step of the checkout.`,

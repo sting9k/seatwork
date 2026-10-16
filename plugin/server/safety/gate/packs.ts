@@ -8,7 +8,7 @@ import type { Scene, Severity } from "./types";
 
 /** The packs of rules read from shared/safety/packs, and the matcher for their rules. */
 
-export interface Match {
+interface Match {
   commands: string[];
   first?: string[];
   seq?: string[][];
@@ -23,7 +23,7 @@ export interface Match {
 
 export type Mode = "deny" | "ask" | "warn" | "log";
 
-export interface Rule {
+interface Rule {
   severity: Severity;
   reason: string;
   explanation?: string;
@@ -36,7 +36,7 @@ export interface Rule {
   noWhere?: boolean;
 }
 
-export interface Pack {
+interface Pack {
   id: string;
   tier: number;
   always?: boolean;
@@ -141,7 +141,7 @@ const nameMatches = (name: string, wanted: string[]): boolean =>
   wanted.some((w) => (w.endsWith("*") ? name.startsWith(w.slice(0, -1)) : name === w));
 
 /** True when one declared match block holds for the command. */
-export function matches(match: Match, scene: Pick<Scene, "call">): boolean {
+function matches(match: Match, scene: Pick<Scene, "call">): boolean {
   const name = scene.call.name;
   if (!name || !nameMatches(name, match.commands)) return false;
   const m = compiled(match);

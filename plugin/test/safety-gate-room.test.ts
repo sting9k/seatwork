@@ -206,16 +206,21 @@ test("a Paseo command is found through wrappers, shells, package runners, full p
     assert.deepEqual(await rules(line), PASEO, line);
 });
 
-test("a Paseo command is stopped whichever agent CLI asks, and no seat above can lift it", async () => {
-  const store = new SafetyStore(join(ROOM_HOME, "paseo-rule"), 1000);
-  const guard = new Guard({
+/** A guard over these tools with a store of its own. */
+function guardAt(name: string): Guard {
+  const store = new SafetyStore(join(ROOM_HOME, name), 1000);
+  return new Guard({
     store: () => store,
     policy: () => ({}),
     tools: () => tools,
     place: () => place,
     repeated: () => {},
   });
-  const seat = { id: "peer", role: "peer", project: PROJECT, tmp: null, start: PROJECT };
+}
+const seat = { id: "peer", role: "peer", project: PROJECT, tmp: null, start: PROJECT };
+
+test("a Paseo command is stopped whichever agent CLI asks, and no seat above can lift it", async () => {
+  const guard = guardAt("paseo-rule");
   const payloads: [Cli, string][] = [
     ["claude", "Bash"],
     ["codex", "Bash"],
@@ -267,15 +272,7 @@ test("the rest of .git stays an owner's call: exclude, HEAD, refs", async () => 
 });
 
 test("a write tool is stopped at those files too, and only the person can lift it", async () => {
-  const store = new SafetyStore(join(ROOM_HOME, "git-runs"), 1000);
-  const guard = new Guard({
-    store: () => store,
-    policy: () => ({}),
-    tools: () => tools,
-    place: () => place,
-    repeated: () => {},
-  });
-  const seat = { id: "peer", role: "peer", project: PROJECT, tmp: null, start: PROJECT };
+  const guard = guardAt("git-runs");
   for (const path of [
     `${PROJECT}/.git/hooks/pre-commit`,
     `${PROJECT}/.git/config`,

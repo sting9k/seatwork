@@ -32,14 +32,13 @@ const seatOf = (agent: Agent): SeatEvent => ({
 /** A seat's create request with the room's start laid in. */
 export async function seatRequest(room: Room, request: CreateRequest): Promise<CreateRequest> {
   const config = request.config;
+  const spec = (config.featureValues as { seatworkSpec?: unknown } | undefined)?.seatworkSpec;
   const start = await room.launch({
     provider: config.provider,
     ...(config.model ? { model: config.model } : {}),
     cwd: config.cwd,
     title: config.title ?? null,
-    ...(typeof (config.featureValues as { seatworkSpec?: unknown } | undefined)?.seatworkSpec === "string"
-      ? { spec: (config.featureValues as { seatworkSpec: string }).seatworkSpec }
-      : {}),
+    ...(typeof spec === "string" ? { spec } : {}),
     ...(config.systemPrompt ? { systemPrompt: config.systemPrompt } : {}),
   });
   let providerOptions = config.providerOptions;
@@ -56,6 +55,11 @@ export async function seatRequest(room: Room, request: CreateRequest): Promise<C
       additionalDirectories: [...new Set([...dirs, ...start.claude.dirs])],
       extraArgs: { ...(current.extraArgs ?? {}), ...start.claude.args },
     };
+  }
+  if (start.opencode) {
+    const current = (providerOptions ?? {}) as { permission?: unknown };
+    const asked = typeof current.permission === "object" && current.permission !== null ? current.permission : {};
+    providerOptions = { ...current, permission: { ...asked, ...start.opencode.permission } };
   }
   return {
     ...request,
@@ -82,14 +86,15 @@ export async function seatRequest(room: Room, request: CreateRequest): Promise<C
 export function connect(server: Pick<PluginServerContext, "on" | "before">, room: Room, host: PaseoHost): () => void {
   let projectOpened = false;
   const marks = new Map<string, ReadMark>();
-  /** Gives the room Paseo's client, which every hook carries; the first hook also opens the room's own project. */
+  /** Gives the room Paseo's client, which every hook carries; hooks also open the room's own project until an open has worked. */
   const enter = (paseo: PaseoApi): Room => {
     host.use(paseo);
     if (!projectOpened) {
       projectOpened = true;
-      void ensureRoomProject(paseo, (message) => console.log(`seatwork: ${message}`)).catch((error) =>
-        console.error("seatwork: the room's project could not be opened", error),
-      );
+      void ensureRoomProject(paseo, (message) => console.log(`seatwork: ${message}`)).catch((error) => {
+        projectOpened = false;
+        console.error("seatwork: the room's project could not be opened", error);
+      });
     }
     return room;
   };

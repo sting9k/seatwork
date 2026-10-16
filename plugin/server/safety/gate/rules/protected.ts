@@ -6,7 +6,7 @@ import type { Scene, Value } from "../types";
 
 /** The files a write must not reach (DCG's credential table), and the room's own files. */
 
-export type GuardRule = "credential-file-write" | "git-internals-write" | "git-config-write" | "room-file-write";
+type GuardRule = "credential-file-write" | "git-internals-write" | "git-config-write" | "room-file-write";
 
 /** A protected path a write reaches, with the pack and rule that judge it. */
 export interface Guarded {
@@ -34,6 +34,7 @@ const FREE = table.free.map(
 const ANCHORS = table.anchors.map(lower);
 const ANCHOR_FILES = table.anchorFiles.map(lower);
 const ROOM_HOME_FILES = table.roomHomeFiles.map(lower);
+const ROOM_FOLDER_OPEN = new Set(table.roomFolderOpen);
 const ENV_ROOTS = table.envRoots as Record<string, string>;
 const GIT_RUNS = table.gitRuns.map((pattern) => new RegExp(pattern));
 
@@ -58,8 +59,10 @@ export function guardOfPath(path: string, mode: WriteMode, scene: Pick<Scene, "p
       return { pack: "room.guard", rule: "room-file-write", path: norm };
   }
   const parts = norm.split("/").filter(Boolean);
-  if (place.roomFolder && parts.includes(place.roomFolder))
-    return { pack: "room.guard", rule: "room-file-write", path: norm };
+  if (place.roomFolder && parts.includes(place.roomFolder)) {
+    const open = parts.at(-2) === place.roomFolder && ROOM_FOLDER_OPEN.has(parts.at(-1)!);
+    if (!open) return { pack: "room.guard", rule: "room-file-write", path: norm };
+  }
   const git = gitGuard(parts, norm);
   if (git) return git;
   const home = lower(place.home);
@@ -125,6 +128,9 @@ function mayBe(pattern: string, mode: WriteMode, scene: Pick<Scene, "place" | "c
   if (!pattern) return null;
   const base = pattern.startsWith("/") ? pattern : scene.cwd ? posix.join(scene.cwd, pattern) : null;
   if (!base) return null;
+  // a path that opens inside a folder the room lets seats write stays in it, as a seat's temporary folder
+  const inside = (folder: string) => base.length > folder.length && within(base, folder) && !base.includes("..");
+  if (open && scene.place.guard?.except.some(inside)) return null;
   for (const entry of entries(scene)) {
     if (mode === "append" && APPEND.some((a) => lower(entry.path).endsWith(`/${a}`))) continue;
     const reach = open

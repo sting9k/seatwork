@@ -11,7 +11,7 @@ export type Param = string | number | null;
 
 export type SqliteFailure = "DATABASE_LOCKED" | "SCHEMA_TOO_NEW" | "MIGRATION_INVALID";
 
-/** How one open store has done: its statements, the slow ones and the slowest, and the size of its write-ahead log and its file on disk. */
+/** How one open store has done: its calls, the slow ones and the slowest, and the size of its write-ahead log and file. */
 export interface StoreStat {
   name: string;
   file: string;
@@ -94,7 +94,7 @@ const isDamaged = (error: unknown) =>
 const isBusy = (error: unknown) =>
   (error as { errcode?: number })?.errcode === 5 || /database is locked/i.test((error as Error)?.message ?? "");
 
-/** A SQLite file of the room: opened sound, brought to its layout by its scripts; `startedOver` says a damaged file was set aside for an empty one. */
+/** An open store; `startedOver` says a damaged file was set aside for an empty one. */
 export class Sqlite {
   protected readonly db: DatabaseSync;
   readonly startedOver: boolean;
@@ -127,7 +127,6 @@ export class Sqlite {
       try {
         return statSync(file).size;
       } catch {
-        // no such file on disk: nothing is kept there
         return 0;
       }
     };
@@ -262,12 +261,17 @@ export class Sqlite {
     this.db.exec(`PRAGMA incremental_vacuum(${Math.max(0, Math.trunc(pages))})`);
   }
 
-  /** Lets SQLite refresh its statistics, then closes the file. */
+  /** Lets SQLite refresh its statistics, then closes the file; a lock another process holds skips the refresh, not the close. */
   close(): void {
     OPEN.delete(this);
     this.statements.clear();
-    this.db.exec("PRAGMA optimize");
-    this.db.close();
+    try {
+      this.db.exec("PRAGMA optimize");
+    } catch (error) {
+      if (!isBusy(error)) throw error;
+    } finally {
+      this.db.close();
+    }
   }
 
   /** A statement prepared once per text; past MAX_STATEMENTS the oldest is dropped, so SQL built per call cannot grow the cache without end. */
@@ -301,7 +305,6 @@ export class Sqlite {
     if (this.depth > 0) return work();
     try {
       const begin = mode === "write" ? "BEGIN IMMEDIATE" : "BEGIN";
-      // a write that waits on another process's lock waits here
       this.timed(begin, () => this.db.exec(begin));
     } catch (error) {
       throw isBusy(error) ? this.locked() : error;

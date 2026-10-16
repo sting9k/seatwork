@@ -29,6 +29,7 @@ export interface CodexRuntimePolicy {
   stripTables: string[];
   stripKeys: string[];
   featuresOff: string[];
+  toolsOff?: string[];
   multiAgentV2Off: boolean;
   agentsOff: boolean;
 }
@@ -179,13 +180,13 @@ const stampOf = (file: string): string => {
 };
 
 /** Keeps a running policy's budget as its file has it, read again when the file changes, so a cap the owner raised there holds without a restart. */
-export function followBudget(policy: RuntimePolicy, file = POLICY_FILE): () => void {
-  let seen = stampOf(file);
+export function followBudget(policy: RuntimePolicy): () => void {
+  let seen = stampOf(POLICY_FILE);
   return () => {
-    const now = stampOf(file);
+    const now = stampOf(POLICY_FILE);
     if (now === seen) return;
     try {
-      policy.budget = (JSON.parse(readFileSync(file, "utf8")) as { budget?: BudgetPolicy }).budget;
+      policy.budget = (JSON.parse(readFileSync(POLICY_FILE, "utf8")) as { budget?: BudgetPolicy }).budget;
       seen = now;
     } catch {
       // a file half written, or no JSON: the budget read last stands until the file is whole

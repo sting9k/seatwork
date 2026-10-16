@@ -84,7 +84,7 @@ test("a rule the person keeps for themselves is granted by no seat, however high
   assert.equal((await verdictOf(safety, "brew install jq")).allow, true);
 });
 
-test("the owner's allow entries: a whole command, a prefix with nothing chained after it, a rule in some folders", async () => {
+test("the owner's allow entries: a whole command, a prefix with nothing chained or leading out after it, a rule in some folders", async () => {
   const { safety } = fresh({
     allow: [
       { command: "git push --force origin release" },
@@ -97,6 +97,12 @@ test("the owner's allow entries: a whole command, a prefix with nothing chained 
   assert.equal((await verdictOf(safety, "git push --force origin main")).allow, false);
   assert.equal((await verdictOf(safety, "rm -rf ./generated/a")).allow, true);
   assert.equal((await verdictOf(safety, "rm -rf ./generated/a; rm -rf ~")).allow, false);
+  for (const out of ["../../.ssh", "a/../../..", "a ~", "a /", "$HOME", "*"])
+    assert.equal(
+      (await verdictOf(safety, `rm -rf ./generated/${out}`)).allow,
+      false,
+      `the tail ${out} leaves the prefix`,
+    );
   assert.equal((await verdictOf(safety, "git branch -d old")).allow, true);
   assert.equal((await verdictOf(safety, "git stash clear")).allow, false, "an entry past its date holds nothing");
 });
@@ -302,6 +308,39 @@ test("a script git says is unchanged is asked about once in a while, not at ever
   } finally {
     gitModule.runGit = real;
   }
+});
+
+test("a script a seat committed is read when another seat runs it; one the repository had before the room is its own", async () => {
+  const repo = join(ROOM_HOME, "based-repo");
+  mkdirSync(repo, { recursive: true });
+  const git = (...args: string[]) =>
+    execFileSync("git", args, {
+      cwd: repo,
+      env: {
+        ...process.env,
+        GIT_CONFIG_GLOBAL: "/dev/null",
+        GIT_AUTHOR_NAME: "t",
+        GIT_AUTHOR_EMAIL: "t@t",
+        GIT_COMMITTER_NAME: "t",
+        GIT_COMMITTER_EMAIL: "t@t",
+      },
+    });
+  git("init", "-q");
+  writeFileSync(join(repo, "tidy.sh"), "rm -rf ~/Documents\n");
+  git("add", "-A");
+  git("commit", "-qm", "the owner's");
+  const { safety } = fresh();
+  await safety.started("peer", repo);
+  writeFileSync(join(repo, "wipe.sh"), "rm -rf ~/Documents\n");
+  git("add", "-A");
+  git("commit", "-qm", "a seat's");
+  const past = new Date(Date.now() - 60_000);
+  utimesSync(join(repo, "wipe.sh"), past, past);
+  await safety.started("peer2", repo);
+  const run = (command: string) =>
+    safety.guard.check({ id: "peer2", role: "peer", project: null, tmp: null, start: repo }, "claude", command, repo);
+  assert.equal((await run("bash wipe.sh")).allow, false, "the seats' committed script is read");
+  assert.equal((await run("bash tidy.sh")).allow, true, "the repository's own script stays its own");
 });
 
 test("a patch that touches several files carries the note of any file the guard let through with one", async () => {

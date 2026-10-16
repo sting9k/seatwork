@@ -42,7 +42,7 @@ export type Verdict =
 export interface GateDeps {
   judge: Judge | null;
   on(): boolean;
-  at?(): number | undefined;
+  at(): number | undefined;
   log(line: string): void;
 }
 
@@ -69,7 +69,7 @@ export class Gate {
       return { kept: true, reading: null };
     }
     // a threshold the policy sets holds when it is one: from a half up to certainty
-    const set = this.deps.at?.();
+    const set = this.deps.at();
     const at = typeof set === "number" && set >= 0.5 && set <= 1 ? set : GATE.at;
     if (reading.keep < at) {
       store.tally("gate-noise");

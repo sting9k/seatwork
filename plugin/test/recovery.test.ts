@@ -140,41 +140,37 @@ test("the rounds ledger is kept on disk: a plugin that starts again knows the co
   assert.equal(new Rounds(file).rejected("sw-k3f"), 1);
 });
 
-test("a retry that cannot be carried out waits twice as long each time, up to a ceiling, and is logged each time", async () => {
+/** A seat's retry missed `misses` times in a row: the waits the room set after each, in seconds, and what it logged. */
+async function waitsAfter(mail: Resumes, misses: number) {
   const recovery = new Recovery(fresh(), POLICY);
   recovery.failed("p1", "socket hang up", T0);
-  const mail: Resumes = {
-    recipientStatus: async () => "idle",
-    post: async () => {
-      throw new Error("store busy");
-    },
-  };
   const lines: string[] = [];
-  let now = T0 + 30_000;
   const waits: number[] = [];
-  for (let miss = 0; miss < 8; miss += 1) {
+  let now = T0 + 30_000;
+  for (let miss = 0; miss < misses; miss += 1) {
     await resumeDue(recovery, mail, now, (line) => lines.push(line));
     const at = recovery.pending("p1")!.at;
     waits.push((at - now) / 1000);
     now = at;
   }
+  return { waits, lines };
+}
+
+test("a retry that cannot be carried out waits twice as long each time, up to a ceiling, and is logged each time", async () => {
+  const busy: Resumes = {
+    recipientStatus: async () => "idle",
+    post: async () => {
+      throw new Error("store busy");
+    },
+  };
+  const { waits, lines } = await waitsAfter(busy, 8);
   assert.deepEqual(waits, [60, 120, 240, 480, 960, 1800, 1800, 1800]);
   assert.equal(lines.length, 8);
   assert.match(lines[0], /p1.*store busy/);
 });
 
 test("a seat the daemon cannot place is asked about again at growing intervals", async () => {
-  const recovery = new Recovery(fresh(), POLICY);
-  recovery.failed("p1", "socket hang up", T0);
-  const mail: Resumes = { recipientStatus: async () => "unknown", post: async () => {} };
-  let now = T0 + 30_000;
-  const waits: number[] = [];
-  for (let miss = 0; miss < 3; miss += 1) {
-    await resumeDue(recovery, mail, now);
-    const at = recovery.pending("p1")!.at;
-    waits.push((at - now) / 1000);
-    now = at;
-  }
+  const { waits } = await waitsAfter({ recipientStatus: async () => "unknown", post: async () => {} }, 3);
   assert.deepEqual(waits, [60, 120, 240]);
 });
 

@@ -52,6 +52,8 @@ const TITLE_SHOWN = 80;
 const DOWN_MS = vocabulary.leaseDownHours * 3_600_000;
 const OPENING_MS = vocabulary.leaseMinutes * 60_000;
 
+export const errorText = (error: unknown) => (error instanceof Error ? error.message : String(error));
+
 /** The issues a seat holds in progress in its project's work store; none when the store cannot be read. */
 function held(room: RoomContext, seat: string): string[] {
   try {
@@ -98,9 +100,7 @@ async function seatingOf(room: RoomContext): Promise<Seating | null> {
     }
     return { alive, unsure };
   } catch (error) {
-    room.log(
-      `work: the seats could not be listed, so no lease changes: ${error instanceof Error ? error.message : String(error)}`,
-    );
+    room.log(`work: the seats could not be listed, so no lease changes: ${errorText(error)}`);
     return null;
   }
 }

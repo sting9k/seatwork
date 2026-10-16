@@ -78,14 +78,20 @@ test("a project leaves the registry only when none of its seats is open, and kee
   assert.ok(existsSync(join(PROJECT, ".seatwork", "mission.md")));
 });
 
-test("projects registered at the same moment all stay in the registry, however long one of them takes", async () => {
+/** An app that knows two projects, the test's and another, and a registry that holds neither. */
+function twoProjects() {
   const other = join(PROJECT, "..", "other-project");
   mkdirSync(other, { recursive: true });
+  rmSync(join(ROOM_HOME, "projects.json"), { force: true });
   const both = async () => [
     { name: "demo", path: PROJECT },
     { name: "other", path: other },
   ];
-  rmSync(join(ROOM_HOME, "projects.json"), { force: true });
+  return { other, both };
+}
+
+test("projects registered at the same moment all stay in the registry, however long one of them takes", async () => {
+  const { other, both } = twoProjects();
   const release = deferred();
   const slow = async (providers: string[]) => {
     await release.promise;
@@ -107,13 +113,7 @@ test("projects registered at the same moment all stay in the registry, however l
 });
 
 test("a project leaves the registry without taking one registered at the same moment with it", async () => {
-  const other = join(PROJECT, "..", "other-project");
-  mkdirSync(other, { recursive: true });
-  const both = async () => [
-    { name: "demo", path: PROJECT },
-    { name: "other", path: other },
-  ];
-  rmSync(join(ROOM_HOME, "projects.json"), { force: true });
+  const { other, both } = twoProjects();
   await registerProject(both, { path: PROJECT }, setUpSeats);
   const release = deferred();
   const slowList = async () => {

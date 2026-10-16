@@ -42,36 +42,35 @@ test("a component glob with many stars is decided in steps proportional to its l
   assert.ok(performance.now() - started < 2_000);
 });
 
+const treeHolds = (glob: string, path: string) => treeGlob(glob, "/h")(path);
+
 test("a tree glob holds for the path itself and for everything under it", () => {
-  const holds = (glob: string, path: string) => treeGlob(glob, "/h")(path);
-  assert.ok(holds("/p/build/**", "/p/build/out"));
-  assert.ok(holds("/p/build/**", "/p/build/a/b"));
-  assert.ok(!holds("/p/build/**", "/p/build"));
-  assert.ok(!holds("/p/build/**", "/p/builds/x"));
-  assert.ok(holds("/p/build", "/p/build"));
-  assert.ok(holds("/p/build", "/p/build/out"));
-  assert.ok(!holds("/p/build", "/p/builds"));
+  assert.ok(treeHolds("/p/build/**", "/p/build/out"));
+  assert.ok(treeHolds("/p/build/**", "/p/build/a/b"));
+  assert.ok(!treeHolds("/p/build/**", "/p/build"));
+  assert.ok(!treeHolds("/p/build/**", "/p/builds/x"));
+  assert.ok(treeHolds("/p/build", "/p/build"));
+  assert.ok(treeHolds("/p/build", "/p/build/out"));
+  assert.ok(!treeHolds("/p/build", "/p/builds"));
 });
 
 test("in a tree glob * stays inside one folder and ** crosses folders", () => {
-  const holds = (glob: string, path: string) => treeGlob(glob, "/h")(path);
-  assert.ok(holds("/p/*/c", "/p/a/c"));
-  assert.ok(holds("/p/*/c", "/p/a/c/d"));
-  assert.ok(!holds("/p/*/c", "/p/a/b/c"));
-  assert.ok(holds("/p/**/c", "/p/a/b/c"));
-  assert.ok(holds("/p/a*", "/p/abc"));
-  assert.ok(holds("/p/a*", "/p/abc/d"));
-  assert.ok(!holds("/p/a*", "/p/b"));
+  assert.ok(treeHolds("/p/*/c", "/p/a/c"));
+  assert.ok(treeHolds("/p/*/c", "/p/a/c/d"));
+  assert.ok(!treeHolds("/p/*/c", "/p/a/b/c"));
+  assert.ok(treeHolds("/p/**/c", "/p/a/b/c"));
+  assert.ok(treeHolds("/p/a*", "/p/abc"));
+  assert.ok(treeHolds("/p/a*", "/p/abc/d"));
+  assert.ok(!treeHolds("/p/a*", "/p/b"));
 });
 
 test("a tree glob takes ~/ for the home and every other character as itself", () => {
-  const holds = (glob: string, path: string) => treeGlob(glob, "/h")(path);
-  assert.ok(holds("~/work/**", "/h/work/a"));
-  assert.ok(!holds("~/work/**", "/x/work/a"));
-  assert.ok(holds("/p/a.b", "/p/a.b"));
-  assert.ok(!holds("/p/a.b", "/p/aXb"));
-  assert.ok(holds("/p/a+b(c)?", "/p/a+b(c)?"));
-  assert.ok(!holds("/p/a?", "/p/ab"));
+  assert.ok(treeHolds("~/work/**", "/h/work/a"));
+  assert.ok(!treeHolds("~/work/**", "/x/work/a"));
+  assert.ok(treeHolds("/p/a.b", "/p/a.b"));
+  assert.ok(!treeHolds("/p/a.b", "/p/aXb"));
+  assert.ok(treeHolds("/p/a+b(c)?", "/p/a+b(c)?"));
+  assert.ok(!treeHolds("/p/a?", "/p/ab"));
 });
 
 test("a tree glob with several ** is decided in steps proportional to the path", () => {

@@ -13,13 +13,25 @@ export const GATE_ENV = {
 
 const SHELL_TOOLS = new Set(["Bash", "Monitor", "PowerShell", "bash", "shell"]);
 const WRITE_TOOLS = new Set(["Write", "Edit", "MultiEdit", "NotebookEdit", "write", "edit"]);
+const READ_TOOLS: Record<string, boolean> = {
+  read: false,
+  grep: true,
+  find: false,
+  ls: false,
+  glob: false,
+  list: false,
+};
+const QUESTION_TOOLS = new Set(["request_user_input", "request_user_input_async"]);
+const ASK_BY_MAIL =
+  "Ask in your final message, or by mail with seatwork_mail: a question asked here keeps you in your turn, and nobody in the room sees it.";
 
 interface Call {
   shell: string | null;
   writes: string[];
+  read: { path: string; whole: boolean } | null;
   texts: Map<string, string>;
   cwd: string | null;
-  tooMuch: string | null;
+  refused: string | null;
 }
 
 const MOST_FILES = 200;
@@ -32,11 +44,15 @@ function callOf(body: Record<string, unknown>): Call {
   const input = (body.tool_input ?? body.input ?? {}) as Record<string, unknown>;
   const tool = String(body.tool_name ?? body.tool ?? "");
   const cwd = typeof body.cwd === "string" ? body.cwd : null;
-  const call: Call = { shell: null, writes: [], texts: new Map(), cwd, tooMuch: null };
+  const call: Call = { shell: null, writes: [], read: null, texts: new Map(), cwd, refused: null };
+  const patch = tool === "apply_patch" ? input.command : tool === "patch" ? input.patchText : null;
   if (SHELL_TOOLS.has(tool) && typeof input.command === "string") call.shell = input.command;
-  else if (tool === "apply_patch" && typeof input.command === "string") patchOf(input.command, call);
-  else if (tool === "patch" && typeof input.patchText === "string") patchOf(input.patchText, call);
-  else if (WRITE_TOOLS.has(tool)) {
+  else if (typeof patch === "string") patchOf(patch, call);
+  else if (QUESTION_TOOLS.has(tool)) call.refused = ASK_BY_MAIL;
+  else if (Object.hasOwn(READ_TOOLS, tool)) {
+    const path = input.path ?? input.file_path ?? input.filePath ?? ".";
+    if (typeof path === "string") call.read = { path, whole: READ_TOOLS[tool] };
+  } else if (WRITE_TOOLS.has(tool)) {
     const path = input.file_path ?? input.notebook_path ?? input.path;
     if (typeof path === "string") {
       call.writes = [path];
@@ -44,13 +60,12 @@ function callOf(body: Record<string, unknown>): Call {
     }
   }
   // a patch longer than the guard reads, or one with more files than it checks, is refused rather than read in part
-  const patch = tool === "apply_patch" ? input.command : tool === "patch" ? input.patchText : null;
   if (
     (typeof patch === "string" && patch.length > MOST_PATCH_CHARS) ||
     call.writes.length > MOST_FILES ||
     call.writes.some((path) => path.length > MOST_PATH_CHARS)
   )
-    call.tooMuch = TOO_MUCH;
+    call.refused = TOO_MUCH;
   return call;
 }
 
@@ -100,13 +115,18 @@ export async function answerHook(
   note?: string,
 ): Promise<{ type: string; text: string; noted: boolean }> {
   const call = callOf(body);
-  if (call.tooMuch)
+  if (call.refused)
     return {
-      ...render(cli, { allow: false, message: call.tooMuch, finding: null, code: null, grantor: null }),
+      ...render(cli, { allow: false, message: call.refused, finding: null, code: null, grantor: null }),
       noted: false,
     };
   let ruling: Ruling | null = null;
   if (call.shell !== null) ruling = await guard.check(seat, cli, call.shell, call.cwd);
+  if (call.read) {
+    const { path, whole } = call.read;
+    const abs = path.startsWith("/") || !call.cwd ? path : `${call.cwd}/${path}`;
+    ruling = await guard.checkRead(seat, cli, abs, call.cwd, whole);
+  }
   for (const path of call.writes) {
     if (ruling && !ruling.allow) break;
     const abs = path.startsWith("/") || !call.cwd ? path : `${call.cwd}/${path}`;
@@ -215,7 +235,7 @@ export function claudePlugin(): Record<string, string> {
   };
 }
 
-const CODEX_MATCHER = "^(Bash|apply_patch)$";
+const CODEX_MATCHER = "^(Bash|apply_patch|request_user_input|request_user_input_async)$";
 const CODEX_TIMEOUT = 10;
 
 /** Codex runs a hook's command line through the user's shell, so the script goes in quoted. */
@@ -291,14 +311,14 @@ function askRoom(cli: Cli): string {
 }`;
 }
 
-/** Pi's extension: every bash, write and edit call goes to the room first. */
+/** Pi's extension: every bash, write, edit and read call goes to the room first. */
 export function piExtension(): string {
-  return `// The room's guard: every bash, write and edit call goes to the room first. The room decides.
+  return `// The room's guard: every bash, write, edit and read call goes to the room first. The room decides.
 ${askRoom("pi")}
 
 export default function (pi: any) {
   pi.on("tool_call", async (event: any, ctx: any) => {
-    if (!["bash", "write", "edit"].includes(event.toolName)) return;
+    if (!["bash", "write", "edit", "read", "grep", "find", "ls"].includes(event.toolName)) return;
     const answer = await ask({ tool: event.toolName, input: event.input, cwd: ctx.cwd });
     if (answer?.block) return { block: true, reason: answer.reason };
   });
@@ -308,7 +328,7 @@ export default function (pi: any) {
 
 /** OpenCode's V2 plugin: a blocked shell call is replaced by one that prints why and fails. */
 export function openCodePlugin(): string {
-  return `// The room's guard: every shell, write, edit and patch call goes to the room first. The room decides.
+  return `// The room's guard: every shell, write, edit, patch and read call goes to the room first. The room decides.
 ${askRoom("opencode")}
 
 const quote = (s: string) => "'" + s.replace(/'/g, "'\\\\''") + "'";
@@ -316,7 +336,7 @@ export default {
   id: "room-guard",
   setup(ctx: any) {
     ctx.tool.hook("execute.before", async (e: any) => {
-      if (!["shell", "write", "edit", "patch"].includes(e.tool)) return;
+      if (!["shell", "write", "edit", "patch", "read", "grep", "glob", "list"].includes(e.tool)) return;
       const answer = await ask({ tool: e.tool, input: e.input, cwd: ctx.location?.directory ?? null });
       if (!answer?.block) return;
       e.tool = "shell";

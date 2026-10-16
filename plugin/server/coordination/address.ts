@@ -24,7 +24,7 @@ export interface Directory {
   isAncestor(ancestor: string, agentId: string): boolean;
 }
 
-export type MailErrorCode =
+type MailErrorCode =
   | "NOT_A_SEAT"
   | "NO_RECIPIENT"
   | "NO_OWNER"

@@ -177,11 +177,10 @@ export class KnowledgeStore extends Sqlite {
     dir: string,
     busyTimeoutMs: number,
     private readonly now: () => Date = () => new Date(),
-    scripts: string = join(SQL_DIR, "knowledge"),
   ) {
     super(join(keptOutOfGit(dir), "knowledge.db"), {
       busyTimeoutMs,
-      scripts,
+      scripts: join(SQL_DIR, "knowledge"),
       fail: (code, message) => new KnowledgeError(code, message),
       name: "the knowledge store",
       now,
@@ -255,7 +254,8 @@ export class KnowledgeStore extends Sqlite {
     const capped = newest.n === SCANNED;
     const kinds = filters.kinds?.length ? filters.kinds.join(",") : "";
     const ranked = this.rows<{ id: number; rank: number }>(
-      `SELECT e.id AS id, bm25(entries_fts) AS rank
+      // a score rounded: words asked in another order add the same scores with other float noise
+      `SELECT e.id AS id, round(bm25(entries_fts), 6) AS rank
          FROM entries_fts JOIN entries e ON e.id = entries_fts.rowid JOIN sources s ON s.id = e.source_id
          WHERE entries_fts MATCH ? AND entries_fts.rowid >= ?
            AND (? = '' OR s.task = ?) AND (? = '' OR s.agent = ?) AND (? = '' OR instr(',' || ? || ',', ',' || e.kind || ','))
@@ -387,7 +387,7 @@ export class KnowledgeStore extends Sqlite {
     return this.decisions(
       `SELECT ${decisionColumns("d")} FROM decisions_fts JOIN decisions d ON d.id = decisions_fts.rowid
          WHERE decisions_fts MATCH ? AND d.state = 'active' AND d.scope_key = ? AND d.topic <> ?
-         ORDER BY bm25(decisions_fts), d.id LIMIT ?`,
+         ORDER BY round(bm25(decisions_fts), 6), d.id LIMIT ?`,
       words,
       scopeKey,
       topic,
@@ -572,7 +572,7 @@ export class KnowledgeStore extends Sqlite {
     });
   }
 
-  /** Moves the decisions that are in force, waiting or replaced from one scope to another, with the notes `seat` was shown on them; a topic the other scope has in force stays where it is. Returns how many moved. */
+  /** Moves the pending, active and replaced decisions of one scope to another, with the notes `seat` was shown on them; a topic the other scope has in force stays. Returns how many moved. */
   moveScope(from: string, to: string, seat: string): number {
     const free = "topic NOT IN (SELECT topic FROM decisions WHERE scope_key = ?2 AND state = 'active')";
     const head = `d:${from}|`;

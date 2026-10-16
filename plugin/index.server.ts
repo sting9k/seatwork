@@ -22,7 +22,7 @@ import { roomStatus, roomWaiting } from "./shared/room";
 import { roomSettings, setupInit, setupProject, setupRemove, setupState } from "./shared/setup";
 import { ROOM_PROJECT } from "./shared/workflow";
 
-const VERSION = "0.33.0";
+const VERSION = "0.34.0";
 const PLUGIN_ID = "seatwork";
 
 /** Seatwork on Paseo: the setup screen first; the room once it is set up. */
@@ -66,7 +66,10 @@ export default function contribute(server: PluginServerContext) {
         (seats) => new Set(seats.keys()),
         () => undefined,
       );
-      const backups = [{ dir: PASEO_HOME, prefixes: ["config.json.bak-"], spare: 1 }];
+      const backups = [
+        { dir: PASEO_HOME, prefixes: ["config.json.bak-"], spare: 1 },
+        { dir: ROOM_HOME, prefixes: ["policy.json.unshipped-"], spare: 0 },
+      ];
       for (const line of collectFiles(ROOM_HOME, backups, new Date(), open)) console.log(`seatwork: gc: ${line}`);
     } catch (error) {
       console.error("seatwork: gc: the file sweep failed", error);
@@ -186,7 +189,7 @@ export default function contribute(server: PluginServerContext) {
       version: VERSION,
       home: ROOM_HOME,
       applied: setup && {
-        models: appliedModels(setup),
+        models: (setup.models ?? {}) as Record<string, never>,
         chime: setup.chime ?? room?.policy.owner.chime ?? true,
         version: setup.version ?? "",
         seats,
@@ -296,9 +299,4 @@ async function ownFolder(paseo: PaseoApi): Promise<string> {
       `seatwork: the plugin's folder holds version ${shipped} and the plugin running is ${VERSION}; reload the plugin (paseo plugin reload seatwork)`,
     );
   return found;
-}
-
-/** The model choices the room was set up with, in the screen's shape. */
-function appliedModels(setup: Setup): Record<string, never> {
-  return (setup.models ?? {}) as Record<string, never>;
 }

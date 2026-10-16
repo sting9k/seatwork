@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import type { Host } from "../../server/host";
+import { HostNotReady, type Host } from "../../server/host";
 import { PASEO_HOME } from "../../server/paths";
 import type { StandInApp } from "./stand-in-app";
 
@@ -164,6 +164,13 @@ export const HOST_CONTRACT: { [M in keyof Host]: Clause[] } = {
       async run({ host, app }) {
         app.put({ id: "open", status: "idle" }).put({ id: "old", status: "idle", archivedAt: "2026-10-14T00:00:00Z" });
         assert.deepEqual([...(await host.live()).keys()], ["open"]);
+      },
+    },
+    {
+      says: "before the app hands a client, the list is refused as not ready, never read as empty",
+      before: true,
+      async run({ host }) {
+        await assert.rejects(host.live(), HostNotReady);
       },
     },
     {

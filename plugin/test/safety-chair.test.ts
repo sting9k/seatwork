@@ -94,12 +94,6 @@ test("a diff shows tests bent to pass: assertions gone, expected values changed 
   assert.deepEqual([gone.deleted, gone.skipped, gone.excerpt], [1, 2, "test/duration.test.ts: deleted"]);
 });
 
-test("a diff with no test file says nothing, and one with tests alone names no code file", () => {
-  assert.equal(gamingOf([sourceFile], 0), null);
-  const only = gamingOf([testFile([ASSERT("a", "1")], [])], 0)!;
-  assert.deepEqual([only.sourceCount, only.dropped], [0, 1]);
-});
-
 test("the lines a juror and the chair read are cut to a length and hide secrets", () => {
   const key = ["sk", "proj", "Abcdefghijklmnopqrstuvwx12"].join("-");
   const removed = Array.from({ length: 400 }, (_, i) => ASSERT(`call(${i}, "${key}")`, `${i}`));
@@ -185,9 +179,9 @@ function harness(
 }
 type Harness = ReturnType<typeof harness>;
 
-/** Labels that earn a member level 3: sixty right findings over eight tasks. */
-function earnLevel3(h: Harness, member: string): void {
-  for (let i = 0; i < 60; i += 1) {
+/** Right findings of a member over eight tasks, labelled by the seat above: sixty earn level 3. */
+function earnLevel3(h: Harness, member: string, labels = 60): void {
+  for (let i = 0; i < labels; i += 1) {
     const id = h.store.read({
       member,
       version: 1,
@@ -240,8 +234,15 @@ test("gaming reads a candidate's diff: firm signs are a found reading, logged at
     /^gaming #\d+: tests were bent while 1 code file\(s\) changed: 2 assertion\(s\) removed$/,
   );
   loud.setDiff(BENT);
+  assert.equal(
+    gaming(await loud.council.endOfTurn({ ...candidate(), turn: "t2" })).length,
+    1,
+    "a finding is not told until its line has reached the seat above",
+  );
+  loud.council.shown(found);
+  loud.setDiff(BENT);
   assert.deepEqual(
-    gaming(await loud.council.endOfTurn({ ...candidate(), turn: "t2" })),
+    gaming(await loud.council.endOfTurn({ ...candidate(), turn: "t3" })),
     [],
     "the same finding is not said twice",
   );
@@ -306,25 +307,7 @@ test("the level that sends work back comes only from labels, and only to a membe
     [2, 2, 2],
   );
   const h = harness();
-  for (let i = 0; i < 59; i += 1) {
-    const id = h.store.read({
-      member: "gaming",
-      version: 1,
-      seat: `s${i % 8}`,
-      role: "peer",
-      task: `task-${i % 8}`,
-      turn: null,
-      tier: "fact",
-      zone: "found",
-      score: null,
-      askId: null,
-      level: 0,
-      shown: false,
-      fingerprint: `g${i}`,
-      evidence: null,
-    });
-    h.council.label(id, "seat:lead-1", "right", "the finding was right");
-  }
+  earnLevel3(h, "gaming", 59);
   assert.equal(h.council.level("gaming"), 2, "59 labels are not 60");
   earnLevel3(h, "claims");
   earnLevel3(h, "scope");

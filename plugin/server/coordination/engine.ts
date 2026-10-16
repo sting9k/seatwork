@@ -40,7 +40,7 @@ export type { SeatRecord } from "./address";
 export type { Needs, Priority } from "./store";
 
 /** The seat a mail comes from, and its role. */
-export interface Sender {
+interface Sender {
   agentId: string;
   role: string;
 }
@@ -72,7 +72,7 @@ export interface NewMail {
 export type Mail = Held;
 
 /** How much of a body is shown; how long repeats and keys count; how long a write waits. */
-export interface MailLimits {
+interface MailLimits {
   mailChars: number;
   quietChars: number;
   dedupeSeconds: number;
@@ -90,14 +90,14 @@ export interface EngineOptions extends Partial<MailLimits> {
 export type Status = "idle" | "running" | "permission" | "unknown" | "gone";
 
 /** What mail needs from the app that runs the seats: a seat's status, a text sent to it (a turn on it at rest; `interrupt` ends a running turn first, else it steers; the same `id` again arrives once), its parent moved. */
-export interface MailHost {
+interface MailHost {
   state(agentId: string): Promise<Status>;
   send(agentId: string, text: string, interrupt: boolean, id?: string): Promise<void>;
   reparent(child: string, parent: string): Promise<void>;
 }
 
 const MAIL_DIR = join(".seatwork", ".mail");
-const ROOM_MAIL = join(ROOM_HOME, "mail");
+export const ROOM_MAIL = join(ROOM_HOME, "mail");
 const ADOPTIONS_FILE = join(ROOM_MAIL, "adoptions.json");
 const DEFAULTS: MailLimits = {
   mailChars: 6000,
@@ -114,17 +114,13 @@ const heldAt = (mail: { heldUntil?: string | null }, now: number) =>
   !!mail.heldUntil && now < Date.parse(mail.heldUntil);
 
 const sum = (counts: readonly number[]) => counts.reduce((total, count) => total + count, 0);
+const errorText = (error: unknown) => (error instanceof Error ? error.message : String(error));
 
 /** The word a subject opens with: one of the room's signals, or a notice's own name. */
 const signalFor = (subject: string) =>
   subjectOpening(subject) ?? subject.split(":")[0].replace(/^\W+/, "").trim().slice(0, 40).toUpperCase();
 
-/**
- * The room's mail: its seats, its stores, and delivery to a seat at rest. Other districts set three hooks: `appendix`
- * adds to the mail a seat is handed, `chooseAsk` picks which open ask an answer that names none settles, `holds` says
- * why a seat takes no mail now; the mail waits in its store. A handing-over that fails is kept, and the next one to that
- * seat is the same message under the same id, so a message the app took late arrives once.
- */
+/** The room's mail: its seats, its stores and delivery to a seat at rest; `appendix`, `chooseAsk` and `holds` are hooks other districts set. */
 export class MailEngine implements Directory {
   appendix: ((agentId: string) => { text: string; told(): void } | null) | null = null;
   chooseAsk: ((answer: Mail, asks: readonly Message[]) => Promise<{ ask: number | null } | null>) | null = null;
@@ -140,6 +136,7 @@ export class MailEngine implements Directory {
   private readonly unsure = new Map<string, { id: string; ids: number[]; text: string; interrupt: boolean }>();
   private readonly spent = new Map<string, { made: string; times: number }>();
   private readonly roots = new Map<string, string | null>();
+  private readonly listedAt = new Map<string, number>();
   private readonly paused = new Set<string>();
   private readonly unwell = new Map<
     string,
@@ -185,8 +182,8 @@ export class MailEngine implements Directory {
       }
       if (root) break;
     }
-    // an answer that failed is asked again, never remembered as none
-    if (!unread) this.roots.set(agentId, root);
+    // an answer that failed is asked again, never remembered as none; a word that is no seat is never remembered
+    if (!unread && this.seats.has(agentId)) this.roots.set(agentId, root);
     return root;
   }
 
@@ -317,7 +314,7 @@ export class MailEngine implements Directory {
 
   /** Every store that holds mail of a seat the room knows. */
   private known(): MailStore[] {
-    const dirs = new Set([ROOM_MAIL, ...[...this.seats.keys()].map((id) => this.folderOf(id))]);
+    const dirs = new Set([ROOM_MAIL, ...this.projects().map((root) => join(root, MAIL_DIR))]);
     return [...dirs].flatMap((dir) => {
       try {
         return this.open(dir, false) ?? [];
@@ -334,7 +331,7 @@ export class MailEngine implements Directory {
       try {
         return [work(store)];
       } catch (error) {
-        this.log(`mail: ${what} failed in one store: ${error instanceof Error ? error.message : String(error)}`);
+        this.log(`mail: ${what} failed in one store: ${errorText(error)}`);
         return [];
       }
     });
@@ -346,7 +343,7 @@ export class MailEngine implements Directory {
       try {
         await work(item);
       } catch (error) {
-        this.log(`mail: ${what} failed: ${error instanceof Error ? error.message : String(error)}`);
+        this.log(`mail: ${what} failed: ${errorText(error)}`);
       }
   }
 
@@ -404,9 +401,49 @@ export class MailEngine implements Directory {
     return this.seats.get(agentId);
   }
 
-  /** Every seat ever registered, oldest first. */
+  /** Every seat registered and not forgotten, oldest first. */
   allSeats(): SeatRecord[] {
     return [...this.seats.values()];
+  }
+
+  /** Forgets the seats `listed` has lacked for `keepMs`, save those the room still needs: mail waiting, a seat below, the newest of a project; returns how many. */
+  forgetGone(listed: ReadonlySet<string>, keepMs: number): number {
+    const now = this.now().getTime();
+    const ids = [...this.seats.keys()];
+    for (const id of ids) if (listed.has(id) || !this.listedAt.has(id)) this.listedAt.set(id, now);
+    const newest = new Map<string, string>();
+    for (const id of ids) {
+      const root = this.projectOf(id);
+      if (root) newest.set(root, id);
+    }
+    const kept = new Set(newest.values());
+    const waiting = (id: string) => {
+      try {
+        return (this.storeOf(id, false)?.queued(id).length ?? 0) > 0;
+      } catch {
+        return true;
+      }
+    };
+    const gone = new Set(
+      ids.filter((id) => !listed.has(id) && !kept.has(id) && now - this.listedAt.get(id)! >= keepMs && !waiting(id)),
+    );
+    const above = new Set<string>();
+    for (const id of ids)
+      if (!gone.has(id))
+        for (let up = this.parentOf(id); up && !above.has(up); up = this.parentOf(up)) {
+          above.add(up);
+          gone.delete(up);
+        }
+    for (const id of gone) {
+      this.seats.delete(id);
+      this.listedAt.delete(id);
+      for (const held of [this.woke, this.unsure, this.spent]) held.delete(id);
+      this.paused.delete(id);
+    }
+    for (const id of this.roots.keys()) if (!this.seats.has(id)) this.roots.delete(id);
+    if ([...gone].filter((id) => this.adoptions.delete(id)).length > 0)
+      writeJson(ADOPTIONS_FILE, Object.fromEntries(this.adoptions));
+    return gone.size;
   }
 
   /** The seat a seat reports to: its adopter when adopted, else the parent it was created under. */
@@ -483,9 +520,7 @@ export class MailEngine implements Directory {
       await this.host.reparent(child, adopter);
     } catch (error) {
       linkMoved = false;
-      this.log(
-        `adopt: the app kept ${child} under its old parent: ${error instanceof Error ? error.message : String(error)}`,
-      );
+      this.log(`adopt: the app kept ${child} under its old parent: ${errorText(error)}`);
     }
     this.storeOf(child)?.note("adopted", child, { adopter, previous });
     return { ok: true, previous, linkMoved };
@@ -537,7 +572,8 @@ export class MailEngine implements Directory {
   /** A mail as `seat` holds it, or as its first recipient does when `seat` is none of them. */
   private heldBy(store: MailStore, id: number, seat: string): Mail | null {
     const message = store.get(id);
-    const delivery = store.deliveries(id).find((to) => to.seat === seat) ?? store.deliveries(id)[0];
+    const deliveries = store.deliveries(id);
+    const delivery = deliveries.find((to) => to.seat === seat) ?? deliveries[0];
     return message && delivery ? { ...message, ...delivery } : null;
   }
 
@@ -602,7 +638,7 @@ export class MailEngine implements Directory {
       }
       store.revise(id, { file });
     } catch (error) {
-      this.log(`mail: #${id} has no file: ${error instanceof Error ? error.message : String(error)}`);
+      this.log(`mail: #${id} has no file: ${errorText(error)}`);
     }
   }
 
@@ -621,9 +657,7 @@ export class MailEngine implements Directory {
     const chosen =
       asks.length > 1 && this.chooseAsk
         ? await this.chooseAsk(mail, asks).catch((error) => {
-            this.log(
-              `mail: no ask was chosen for #${mail.id}: ${error instanceof Error ? error.message : String(error)}`,
-            );
+            this.log(`mail: no ask was chosen for #${mail.id}: ${errorText(error)}`);
             return null;
           })
         : null;
@@ -735,7 +769,7 @@ export class MailEngine implements Directory {
 
   /** How many deliveries wait to reach their seats across the stores the room's seats use. */
   backlog(): number {
-    return this.known().reduce((sum, store) => sum + store.backlog(), 0);
+    return sum(this.known().map((store) => store.backlog()));
   }
 
   /** How many mails wait for a seat and since when the oldest has, and the reports held for their round with the first one's time; undefined when there are none. A held report is not waiting yet. Reads no body. */
@@ -887,7 +921,7 @@ export class MailEngine implements Directory {
           this.unsure.delete(agentId);
           this.spent.set(agentId, { made, times: spent?.made === made ? spent.times + 1 : 1 });
         } else this.unsure.set(agentId, attempt);
-        this.log(`mail: delivery to ${agentId} failed: ${error instanceof Error ? error.message : String(error)}`);
+        this.log(`mail: delivery to ${agentId} failed: ${errorText(error)}`);
         return;
       }
       this.unsure.delete(agentId);

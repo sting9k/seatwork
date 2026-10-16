@@ -3,7 +3,8 @@ import { baseName, programNames, invocationOf } from "./normalize";
 import { absolute, isTemp, lossOf, valueOf } from "./paths";
 import { paseoCommand, reachesDaemon, startsPaseo } from "./rules/paseo";
 import { guardOf } from "./rules/protected";
-import type { Part, Pipeline, Word } from "./shell";
+import { namesSecret } from "./rules/secrets";
+import { textWord, type Part, type Pipeline, type Word } from "./shell";
 import { fork, type Reader, type State } from "./state";
 import type { Known, Scene } from "./types";
 
@@ -20,7 +21,7 @@ export async function shellWord(rd: Reader, word: Word, state: State, depth: num
   else rd.out.doubt("a shell runs a line known only at run time", scene.text);
 }
 
-/** A script file run by a shell or interpreter: the Paseo CLI's own, or written earlier in the line, or changed since the last commit; `inShell` when it runs in the line's own shell. */
+/** A script file a shell or interpreter runs: the Paseo CLI's, one written earlier on the line, or one the room's seats changed; `inShell` when it runs in the line's shell. */
 export async function scriptFile(
   rd: Reader,
   word: Word,
@@ -112,10 +113,14 @@ export async function program(
   if (source === null || source === undefined) return;
   const reach = reachesDaemon(source, known.place, true);
   if (reach) rd.out.add("room.guard", "paseo-daemon", scene.text, `${language} ${reach}`);
+  const secret = known.place.guard?.secrets?.length
+    ? namesSecret(source, known.place.guard.secrets, known.place.home)
+    : null;
+  if (secret) rd.out.add("room.guard", "secret-read", scene.text, `${language} ${secret}`);
   const found = scanEmbedded(language, source);
   for (const line of found.shell) await rd.text(line, fork(state), depth);
   for (const del of found.deletes) {
-    const value = valueOf(literalWord(del.path), known);
+    const value = valueOf(textWord(del.path, "single"), known);
     const how = `${language} ${del.how} ${del.path}`;
     if (del.recursive) {
       if (isTemp(value, known)) continue;
@@ -124,19 +129,12 @@ export async function program(
     } else if (guardOf(value, "remove", known)) rd.out.add("core.filesystem", "rm-protected-file", scene.text, how);
   }
   for (const write of found.writes) {
-    const guard = guardOf(valueOf(literalWord(write.path), known), write.append ? "append" : "write", known);
+    const guard = guardOf(valueOf(textWord(write.path, "single"), known), write.append ? "append" : "write", known);
     if (guard) rd.out.add(guard.pack, guard.rule, scene.text, `${language} ${write.how} ${write.path}`);
   }
   if (found.dynamicExec.length)
     rd.out.add("core.filesystem", "interpreter-runs-dynamic-shell", scene.text, `${language} ${found.dynamicExec[0]}`);
 }
-
-const literalWord = (path: string): Word => ({
-  raw: path,
-  start: 0,
-  end: 0,
-  parts: [{ kind: "text", text: path, quote: "single" }],
-});
 
 /** True when a stage before `stage` of the pipeline downloads something. */
 function pipeDownloads(pipeline: Pipeline, stage: number): boolean {

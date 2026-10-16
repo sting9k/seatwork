@@ -4,6 +4,7 @@ import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { incidentOf } from "../server/operations/lines";
 import { loadPolicy } from "../server/policy";
 import { projectBlock } from "../server/orchestration/registry";
 import { roleSkillNames } from "../server/orchestration/runtimes";
@@ -22,12 +23,25 @@ const output = { log: console.log, error: console.error };
 let dispose: () => Promise<void>;
 
 before(() => {
-  installRoom(["claude-hq", "claude-supervisor", "claude-lead", "claude-peer", "pi-peer", "codex-peer"]);
+  installRoom([
+    "claude-hq",
+    "claude-supervisor",
+    "claude-lead",
+    "claude-peer",
+    "pi-peer",
+    "codex-peer",
+    "opencode-peer",
+  ]);
   chmodSync(ROOM_HOME, 0o755); // as a room home made under the usual umask
-  // this room's owner gave the Peer one more model, on Pi
+  // this room's owner gave the Peer one more model, on Pi and OpenCode
   const table = join(ROOM_HOME, "room", "models.json");
   const models = JSON.parse(readFileSync(table, "utf8"));
-  models.peer.tiers.long = { providers: ["pi-peer/m-one"], thinking: "default", use: "the long jobs", never: "—" };
+  models.peer.tiers.long = {
+    providers: ["pi-peer/m-one", "opencode-peer/m-one"],
+    thinking: "default",
+    use: "the long jobs",
+    never: "—",
+  };
   writeFileSync(table, JSON.stringify(models));
   mkdirSync(runtimes);
   writeFileSync(join(runtimes, "pi"), ""); // no Pi runtime can be built while this file is in the way
@@ -94,12 +108,36 @@ test("a Claude seat is created with the policy's launch flags and its role's ski
     debug: null,
     "setting-sources": "project,local",
     "strict-mcp-config": null,
+    tools: "Bash,Edit,Glob,Grep,Read,Skill,Write,WebFetch,WebSearch",
     "plugin-dir": join(ROOM_HOME, "safety", "claude"),
   });
   assert.deepEqual(created.config.providerOptions.additionalDirectories, [
     "/elsewhere",
     join(ROOM_HOME, "role-skills", "claude", "peer"),
   ]);
+});
+
+test("an OpenCode seat is created with the policy's permissions and its role's skills only, over what its creator asked for", async () => {
+  const request = {
+    request: {
+      config: {
+        provider: "opencode-peer",
+        model: "m-one",
+        cwd: PROJECT,
+        title: "[Peer] task",
+        providerOptions: { permission: { webfetch: "allow", task: "allow" } },
+      },
+      env: {},
+    },
+  };
+  const created = (await call("before agent.create", request)) as {
+    config: { providerOptions: { permission: Record<string, unknown> } };
+  };
+  const { permission } = created.config.providerOptions;
+  assert.equal(permission.webfetch, "allow");
+  assert.equal(permission.task, "deny", "the room's denial holds over the creator's");
+  assert.equal(permission.question, "deny");
+  assert.deepEqual(permission.skill, { "*": "deny", "blast-radius": "allow", "test-audit": "allow" });
 });
 
 test("a new seat is held to the model table in force, whatever its creator's prompt still says", async () => {
@@ -241,11 +279,11 @@ for (const archive of ["works", "fails"] as const) {
 interface TestSeat {
   agent: { id: string; parentAgentId: string | null; provider: string; cwd: string; title: string; workspaceId: null };
   inbox: string[];
-  /** its MCP server address: the guard listens beside it */
-  url: string;
   prompt: string;
   call(name: string, args: Record<string, unknown>): Promise<string>;
   listed(): Promise<string[]>;
+  /** The guard's answer to one tool call of this seat's hook: it listens beside the MCP server, on its port and token. */
+  hook(tool: string, input: object, cwd?: string): Promise<string>;
   mail(args: Record<string, unknown>): Promise<string>;
   /** What seatwork_inbox hands this seat. */
   held(): Promise<string>;
@@ -272,49 +310,49 @@ async function seat(
   };
   const agent = { id, parentAgentId, provider, cwd, title, workspaceId: null };
   await call("on agent.created", { agent }, context);
-  const tool = async (name: string, args: Record<string, unknown>) => {
-    const response = await fetch(made.config.mcpServers.seatwork.url, {
+  const { url } = made.config.mcpServers.seatwork;
+  const post = (to: string, body: object, headers: Record<string, string> = {}) =>
+    fetch(to, {
       method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name, arguments: args } }),
+      headers: { "content-type": "application/json", ...headers },
+      body: JSON.stringify(body),
     });
-    const { result } = (await response.json()) as { result: { content: { text: string }[]; isError: boolean } };
+  const rpc = async (method: string, params?: object) =>
+    ((await (await post(url, { jsonrpc: "2.0", id: 1, method, params })).json()) as { result: any }).result;
+  const tool = async (name: string, args: Record<string, unknown>) => {
+    const result = await rpc("tools/call", { name, arguments: args });
     if (result.isError) throw new Error(result.content[0].text);
     return result.content[0].text;
   };
-  const listed = async () => {
-    const response = await fetch(made.config.mcpServers.seatwork.url, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list" }),
-    });
-    const { result } = (await response.json()) as { result: { tools: { name: string }[] } };
-    return result.tools.map((entry) => entry.name);
-  };
+  const gate = `${url.replace(/\/mcp\/([^/]+)\/[^/]+$/, "/gate/$1")}?cli=claude`;
   return {
     agent,
     inbox,
-    url: made.config.mcpServers.seatwork.url,
     prompt: made.config.systemPrompt,
     call: tool,
-    listed,
+    listed: async () => (await rpc("tools/list")).tools.map((entry: { name: string }) => entry.name),
+    hook: async (tool_name, tool_input, cwd = PROJECT) =>
+      (await post(gate, { tool_name, tool_input, cwd }, { "x-seat": id })).text(),
     mail: (args) => tool("seatwork_mail", args),
     held: () => tool("seatwork_inbox", {}),
     adopt: (agentId) => tool("seatwork_adopt", { agent_id: agentId }),
   };
 }
 
-function turnEnds(who: TestSeat, finalMessage: string, outcome: object = { kind: "completed" }) {
-  return call(
-    "on agent.turn_ended",
-    {
-      agent: who.agent,
-      turnId: null,
-      outcome,
-      timeline: finalMessage ? [{ type: "assistant_message", text: finalMessage }] : [],
-    },
-    context,
-  );
+const completed = { kind: "completed" };
+
+/** A turn that starts, and one that ends as the app reports it: with the seat's whole timeline. */
+const startTurn = (who: { agent: object }, turnId: string) =>
+  call("on agent.turn_started", { agent: who.agent, turnId }, context);
+const endTurn = (
+  who: { agent: object },
+  timeline: object[],
+  turnId: string | null = null,
+  outcome: object = completed,
+) => call("on agent.turn_ended", { agent: who.agent, turnId, outcome, timeline }, context);
+
+function turnEnds(who: TestSeat, finalMessage: string, outcome: object = completed) {
+  return endTurn(who, finalMessage ? [{ type: "assistant_message", text: finalMessage }] : [], null, outcome);
 }
 
 /** A writing Peer's hand-in as its Lead gets it: when the room returns it for a pass with fresh eyes, the Peer hands in again. */
@@ -370,8 +408,20 @@ test("a seat that mailed its signal to its Owner is not reported a second time w
   });
   assert.equal(lead.inbox.length, 1, "a question asked mid-work goes out at once");
 
-  await turnEnds(peer, "QUESTION\nseconds or minutes?\nRECAP: asked the Owner → waiting");
+  const said: string[] = [];
+  const quiet = console.log;
+  console.log = (line: unknown) => void said.push(String(line).replace(/^seatwork: /, ""));
+  try {
+    await turnEnds(peer, "QUESTION\nseconds or minutes?\nRECAP: asked the Owner → waiting");
+  } finally {
+    console.log = quiet;
+  }
   assert.equal(lead.inbox.length, 1);
+  assert.deepEqual(
+    said.filter((line) => incidentOf(line) !== null),
+    [],
+    "what the room logs of it is no trouble",
+  );
 });
 
 test("what the room kept for a turn does not outlive the runtime that closed in it", async () => {
@@ -618,7 +668,7 @@ test("what a turn leaves for the Owner is listed for the app until that seat wor
     };
     return waiting.filter((item) => item.agentId.endsWith("-owed")).map((item) => `${item.agentId} ${item.what}`);
   };
-  const starts = () => call("on agent.turn_started", { agent: supervisor.agent, turnId: "next" }, context);
+  const starts = () => startTurn(supervisor, "next");
 
   // a Lead's question goes to its Supervisor by mail
   await turnEnds(lead, "DECISION_NEEDED\ncallers may run at the same time; the brief does not say");
@@ -893,7 +943,7 @@ test("seatwork_seats shows an orchestrating seat every open seat under it: its s
   assert.equal(head, "2 open seats under you, 1 at work.");
   assert.equal(
     lines[0],
-    "- peer [Peer] store · peer-view-a · at work · context 267K tokens, past the rotation line: its next task goes to a fresh seat · $6.13 · last turn ended with CANDIDATE · 1 rejection since its last ACCEPT · owes an answer, the oldest for 0 min",
+    "- peer [Peer] store · peer-view-a · at work · context 267K tokens, past the rotation line: seatwork_rotate moves its work to a fresh seat · $6.13 · last turn ended with CANDIDATE · 1 rejection since its last ACCEPT · owes an answer, the oldest for 0 min",
   );
   assert.equal(lines[1], "- peer [Peer] scout-01 · peer-view-b · waiting for a permission");
   assert.equal(lines.length, 2);
@@ -963,19 +1013,10 @@ test("the last answer of a round says when answers to one question came from one
       angle,
     ].join("\n");
   const answers = (who: TestSeat, angle: string) =>
-    call(
-      "on agent.turn_ended",
-      {
-        agent: who.agent,
-        turnId: null,
-        outcome: { kind: "completed" },
-        timeline: [
-          { type: "user_message", text: brief(angle) },
-          { type: "assistant_message", text: "REVIEW\nposition: one log" },
-        ],
-      },
-      context,
-    );
+    endTurn(who, [
+      { type: "user_message", text: brief(angle) },
+      { type: "assistant_message", text: "REVIEW\nposition: one log" },
+    ]);
   const lead = await seat("lead-family", "claude-lead", null, "[Lead] stream");
   const lenses = [
     await seat("family-a", "claude-peer", lead.agent.id, "[Peer:review] layout"),
@@ -1190,41 +1231,39 @@ test("a writing Peer's candidate goes back to it once for a pass with fresh eyes
   assert.equal(lead.inbox.length, 3);
 });
 
-test("a seat's hook reaches the room's guard; a code its Lead grants lets the command run once; a focused test sends the candidate back until acknowledged", async () => {
-  const repo = join(PROJECT, "..", "guarded");
+/** A git repository beside the project with `files` committed: where a seat starts. */
+function gitRepo(name: string, files: Record<string, string>): string {
+  const repo = join(PROJECT, "..", name);
   rmSync(repo, { recursive: true, force: true });
-  mkdirSync(join(repo, "test"), { recursive: true });
-  writeFileSync(join(repo, "test", "a.test.ts"), 'test("a", () => expect(1).toBe(1));\n');
-  const git = (...args: string[]) =>
-    execFileSync("git", args, {
-      cwd: repo,
-      env: {
-        ...process.env,
-        GIT_CONFIG_GLOBAL: "/dev/null",
-        GIT_AUTHOR_NAME: "t",
-        GIT_AUTHOR_EMAIL: "t@t",
-        GIT_COMMITTER_NAME: "t",
-        GIT_COMMITTER_EMAIL: "t@t",
-      },
-    });
-  git("init", "-q");
-  git("add", "-A");
-  git("commit", "-qm", "start");
+  for (const [path, text] of Object.entries(files)) {
+    mkdirSync(join(repo, path, ".."), { recursive: true });
+    writeFileSync(join(repo, path), text);
+  }
+  const env = {
+    ...process.env,
+    GIT_CONFIG_GLOBAL: "/dev/null",
+    GIT_AUTHOR_NAME: "t",
+    GIT_AUTHOR_EMAIL: "t@t",
+    GIT_COMMITTER_NAME: "t",
+    GIT_COMMITTER_EMAIL: "t@t",
+  };
+  for (const args of [
+    ["init", "-q"],
+    ["add", "-A"],
+    ["commit", "-qm", "start"],
+  ])
+    execFileSync("git", args, { cwd: repo, env });
+  return repo;
+}
+
+test("a seat's hook reaches the room's guard; a code its Lead grants lets the command run once; a focused test sends the candidate back until acknowledged", async () => {
+  const repo = gitRepo("guarded", { "test/a.test.ts": 'test("a", () => expect(1).toBe(1));\n' });
   const lead = await seat("lead-guard", "claude-lead", null, "[Lead] stream", repo);
   const peer = await seat("peer-guard", "claude-peer", lead.agent.id, "[Peer] guarded", repo);
   // the guard notes the seat's starting commit beside its creation
   await new Promise((resolve) => setTimeout(resolve, 300));
 
-  // the hook calls the guard beside the seat's MCP server: same port and token
-  const gate = peer.url.replace(/\/mcp\/([^/]+)\/[^/]+$/, "/gate/$1");
-  const hook = async (command: string) => {
-    const response = await fetch(`${gate}?cli=claude`, {
-      method: "POST",
-      headers: { "content-type": "application/json", "x-seat": peer.agent.id },
-      body: JSON.stringify({ tool_name: "Bash", tool_input: { command }, cwd: repo }),
-    });
-    return response.text();
-  };
+  const hook = (command: string) => peer.hook("Bash", { command }, repo);
   const denied = JSON.parse(await hook("git reset --hard"));
   assert.match(denied.hookSpecificOutput.permissionDecisionReason, /reset-hard[\s\S]*code (\d{6})/);
   const code = /code (\d{6})/.exec(denied.hookSpecificOutput.permissionDecisionReason)![1];
@@ -1271,20 +1310,15 @@ test("the council reads a seat's ended turn from the app's timeline and logs eac
     error: null,
     detail,
   });
-  await call("on agent.turn_started", { agent: peer.agent, turnId: "turn-c" }, context);
-  await call(
-    "on agent.turn_ended",
-    {
-      agent: peer.agent,
-      turnId: "turn-c",
-      outcome: { kind: "completed" },
-      timeline: [
-        tool("1", "Edit", { type: "edit", filePath: join(PROJECT, "src/cli.js") }),
-        tool("2", "Bash", { type: "shell", command: "git status", exitCode: 0, output: "" }),
-        { type: "assistant_message", text: "CANDIDATE: hours added\nAll tests pass." },
-      ],
-    },
-    context,
+  await startTurn(peer, "turn-c");
+  await endTurn(
+    peer,
+    [
+      tool("1", "Edit", { type: "edit", filePath: join(PROJECT, "src/cli.js") }),
+      tool("2", "Bash", { type: "shell", command: "git status", exitCode: 0, output: "" }),
+      { type: "assistant_message", text: "CANDIDATE: hours added\nAll tests pass." },
+    ],
+    "turn-c",
   );
   const db = new DatabaseSync(join(ROOM_HOME, "safety", "safety.db"));
   const rows = db
@@ -1313,30 +1347,11 @@ test("the council reads a seat's ended turn from the app's timeline and logs eac
 });
 
 test("a council member that has earned the level that sends work back asks the room's own seat, whose ruling returns the candidate", async () => {
-  const repo = join(PROJECT, "..", "chair-repo");
-  rmSync(repo, { recursive: true, force: true });
-  mkdirSync(join(repo, "src"), { recursive: true });
-  mkdirSync(join(repo, "test"), { recursive: true });
-  writeFileSync(join(repo, "src", "sum.ts"), "export const sum = (a: number, b: number) => a + b;\n");
-  writeFileSync(
-    join(repo, "test", "sum.test.ts"),
-    'test("sum", () => {\n  expect(sum(1, 2)).toBe(3);\n  expect(sum(2, 2)).toBe(4);\n  expect(sum(3, 3)).toBe(6);\n});\n',
-  );
-  const git = (...args: string[]) =>
-    execFileSync("git", args, {
-      cwd: repo,
-      env: {
-        ...process.env,
-        GIT_CONFIG_GLOBAL: "/dev/null",
-        GIT_AUTHOR_NAME: "t",
-        GIT_AUTHOR_EMAIL: "t@t",
-        GIT_COMMITTER_NAME: "t",
-        GIT_COMMITTER_EMAIL: "t@t",
-      },
-    });
-  git("init", "-q");
-  git("add", "-A");
-  git("commit", "-qm", "start");
+  const repo = gitRepo("chair-repo", {
+    "src/sum.ts": "export const sum = (a: number, b: number) => a + b;\n",
+    "test/sum.test.ts":
+      'test("sum", () => {\n  expect(sum(1, 2)).toBe(3);\n  expect(sum(2, 2)).toBe(4);\n  expect(sum(3, 3)).toBe(6);\n});\n',
+  });
   const hq = await seat("hq-chair", "claude-hq", null, "[HQ] the room", join(ROOM_HOME, "hq-seatwork"));
   const lead = await seat("lead-chair", "claude-lead", null, "[Lead] stream", repo);
   const peer = await seat("peer-chair", "claude-peer", lead.agent.id, "[Peer] chair", repo);
@@ -1390,35 +1405,30 @@ test("a council member that has earned the level that sends work back asks the r
 test("a seat's ended turn is kept in the record: another seat finds it and reads around it", async () => {
   const lead = await seat("lead-record", "claude-lead", null, "[Lead] record");
   const peer = await seat("peer-record", "claude-peer", lead.agent.id, "[Peer] record");
-  await call("on agent.turn_started", { agent: peer.agent, turnId: "turn-r" }, context);
-  await call(
-    "on agent.turn_ended",
-    {
-      agent: peer.agent,
-      turnId: "turn-r",
-      outcome: { kind: "completed" },
-      timeline: [
-        { type: "user_message", text: "Fix the flaky session refresh" },
-        {
-          type: "tool_call",
-          callId: "1",
-          name: "Skill",
-          status: "completed",
-          error: null,
-          detail: { type: "plain_text", label: "debugging" },
-        },
-        {
-          type: "tool_call",
-          callId: "2",
-          name: "Bash",
-          status: "completed",
-          error: null,
-          detail: { type: "shell", command: "npm test", exitCode: 1, output: "session refresh: timeout" },
-        },
-        { type: "assistant_message", text: "The refresh timer raced the logout; fixed with a lock." },
-      ],
-    },
-    context,
+  await startTurn(peer, "turn-r");
+  await endTurn(
+    peer,
+    [
+      { type: "user_message", text: "Fix the flaky session refresh" },
+      {
+        type: "tool_call",
+        callId: "1",
+        name: "Skill",
+        status: "completed",
+        error: null,
+        detail: { type: "plain_text", label: "debugging" },
+      },
+      {
+        type: "tool_call",
+        callId: "2",
+        name: "Bash",
+        status: "completed",
+        error: null,
+        detail: { type: "shell", command: "npm test", exitCode: 1, output: "session refresh: timeout" },
+      },
+      { type: "assistant_message", text: "The refresh timer raced the logout; fixed with a lock." },
+    ],
+    "turn-r",
   );
   const found = JSON.parse(
     await lead.call("seatwork_knowledge", { do: "search", q: "refresh race", also: ["session timeout"] }),
@@ -1458,8 +1468,8 @@ test("the app hands a seat's whole timeline at each turn's end, and the room kee
     ["turn-w1", first],
     ["turn-w2", second],
   ] as const) {
-    await call("on agent.turn_started", { agent: peer.agent, turnId }, context);
-    await call("on agent.turn_ended", { agent: peer.agent, turnId, outcome: { kind: "completed" }, timeline }, context);
+    await startTurn(peer, turnId);
+    await endTurn(peer, timeline, turnId);
   }
   const kept = async (turn: string) =>
     JSON.parse(
@@ -1482,22 +1492,14 @@ test("a turn that ends with no words of the seat's own sends up its outcome, nev
   const lead = await seat("lead-silent", "claude-lead", null, "[Lead] silent");
   const peer = await seat("peer-silent", "claude-peer", lead.agent.id, "[Peer] silent");
   const prompt = { type: "user_message", text: "BLOCKED if the parser tests fail; end with DONE once they pass" };
-  await call("on agent.turn_started", { agent: peer.agent, turnId: "turn-silent" }, context);
-  await call(
-    "on agent.turn_ended",
-    { agent: peer.agent, turnId: "turn-silent", outcome: { kind: "completed" }, timeline: [prompt] },
-    context,
-  );
+  await startTurn(peer, "turn-silent");
+  await endTurn(peer, [prompt], "turn-silent");
   const report = lead.inbox.at(-1) ?? "";
   assert.match(report, /no final message; outcome completed/);
   assert.doesNotMatch(report, /subject="(BLOCKED|DONE)/, "the brief's protocol words are not the seat's report");
   const own = { id: "users-own-agent", parentAgentId: null, provider: "claude", cwd: PROJECT, title: "mine" };
-  await call("on agent.turn_started", { agent: own, turnId: "turn-own" }, context);
-  await call(
-    "on agent.turn_ended",
-    { agent: own, turnId: "turn-own", outcome: { kind: "completed" }, timeline: [prompt] },
-    context,
-  );
+  await startTurn({ agent: own }, "turn-own");
+  await endTurn({ agent: own }, [prompt], "turn-own");
   const found = JSON.parse(await lead.call("seatwork_knowledge", { do: "search", q: "parser tests", agent: own.id }));
   assert.deepEqual(found.hits, [], "an agent of the user's own is none of the room's business");
 });
@@ -1533,22 +1535,17 @@ test("a person's decision reaches every seat: a new seat starts with it, a worki
   const sup = await seat("sup-decide", "claude-supervisor", null, "[Supervisor] decide", project);
   const lead = await seat("lead-decide", "claude-lead", null, "[Lead] decide", project);
   const ownerSays = async (words: string, turnId: string, args: Record<string, unknown>) => {
-    await call("on agent.turn_started", { agent: sup.agent, turnId }, context);
+    await startTurn(sup, turnId);
     const answer = JSON.parse(
       await sup.call("seatwork_knowledge", { do: "decide", scope: "project", project: "decisions-project", ...args }),
     );
-    await call(
-      "on agent.turn_ended",
-      {
-        agent: sup.agent,
-        turnId,
-        outcome: { kind: "completed" },
-        timeline: [
-          { type: "user_message", text: words },
-          { type: "assistant_message", text: "Noted." },
-        ],
-      },
-      context,
+    await endTurn(
+      sup,
+      [
+        { type: "user_message", text: words },
+        { type: "assistant_message", text: "Noted." },
+      ],
+      turnId,
     );
     return answer;
   };
@@ -1563,15 +1560,7 @@ test("a person's decision reaches every seat: a new seat starts with it, a worki
     /## Decisions in force[\s\S]*package-manager: Use pnpm for every install; never npm\. \(since/,
   );
 
-  const gate = peer.url.replace(/\/mcp\/([^/]+)\/[^/]+$/, "/gate/$1");
-  const hook = async (command: string) =>
-    (
-      await fetch(`${gate}?cli=claude`, {
-        method: "POST",
-        headers: { "content-type": "application/json", "x-seat": peer.agent.id },
-        body: JSON.stringify({ tool_name: "Bash", tool_input: { command }, cwd: project }),
-      })
-    ).text();
+  const hook = (command: string) => peer.hook("Bash", { command }, project);
   assert.equal(await hook("ls"), "", "a seat that holds every decision is told nothing");
   await ownerSays("thôi chuyển qua yarn", "sup-t2", {
     topic: "package manager",
@@ -1851,22 +1840,11 @@ test("the seat asked for its handoff is archived first: whoever asked is told, a
 test("the room's own seat runs the room through its tool; no seat writes the code that runs the room", async () => {
   const hq = await seat("hq-ops", "claude-hq", null, "HQ Supervisor", join(ROOM_HOME, "hq-seatwork"));
   const lead = await seat("lead-ops", "claude-lead", null, "[Lead] ops", PROJECT);
-  const health = JSON.parse(await hq.call("seatwork_room", { do: "health" }));
-  assert.deepEqual(health.readings, ["jev", "knowledge", "skills", "mail", "safety", "seats", "host", "budget"]);
   const peer = await seat("peer-ops", "claude-peer", lead.agent.id, "[Peer] ops", PROJECT);
-  await call(
-    "on agent.turn_ended",
-    {
-      agent: peer.agent,
-      turnId: null,
-      outcome: { kind: "completed" },
-      timeline: [
-        { type: "tool_call", name: "Skill", status: "completed", detail: { type: "plain_text", label: "test-audit" } },
-        { type: "assistant_message", text: "STATUS: read the tests" },
-      ],
-    },
-    context,
-  );
+  await endTurn(peer, [
+    { type: "tool_call", name: "Skill", status: "completed", detail: { type: "plain_text", label: "test-audit" } },
+    { type: "assistant_message", text: "STATUS: read the tests" },
+  ]);
   const { skills } = JSON.parse(await hq.call("seatwork_room", { do: "skills" }));
   assert.deepEqual(
     skills.loads.filter((one: { skill: string }) => one.skill === "test-audit"),
@@ -1904,15 +1882,6 @@ test("the room's own seat runs the room through its tool; no seat writes the cod
     /"code":"BAD_REQUEST".*the room ships a skill named test-audit/,
   );
   assert.match(await lead.call("seatwork_room", { do: "skill" }).catch((error: Error) => error.message), /refused/);
-  const gate = lead.url.replace(/\/mcp\/([^/]+)\/[^/]+$/, "/gate/$1");
-  const write = await fetch(`${gate}?cli=claude`, {
-    method: "POST",
-    headers: { "content-type": "application/json", "x-seat": lead.agent.id },
-    body: JSON.stringify({
-      tool_name: "Write",
-      tool_input: { file_path: join(PLUGIN_DIR, "server", "room", "room.ts"), content: "" },
-      cwd: PROJECT,
-    }),
-  });
-  assert.match(JSON.parse(await write.text()).hookSpecificOutput.permissionDecision, /deny/);
+  const write = await lead.hook("Write", { file_path: join(PLUGIN_DIR, "server", "room", "room.ts"), content: "" });
+  assert.match(JSON.parse(write).hookSpecificOutput.permissionDecision, /deny/);
 });

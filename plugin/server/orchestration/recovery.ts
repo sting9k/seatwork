@@ -119,6 +119,13 @@ export class Recovery {
     return this.seats.get(agentId)?.retry;
   }
 
+  /** How many retries wait for their time, none taken. */
+  waiting(): number {
+    let count = 0;
+    for (const state of this.seats.values()) if (state.retry) count += 1;
+    return count;
+  }
+
   /** The retries whose time has come; each is handed out once. */
   due(now: number): Retry[] {
     const out: Retry[] = [];

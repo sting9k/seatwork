@@ -7,7 +7,7 @@ import type { Hit } from "./store";
 /** A seat's mailbox as it asks to see it: what waits, one mail, a thread, sent, owed, a search. */
 
 /** What a seat may ask of its mailbox; each field is optional and read as text or a number. */
-export interface InboxArgs {
+interface InboxArgs {
   view?: unknown;
   id?: unknown;
   thread?: unknown;
@@ -39,11 +39,11 @@ const hitLine = (hit: Hit, from: string) => `#${hit.id} ${clock(hit.at)} ${from}
 /** A seat's mailbox as the view it asks for: one mail by id, or what is new, all, sent, owed, a thread or a search. */
 export function inbox(engine: MailEngine, me: string, args: InboxArgs, now: number): string {
   const store = engine.storeOf(me, false);
-  const seenBy = engine.seenBy(me);
   const limit = limitOf(args.limit, 20);
   const id = Number(String(args.id ?? "").replace(/^#/, "")) || 0;
   if (id) {
     const message = store?.get(id);
+    const seenBy = engine.seenBy(me);
     if (!store || !message || (seenBy && !store.seen(id, seenBy)))
       throw new MailError("UNKNOWN_MAIL", `no mail #${id} that you may read is in your project`, undefined, {
         tool: "seatwork_inbox",
@@ -94,7 +94,7 @@ export function inbox(engine: MailEngine, me: string, args: InboxArgs, now: numb
   if (view === "thread") {
     const thread = text(args.thread);
     if (!thread) throw new MailError("INVALID_ARGUMENT", "give `thread`: an issue id, or the thread a mail names");
-    const mails = store.thread(thread, seenBy, limit);
+    const mails = store.thread(thread, engine.seenBy(me), limit);
     if (mails.length === 0) return `no mail in thread ${thread} that you may read`;
     const whole = store.threadCount(thread) === mails.length;
     const file = whole ? threadFile(engine.folderOf(me), thread) : null;
@@ -106,7 +106,7 @@ export function inbox(engine: MailEngine, me: string, args: InboxArgs, now: numb
   }
   const q = text(args.q);
   if (!q) throw new MailError("INVALID_ARGUMENT", "give `q`: the words to look for");
-  const hits = store.search(q, seenBy, {
+  const hits = store.search(q, engine.seenBy(me), {
     limit,
     thread: text(args.thread),
     signal: text(args.signal),

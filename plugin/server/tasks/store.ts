@@ -159,24 +159,28 @@ const TO_OWNER: NextCall = { tool: "seatwork_mail", args: { to: "owner" } };
 
 /** The call that reads the issue a blocker reference names. */
 const showOf = (ref: string): NextCall => ({ tool: "seatwork_work", args: { do: "show", id: refIssue(ref) } });
+const OPEN = "('open', 'in_progress', 'deferred')";
 const HELD = `
 WITH RECURSIVE
   held (id) AS (
-    SELECT d.issue_id FROM dependencies d JOIN issues b ON b.id = d.depends_on_id
-    WHERE d.type = 'blocks' AND b.status != 'closed'
+    SELECT d.issue_id FROM issues b INDEXED BY issues_by_status CROSS JOIN dependencies d INDEXED BY dependencies_by_target
+      ON d.depends_on_id = b.id AND d.type = 'blocks'
+    WHERE b.status IN ${OPEN}
     UNION
     SELECT d.issue_id FROM held JOIN dependencies d INDEXED BY dependencies_by_target
       ON d.depends_on_id = held.id AND d.type = 'parent-child'
   ),
   parents (id) AS (
-    SELECT d.depends_on_id FROM dependencies d JOIN issues c ON c.id = d.issue_id
-    WHERE d.type = 'parent-child' AND c.status != 'closed'
+    SELECT d.depends_on_id FROM issues c INDEXED BY issues_by_status CROSS JOIN dependencies d
+      ON d.issue_id = c.id AND d.type = 'parent-child'
+    WHERE c.status IN ${OPEN}
   )`;
 const IN_THE_WAY = `
 WITH RECURSIVE
   hard (id, ref) AS (
-    SELECT d.issue_id, d.depends_on_id FROM dependencies d JOIN issues b ON b.id = d.depends_on_id
-    WHERE d.type = 'blocks' AND b.status != 'closed'
+    SELECT d.issue_id, d.depends_on_id FROM issues b INDEXED BY issues_by_status CROSS JOIN dependencies d INDEXED BY dependencies_by_target
+      ON d.depends_on_id = b.id AND d.type = 'blocks'
+    WHERE b.status IN ${OPEN}
   ),
   under (id, ref) AS (
     SELECT d.issue_id, d.depends_on_id FROM dependencies d INDEXED BY dependencies_by_target
@@ -188,8 +192,9 @@ WITH RECURSIVE
   way (id, ref) AS (
     SELECT id, ref FROM hard
     UNION SELECT id, ref || '${PARENT_BLOCKED}' FROM under
-    UNION SELECT d.depends_on_id, d.issue_id || '${CHILD_OPEN}' FROM dependencies d JOIN issues c ON c.id = d.issue_id
-      WHERE d.type = 'parent-child' AND c.status != 'closed'
+    UNION SELECT d.depends_on_id, d.issue_id || '${CHILD_OPEN}' FROM issues c INDEXED BY issues_by_status CROSS JOIN dependencies d
+      ON d.issue_id = c.id AND d.type = 'parent-child'
+      WHERE c.status IN ${OPEN}
   )`;
 const BLOCKERS = `
 WITH RECURSIVE
@@ -239,12 +244,11 @@ export class WorkStore extends Sqlite {
     dir: string,
     private readonly policy: Pick<WorkPolicy, "busyTimeoutMs" | "flushAfterMs">,
     private readonly now: () => Date = () => new Date(),
-    scripts: string = join(SQL_DIR, "work"),
     private readonly leased: (holder: string) => boolean = () => true,
   ) {
     super(databaseIn(dir), {
       busyTimeoutMs: policy.busyTimeoutMs,
-      scripts,
+      scripts: join(SQL_DIR, "work"),
       fail: (code, message) => new WorkError(code, message),
       name: "the work store",
       now,
@@ -400,7 +404,7 @@ export class WorkStore extends Sqlite {
     return this.now().toISOString();
   }
 
-  /** Gives a lease to the open issues held by seats of the room that carry none, as a store made before leases has: the lease starts now, and a person's claim is left alone. */
+  /** Gives a lease to the open issues held by seats of the room that carry none, as in a store made before leases; a person's claim is left alone. */
   leaseHeld(): void {
     const holders = this.rows<{ assignee: string }>(
       "SELECT DISTINCT assignee FROM issues INDEXED BY issues_by_assignee WHERE assignee IS NOT NULL AND status <> 'closed' AND lease_until IS NULL",
@@ -510,11 +514,11 @@ export class WorkStore extends Sqlite {
     return this.transaction("read", () => ({
       ready: new Set(this.ready().map((issue) => issue.id)),
       blocked: this.inTheWay(),
-      issues: this.rows(
-        `SELECT * FROM issues WHERE status IN ('open', 'in_progress', 'deferred') ORDER BY ${ORDERED}`,
-      ).map(toIssue),
+      issues: this.rows(`SELECT * FROM issues WHERE status IN ${OPEN} ORDER BY ${ORDERED}`).map(toIssue),
       dependencies: this.rows<Dependency>(
-        "SELECT d.issue_id, d.depends_on_id, d.type FROM dependencies d JOIN issues a ON a.id = d.issue_id JOIN issues b ON b.id = d.depends_on_id WHERE a.status != 'closed' AND b.status != 'closed'",
+        `SELECT d.issue_id, d.depends_on_id, d.type FROM issues a INDEXED BY issues_by_status
+           CROSS JOIN dependencies d ON d.issue_id = a.id JOIN issues b ON b.id = d.depends_on_id
+           WHERE a.status IN ${OPEN} AND b.status IN ${OPEN} ORDER BY d.type, d.issue_id, d.depends_on_id`,
       ),
     }));
   }
@@ -664,7 +668,7 @@ export class WorkStore extends Sqlite {
     });
   }
 
-  /** What stands in an issue's way, as br's refs: a bare id blocks it; `:parent-blocked` (its parent is blocked) holds it back from ready only; `:child-open` (an open child) keeps it from closing only. Read from the issue's own corner of the graph. */
+  /** What stands in an issue's way, as br's refs: a bare id blocks it, `:parent-blocked` holds it back from ready only, `:child-open` keeps it from closing only. */
   blockers(id: string): string[] {
     return this.rows<{ ref: string }>(BLOCKERS, this.get(id).id).map((row) => row.ref);
   }
@@ -746,15 +750,6 @@ export class WorkStore extends Sqlite {
       status,
       limit,
     );
-  }
-
-  /** The id of the issue in progress a seat holds, the first `list` would give; undefined when it holds none. Reads one row. */
-  heldBy(seat: string): string | undefined {
-    return this.row<{ id: string }>(
-      `SELECT id FROM issues INDEXED BY issues_by_assignee WHERE assignee = ? AND status = 'in_progress'
-       ORDER BY ${ORDERED} LIMIT 1`,
-      seat,
-    )?.id;
   }
 
   /** Changes one issue row and counts its revision up; a stale `if_revision` is refused, and a `lease` other than undefined replaces its lease. */
@@ -969,7 +964,7 @@ export class WorkStore extends Sqlite {
     });
   }
 
-  /** Drops the issues closed before `before`, in slices, with their comments and trail; one in a live tree stays: a closed child of an open parent keeps its number, a closed parent its open child. Returns how many. */
+  /** Drops the issues closed before `before`, in slices, with their comments and trail; a closed issue in a live tree stays, so its number holds. Returns how many. */
   expire(before: Date): number {
     const at = before.toISOString();
     let gone = 0;
@@ -1030,7 +1025,7 @@ export class WorkStore extends Sqlite {
     return due !== undefined;
   }
 
-  /** Pushes on, in one statement, the leases of the issues these seats hold that have less than half their time left; the issue itself is left as it is, so a renewal is no progress. Returns how many. */
+  /** Renews, in one statement, the leases of these seats' issues with under half their time left; the issue is left as it is, so a renewal is no progress. Returns how many. */
   renewLeases(seats: readonly string[]): number {
     if (seats.length === 0) return 0;
     return this.transaction(
@@ -1045,7 +1040,7 @@ export class WorkStore extends Sqlite {
     );
   }
 
-  /** Gives back to the board, at most `most`, the longest lapsed first, the issues whose lease has passed and whose holder is not in `listed`: open again, unassigned, with a comment saying why. Returns what went back. */
+  /** Gives back to the board, longest lapsed first and at most `most`, the issues whose lease has passed with their holder not in `listed`: open, unassigned, with a comment. */
   expireLeases(listed: readonly string[], most: number): Lapsed[] {
     const gone = this.transaction("write", () =>
       this.rows<Lapsed & Pick<Issue, "status" | "revision">>(

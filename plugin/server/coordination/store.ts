@@ -55,7 +55,7 @@ export type NewMessage = Pick<Message, "sender" | "senderRole" | "signal" | "sub
     key?: string | null;
   };
 
-export type NewDelivery = Pick<Delivery, "seat" | "kind" | "priority"> &
+type NewDelivery = Pick<Delivery, "seat" | "kind" | "priority"> &
   Partial<Pick<Delivery, "state" | "quiet" | "progress" | "urgent" | "round" | "heldUntil">>;
 
 /** One line of what was posted, as room stats read it. */
@@ -79,7 +79,7 @@ export interface WakeUp {
 }
 
 /** The most wake-ups waiting for a seat: `own` set by itself, `others` by all other seats together, `setter` by one other seat; a wake-up of the same setter, seat and note within `sameWithinMs` of a waiting one repeats it. */
-export interface WakeShares {
+interface WakeShares {
   own: number;
   others: number;
   setter: number;
@@ -121,6 +121,8 @@ const RECLAIM_PAGES = 4000;
 const MAX_ID = Number.MAX_SAFE_INTEGER;
 const LIVE = `EXISTS (SELECT 1 FROM deliveries l WHERE l.message_id = m.id AND l.state NOT IN ('replaced', 'withdrawn', 'bounced'))`;
 const HELD = `(h.state = 'kept' OR (h.state = 'withdrawn' AND h.how = '${TAKEN}'))`;
+const OWED = `m.needs <> 'nothing' AND m.answered_at IS NULL AND m.sender_role <> 'system'
+  AND d.kind = 'to' AND d.state IN ('delivered', 'read')`;
 const SEEN_BY = `(m.sender IN (SELECT value FROM json_each(?1))
   OR EXISTS (SELECT 1 FROM deliveries s WHERE s.message_id = m.id AND s.seat IN (SELECT value FROM json_each(?1))))`;
 
@@ -183,11 +185,10 @@ export class MailStore extends Sqlite {
     readonly folder: string,
     busyTimeoutMs: number,
     private readonly now: () => Date = () => new Date(),
-    scripts: string = join(SQL_DIR, "mail"),
   ) {
     super(databaseIn(folder), {
       busyTimeoutMs,
-      scripts,
+      scripts: join(SQL_DIR, "mail"),
       fail: (code, message) => new MailStoreError(code, message),
       name: "the mail store",
       now,
@@ -505,7 +506,7 @@ export class MailStore extends Sqlite {
   /** Moves deliveries of one seat on in their life, `how` noting why (DRAFT: a replaced draft; TAKEN: a report taken to go out); returns how many changed. */
   mark(seat: string, ids: readonly number[], state: State, how?: string): number {
     if (ids.length === 0) return 0;
-    const settled = (SETTLED_STATES as readonly string[]).includes(state);
+    const settled = SETTLED_STATES.includes(state);
     const notes: SettledLine[] = [];
     const moved = this.transaction("write", () => {
       let changed = 0;
@@ -808,23 +809,21 @@ export class MailStore extends Sqlite {
     return closed.length;
   }
 
-  /** Asks of other seats that reached a seat and wait for its answer, oldest first. */
+  /** Asks of other seats that reached a seat and wait for its answer, oldest first; found from the open asks, so the seat's mail already read costs nothing. */
   owedBy(seat: string): Message[] {
     return this.rows(
-      `SELECT ${MESSAGE} FROM deliveries d INDEXED BY deliveries_by_seat CROSS JOIN messages m ON m.id = d.message_id
-       WHERE d.seat = ? AND d.state IN ('delivered', 'read') AND d.kind = 'to'
-         AND m.needs <> 'nothing' AND m.answered_at IS NULL AND m.sender_role <> 'system' ORDER BY m.id`,
+      `SELECT ${MESSAGE} FROM messages m INDEXED BY messages_owed CROSS JOIN deliveries d ON d.message_id = m.id AND d.seat = ?
+       WHERE ${OWED} ORDER BY m.id`,
       seat,
     ).map(toMessage);
   }
 
-  /** How many asks `owedBy` lists for a seat, and since when the oldest of them has waited; undefined when none. Reads no body, and from the open asks, so the seat's mail already read costs nothing. */
+  /** How many asks `owedBy` lists for a seat, and since when the oldest of them has waited; undefined when none. Reads no body. */
   owedCount(seat: string): { count: number; since: string } | undefined {
     const row = this.row<{ n: number; since: string | null }>(
       `SELECT count(*) AS n, min(m.at) AS since FROM messages m INDEXED BY messages_owed
          CROSS JOIN deliveries d ON d.message_id = m.id AND d.seat = ?
-       WHERE m.needs <> 'nothing' AND m.answered_at IS NULL AND m.sender_role <> 'system'
-         AND d.kind = 'to' AND d.state IN ('delivered', 'read')`,
+       WHERE ${OWED}`,
       seat,
     );
     return row && row.n > 0 ? { count: Number(row.n), since: String(row.since) } : undefined;

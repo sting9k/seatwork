@@ -84,13 +84,11 @@ export function eventsOf(items: readonly unknown[]): TurnEvent[] {
 /** The latest turn among dated entries: those of the last turn id, else those since the last prompt. */
 export function latestTurn(entries: readonly { item: unknown; timestamp?: string; turnId?: string }[]): TurnEvent[] {
   const lastTurn = entries.findLast((entry) => entry.turnId)?.turnId;
-  let from = 0;
-  if (lastTurn) from = entries.findIndex((entry) => entry.turnId === lastTurn);
-  else
-    for (let i = entries.length - 1; i >= 0; i -= 1)
-      if ((entries[i].item as { type?: unknown })?.type === "user_message") {
-        from = i;
-        break;
-      }
+  const from = lastTurn
+    ? entries.findIndex((entry) => entry.turnId === lastTurn)
+    : Math.max(
+        0,
+        entries.findLastIndex((entry) => (entry.item as { type?: unknown } | null)?.type === "user_message"),
+      );
   return entries.slice(from).flatMap((entry) => eventOf(entry.item, entry.timestamp) ?? []);
 }

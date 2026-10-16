@@ -27,7 +27,7 @@ export interface Router {
 }
 
 /** One fork over the last week: on or off, its threshold, its answers acted on and left split, its failed calls. */
-export interface ForkReading {
+interface ForkReading {
   on: boolean;
   sharpAt: number;
   asked: number;

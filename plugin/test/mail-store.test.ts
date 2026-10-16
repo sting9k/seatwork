@@ -1,3 +1,4 @@
+import { shipSql } from "./support/room";
 import fs, { mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -11,14 +12,15 @@ import { MailStore, MailStoreError, type NewMessage } from "../server/coordinati
 const base = mkdtempSync(join(tmpdir(), "seatwork-mail-store-"));
 process.on("exit", () => rmSync(base, { recursive: true, force: true }));
 
-const SCRIPTS = join(__dirname, "..", "room", "sql", "mail");
+shipSql();
+
 const NOW = "2026-10-14T01:00:00.000Z";
 let folders = 0;
 /** A store of its own, with a clock that moves a second at every reading. */
 function fresh(): { store: MailStore; dir: string } {
   const dir = join(base, `store-${(folders += 1)}`);
   let tick = Date.parse("2026-10-14T00:00:00Z");
-  return { store: new MailStore(dir, 2000, () => new Date((tick += 1000)), SCRIPTS), dir };
+  return { store: new MailStore(dir, 2000, () => new Date((tick += 1000))), dir };
 }
 
 const mail = (sender: string, subject: string, extra: Partial<NewMessage> = {}): NewMessage => ({
@@ -213,7 +215,7 @@ test("a damaged database is set aside, kept beside the new one, and a new one st
   store.insert(mail("lead", "FYI: one"), [{ seat: "p1", kind: "to", priority: "fyi" }]);
   store.close();
   writeFileSync(join(dir, "mail.db"), "not a database at all");
-  const again = new MailStore(dir, 2000, undefined, SCRIPTS);
+  const again = new MailStore(dir, 2000);
   assert.equal(again.startedOver, true);
   assert.equal(again.count(), 0);
   assert.equal(readdirSync(dir).filter((name) => name.startsWith("mail.db.damaged-")).length, 1);
@@ -314,7 +316,7 @@ test("how asks are answered and what the tools refused are read from the store",
 test("a mail written while another process writes the store is refused as one to try again", () => {
   const { store, dir } = fresh();
   store.close();
-  const slow = new MailStore(dir, 50, undefined, SCRIPTS);
+  const slow = new MailStore(dir, 50);
   const other = new DatabaseSync(join(dir, "mail.db"));
   other.exec("BEGIN IMMEDIATE");
   assert.throws(
@@ -475,6 +477,7 @@ test("a seat's owed asks are counted from the open asks of the project, not from
   ]);
   store.waitingFor("lead", NOW);
   store.owedCount("lead");
+  store.owedBy("lead");
   assert.equal(store.backlog(), 1);
   const planOf = (needle: string) =>
     store
@@ -482,8 +485,10 @@ test("a seat's owed asks are counted from the open asks of the project, not from
       .filter(({ sql }) => sql.includes(needle))
       .map(({ plan }) => plan)
       .join(" | ");
-  assert.match(planOf("min(m.at) AS since FROM messages m"), /SCAN m USING INDEX messages_owed/);
-  assert.doesNotMatch(planOf("min(m.at) AS since FROM messages m"), /deliveries_by_seat/);
+  for (const needle of ["min(m.at) AS since FROM messages m", "AND d.state IN ('delivered', 'read') ORDER BY m.id"]) {
+    assert.match(planOf(needle), /SCAN m USING INDEX messages_owed/);
+    assert.doesNotMatch(planOf(needle), /deliveries_by_seat/);
+  }
   assert.match(
     planOf("FROM deliveries INDEXED BY deliveries_by_state WHERE state IN"),
     /USING COVERING INDEX deliveries_by_state/,

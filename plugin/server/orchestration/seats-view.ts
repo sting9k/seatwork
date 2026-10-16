@@ -47,7 +47,9 @@ export function describeSeats(rows: readonly SeatRow[], rotateAtTokens: number, 
     const parts = [`${row.role} ${row.title ?? "(no title)"}`, row.agentId, state(row, now)];
     if (row.contextTokens !== null) {
       const past =
-        row.contextTokens >= rotateAtTokens ? ", past the rotation line: its next task goes to a fresh seat" : "";
+        row.contextTokens >= rotateAtTokens
+          ? ", past the rotation line: seatwork_rotate moves its work to a fresh seat"
+          : "";
       parts.push(`context ${Math.round(row.contextTokens / 1000)}K tokens${past}`);
     }
     if (row.costUsd !== null) parts.push(`$${row.costUsd.toFixed(2)}`);

@@ -15,6 +15,7 @@ import { checkPlacement, findProject, findRoomMarker, loadRegistry, projectBlock
 import {
   claudeRoleDir,
   ensureRuntime,
+  openCodePermission,
   projectSkillsShadowing,
   roleSkillNames,
   sharedInstructions,
@@ -34,11 +35,12 @@ export interface SeatLaunch {
   systemPrompt?: string;
 }
 
-/** What the room lays into a start: the table's model (absent where the asked one stands; `thinking` null takes the model's own default), the prompt, Claude's flags. */
+/** What the room lays into a start: the table's model (absent where the asked one stands; `thinking` null takes the model's own default), the prompt, Claude's flags, OpenCode's permissions. */
 export interface Launched {
   model?: { id: string; thinking?: string | null };
   systemPrompt: string;
   claude?: { dirs: string[]; args: Record<string, string | null> };
+  opencode?: { permission: Record<string, unknown> };
 }
 
 /** A registered project, or one found by its marker, as a seat's start sees it. */
@@ -200,6 +202,9 @@ export async function launch(
             },
           },
         }
+      : {}),
+    ...(seat.harness === "opencode"
+      ? { opencode: { permission: openCodePermission(seat.role, policy.opencode) } }
       : {}),
   };
 }

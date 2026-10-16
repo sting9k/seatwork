@@ -3,10 +3,10 @@ import { stdinText } from "./programs";
 import { literal, type Word } from "./shell";
 import type { Known, Scene } from "./types";
 
-/** The text a command writes to files, from the literals the line shows: a redirect of echo, printf or cat, tee's input, a copy of a file written earlier. */
+/** The text a command writes to files from literals on the line: echo, printf or cat redirected, tee's input, a copy of a file written earlier. */
 
 /** A file a command writes and the text it gets. */
-export interface Written {
+interface Written {
   target: Word;
   text: string;
 }

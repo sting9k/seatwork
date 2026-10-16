@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { after, before, test } from "node:test";
 import contribute from "../index.server";
 import { fakeServer } from "./support/server";
+import { projectFolder, roomSeats } from "./room-seats";
 
 const paseoSide = fakeServer();
 const { call } = paseoSide;
@@ -73,63 +74,7 @@ after(async () => {
   Object.assign(console, output);
 });
 
-const agents: Record<string, object> = {};
-const context = { paseo: { agents: { ref: (id: string) => agents[id], list: async () => ({ entries: [] }) } } };
-
-interface TestSeat {
-  agent: { id: string; parentAgentId: string | null; provider: string; cwd: string; title: string; workspaceId: null };
-  inbox: string[];
-  call(name: string, args: Record<string, unknown>): Promise<string>;
-  mail(args: Record<string, unknown>): Promise<string>;
-}
-
-async function seat(
-  id: string,
-  provider: string,
-  parent: string | null,
-  title: string,
-  cwd = PROJECT,
-): Promise<TestSeat> {
-  const made = (await call("before agent.create", { request: { config: { provider, cwd, title }, env: {} } })) as {
-    env: Record<string, string>;
-    config: { mcpServers: { seatwork: { url: string } } };
-  };
-  await call("before agent.session_open", { request: { env: made.env, reason: "create", agentId: id, provider } });
-  const inbox: string[] = [];
-  agents[id] = {
-    refresh: async () => {},
-    current: () => ({ status: "idle" }),
-    send: async (text: string) => void inbox.push(text),
-  };
-  const agent = { id, parentAgentId: parent, provider, cwd, title, workspaceId: null };
-  await call("on agent.created", { agent }, context);
-  const tool = async (name: string, args: Record<string, unknown>) => {
-    const response = await fetch(made.config.mcpServers.seatwork.url, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name, arguments: args } }),
-    });
-    const { result } = (await response.json()) as { result: { content: { text: string }[]; isError: boolean } };
-    if (result.isError) throw new Error(result.content[0].text);
-    return result.content[0].text;
-  };
-  return { agent, inbox, call: tool, mail: (args) => tool("seatwork_mail", args) };
-}
-
-const turnEnds = (who: TestSeat, text: string) =>
-  call(
-    "on agent.turn_ended",
-    { agent: who.agent, turnId: null, outcome: { kind: "completed" }, timeline: [{ type: "assistant_message", text }] },
-    context,
-  );
-
-/** A folder the room reads as a project of its own, so its seats share one work store. */
-function projectFolder(name: string): string {
-  const folder = join(PROJECT, "..", name);
-  mkdirSync(join(folder, ".seatwork"), { recursive: true });
-  writeFileSync(join(folder, ".seatwork", "room.json"), "{}");
-  return folder;
-}
+const { agents, context, seat, turnEnds } = roomSeats(call);
 
 const reset = () => {
   for (const key of Object.keys(says)) delete says[key];

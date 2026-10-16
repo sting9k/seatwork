@@ -29,7 +29,6 @@ const DOTS = 8;
 export function RoomScreen({ theme, layout, navigation }: PluginScreenProps) {
   const read = useRpc(roomStatus);
   const room = useQuery({ queryKey: ["seatwork", "room.status"], queryFn: () => read({}), refetchInterval: 10_000 });
-  // every project starts as one line; a press opens its seats
   const [opened, setOpened] = useState({} as Record<string, boolean>);
   const c = theme.colors;
   const pad = layout.compact ? 16 : 24;

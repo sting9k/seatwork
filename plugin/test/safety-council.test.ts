@@ -5,7 +5,7 @@ import { mkdirSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { test } from "node:test";
 import { traits } from "../shared/workflow";
-import { quotedCommands } from "../server/orchestration/brief";
+import { briefFields, quotedCommands, scopeGlobs } from "../server/orchestration/brief";
 import type { TurnEvent } from "../server/host";
 import {
   Council,
@@ -14,11 +14,10 @@ import {
   type HandInDiff,
   type TurnInput,
 } from "../server/safety/council/council";
-import { counted, hiFor, levelFor, trustedSources, type Label } from "../server/safety/council/calibration";
+import { counted, hiFor, levelFor, type Label } from "../server/safety/council/calibration";
 import { lowerBound, upperBound } from "../server/bounds";
 import {
   claimsIn,
-  isCheck,
   loopIn,
   maskOf,
   outsideScope,
@@ -27,7 +26,7 @@ import {
   unborneIn,
 } from "../server/safety/council/facts";
 import { snapshot } from "../server/safety/council/git";
-import { SafetyStore } from "../server/safety/store";
+import { SafetyStore, type ReadingRow } from "../server/safety/store";
 
 shipSql();
 
@@ -52,10 +51,11 @@ test("what a turn shows without a model: claims, checks, changes outside the sco
   assert.deepEqual(claimsIn("Done.\nAll 42 tests pass.\nThe build is not green yet.\nTests failed twice, now pass"), [
     "All 42 tests pass.",
   ]);
-  assert.ok(
-    isCheck("cd app && npx vitest run", []) && isCheck("./scripts/acceptance.sh --fast", ["./scripts/acceptance.sh"]),
+  const ran = [shell("cd app && npx vitest run"), shell("./scripts/acceptance.sh --fast"), shell("git status")];
+  assert.deepEqual(
+    turnFacts(ran, ["./scripts/acceptance.sh"]).checks.map(({ command }) => command),
+    ["cd app && npx vitest run", "./scripts/acceptance.sh --fast"],
   );
-  assert.ok(!isCheck("git status", []));
   assert.deepEqual(
     quotedCommands(
       '`npm test` passes; `parseDuration("2h") === 7200000`; edit `src/a.js`; run `./scripts/check.sh --fast`, `make`',
@@ -87,6 +87,54 @@ test("what a turn shows without a model: claims, checks, changes outside the sco
     [[shell("ls"), shell("cat a"), shell("npm test"), shell("git status")], null],
   ];
   for (const [events, pattern] of cases) assert.equal(loopIn(events, limits)?.pattern ?? null, pattern);
+});
+
+test("a file whose name starts with two dots is inside the work tree; only a step to the parent is outside it", () => {
+  assert.deepEqual(outsideScope(["..data/app.yaml", "..", "../x.js", "a/../../y.js"], ["**"], ROOT), [
+    "..",
+    "../x.js",
+    "a/../../y.js",
+  ]);
+  assert.deepEqual(outsideScope(["..data/app.yaml"], ["..data/**"], ROOT), []);
+  for (const [scope, globs] of [
+    [
+      "src/, test/ (including new fixtures under test/fixtures/), README.md. Nothing else. Do NOT edit fixtures/",
+      ["src/", "test/", "test/fixtures/", "README.md"],
+    ],
+    ["`src/parse.js`, `test/parse.test.js`", ["src/parse.js", "test/parse.test.js"]],
+    ["src/a.ts src/b.ts", ["src/a.ts", "src/b.ts"]],
+    ["src, docs/*.md", ["src", "docs/*.md"]],
+    ["NONE. Read-only. Do not edit any file", []],
+    [
+      "src/cli.js; src/glob.js (new); in src/check.js ONLY scanFolder — do not touch parseMarkdown; new fixture folders under test/fixtures/; README.md: the usage block — NOT the Limits section",
+      ["src/cli.js", "src/glob.js", "src/check.js", "test/fixtures/", "README.md"],
+    ],
+  ] as const)
+    assert.deepEqual(scopeGlobs(scope), globs, scope);
+  assert.deepEqual(
+    outsideScope([".env", ".github/ci.yml", "src/.hidden.ts", "other/a.ts"], ["src/**", ".github/**"], ROOT),
+    [".env", "other/a.ts"],
+    "a glob covers a name that starts with a dot as it covers any other",
+  );
+});
+
+test("a brief label may carry a note in brackets, and a write scope ends at its first blank line", () => {
+  const fields = briefFields(
+    [
+      "Write scope: src/, README.md. Nothing else.",
+      "",
+      "Contract the candidate must meet (locked by the Lead):",
+      "- `mdlinks a/**/b.md` skips drafts/** and is case-sensitive",
+      "Contract (locked): one line per link",
+      "Non-goals: tables",
+      "Acceptance evidence (run after your last change):",
+      "- `npm test`",
+    ].join("\n"),
+  );
+  assert.deepEqual(scopeGlobs(fields.writeScope!), ["src/", "README.md"]);
+  assert.equal(fields.contract, "one line per link");
+  assert.equal(fields.nonGoals, "tables");
+  assert.equal(fields.acceptance, "- `npm test`");
 });
 
 test("a check whose exit code proves nothing is named: a later command sets it, or a filter the brief did not ask for", () => {
@@ -141,6 +189,12 @@ test("the tests a turn ran after its last change: a check that names no path run
     ],
   ];
   for (const [events, missed] of cases) assert.deepEqual(testsNotRun(events, [], related, ROOT), missed);
+  const hidden = ["test/.unit/d.test.ts"];
+  assert.deepEqual(
+    testsNotRun([change("src/a.ts"), shell("npx vitest run 'test/**/*.test.ts'")], [], hidden, ROOT),
+    [],
+    "a glob covers a folder whose name starts with a dot",
+  );
 });
 
 test("what a report says that its turn does not bear out: a path cited or changed that is not there, a run, a test count", () => {
@@ -240,6 +294,13 @@ test("a member that has earned its level speaks once per finding: the same thing
     /^claims #\d+: the report says "All tests pass\.", and no check passed after the last change$/,
   );
   assert.match(first[1].line, /^scope #\d+: changed \/work\/echo\/src\/cli\.js, outside the write scope/);
+  const held = await council.endOfTurn({ ...turn, turn: "t1b" });
+  assert.deepEqual(
+    held.map((finding) => finding.member),
+    ["claims", "scope"],
+    "a finding whose line did not reach the seat above is not yet said",
+  );
+  council.shown(first);
   const again = await council.endOfTurn({ ...turn, turn: "t2" });
   assert.deepEqual(
     again.map((finding) => finding.member),
@@ -296,6 +357,7 @@ test("a juror is asked only where the facts cannot tell, and its grey band keeps
   assert.deepEqual([asked.length, found.length], [1, 1]);
   assert.match(found[0].line, /^claims #\d+: the report reads as tested \(0\.95\)/);
   assert.equal((asked[0] as { report: string }).report, report);
+  council.shown(found);
 
   probability.value = 0.5;
   assert.deepEqual(await council.endOfTurn(peerTurn([change(`${ROOT}/src/duration.js`)], report, null)), []);
@@ -304,16 +366,22 @@ test("a juror is asked only where the facts cannot tell, and its grey band keeps
   assert.deepEqual(readings()[0], { member: "claims", readings: 3, found: 1, grey: 1, shown: 1 });
 });
 
+const lead = (
+  events: TurnEvent[],
+  verdicts: TurnInput["verdicts"],
+  text = "ACCEPT",
+  turn = `t${events.length}`,
+): TurnInput => ({
+  seat: { id: "lead-1", role: "lead", traits: traits("lead"), root: ROOT, task: "lead-1" },
+  turn,
+  events,
+  text,
+  brief: null,
+  verdicts,
+});
+
 test("a Lead's verdicts are read against the work: an acceptance without its check, a task sent back again and again", async () => {
   const { council } = councilWith({ verdict: 1, repair: 1 });
-  const lead = (events: TurnEvent[], verdicts: TurnInput["verdicts"]): TurnInput => ({
-    seat: { id: "lead-1", role: "lead", traits: traits("lead"), root: ROOT, task: "lead-1" },
-    turn: `t${events.length}`,
-    events,
-    text: "ACCEPT",
-    brief: null,
-    verdicts,
-  });
   const work = { to: "peer-1", brief: BRIEF, task: "peer-1", rejected: 0, contextTokens: 400_000, costUsd: 9.5 };
   const unchecked = await council.endOfTurn(lead([shell("git diff")], [{ ...work, accepted: true }]));
   assert.match(
@@ -356,7 +424,7 @@ test("a Lead's verdicts are read against the work: an acceptance without its che
   );
 });
 
-test("a running turn is mailed about only for a loop or a silence, and only by a member at the mailing level", () => {
+test("a running turn is mailed about only for a loop or a silence, and only by a member at the mailing level", async () => {
   const seat = { id: "peer-1", role: "peer", traits: traits("peer"), root: ROOT, task: "peer-1" };
   const looping = Array.from({ length: 4 }, () => shell("npm test", 1, "same"));
   const quiet: TurnEvent[] = [{ ...shell("sleep 1"), at: new Date(Date.now() - 15 * 60_000).toISOString() }];
@@ -370,11 +438,20 @@ test("a running turn is mailed about only for a loop or a silence, and only by a
   assert.match(mails.whileRunning(seat, looping)[0].line, /^stuck #\d+: same-result 4 times in a row: "npm test"$/);
   assert.deepEqual(mails.whileRunning(seat, looping), [], "the same loop is mailed once");
   assert.match(mails.whileRunning(seat, quiet)[0].line, /^stuck #\d+: no step for 15 minutes in a running turn$/);
+
+  const { council: lines } = councilWith({ stuck: 1 });
+  assert.deepEqual(lines.whileRunning(seat, looping), [], "a member below the mailing level has nothing to say yet");
+  const found = await lines.endOfTurn(peerTurn(looping, "STATUS: still at it", null));
+  assert.match(
+    found[0].line,
+    /^stuck #\d+: same-result 4 times in a row: "npm test"$/,
+    "its line goes under the report",
+  );
 });
 
 test("the council's log keeps what a label holds and lets the rest go; every statement uses an index", () => {
   const { council, store } = councilWith();
-  const id = store.read({
+  const reading: ReadingRow = {
     member: "claims",
     version: 1,
     seat: "s",
@@ -389,19 +466,11 @@ test("the council's log keeps what a label holds and lets the rest go; every sta
     shown: false,
     fingerprint: "f",
     evidence: null,
-  });
-  store.read({
-    ...{ member: "scope", version: 1, seat: "s", role: null, task: null, turn: null },
-    tier: "fact",
-    zone: "clear",
-    score: null,
-    askId: null,
-    level: 0,
-    shown: false,
-    fingerprint: null,
-    evidence: null,
-  });
+  };
+  const id = store.read(reading);
+  store.read({ ...reading, member: "scope", zone: "clear", fingerprint: null });
   assert.ok(store.labelReading(id, "owner", "right"));
+  store.markShown([id]);
   store.shownBefore("s", "claims", "f");
   store.readBefore("s", "claims", "f");
   store.readingSeat(id);
@@ -470,15 +539,15 @@ test("labels move a member by exact binomial bounds: up when enough are right, d
   assert.equal(levelFor(slipping, 2), 1, "the newest twenty labels pull a member down one level");
 
   const implied = (i: number, value: "right" | "wrong") => label(i, value, { source: "implied:acceptance-run" });
-  const agreeing = [...right(10), ...Array.from({ length: 10 }, (_, i) => implied(i, "right"))];
-  assert.ok(trustedSources(agreeing).has("implied:acceptance-run"));
-  const disagreeing = [...right(10), ...Array.from({ length: 10 }, (_, i) => implied(i, i < 6 ? "right" : "wrong"))];
-  assert.equal(trustedSources(disagreeing).size, 0);
-  assert.equal(
-    counted([...right(3), implied(50, "right")]).length,
-    3,
-    "an implied source no seat has checked does not count",
-  );
+  const alone = implied(50, "right");
+  const asSeats = (agree: number) => [
+    ...right(10),
+    ...Array.from({ length: 10 }, (_, i) => implied(i, i < agree ? "right" : "wrong")),
+    alone,
+  ];
+  assert.equal(counted(asSeats(10)).length, 11, "an implied source that agrees with the seats counts on its own");
+  assert.equal(counted(asSeats(6)).length, 10, "one that parts company with them does not");
+  assert.equal(counted([...right(3), alone]).length, 3, "an implied source no seat has checked does not count");
 
   const scored = [
     ...Array.from({ length: 20 }, (_, i) => label(i, "right", { tier: "juror", score: 0.96 })),
@@ -518,17 +587,11 @@ test("a member earns its level from the seat above's labels and then speaks; a l
 
 test("an Owner's run of the work's own check labels the claim it answers; the label waits until the seats agree with it", async () => {
   const { council, store } = councilWith();
+  const sentBack = [
+    { to: "peer-1", accepted: false, brief: BRIEF, task: "peer-1", rejected: 1, contextTokens: null, costUsd: null },
+  ];
   await council.endOfTurn(peerTurn([change(`${ROOT}/src/duration.js`)], "CANDIDATE: hours added\nAll tests pass."));
-  await council.endOfTurn({
-    seat: { id: "lead-1", role: "lead", traits: traits("lead"), root: ROOT, task: "lead-1" },
-    turn: "lt1",
-    events: [shell("npm test", 1, "1 failing")],
-    text: "REJECT",
-    brief: null,
-    verdicts: [
-      { to: "peer-1", accepted: false, brief: BRIEF, task: "peer-1", rejected: 1, contextTokens: null, costUsd: null },
-    ],
-  });
+  await council.endOfTurn(lead([shell("npm test", 1, "1 failing")], sentBack, "REJECT", "lt1"));
   assert.deepEqual(
     store.labelsOf("claims", 1, 10).map(({ source, value }) => [source, value]),
     [["implied:acceptance-run", "right"]],
@@ -540,16 +603,7 @@ test("an Owner's run of the work's own check labels the claim it answers; the la
     ...peerTurn([change(`${ROOT}/src/duration.js`)], "CANDIDATE: hours added\nAll tests pass."),
     turn: "t2",
   });
-  await council.endOfTurn({
-    seat: { id: "lead-1", role: "lead", traits: traits("lead"), root: ROOT, task: "lead-1" },
-    turn: "lt2",
-    events: [shell("npm test | tail -3", 0, "1 failing")],
-    text: "ACCEPT",
-    brief: null,
-    verdicts: [
-      { to: "peer-1", accepted: false, brief: BRIEF, task: "peer-1", rejected: 1, contextTokens: null, costUsd: null },
-    ],
-  });
+  await council.endOfTurn(lead([shell("npm test | tail -3", 0, "1 failing")], sentBack, "ACCEPT", "lt2"));
   assert.equal(store.labelsOf("claims", 1, 10).length, 1);
 });
 
@@ -567,6 +621,8 @@ test("scope sees every file a turn changed, a shell's edits included, by git", a
   const { council } = councilWith({ scope: 1 });
   const seat = { id: "peer-git", role: "peer", traits: traits("peer"), root: repo, task: "peer-git" };
   council.turnStarted(seat.id, join(repo, "src"));
+  // the turn's start is read before its first edit, as a model takes seconds to make one
+  await council.changedIn(seat.id);
   // as `sed -i` and `echo >` would: no edit tool call for either file
   writeFileSync(join(repo, "README.md"), "changed by a shell\n");
   writeFileSync(join(repo, "src", "duration.js"), "2\n");

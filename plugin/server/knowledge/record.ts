@@ -5,7 +5,8 @@ import { redact } from "../redact";
 
 /** A turn of a seat as the record's entries: what was typed, said, run, changed and read, secrets hidden, size held. */
 
-export type EntryKind = "owner" | "prompt" | "say" | "shell" | "change" | "read" | "tool" | "mail";
+export const ENTRY_KINDS = ["owner", "prompt", "say", "shell", "change", "read", "tool", "mail"] as const;
+export type EntryKind = (typeof ENTRY_KINDS)[number];
 
 /** One thing in a turn; `owner` is what a person typed to the seat, `prompt` a brief the seat was started with. */
 export interface Entry {

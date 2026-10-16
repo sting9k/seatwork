@@ -4,7 +4,7 @@ import { fromTemplate } from "../orchestration/brief";
 import { briefInForce } from "../orchestration/rotation";
 import type { Finding, Verdict } from "../safety/council/council";
 import { subjectOpening, verdictOf } from "../signals";
-import { fromRoom, taskOf, type RoomContext } from "./context";
+import { errorText, fromRoom, taskOf, type RoomContext } from "./context";
 import type { TurnEnd } from "./turns";
 
 /** What the room gathers for the council about turns, ended and running; the Safety district reads it. */
@@ -92,17 +92,19 @@ async function lookAt(room: RoomContext, id: string, live: LiveSeat): Promise<vo
     task: taskOf(room, id),
   };
   const reader = engine.parentOf(id);
-  for (const finding of safety.council.whileRunning(seat, events))
-    if (reader)
-      await engine.post({
-        from: fromRoom,
-        to: reader,
-        priority: "action",
-        subject: `COUNCIL: ${finding.member} on ${live.title ?? id}`,
-        body: finding.line,
-        needs: "nothing",
-        why: "the room's council saw a running turn of a seat under you",
-      });
+  for (const finding of safety.council.whileRunning(seat, events)) {
+    if (!reader) continue;
+    await engine.post({
+      from: fromRoom,
+      to: reader,
+      priority: "action",
+      subject: `COUNCIL: ${finding.member} on ${live.title ?? id}`,
+      body: finding.line,
+      needs: "nothing",
+      why: "the room's council saw a running turn of a seat under you",
+    });
+    safety.council.shown([finding]);
+  }
 }
 
 /** The council's look at the turns now running; a seat that cannot be looked at is logged and the others are still looked at. */
@@ -112,7 +114,7 @@ export async function lookAtRunningTurns(room: RoomContext): Promise<void> {
     try {
       await lookAt(room, id, live);
     } catch (error) {
-      room.log(`the council could not look at ${id}: ${error instanceof Error ? error.message : String(error)}`);
+      room.log(`the council could not look at ${id}: ${errorText(error)}`);
     }
   }
 }

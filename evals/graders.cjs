@@ -84,6 +84,10 @@ const GRADERS = {
     const ok = Boolean(g.check(o.project));
     return { ok, why: ok ? g.says : `not so: ${g.says}` };
   },
+  outcome: (g, o) => {
+    const ok = Boolean(g.check(o));
+    return { ok, why: ok ? g.says : `not so: ${g.says}` };
+  },
 };
 
 /** Grades one run: each grader of its case, a grader that throws being a failure that says why. */
@@ -110,6 +114,7 @@ const g = {
   before: (first, then, label) => ({ kind: "before", first, then, label }),
   room: (says, check) => ({ kind: "room", says, check, label: says }),
   project: (says, check) => ({ kind: "project", says, check, label: says }),
+  outcome: (says, check) => ({ kind: "outcome", says, check, label: says }),
 };
 
-module.exports = { grade, g, commands };
+module.exports = { grade, g, commands, callsOf, holds };

@@ -1,9 +1,9 @@
 import { appendFileSync, chmodSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { inRoom, maySpawn, reviews, ROLES, routeOpen, SPAWN, traits } from "../../shared/workflow";
-import { MailEngine } from "../coordination/engine";
+import { MailEngine, ROOM_MAIL } from "../coordination/engine";
 import { Collector } from "../gc";
-import type { Host } from "../host";
+import { HostNotReady, type Host } from "../host";
 import { McpHttpServer, type Route } from "../mcp-http";
 import { projectRootOf, roomProjectDir } from "../orchestration/registry";
 import { clip, Forks } from "../orchestration/forks";
@@ -41,10 +41,11 @@ import { OwedList, roomStatus } from "./status";
 import { Jev } from "../jev/index";
 import { Knowledge } from "../knowledge/index";
 import { Safety } from "../safety/index";
+import { secretsOf } from "../safety/gate/rules/secrets";
 import { render, SKILLS_ENV, type Cli } from "../safety/hooks";
 import { WorkStores } from "../tasks/stores";
 import { Callers, serverToken } from "./callers";
-import { fromRoom, releaseWork, sweepLeases, taskOf, type RoomContext } from "./context";
+import { errorText, fromRoom, releaseWork, sweepLeases, taskOf, type RoomContext } from "./context";
 import { lookAtRunningTurns } from "./council";
 import { launch, type Launched, type SeatLaunch } from "./launch";
 import { mailHealth, registerTools } from "./tools";
@@ -54,7 +55,6 @@ import { rotationFailed, turnEnded, type SeatEvent, type TurnEnd } from "./turns
 
 export type { SeatEvent, TurnEnd } from "./turns";
 
-const ROOM_MAIL = join(ROOM_HOME, "mail");
 const OPERATOR_EVERY_MINUTES = 5;
 
 /** A room seat's start as the room lays it out: its launch, the nonce that names it, its MCP server. */
@@ -110,15 +110,8 @@ function startKnowledge(
     projectOf: (id) => engine.projectOf(id),
     projects: () => engine.projects(),
     mailAfter: (root, id, limit) => engine.mailAfter(root, id, limit),
-    seen: (reader) =>
-      inRoom(engine.seat(reader)?.role)
-        ? null
-        : [
-            reader,
-            // the seats it replaced kept the record of its task
-            ...room().taskKeys.before(reader),
-            ...engine.allSeats().flatMap((seat) => (engine.isAncestor(reader, seat.agentId) ? [seat.agentId] : [])),
-          ],
+    // the seats it replaced kept the record of its task
+    seen: (reader) => engine.seenBy(reader)?.concat(room().taskKeys.before(reader)) ?? null,
     ownedTask: (id, task) => {
       // a short id names the same task as its full one; the work store knows the full one
       let full = task;
@@ -171,6 +164,7 @@ function startSafety(
     guard: {
       paths: [ROOM_HOME, CLAUDE_HOME, CODEX_HOME, PI_HOME, OPENCODE_CONFIG_HOME, PASEO_HOME, ...pluginSource()],
       except: [SEAT_TMP_DIR, roomProjectDir()],
+      secrets: secretsOf(PASEO_HOME, ROOM_HOME),
     },
     roomFolder: ".seatwork",
     repeated: (seat, rule, count, command) => {
@@ -216,7 +210,7 @@ function gateRoute(safety: Safety, knowledge: Knowledge, log: (message: string) 
       if (answered.noted) notices?.told();
       return { type: answered.type, text: answered.text };
     } catch (error) {
-      const reason = error instanceof Error ? error.message : String(error);
+      const reason = errorText(error);
       log(`the guard failed on a ${cli} call: ${reason}`);
       return render(cli, {
         allow: false,
@@ -246,7 +240,7 @@ async function refuseSpawn(
   try {
     await host.archive(agent.id);
   } catch (error) {
-    const reason = error instanceof Error ? error.message : String(error);
+    const reason = errorText(error);
     log(`spawn refused: could not archive ${agent.id}: ${reason}`);
     outcome = `The room could not archive it (${reason}), so it is still there: archive ${agent.id} yourself, then check what it changed.`;
   }
@@ -306,7 +300,7 @@ function serve(room: RoomContext, safety: Safety, knowledge: Knowledge) {
       room.log(`the room's MCP server on 127.0.0.1:${port}`);
     })
     .catch((error) => {
-      unbound = error instanceof Error ? error.message : String(error);
+      unbound = errorText(error);
       room.log(`the room's MCP server failed to listen on ${port}; the room's tools are unavailable: ${unbound}`);
     });
   return { mcp, started, port: () => port, unbound: () => unbound };
@@ -377,7 +371,11 @@ function startTimers(room: RoomContext, gc: Collector): { touch(): void; stop():
       if (looking || !safety.council.on) return;
       looking = true;
       void lookAtRunningTurns(room)
-        .catch((error) => log(`the council could not look at running turns: ${String(error)}`))
+        // before the app hands the room its client there is no turn to look at
+        .catch(
+          (error) =>
+            error instanceof HostNotReady || log(`the council could not look at running turns: ${String(error)}`),
+        )
         .finally(() => (looking = false));
     },
     Math.max(15, policy.safety?.council?.tickSeconds ?? 60) * 1000,
@@ -567,7 +565,7 @@ function startOperations(policy: RuntimePolicy, operators: ReadonlySet<string>, 
           (since) => mailHealth(room(), since),
         ).split("\n"),
       safety: () => room().safety.councilLines(1).split("\n"),
-      seats: () => ({ retrying: room().recovery.due(Number.MAX_SAFE_INTEGER).length }),
+      seats: () => ({ retrying: room().recovery.waiting() }),
     },
     vitals: new Vitals(undefined, () => ({ "mail waiting": room().engine.backlog() })),
     echo: (line) => console.log(`seatwork: ${line}`),

@@ -30,17 +30,19 @@ interface JsonRpcRequest {
 const PROTOCOL_VERSION = "2025-06-18";
 const MAX_BODY = 4 * 1024 * 1024;
 
-/** A request's body as text, whole; null when it passes the cap or the client goes away before it ends. */
-async function bodyOf(req: IncomingMessage): Promise<string | null> {
+/** A request's body as text, whole; past the cap, or if the client goes away first, it is answered 413 and null is returned. */
+async function bodyOf(req: IncomingMessage, res: ServerResponse): Promise<string | null> {
   const chunks: Buffer[] = [];
   let size = 0;
   try {
     for await (const chunk of req as AsyncIterable<Buffer>) {
       // a payload past the cap is refused, never read whole into memory
-      if ((size += chunk.length) > MAX_BODY) return null;
+      if ((size += chunk.length) > MAX_BODY) throw new RangeError("body past the cap");
       chunks.push(chunk);
     }
   } catch {
+    res.writeHead(413).end();
+    req.destroy();
     return null;
   }
   // joined as bytes first: a letter split between two chunks stays one letter
@@ -128,12 +130,8 @@ export class McpHttpServer {
       res.writeHead(404).end();
       return;
     }
-    const body = await bodyOf(req);
-    if (body === null) {
-      res.writeHead(413).end();
-      req.destroy();
-      return;
-    }
+    const body = await bodyOf(req, res);
+    if (body === null) return;
     try {
       const answer = await route(body, {
         query: url.searchParams,
@@ -165,12 +163,8 @@ export class McpHttpServer {
       res.writeHead(405).end();
       return;
     }
-    const body = await bodyOf(req);
-    if (body === null) {
-      res.writeHead(413).end();
-      req.destroy();
-      return;
-    }
+    const body = await bodyOf(req, res);
+    if (body === null) return;
     let parsed: JsonRpcRequest | JsonRpcRequest[];
     try {
       parsed = JSON.parse(body) as JsonRpcRequest | JsonRpcRequest[];
@@ -187,7 +181,7 @@ export class McpHttpServer {
       if (response !== undefined) responses.push(response);
     }
     if (responses.length === 0) {
-      res.writeHead(202).end(); // notifications only
+      res.writeHead(202).end();
       return;
     }
     const payload = Array.isArray(parsed) ? responses : responses[0];

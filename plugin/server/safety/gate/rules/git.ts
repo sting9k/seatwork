@@ -1,9 +1,9 @@
-import { literal, type Word } from "../shell";
+import { literal, textWord, type Word } from "../shell";
 import type { Scene } from "../types";
 
 /** git read as git reads its line: global options, subcommand, aliases, then DCG's git rules. */
 
-export interface GitHit {
+interface GitHit {
   pack: "core.git" | "strict_git" | "room.guard";
   rule: string;
   detail: string;
@@ -17,7 +17,7 @@ export interface GitTools {
 }
 
 /** The rules a git command trips; `shells` are the lines it runs through the shell (an alias, a program a `-c` option names), which are judged too. */
-export interface GitOutcome {
+interface GitOutcome {
   hits: GitHit[];
   shells: string[];
 }
@@ -97,7 +97,7 @@ export async function gitRules(scene: Scene, tools: GitTools, strict: boolean): 
   if (name !== "git") {
     const sub = name.slice(4);
     if (!name.startsWith("git-") || !BUILTIN.has(sub)) return NOTHING;
-    words = [{ raw: sub, start: 0, end: 0, parts: [{ kind: "text", text: sub, quote: "none" }] }, ...words];
+    words = [textWord(sub), ...words];
   }
   const aliases = new Map<string, string>();
   const given: GitOutcome = { hits: [], shells: [] };
@@ -240,7 +240,7 @@ function splitAlias(body: string): Word[] {
     } else current += c;
   }
   if (current || any) out.push(current);
-  return out.map((text) => ({ raw: text, start: 0, end: 0, parts: [{ kind: "text", text, quote: "single" }] }));
+  return out.map((text) => textWord(text, "single"));
 }
 
 /** True for a cluster of short options such as `-fd`. */

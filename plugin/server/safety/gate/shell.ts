@@ -1,6 +1,6 @@
 /** Reads a POSIX or bash command line into a tree; words keep literal and run-time parts. */
 
-export type Quote = "none" | "single" | "double" | "ansi";
+type Quote = "none" | "single" | "double" | "ansi";
 
 /** One piece of a word: literal text, or what the shell only knows when it runs the line. */
 export type Part =
@@ -18,7 +18,7 @@ export interface Word {
   parts: Part[];
 }
 
-export interface Heredoc {
+interface Heredoc {
   delimiter: string;
   quoted: boolean;
   stripTabs: boolean;
@@ -27,7 +27,7 @@ export interface Heredoc {
   terminated: boolean;
 }
 
-export type RedirectOp = "<" | ">" | ">>" | ">|" | "<>" | "&>" | "&>>" | ">&" | "<&" | "<<" | "<<-" | "<<<";
+type RedirectOp = "<" | ">" | ">>" | ">|" | "<>" | "&>" | "&>>" | ">&" | "<&" | "<<" | "<<-" | "<<<";
 
 export interface Redirect {
   op: RedirectOp;
@@ -62,7 +62,7 @@ export interface Compound {
   end: number;
 }
 
-export interface FunctionDef {
+interface FunctionDef {
   kind: "function";
   name: string;
   body: Command;
@@ -88,7 +88,7 @@ export interface Sequence {
 export type Script = Sequence[];
 
 /** A command line read whole, or as far as it goes; `costly` marks a line that stopped at the step budget. */
-export interface Parsed {
+interface Parsed {
   script: Script;
   error: { at: number; message: string; costly?: true } | null;
 }
@@ -1030,3 +1030,11 @@ function literalOf(parts: readonly Part[]): string | null {
 
 /** A word's text when nothing in it waits for run time. */
 export const literal = (word: Word): string | null => literalOf(word.parts);
+
+/** A word made of one text, as if the line had spelled it. */
+export const textWord = (text: string, quote: Quote = "none"): Word => ({
+  raw: text,
+  start: 0,
+  end: 0,
+  parts: [{ kind: "text", text, quote }],
+});

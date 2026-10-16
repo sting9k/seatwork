@@ -1,25 +1,27 @@
 import { Forks, type Fork, type ForkName, type Router } from "../server/orchestration/forks";
 
-/** One call the stand-in decision model was put: the caller, the state, and the labels of the first question. */
+/** One call the stand-in decision model was put: the caller, the state, the question ids and the labels of the first question. */
 export interface Asked {
   caller: string;
   state: Record<string, unknown>;
+  ids: string[];
   labels: string[];
 }
 
-/** A decision model that answers each question with `pick` at `probability`, as Jev would: a label outside the question's is no answer. It keeps what it was asked. */
+/** A decision model that answers each question with `pick` at `probability` as Jev would (a label outside the question's is no answer) and keeps what it was asked; `held` is why it cannot answer. */
 export function modelSaying(
   pick: string | null | ((labels: string[], state: Record<string, unknown>, id: string) => string | null),
   probability = 0.95,
+  held: string | null = null,
 ) {
   const asked: Asked[] = [];
   const router: Router = {
-    why: () => null,
+    why: () => held,
     routes: async (caller, state, questions, sharpAt) => {
       const ids = Object.keys(questions);
       const first = questions[ids[0]] as unknown as { criteria?: Record<string, unknown> };
       const labels = Object.keys(first.criteria ?? {});
-      asked.push({ caller, state, labels });
+      asked.push({ caller, state, ids, labels });
       return Object.fromEntries(
         ids.map((id): [string, Fork] => {
           const said = typeof pick === "function" ? pick(labels, state, id) : pick;

@@ -1,11 +1,13 @@
 import { existsSync, readFileSync } from "node:fs";
+import { KEEP_LOG_DAYS, stamp } from "../../gc";
 import { join } from "node:path";
-import { merge } from "../../../shared/model-choices";
 import { allowed, layModels, tiersOf, type Models } from "../../orchestration/models";
+import { PASEO_HOME } from "../../paths";
 import { claudeDisallowed } from "../../policy";
+import { secretsOf } from "../../safety/gate/rules/secrets";
 import { HARNESSES, parseSeat, type Harness } from "../../orchestration/seats";
 import { inRoom, ROLES, ROOM_ROLE, traits } from "../../../shared/workflow";
-import { keptChanges, layOver } from "./policy-changes";
+import { keptChanges, layOver, unshipped } from "./policy-changes";
 
 /** This machine's own choices, kept in ROOM_HOME/setup.json and never in the repo; the room's own seat is in `models` like any seat. */
 export interface Setup {
@@ -34,7 +36,7 @@ export interface ProviderEntry {
   description: string;
   paseoTools: { enabled: boolean; disabledTools: string[] };
   env: Record<string, string>;
-  options?: { extraArgs: Record<string, string | null> };
+  options?: { extraArgs?: Record<string, string | null>; permission?: Record<string, unknown> };
   disallowedTools?: string[];
   models?: Record<string, unknown>[];
 }
@@ -58,7 +60,7 @@ interface ProfileSpec {
   [key: string]: unknown;
 }
 
-/** Everything setting the room up writes, worked out before anything is written. */
+/** Everything setting the room up writes, worked out before anything is written; `keepAside` names the copy the old policy.json is kept as when its changes cannot be known. */
 export interface RoomPlan {
   seats: Record<string, string[]>;
   providers: Record<string, ProviderEntry>;
@@ -66,6 +68,7 @@ export interface RoomPlan {
   models: Models;
   policy: Record<string, any>;
   shipped: Record<string, any>;
+  keepAside?: string;
   warnings: string[];
 }
 
@@ -247,7 +250,7 @@ interface ProviderContext {
   tools: Tools;
   restrictModels: boolean;
   used: Map<string, Set<string>>;
-  catalogOf: (harness: Harness) => Promise<Record<string, CatalogModel> | null>;
+  catalogOf: Catalog;
   warnings: string[];
 }
 
@@ -271,8 +274,13 @@ async function providerFor(id: string, context: ProviderContext): Promise<Provid
   if (launch.extraArgs && Object.keys(launch.extraArgs).length) entry.options = { extraArgs: launch.extraArgs };
   if (harness === "claude") {
     const deniedSkills = ((policy.claude.deniedSkills ?? []) as string[]).map((name) => `Skill(skill:${name})`);
-    entry.disallowedTools = [...claudeDisallowed(policy, role), ...deniedSkills];
+    // Claude's own Read, Grep and Glob meet the secrets here; its shell meets them at the guard
+    const secrets = secretsOf(PASEO_HOME, roomHome).map((s) => `Read(/${s}${s.endsWith("/") ? "**" : ""})`);
+    entry.disallowedTools = [...claudeDisallowed(policy, role), ...deniedSkills, ...secrets];
   }
+  // OpenCode 2 reads permissions from the session, so the policy's travel with the provider too
+  if (harness === "opencode" && policy.opencode.runtime.config.permission)
+    entry.options = { ...entry.options, permission: policy.opencode.runtime.config.permission };
   const assigned = used.get(id);
   if (restrictModels && assigned?.size) {
     const cat = await catalogOf(harness);
@@ -290,7 +298,7 @@ async function profilesFor(
   shown: ProfileSpec[],
   models: Models,
   providers: Record<string, ProviderEntry>,
-  catalogOf: (harness: Harness) => Promise<Record<string, CatalogModel> | null>,
+  catalogOf: Catalog,
 ): Promise<Profile[]> {
   const profiles: Profile[] = [];
   for (const { role, ...rest } of shown) {
@@ -343,6 +351,11 @@ export async function planRoom(input: {
   const bySetup = [setup.chime !== undefined && "owner.chime", setup.mailPort !== undefined && "mail.port"];
   const changes = keptChanges(roomHome).filter((change) => !bySetup.includes(change.path.join(".")));
   warnings.push(...layOver(policy, changes));
+  const keepAside = unshipped(roomHome) ? `policy.json.unshipped-${stamp()}` : undefined;
+  if (keepAside)
+    warnings.push(
+      `policy.json: this room's policy is from a version that kept no copy of what it shipped, so its changes cannot be told from its defaults; this version's policy is written, the old one is kept as ${keepAside} for ${KEEP_LOG_DAYS} days, and a key changed there is laid in again by hand`,
+    );
   const { seats, enabled, used } = enabledSeats(seatsFile, models, setup);
 
   const tools = policy.paseoTools as Tools;
@@ -371,5 +384,5 @@ export async function planRoom(input: {
   for (const id of enabled) providers[id] = await providerFor(id, context);
   const profiles = await profilesFor(shown, models, providers, catalogOf);
 
-  return { seats, providers, profiles, models, policy, shipped, warnings };
+  return { seats, providers, profiles, models, policy, shipped, ...(keepAside ? { keepAside } : {}), warnings };
 }

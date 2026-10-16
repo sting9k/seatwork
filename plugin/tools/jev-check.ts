@@ -12,6 +12,8 @@ async function main(): Promise<void> {
   const why = jev.why();
   if (why) throw new Error(why);
   try {
+    const probe = await jev.probeEndpoint();
+    if (probe) console.log(JSON.stringify({ probe }, null, 2));
     const decision = await jev.decide("check", "The test suite ran after the last edit, and all 42 tests passed.", {
       passed: { type: "noul", instructions: "Does the text say the tests passed?" },
       sure: {

@@ -55,7 +55,7 @@ export class Rounds {
     return task.rejected;
   }
 
-  /** The Owner's mail on this task; returns the rejections so far, counting this mail when it is one. `seat` is the key the task may also have been counted under. */
+  /** The Owner's mail on this task: the rejections so far, counting this mail when it is one; `seat` is the key the task may also be counted under. */
   answered(key: string, opening: string, seat?: string): number {
     const verdict = verdictOf(opening);
     if (verdict === "accepted" || verdict === "deferred") {

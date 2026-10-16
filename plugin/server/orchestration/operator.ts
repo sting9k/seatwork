@@ -9,7 +9,7 @@ const START =
   "The room started you because its own seat was gone. You run the room: read seatwork_room do=health and the incidents, and act only on what you measured.";
 
 /** What keeping the seat needs: the app, the provider set up for the room's role, the room's folder, a log. */
-export interface OperatorDeps {
+interface OperatorDeps {
   host: Pick<Host, "live" | "create">;
   provider(): string | undefined;
   folder: string;

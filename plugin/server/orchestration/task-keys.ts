@@ -23,7 +23,7 @@ const isHeld = (value: unknown): value is Held => {
   );
 };
 
-/** The task of each seat that has one beyond its own id: what task-scoped decisions and rounds are filed under. `claimed` is told when a seat's first claim replaces its own id or its chain's head as its key. */
+/** The task of each seat that has one beyond its own id, which task-scoped decisions and rounds are filed under; `claimed` hears of a first claim replacing a seat's key. */
 export class TaskKeys {
   private readonly seats = new Map<string, Held>();
 

@@ -62,7 +62,7 @@ function tierTable(tiers: Record<string, Tier>): string {
   ].join("\n");
 }
 
-const listed = (entries: readonly string[] | undefined) => (entries ?? []).map((p) => `\`${p}\``).join(", ") || "none";
+const quoted = (entries: readonly string[] | undefined) => (entries ?? []).map((p) => `\`${p}\``).join(", ") || "none";
 const snake = (name: string) => name.replace(/[A-Z]/g, (letter) => `_${letter.toLowerCase()}`);
 
 /** A param as prompts quote it: `readBudgetTokens` is {{read_budget}}, shown as ~80k. */
@@ -90,7 +90,7 @@ export function promptVars(m: Models, params: RoomParams): Record<string, string
     if (!seat) continue;
     vars[`${role}_provider`] = seat.provider;
     vars[`${role}_thinking`] = seat.thinking;
-    vars[`${role}_alternatives`] = listed(seat.alternatives);
+    vars[`${role}_alternatives`] = quoted(seat.alternatives);
   }
   for (const role of rolesWhere((role) => role.models === "tiers")) {
     const group = tiersOf(m, role);
@@ -102,7 +102,7 @@ export function promptVars(m: Models, params: RoomParams): Record<string, string
   }
   for (const [name, from] of Object.entries(VARS)) {
     const tiers = Object.entries(tiersOf(m, from.role)?.tiers ?? {});
-    vars[name] = listed(tiers.filter(([tier]) => !from.except.includes(tier)).flatMap(([, t]) => t.providers));
+    vars[name] = quoted(tiers.filter(([tier]) => !from.except.includes(tier)).flatMap(([, t]) => t.providers));
   }
   for (const [name, value] of Object.entries(params))
     if (value !== undefined) {
@@ -192,20 +192,8 @@ const split = (entry: string): [provider: string, model: string] => {
   return [entry.slice(0, slash), entry.slice(slash + 1)];
 };
 
-/** Whether a seat about to be created runs on a model the table lists for its role. */
-export function modelAllowed(
-  m: Models,
-  role: string,
-  provider: string,
-  model: string | undefined,
-): { ok: boolean; listed: string[] } {
-  const listed = allowed(m)[role] ?? [];
-  const ok = listed.some((entry) => {
-    const [seat, id] = split(entry);
-    return seat === provider && (!model || model === id || model.startsWith(`${id}-`));
-  });
-  return { ok, listed };
-}
+/** Whether a model name is the table's id or a dated build of it (`sonnet-20261001` is `sonnet`). */
+const isModel = (model: string, id: string): boolean => model === id || model.startsWith(`${id}-`);
 
 /** What the table in force makes of a seat about to be created. */
 export type SeatFit = { ok: true; model?: string; thinking?: string } | { ok: false; listed: string[] };
@@ -215,7 +203,7 @@ export function fitSeat(m: Models, role: string, provider: string, model: string
   const listed = allowed(m)[role] ?? [];
   const mine = listed.filter((entry) => split(entry)[0] === provider);
   if (mine.length === 0) return { ok: false, listed };
-  if (model && modelAllowed(m, role, provider, model).ok) return { ok: true };
+  if (model && mine.some((entry) => isModel(model, split(entry)[1]))) return { ok: true };
   const seat = traits(role).models === "one" ? m.seats[role] : null;
   if (seat) {
     const [first, id] = split(seat.provider);
@@ -235,7 +223,7 @@ interface TierModel {
 }
 
 /** The tiers of a role that list a model on this provider, in the table's order. */
-export function tiersOn(m: Models, role: string, provider: string): TierModel[] {
+function tiersOn(m: Models, role: string, provider: string): TierModel[] {
   return Object.entries(tiersOf(m, role)?.tiers ?? {}).flatMap(([tier, one]) => {
     const entry = (one.providers ?? []).find((listed) => providerOf(listed) === provider);
     return entry ? [{ tier, model: split(entry)[1], use: typeof one.use === "string" ? one.use : null }] : [];
@@ -245,12 +233,12 @@ export function tiersOn(m: Models, role: string, provider: string): TierModel[] 
 /** The model of the next tier up on the same provider, as the table orders its tiers; undefined where there is none. */
 export function stepUp(m: Models, role: string, provider: string, model: string): string | undefined {
   const tiers = tiersOn(m, role, provider);
-  const at = tiers.findIndex((one) => model === one.model || model.startsWith(`${one.model}-`));
+  const at = tiers.findIndex((one) => isModel(model, one.model));
   return at < 0 ? undefined : tiers[at + 1]?.model;
 }
 
 /** What a seat about to start is for, as its creator gave it. */
-export interface SeatTask {
+interface SeatTask {
   title?: string | null;
   spec?: string;
   brief?: string;

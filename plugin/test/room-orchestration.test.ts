@@ -14,6 +14,7 @@ import type { RoomContext } from "../server/room/context";
 import { Safety } from "../server/safety/index";
 import { WorkStore } from "../server/tasks/store";
 import { fakeServer } from "./support/server";
+import { projectFolder, roomSeats, type TestSeat } from "./room-seats";
 
 const paseoSide = fakeServer();
 const { call } = paseoSide;
@@ -31,60 +32,7 @@ after(async () => {
   Object.assign(console, output);
 });
 
-const agents: Record<string, object> = {};
-const listed = async () => ({
-  entries: Object.entries(agents).flatMap(([id, handle]) => {
-    const now = (handle as { current?: () => object }).current?.();
-    return now ? [{ agent: { id, updatedAt: new Date().toISOString(), ...now } }] : [];
-  }),
-});
-const context = { paseo: { agents: { ref: (id: string) => agents[id], list: listed } } };
-
-interface TestSeat {
-  agent: { id: string; parentAgentId: string | null; provider: string; cwd: string; title: string; workspaceId: null };
-  inbox: string[];
-  call(name: string, args: Record<string, unknown>): Promise<string>;
-}
-
-async function seat(
-  id: string,
-  provider: string,
-  parent: string | null,
-  title: string,
-  cwd = PROJECT,
-): Promise<TestSeat> {
-  const made = (await call("before agent.create", { request: { config: { provider, cwd, title }, env: {} } })) as {
-    env: Record<string, string>;
-    config: { mcpServers: { seatwork: { url: string } } };
-  };
-  await call("before agent.session_open", { request: { env: made.env, reason: "create", agentId: id, provider } });
-  const inbox: string[] = [];
-  agents[id] = {
-    refresh: async () => {},
-    current: () => ({ status: "idle" }),
-    send: async (text: string) => void inbox.push(text),
-  };
-  const agent = { id, parentAgentId: parent, provider, cwd, title, workspaceId: null };
-  await call("on agent.created", { agent }, context);
-  const tool = async (name: string, args: Record<string, unknown>) => {
-    const response = await fetch(made.config.mcpServers.seatwork.url, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name, arguments: args } }),
-    });
-    const { result } = (await response.json()) as { result: { content: { text: string }[]; isError: boolean } };
-    if (result.isError) throw new Error(result.content[0].text);
-    return result.content[0].text;
-  };
-  return { agent, inbox, call: tool };
-}
-
-const turnEnds = (who: TestSeat, text: string) =>
-  call(
-    "on agent.turn_ended",
-    { agent: who.agent, turnId: null, outcome: { kind: "completed" }, timeline: [{ type: "assistant_message", text }] },
-    context,
-  );
+const { agents, context, seat, turnEnds } = roomSeats(call);
 
 test("an ended turn asks the work store which task the seat holds once, not once for each thing that wants to know", async () => {
   const project = join(PROJECT, "..", "taskof-project");
@@ -168,6 +116,7 @@ test("a rotation whose successor stands is not reported as failed when a later s
 test("the council's look at running turns goes on to the next seat when one cannot be looked at", async () => {
   const running = (title: string) => ({ status: "running", cwd: PROJECT, title }) as LiveSeat;
   const posted: string[] = [];
+  const shown: number[] = [];
   const logs: string[] = [];
   const room = {
     log: (line: string) => logs.push(line),
@@ -191,13 +140,15 @@ test("the council's look at running turns goes on to the next seat when one cann
       council: {
         whileRunning: (seat: { id: string }) => {
           if (seat.id === "seat-a") throw new Error("a timeline that cannot be read");
-          return [{ member: "stuck", line: "the same command four times", level: 1 }];
+          return [{ id: 7, member: "stuck", line: "the same command four times", level: 1 }];
         },
+        shown: (findings: { id: number }[]) => shown.push(...findings.map((finding) => finding.id)),
       },
     },
   } as unknown as RoomContext;
   await lookAtRunningTurns(room);
   assert.deepEqual(posted, ["COUNCIL: stuck on B"]);
+  assert.deepEqual(shown, [7], "a finding is shown once its mail is posted");
   assert.match(logs[0], /seat-a.*cannot be read/);
 });
 
@@ -302,14 +253,6 @@ test("a brief line of a label and many spaces is read in time that grows with it
   const [small, large] = BIG.map((n) => fastest(() => briefFields(`a${" ".repeat(n)}x`)));
   assert.ok(large < small * 8, `4 times the spaces took ${(large / small).toFixed(1)} times as long`);
 });
-
-/** A folder the room reads as a project of its own, so its seats share one work store. */
-function projectFolder(name: string): string {
-  const folder = join(PROJECT, "..", name);
-  mkdirSync(join(folder, ".seatwork"), { recursive: true });
-  writeFileSync(join(folder, ".seatwork", "room.json"), "{}");
-  return folder;
-}
 
 /** `owner` asks `old` for its handoff, `old` answers with `handoff`, and the successor is the seat the room made. */
 async function rotated(

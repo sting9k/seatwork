@@ -111,7 +111,7 @@ const BARS: Record<string, number> = {
 };
 
 /** A thinking level as three rising bars (BARS says how many a level fills). */
-export function Meter(props: { level: string; colors: Colors }) {
+function Meter(props: { level: string; colors: Colors }) {
   const on = BARS[props.level] ?? 2;
   return (
     <View style={{ flexDirection: "row", alignItems: "flex-end", gap: 2, height: 10 }}>
@@ -373,35 +373,24 @@ export function Toggle(props: { value: boolean; onChange(value: boolean): void; 
 }
 
 /** A label and its value on one line of a rail card. */
-export function KeyValue(props: {
-  name: string;
-  icon?: string;
-  value?: string;
-  mono?: boolean;
-  right?: Inside;
-  colors: Colors;
-}) {
+export function KeyValue(props: { name: string; value: string; mono?: boolean; colors: Colors }) {
   const c = props.colors;
   return (
     <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
-      {props.icon ? <Icon name={props.icon} size={13} color={c.foregroundMuted} /> : null}
       <Text style={{ flex: 1, color: c.foregroundMuted, fontSize: 12, lineHeight: 17 }}>{props.name}</Text>
-      {props.value !== undefined ? (
-        <Text
-          numberOfLines={1}
-          style={{
-            color: c.foreground,
-            fontSize: 12,
-            lineHeight: 17,
-            fontWeight: "500",
-            flexShrink: 1,
-            ...(props.mono ? { fontFamily: "monospace" } : {}),
-          }}
-        >
-          {props.value}
-        </Text>
-      ) : null}
-      {props.right}
+      <Text
+        numberOfLines={1}
+        style={{
+          color: c.foreground,
+          fontSize: 12,
+          lineHeight: 17,
+          fontWeight: "500",
+          flexShrink: 1,
+          ...(props.mono ? { fontFamily: "monospace" } : {}),
+        }}
+      >
+        {props.value}
+      </Text>
     </View>
   );
 }

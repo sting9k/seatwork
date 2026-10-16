@@ -27,7 +27,7 @@ export interface SafetyDeps {
   projectOf(agentId: string): string | null;
   isAncestor(ancestor: string, agentId: string): boolean;
   tmpOf(agentId: string): string;
-  guard: { paths: string[]; except: string[] };
+  guard: { paths: string[]; except: string[]; secrets?: readonly string[] };
   roomFolder: string;
   repeated(seat: string, rule: string, count: number, command: string): void;
   decider: Decider | null;
@@ -51,7 +51,7 @@ export class Safety {
     this.guard = new Guard({
       store: () => this.store(),
       policy: deps.policy,
-      tools: (seat) => machineTools(() => this.startedAt(seat?.id ?? null)),
+      tools: (seat) => machineTools(() => this.startedAt(seat?.id ?? null), this.baseOf),
       place: (seat) => this.placeOf(seat),
       repeated: (seat, rule, count, command) => deps.repeated(seat.id, rule, count, command),
     });
@@ -121,6 +121,8 @@ export class Safety {
     this.starts.set(agentId, Date.now());
     const head = await gitHead(cwd);
     this.store().noteStart(agentId, cwd, head);
+    const common = head ? await commonDirOf(cwd) : null;
+    if (common && head) this.store().noteBase(common, head);
   }
 
   /** A successor takes its predecessor's start, so its hand-ins cover the work it took over. */
@@ -136,7 +138,7 @@ export class Safety {
     const result = await inspectHandIn(
       agentId,
       this.store(),
-      { place, config: this.guard.gateConfig(place), tools: machineTools(() => this.startedAt(agentId)) },
+      { place, config: this.guard.gateConfig(place), tools: machineTools(() => this.startedAt(agentId), this.baseOf) },
       this.deps.policy()?.handin?.registry === false ? {} : { firstRelease },
     );
     if (this.council.on)
@@ -292,6 +294,9 @@ export class Safety {
     return this.storeHandle ?? (existsSync(databaseIn(this.deps.dir)) ? this.store() : null);
   }
 
+  /** The commit the room first saw a repository at; null before the room has a store. */
+  private readonly baseOf = (commonDir: string): string | null => this.existing()?.baseOf(commonDir) ?? null;
+
   /** When a seat began: this process saw it begin, or the store remembers it from an earlier run. */
   private startedAt(agentId: string | null): number | null {
     if (!agentId) return null;
@@ -326,6 +331,15 @@ export class Safety {
       daemon: this.deps.daemon,
     };
   }
+}
+
+/** The git folder a repository's worktrees share, which names the repository wherever a seat starts in it. */
+async function commonDirOf(cwd: string): Promise<string | null> {
+  const ran = await runGit(cwd, ["rev-parse", "--path-format=absolute", "--git-common-dir"], {
+    timeoutMs: 3000,
+    maxBytes: 1 << 16,
+  });
+  return ran.code === 0 ? ran.out.trim() || null : null;
 }
 
 async function gitHead(cwd: string): Promise<string | null> {

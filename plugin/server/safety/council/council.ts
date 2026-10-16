@@ -10,6 +10,7 @@ import { counted, hiFor, levelFor } from "./calibration";
 import type { Chair, Packet } from "./chair";
 import {
   claimsIn,
+  clip,
   loopIn,
   maskOf,
   outsideScope,
@@ -28,6 +29,7 @@ import { changedSince, type Snapshot } from "./git";
 type MemberName = keyof typeof council.members;
 type Juror = "claims" | "scope" | "gaming";
 const MEMBERS = Object.keys(council.members) as MemberName[];
+const MAILS_LEVEL = 2;
 const SEND_BACK_LEVEL = 3;
 
 /** The council's settings in the policy: `levels` pins a member's level (2 at most), readings no label holds are kept `keepDays`, an appeal lapses after `chairMinutes`. */
@@ -96,8 +98,9 @@ export interface TurnInput {
   changed?: readonly string[] | null;
 }
 
-/** What a member says with the report of a turn: its level and one line. */
+/** What a member says with the report of a turn: its reading's id, its level and one line. */
 export interface Finding {
+  id: number;
   member: MemberName;
   level: number;
   line: string;
@@ -120,6 +123,12 @@ interface Reading {
 
 type BriefFields = ReturnType<typeof briefFields>;
 
+const shortHash = (text: string) => createHash("sha1").update(text).digest("hex").slice(0, 12);
+const namedChecks = (fields: BriefFields) =>
+  quotedCommands([fields.acceptance, fields.contract].filter(Boolean).join("\n"));
+const acceptanceOf = (verdict: Verdict) =>
+  verdict.brief ? quotedCommands(briefFields(verdict.brief).acceptance ?? "") : [];
+
 /** A reading made at once, or a juror's question to ask when its caller says so. */
 type Pending = Reading | (() => Promise<Reading>);
 
@@ -131,7 +140,6 @@ const COMMAND_CHARS = 200;
 const BRIEF_CHARS = 400;
 const FINDING_CHARS = 400;
 
-const clip = (text: string, most: number) => (text.length > most ? `${text.slice(0, most)}…` : text);
 const quoted = (text: string) => `"${clip(text.replace(/\s+/g, " "), 120)}"`;
 
 /** A loop among a turn's last steps, as a found reading. */
@@ -237,10 +245,11 @@ export class Council {
     if (!this.on) return [];
     this.implied(input);
     const diff = signalOf(input.text) === "CANDIDATE" ? (this.deps.diffOf?.(input.seat.id) ?? null) : null;
+    const fields = input.brief ? briefFields(input.brief) : {};
     const findings: Finding[] = [];
     for (const member of MEMBERS) {
       if (!this.watches(member, input.seat.traits)) continue;
-      for (const reading of this.read(member, input, diff)) {
+      for (const reading of this.read(member, input, fields, diff)) {
         if (typeof reading !== "function") {
           const shown = this.log(member, input, reading);
           if (shown) findings.push(shown);
@@ -280,13 +289,18 @@ export class Council {
         : null);
     // a running turn is logged only for a finding not yet logged: the turn's end logs the turn
     if (!reading || this.deps.store().readBefore(seat.id, "stuck", reading.fingerprint!)) return [];
-    const shown = this.log("stuck", { seat, turn: null, events, text: "", brief: null, verdicts: [] }, reading);
-    return shown && shown.level >= 2 ? [shown] : [];
+    const shown = this.log("stuck", { seat, turn: null, events, text: "", brief: null, verdicts: [] }, reading, true);
+    return shown ? [shown] : [];
   }
 
   /** Each member's readings and labels over the last `days`. */
   counts(days: number): MemberCount[] {
     return this.deps.store().councilCounts(new Date(this.now() - days * 86_400_000).toISOString());
+  }
+
+  /** Notes that findings reached the seat above, so the same thing found again is not said again. */
+  shown(findings: readonly Finding[]): void {
+    this.deps.store().markShown(findings.map((finding) => finding.id));
   }
 
   /** A seat's word on a finding; the member is weighed again. Null when no such finding is kept. */
@@ -301,7 +315,7 @@ export class Council {
     const store = this.deps.store();
     const touched = new Set<MemberName>();
     for (const verdict of input.verdicts) {
-      const wanted = verdict.brief ? quotedCommands(briefFields(verdict.brief).acceptance ?? "") : [];
+      const wanted = acceptanceOf(verdict);
       const runs = input.events.filter(
         (event): event is Extract<TurnEvent, { kind: "shell" }> =>
           event.kind === "shell" &&
@@ -362,13 +376,13 @@ export class Council {
     return { tier: "juror", zone: "skipped", evidence: { error: String(error).slice(0, 200) } };
   }
 
-  /** Logs a reading; returns it as a finding when it is found, new, and its member speaks. */
-  private log(member: MemberName, input: TurnInput, reading: Reading): Finding | null {
+  /** Logs a reading; returns it as a finding when it is found, new, and its member speaks; it is shown once its line or its mail reaches the seat above (`shown`). */
+  private log(member: MemberName, input: TurnInput, reading: Reading, mailed = false): Finding | null {
     const level = this.level(member);
     const store = this.deps.store();
     const shows =
       reading.zone === "found" &&
-      level > 0 &&
+      level >= (mailed ? MAILS_LEVEL : 1) &&
       !!reading.line &&
       !(reading.fingerprint && store.shownBefore(input.seat.id, member, reading.fingerprint));
     const id = store.read({
@@ -383,13 +397,13 @@ export class Council {
       score: reading.score ?? null,
       askId: reading.askId ?? null,
       level,
-      shown: shows,
+      shown: false,
       fingerprint: reading.fingerprint ?? null,
       evidence: reading.evidence === undefined ? null : JSON.stringify(reading.evidence),
     });
     this.appealIfWarranted(member, input, reading, level, id);
     // the number lets the seat above say whether the finding was right
-    return shows ? { member, level, line: reading.line!.replace(/^(\w+):/, `$1 #${id}:`) } : null;
+    return shows ? { id, member, level, line: reading.line!.replace(/^(\w+):/, `$1 #${id}:`) } : null;
   }
 
   /** A member at the level that sends work back asks the chair about a candidate it found something in or is unsure of. */
@@ -401,18 +415,12 @@ export class Council {
     if (reading.returned || input.seat.traits.writes !== true || signalOf(input.text) !== "CANDIDATE") return;
     const line = (reading.line ?? `${member}: a finding about this candidate`).replace(/^(\w+):/, `$1 #${id}:`);
     const why = reading.contested ?? (reading.zone === "grey" ? "unsure" : "found");
-    const finding =
-      reading.fingerprint ??
-      createHash("sha1")
-        .update(reading.line ?? member)
-        .digest("hex")
-        .slice(0, 12);
     void chair
       .appeal({
         reading: id,
         member,
         seat: input.seat.id,
-        finding,
+        finding: reading.fingerprint ?? shortHash(reading.line ?? member),
         packet: this.packetOf(member, input, reading, why, line),
       })
       .catch((error) => this.deps.log(`council: ${member} could not ask the chair: ${String(error)}`));
@@ -504,15 +512,14 @@ export class Council {
   }
 
   /** A member's readings of a turn; `diff` is what the hand-in check saw of a candidate's. */
-  private read(member: MemberName, input: TurnInput, diff: HandInDiff | null): Pending[] {
-    const fields = input.brief ? briefFields(input.brief) : {};
+  private read(member: MemberName, input: TurnInput, fields: BriefFields, diff: HandInDiff | null): Pending[] {
     switch (member) {
       case "claims":
         return this.readClaims(input, fields);
       case "scope":
         return this.readScope(input, fields);
       case "gaming":
-        return this.readGaming(input, fields, diff);
+        return this.readGaming(fields, diff);
       case "radius":
         return readRadius(input, fields, diff);
       case "report":
@@ -528,7 +535,7 @@ export class Council {
 
   /** Holds a report that says the work was checked to the checks the turn ran; a juror is asked only where facts cannot tell. */
   private readClaims(input: TurnInput, fields: BriefFields): Pending[] {
-    const named = quotedCommands([fields.acceptance, fields.contract].filter(Boolean).join("\n"));
+    const named = namedChecks(fields);
     const facts = turnFacts(input.events, named);
     const writes = input.seat.traits.writes === true;
     // a writer's checks count after its last change; a reviewer changes nothing, so any check counts
@@ -596,13 +603,13 @@ export class Council {
   }
 
   /** Firm signs of bent tests speak for themselves, softer ones go to a juror, and a member that may send the hand-in back checks firm signs against a juror too. */
-  private readGaming(input: TurnInput, fields: BriefFields, diff: HandInDiff | null): Pending[] {
+  private readGaming(fields: BriefFields, diff: HandInDiff | null): Pending[] {
     const evidence = diff?.gaming ?? null;
     if (!evidence) return [];
     const [hard, soft] = [hardSigns(evidence), softSigns(evidence)];
     if (evidence.sourceCount === 0 || hard + soft === 0) return [{ tier: "fact", zone: "clear" }];
     const line = gamingLine(evidence);
-    const fingerprint = createHash("sha1").update(evidence.excerpt).digest("hex").slice(0, 12);
+    const fingerprint = shortHash(evidence.excerpt);
     const signs = { ...evidence, excerpt: undefined };
     const common = { fingerprint, diff: evidence.excerpt, returned: diff!.returned };
     const facts: Reading = { tier: "fact", zone: "found", line, evidence: signs, ...common };
@@ -655,14 +662,13 @@ function readRepair(input: TurnInput): Reading[] {
 function readRadius(input: TurnInput, fields: BriefFields, diff: HandInDiff | null): Reading[] {
   const related = diff?.related ?? [];
   if (related.length === 0) return [];
-  const named = quotedCommands([fields.acceptance, fields.contract].filter(Boolean).join("\n"));
-  const missed = testsNotRun(input.events, named, related, input.seat.root);
+  const missed = testsNotRun(input.events, namedChecks(fields), related, input.seat.root);
   if (missed.length === 0) return [{ tier: "fact", zone: "clear", evidence: { related } }];
   return [
     {
       tier: "fact",
       zone: "found",
-      fingerprint: createHash("sha1").update(missed.join("\n")).digest("hex").slice(0, 12),
+      fingerprint: shortHash(missed.join("\n")),
       line: `radius: ${missed.length} test(s) that name what changed did not pass after the last change: ${missed.slice(0, 5).join(", ")}${missed.length > 5 ? ", …" : ""}`,
       evidence: { missed, related },
     },
@@ -671,14 +677,13 @@ function readRadius(input: TurnInput, fields: BriefFields, diff: HandInDiff | nu
 
 /** A final message held to its turn: the paths it cites or says it changed, the runs it names, the test count it gives. */
 function readReport(input: TurnInput, fields: BriefFields): Reading[] {
-  const named = quotedCommands([fields.acceptance, fields.contract].filter(Boolean).join("\n"));
-  const unborne = unborneIn(input.text, input.events, named, input.seat.root);
+  const unborne = unborneIn(input.text, input.events, namedChecks(fields), input.seat.root);
   if (unborne.length === 0) return [{ tier: "fact", zone: "clear" }];
   return [
     {
       tier: "fact",
       zone: "found",
-      fingerprint: createHash("sha1").update(JSON.stringify(unborne)).digest("hex").slice(0, 12),
+      fingerprint: shortHash(JSON.stringify(unborne)),
       line: `report: ${unborne.slice(0, 4).map(unborneLine).join("; ")}`,
       evidence: { unborne },
     },
@@ -709,7 +714,7 @@ function readVerdicts(input: TurnInput): Reading[] {
 
 /** Work accepted without a run of its own acceptance check is a finding. */
 function acceptanceRun(input: TurnInput, verdict: Verdict): Reading {
-  const wanted = verdict.brief ? quotedCommands(briefFields(verdict.brief).acceptance ?? "") : [];
+  const wanted = acceptanceOf(verdict);
   if (wanted.length === 0) return { tier: "fact", zone: "skipped" };
   const passed = input.events.filter(
     (event): event is Extract<TurnEvent, { kind: "shell" }> =>

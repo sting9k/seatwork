@@ -15,11 +15,5 @@ export const refusal = (error: {
   next?: NextCall;
 }): string =>
   JSON.stringify({
-    error: {
-      code: error.code,
-      message: error.message,
-      retryable: error.retryable,
-      ...(error.fix === undefined ? {} : { fix: error.fix }),
-      ...(error.next === undefined ? {} : { next: error.next }),
-    },
+    error: { code: error.code, message: error.message, retryable: error.retryable, fix: error.fix, next: error.next },
   });

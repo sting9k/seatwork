@@ -23,29 +23,17 @@ export function ensureRoomProject(paseo: PaseoApi, log: (message: string) => voi
   return opening;
 }
 
-/** Archives the room project's workspaces: they leave Paseo's lists, the project's own line stays. */
-async function closeRoomProject(paseo: PaseoApi): Promise<void> {
+/** Takes the room's project out of Paseo through the CLI (the SDK has no call); false when only its workspaces could be archived. */
+export async function removeRoomProject(paseo: PaseoApi): Promise<boolean> {
   const dir = roomProjectDir();
-  const { entries } = await paseo.workspaces.list();
-  for (const workspace of entries) if (dirOf(workspace) === dir) await paseo.workspaces.archive(workspace.id);
-}
-
-/** Deletes from Paseo the project at this folder, through the CLI (the SDK has no call); false when it could not. */
-export async function deleteProjectAt(dir: string): Promise<boolean> {
   const real = realOrSelf(dir);
   try {
     const projects = JSON.parse(await paseoCli(["project", "ls", "--json"])) as { projectId: string; path: string }[];
     for (const project of projects)
       if (realOrSelf(project.path) === real) await paseoCli(["project", "delete", project.projectId]);
     return true;
-  } catch {
-    return false;
-  }
-}
-
-/** Takes the room's project out of Paseo; false when only its workspaces could be archived. */
-export async function removeRoomProject(paseo: PaseoApi): Promise<boolean> {
-  if (await deleteProjectAt(roomProjectDir())) return true;
-  await closeRoomProject(paseo);
+  } catch {}
+  const { entries } = await paseo.workspaces.list();
+  for (const workspace of entries) if (dirOf(workspace) === dir) await paseo.workspaces.archive(workspace.id);
   return false;
 }

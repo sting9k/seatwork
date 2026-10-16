@@ -179,7 +179,7 @@ async function readGaps(deps: WorkForkDeps, store: WorkStore, seat: string, id: 
 const wordsOf = (title: string): Set<string> =>
   new Set((title.toLowerCase().match(/[a-z0-9]{3,}/g) ?? []).filter((word) => !COMMON.has(word)));
 
-/** The open issues whose titles share at least two words and half the shorter title with `title`, the closest first, at most NEAR. */
+/** The open issues whose titles share at least two words and half the shorter title with `title`, the closest first. */
 function similar<T extends Pick<Issue, "title">>(title: string, pool: readonly T[]): T[] {
   const mine = wordsOf(title);
   return pool
@@ -194,7 +194,7 @@ function similar<T extends Pick<Issue, "title">>(title: string, pool: readonly T
     .map(({ issue }) => issue);
 }
 
-/** The open issues new ones repeat, as the decision model reads them in one call, each linked to its twin as related; never merged or closed. A plan's own issues are not compared with each other. */
+/** The open issues the new ones repeat, read by the decision model in one call and linked as related, never merged or closed; a plan's own issues are not compared with each other. */
 async function readDuplicates(
   deps: WorkForkDeps,
   store: WorkStore,
@@ -247,7 +247,7 @@ async function readDuplicates(
   return found;
 }
 
-/** What the forks add to a seat's work call: after a claim, what the issue lacks; after a create, of one issue or a plan, the open issue each may repeat. A fork that fails leaves the call's own answer. */
+/** What the forks add to a seat's work call: after a claim, what the issue lacks; after a create, the open issue each new one may repeat; a failing fork leaves the call's own answer. */
 export async function afterWork(
   deps: WorkForkDeps,
   store: WorkStore,

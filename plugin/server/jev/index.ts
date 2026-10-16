@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { firstNotEnglish } from "../english";
-import { redact } from "../redact";
+import { probeChat, type ChatProbe } from "./chat";
 import { call } from "./client";
 import {
   checkRequest,
@@ -58,7 +58,6 @@ export interface JevDeps {
 
 /** A decision as its caller reads it: the answers, the ids they were logged under, its cost, and whether memory gave it. */
 export interface Decision {
-  callId: number;
   model: string;
   answers: Record<string, Answer>;
   asks: Record<string, number>;
@@ -135,9 +134,8 @@ function failedRow(
   };
 }
 
-/** The district: puts questions to the provider in force and logs every call. */
 /** An answer's label and how sure it is of it, the way a fork weighs it. */
-export function labelOf(answer: Answer): { label: string; probability: number } {
+function labelOf(answer: Answer): { label: string; probability: number } {
   if (answer.type === "noul")
     return { label: answer.noul >= 0.5 ? "true" : "false", probability: Math.max(answer.noul, 1 - answer.noul) };
   if (answer.type === "choice")
@@ -145,6 +143,7 @@ export function labelOf(answer: Answer): { label: string; probability: number } 
   return { label: String(answer.score), probability: answer.confidence };
 }
 
+/** The district: puts questions to the provider in force and logs every call. */
 export class Jev {
   private storeHandle: JevStore | null = null;
   private readonly keys = new Map<ProviderName, { at: number; key: string | undefined }>();
@@ -152,6 +151,7 @@ export class Jev {
   private readonly waiting: (() => void)[] = [];
   private readonly down = { failures: 0, opens: 0, until: 0, round: 0, probing: false };
   private readonly cache = new Map<string, { at: number; decision: Decision }>();
+  private unfit: { wire: string; why: string } | null = null;
 
   constructor(private readonly deps: JevDeps) {}
 
@@ -160,7 +160,7 @@ export class Jev {
   }
 
   /** Where a provider's key is kept, when no env variable names it. */
-  keyFile(name: ProviderName): string {
+  private keyFile(name: ProviderName): string {
     return join(this.deps.dir, `${name}.key`);
   }
 
@@ -190,6 +190,7 @@ export class Jev {
     if (!policy || !name || !settings) return { why: "no decision provider is set up in the policy" };
     if (!settings.url || !settings.model) return { why: `${name} has no url or model in the policy` };
     if (!DIALECTS.includes(settings.dialect)) return { why: `${name} names an unknown dialect ${settings.dialect}` };
+    if (this.unfit?.wire === `${settings.url}\0${settings.model}`) return { why: this.unfit.why };
     const bad = outOfRange(policy, settings);
     if (bad) return { why: `the policy's jev.${bad} is out of range` };
     const key = this.key(name, settings);
@@ -198,6 +199,14 @@ export class Jev {
         why: `no key for ${name}: put it in ${this.keyFile(name)}${settings.keyEnv ? ` or ${settings.keyEnv}` : ""}`,
       };
     return { name, settings, policy, key };
+  }
+
+  /** What a Chat Completions provider's endpoint gives the wire, measured with two calls; null for another dialect or for no provider. */
+  async probeEndpoint(): Promise<ChatProbe | null> {
+    const found = this.provider();
+    if ("why" in found || found.settings.dialect !== "openai-chat") return null;
+    const { url, model } = found.settings;
+    return probeChat({ url, model, key: found.key }, this.deps.fetch ?? fetch);
   }
 
   /** Why no decision can be asked now; null when one can. */
@@ -308,12 +317,11 @@ export class Jev {
     if (this.now().getTime() < this.down.until) throw new DecisionError("DOWN", this.downWhy());
     const { name, settings, policy, key } = found;
     // every string's secrets are hidden before the state leaves the machine or is logged
-    const cleaned = cleanState(state, redact);
-    const sent = cleaned.state;
+    const { state: sent, suspect } = cleanState(state);
     const asked = guarded(questions);
     const text = JSON.stringify(sent);
     const stateHash = createHash("sha256").update(text).digest("hex");
-    const logged = { caller, provider: name, modelAsked: settings.model, stateHash, suspect: cleaned.suspect };
+    const logged = { caller, provider: name, modelAsked: settings.model, stateHash, suspect };
     const refused = this.refusal(caller, policy, sent, asked);
     if (refused) {
       this.store().record(failedRow(logged, refused, 0));
@@ -341,7 +349,7 @@ export class Jev {
       });
       Object.assign(this.down, { failures: 0, opens: 0, until: 0 });
       const { usd, usdSource } = costOf(reply, settings.usdPerMillionInput, () => tokensOf(sent, asked));
-      const { callId, asks } = this.store().record(
+      const asks = this.store().record(
         {
           ...logged,
           model: reply.model || null,
@@ -357,20 +365,24 @@ export class Jev {
         { hash: stateHash, text },
       );
       const decision: Decision = {
-        callId,
         model: reply.model,
         answers: reply.answers,
         asks,
         usd,
         latencyMs: reply.latencyMs,
         attempts: reply.attempts,
-        suspect: cleaned.suspect,
+        suspect,
         cached: false,
       };
       this.remember(memo, decision);
       return decision;
     } catch (error) {
       if (error instanceof DecisionError) {
+        if (error.code === "NO_LOGPROBS") {
+          const why = `${name} gives no log probabilities for ${settings.model}, and ${settings.dialect} reads its answers from them: set a model or an endpoint that gives them`;
+          this.unfit = { wire: `${settings.url}\0${settings.model}`, why };
+          this.deps.log?.(`jev: ${why}`);
+        }
         this.failed(error, round, probing);
         this.store().record(failedRow(logged, error, Date.now() - started));
       }

@@ -57,7 +57,7 @@ export class Collector {
     private readonly districts: readonly DistrictRecords[] = [],
   ) {}
 
-  /** One full pass: idle seats, orphan heartbeats, seat leftovers, finished mail, the districts' records, old handoffs. */
+  /** One full pass: idle seats, orphan heartbeats, seat leftovers, finished mail, seats long gone, the districts' records, old handoffs. */
   async run(): Promise<void> {
     if (this.running) return;
     this.running = true;
@@ -78,6 +78,11 @@ export class Collector {
         const unread = this.engine.expire(new Date(Date.now() - this.expireUnreadDays * DAY_MS).toISOString());
         if (unread > 0) this.log(`gc: ${unread} mails sent only to be read went unread ${this.expireUnreadDays} days`);
       });
+      if (live)
+        await this.attempt("forgetting the seats long gone", () => {
+          const gone = this.engine.forgetGone(new Set(live.keys()), this.keepMailDays * DAY_MS);
+          if (gone > 0) this.log(`gc: ${gone} seats gone more than ${this.keepMailDays} days left the mail engine`);
+        });
       for (const district of this.districts)
         await this.attempt(`expiring ${district.what}`, () => {
           const gone = district.expire(cutoff);
@@ -269,7 +274,7 @@ export interface Stamped {
 export function collectFiles(
   roomHome: string,
   backups: readonly Stamped[],
-  now = new Date(),
+  now: Date,
   open?: ReadonlySet<string>,
 ): string[] {
   const done: string[] = [];
@@ -307,7 +312,7 @@ export function stamp(now = new Date()): string {
 }
 
 /** Deletes entries named `<prefix><stamp>` older than `days`, sparing the `spare` newest. */
-function dropStamped(dir: string, prefixes: readonly string[], days: number, now = new Date(), spare = 0): string[] {
+function dropStamped(dir: string, prefixes: readonly string[], days: number, now: Date, spare = 0): string[] {
   if (!existsSync(dir)) return [];
   const dated: { path: string; at: number }[] = [];
   for (const entry of readdirSync(dir)) {
@@ -328,13 +333,14 @@ function dropStamped(dir: string, prefixes: readonly string[], days: number, now
   return gone;
 }
 
-/** Deletes closed seats' temporary directories once untouched for `days`. */
-export function dropSeatTmp(dir: string, open: readonly string[], days = KEEP_LOG_DAYS, now = new Date()): string[] {
+/** Deletes closed seats' temporary directories once untouched for the keep. */
+export function dropSeatTmp(dir: string, open: readonly string[]): string[] {
   if (!existsSync(dir)) return [];
+  const before = Date.now() - KEEP_LOG_DAYS * DAY_MS;
   const gone = readdirSync(dir)
     .filter((name) => !open.some((agentId) => agentId.startsWith(name)))
     .map((name) => join(dir, name))
-    .filter((path) => now.getTime() - statSync(path).mtimeMs >= days * DAY_MS);
+    .filter((path) => statSync(path).mtimeMs <= before);
   for (const path of gone) rmSync(path, { recursive: true, force: true });
   return gone;
 }
@@ -350,20 +356,23 @@ function dropOld(dir: string, suffix: string, before: number): string[] {
   return gone;
 }
 
-/** Drops the files under `dir` unwritten since `before`, and emptied folders; follows no link. */
-function dropUnwritten(dir: string, before: number): number {
+/** Drops the files under `dir` unwritten since `before`, and emptied folders, each folder read once; follows no link. */
+function dropUnwritten(dir: string, before: number): { gone: number; empty: boolean } {
   let gone = 0;
+  let kept = 0;
   for (const entry of readdirSync(dir, { withFileTypes: true })) {
     const path = join(dir, entry.name);
     if (entry.isDirectory()) {
-      gone += dropUnwritten(path, before);
-      if (readdirSync(path).length === 0) rmSync(path, { recursive: true, force: true });
+      const inner = dropUnwritten(path, before);
+      gone += inner.gone;
+      if (inner.empty) rmSync(path, { recursive: true, force: true });
+      else kept += 1;
     } else if (entry.isFile() && statSync(path).mtimeMs < before) {
       rmSync(path, { force: true });
       gone += 1;
-    }
+    } else kept += 1;
   }
-  return gone;
+  return { gone, empty: kept === 0 };
 }
 
 /** Clears what agent CLIs left in seats' homes, one home at a time, so a home that cannot be cleared is named and the rest still are; `open` are the providers that have a seat. */
@@ -371,12 +380,10 @@ export function sweepRuntimes(
   dir: string,
   open: ReadonlySet<string>,
   leftovers: Partial<Record<string, RuntimeLeftovers>>,
-  days = KEEP_LOG_DAYS,
-  now = new Date(),
 ): string[] {
   const done: string[] = [];
-  const before = now.getTime() - days * DAY_MS;
-  // a name is an entry of the home itself: nothing above it, nothing reached through a link
+  const before = Date.now() - KEEP_LOG_DAYS * DAY_MS;
+  /** An entry of the home itself: nothing above it, nothing reached through a link. */
   const own = (home: string, name: string) => {
     if (isAbsolute(name) || name.split(/[\\/]/).includes("..")) return null;
     const path = join(home, name);
@@ -398,8 +405,9 @@ export function sweepRuntimes(
         }
         for (const name of left.sessions) {
           const entry = own(home, name);
-          const gone = entry?.folder ? dropUnwritten(entry.path, before) : 0;
-          if (gone > 0) done.push(`deleted ${gone} session files not written for ${days} days in ${entry!.path}`);
+          const gone = entry?.folder ? dropUnwritten(entry.path, before).gone : 0;
+          if (gone > 0)
+            done.push(`deleted ${gone} session files not written for ${KEEP_LOG_DAYS} days in ${entry!.path}`);
         }
       } catch (error) {
         done.push(`could not clear ${home}: ${reason(error)}`);
@@ -410,6 +418,6 @@ export function sweepRuntimes(
 }
 
 /** Deletes the folders set aside beside a room home after `days`. */
-export function sweepRemoved(roomHome: string, days = KEEP_REMOVED_DAYS, now = new Date()): string[] {
+export function sweepRemoved(roomHome: string, days: number, now: Date): string[] {
   return dropStamped(dirname(roomHome), [`${basename(roomHome)}.removed-`], days, now);
 }

@@ -1,5 +1,5 @@
 {
-  "$comment": "The room's forks: small choices about mail, work, seats and incidents put to the decision model. A label at sharpAt or more is acted on; anything less keeps the room's own rule. deadlineMs: how long a call may take. A fork with no criteria takes its labels from the call. escalate.signals: the subjects it reads. rotate.fromShare: the share of the rotation line from which it is asked. Each is asked only where its condition in the code holds; policy.jev.forks lists those that are on.",
+  "$comment": "Small choices about mail, work, seats and incidents put to the decision model: a label at sharpAt or more is acted on, anything less keeps the room's own rule. deadlineMs: how long a call may take. Empty criteria: the labels come with the call. escalate.signals: the subjects it reads. rotate.fromShare: the share of the rotation line from which it is asked. policy.jev.forks lists the forks that are on.",
   "forks": {
     "report": {
       "version": 1,

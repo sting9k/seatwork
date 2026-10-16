@@ -15,6 +15,9 @@ const NARROW = council.narrow.map(({ runner, flags }) => ({
 
 const squash = (command: string) => command.replace(/\s+/g, " ").trim();
 
+/** A text cut to `most` characters, with an ellipsis where it was cut. */
+export const clip = (text: string, most: number) => (text.length > most ? `${text.slice(0, most)}…` : text);
+
 /** Whether a command runs one of `wanted`, as the brief quotes them. */
 export function runsOneOf(command: string, wanted: readonly string[]): boolean {
   const flat = squash(command);
@@ -22,7 +25,7 @@ export function runsOneOf(command: string, wanted: readonly string[]): boolean {
 }
 
 /** Whether a command runs a check: a known runner, or one of the commands its brief names. */
-export function isCheck(command: string, named: readonly string[]): boolean {
+function isCheck(command: string, named: readonly string[]): boolean {
   const flat = squash(command);
   return CHECKS.some((pattern) => pattern.test(flat)) || runsOneOf(flat, named);
 }
@@ -108,9 +111,13 @@ export function testsNotRun(
     ran.push(...paths);
   }
   return tests.filter(
-    (test) => !ran.some((path) => test === path || test.startsWith(`${path}/`) || matchesGlob(test, path)),
+    (test) => !ran.some((path) => test === path || test.startsWith(`${path}/`) || covers(test, path)),
   );
 }
+
+/** Whether a glob covers a path, a name that starts with a dot as any other: node's `*` passes over such a name. */
+const covers = (path: string, glob: string) =>
+  matchesGlob(path, glob) || matchesGlob(path.replace(/(^|\/)\./g, "$1_"), glob);
 
 /** The lines of a message that say the work passed or was checked, and deny nothing. */
 export function claimsIn(text: string): string[] {
@@ -205,13 +212,13 @@ export function unborneIn(
 }
 
 /** A check a turn ran; `masked` says why its exit code says nothing of the work, null when it does. */
-export interface CheckRun {
+interface CheckRun {
   command: string;
   exitCode: number | null;
   masked: string | null;
 }
 
-export interface TurnFacts {
+interface TurnFacts {
   lastChange: number;
   changed: string[];
   checks: CheckRun[];
@@ -245,26 +252,26 @@ export function turnFacts(events: readonly TurnEvent[], named: readonly string[]
   };
 }
 
-/** The changed paths no glob of the write scope covers; relative globs are read from `root`. */
+/** The changed paths no glob of the write scope covers; relative globs are read from `root`, and a `*` covers a name that starts with a dot. */
 export function outsideScope(paths: readonly string[], globs: readonly string[], root: string): string[] {
   if (globs.length === 0) return [];
   const local = globs.map((glob) => (isAbsolute(glob) ? relative(root, glob) : glob.replace(/^\.\//, "")));
   return paths.filter((path) => {
     const inside = relative(root, resolve(root, path));
-    if (inside.startsWith("..")) return true;
+    if (inside === ".." || inside.startsWith("../")) return true;
     return !local.some(
-      (glob) => matchesGlob(inside, glob) || matchesGlob(inside, `${glob.replace(/\/$/, "")}/**`) || inside === glob,
+      (glob) => covers(inside, glob) || covers(inside, `${glob.replace(/\/$/, "")}/**`) || inside === glob,
     );
   });
 }
 
-export interface Loop {
+interface Loop {
   pattern: "same-result" | "same-error" | "alternation";
   command: string;
   count: number;
 }
 
-export interface LoopLimits {
+interface LoopLimits {
   window: number;
   sameResult: number;
   sameError: number;

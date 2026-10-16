@@ -123,7 +123,7 @@ function load(name: string, text: string): any {
   return require(file);
 }
 
-test("Pi's extension asks the room about bash, write and edit calls, and blocks with the room's reason", async () => {
+test("Pi's extension asks the room about bash, write, edit and read calls, and blocks with the room's reason", async () => {
   const live = await room(async (body) => ({
     type: "application/json",
     text: JSON.stringify(
@@ -138,7 +138,8 @@ test("Pi's extension asks the room about bash, write and edit calls, and blocks 
       handlers.tool_call({ toolName, input: { command } }, { cwd: "/x" });
     assert.deepEqual(await call("bash", "rm -rf ~"), { block: true, reason: "no" });
     assert.equal(await call("bash", "ls"), undefined);
-    assert.equal(await call("read", "rm -rf ~"), undefined, "reading tools are not asked about");
+    assert.deepEqual(await call("read", "rm -rf ~"), { block: true, reason: "no" }, "reading tools are asked about");
+    assert.equal(await call("todo", "rm -rf ~"), undefined, "other tools are not");
     await live.close();
     const reason = async () => ((await call("bash", "ls")) as { reason: string }).reason;
     assert.match(await reason(), /not answering/);

@@ -1,9 +1,11 @@
 import { installRoom, PLUGIN_DIR, ROOM_HOME } from "./support/room";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { beforeEach, test } from "node:test";
+import { PASEO_HOME } from "../server/paths";
 import { loadPolicy } from "../server/policy";
 import { envFor } from "../server/orchestration/runtimes";
 import { parseSeat } from "../server/orchestration/seats";
@@ -12,6 +14,7 @@ import { addSeats, setUpRoom } from "../server/paseo/setup/init";
 import { applyToConfigFile, applyWithSdk } from "../server/paseo/setup/paseo-config";
 import { checkSetup, planRoom, roomModels, type Catalog, type Setup } from "../server/paseo/setup/plan";
 import { sweepRemoved } from "../server/gc";
+import { keptAt, takeRoomFiles } from "../server/paseo/setup/project-files";
 import { isSetUp, readSetup } from "../server/paseo/setup/room-home";
 import {
   changedRoles,
@@ -101,7 +104,7 @@ test("a choice the installer cannot honour is refused by name", async () => {
   for (const [flags, error] of cases) await assert.rejects(chosen(flags, ""), error, JSON.stringify(flags));
 });
 
-test("the provider written for a seat starts it as the plugin does: the same environment, the same flags", async () => {
+test("the provider written for a seat starts it as the plugin does: the same environment, the same flags, the same denials", async () => {
   installRoom([]);
   // every install gets Claude and Codex seats; this machine added one of each other harness
   const { providers } = await plan({ seats: ["pi-peer", "opencode-peer"] });
@@ -117,6 +120,19 @@ test("the provider written for a seat starts it as the plugin does: the same env
     const seat = parseSeat(id)!;
     assert.deepEqual(provider.env, envFor(seat, policy), id);
     assert.deepEqual(provider.options?.extraArgs, policy.launch[seat.harness].extraArgs, id);
+    if (seat.harness === "claude")
+      for (const denied of [
+        `Read(/${PASEO_HOME}/local-credential)`,
+        `Read(/${ROOM_HOME}/jev/**)`,
+        "Skill(skill:design)",
+      ])
+        assert.ok(provider.disallowedTools?.includes(denied), `${id} denies ${denied}`);
+    if (seat.harness === "opencode")
+      assert.deepEqual(
+        provider.options?.permission,
+        policy.opencode.config.permission,
+        `${id} carries the policy's permissions`,
+      );
   }
 });
 
@@ -326,6 +342,24 @@ test("a change kept in the room's policy whose place a new version dropped is na
   ]);
 });
 
+test("a room's policy from before the shipped copy is kept aside whole, since what was changed in it cannot be known", async () => {
+  await setUpRoom(source, {}, paseoAccepts);
+  const file = join(ROOM_HOME, "policy.json");
+  const old = JSON.parse(readFileSync(file, "utf8"));
+  old.jev.monthlyCapUsd = 3;
+  writeFileSync(file, JSON.stringify(old));
+  rmSync(join(ROOM_HOME, "policy.shipped.json"));
+
+  const { warnings } = await setUpRoom(source, {}, paseoAccepts);
+
+  const kept = readdirSync(ROOM_HOME).filter((name) => name.startsWith("policy.json.unshipped-"));
+  assert.equal(kept.length, 1);
+  assert.equal(JSON.parse(readFileSync(join(ROOM_HOME, kept[0]), "utf8")).jev.monthlyCapUsd, 3);
+  assert.notEqual(JSON.parse(readFileSync(file, "utf8")).jev.monthlyCapUsd, 3, "this version's policy is written");
+  assert.ok(existsSync(join(ROOM_HOME, "policy.shipped.json")));
+  assert.match(policyWarnings(warnings).join("\n"), new RegExp(`kept as ${kept[0]}`));
+});
+
 test("a seat added to a running room is kept by every later setup, and adding it moves nothing else", async () => {
   await setUpRoom(source, {}, paseoAccepts);
   writeFileSync(join(ROOM_HOME, "room", "roles", "edited-by-hand.md"), "kept");
@@ -518,4 +552,24 @@ test("a running daemon is patched so that no seat keeps a key its new entry drop
     ["mine", ...room.profiles.map((p) => p.id)],
   );
   assert.deepEqual(removed, ["pi-lens"]);
+});
+
+test("two projects whose paths differ only in a separator keep their room files apart when the room is removed", () => {
+  const base = mkdtempSync(join(tmpdir(), "seatwork-keep-"));
+  try {
+    const roots = [join(base, "work", "a-b"), join(base, "work", "a", "b")];
+    roots.forEach((root, index) => {
+      mkdirSync(join(root, ".seatwork"), { recursive: true });
+      writeFileSync(join(root, ".seatwork", "mission.md"), `mission ${index}`);
+    });
+    const movedTo = join(base, "moved");
+    for (const root of roots) assert.ok(takeRoomFiles(root, keptAt(movedTo, root)));
+    assert.deepEqual(
+      roots.map((root) => readFileSync(join(keptAt(movedTo, root), "mission.md"), "utf8")),
+      ["mission 0", "mission 1"],
+    );
+    assert.ok(keptAt(movedTo, roots[1]).includes("work-a-b"), "the name still says where it came from");
+  } finally {
+    rmSync(base, { recursive: true, force: true });
+  }
 });

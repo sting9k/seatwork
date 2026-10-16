@@ -6,6 +6,8 @@ import { within } from "./gate/paths";
 import { ATTRIBUTES_FILE, namesDriver } from "./gate/rules/attributes";
 import { guardThroughLinks } from "./gate/rules/files";
 import { guardOf } from "./gate/rules/protected";
+import { secretAt } from "./gate/rules/secrets";
+import { textWord } from "./gate/shell";
 import { SEVERITY_RANK, type Doubt, type Finding, type Place } from "./gate/types";
 import { redact } from "../redact";
 import { codeHash, type Grantor, type SafetyStore } from "./store";
@@ -14,7 +16,7 @@ import type { CouncilPolicy } from "./council/council";
 /** The command guard: packs, the owner's exceptions and one-time codes. */
 
 /** One exception of the owner's: a `pack:rule` lifted, or a command or prefix that runs as is, in `paths` (anywhere when absent) until `until`. */
-export interface AllowEntry {
+interface AllowEntry {
   rule?: string;
   command?: string;
   prefix?: string;
@@ -81,7 +83,7 @@ interface ProjectRules {
 }
 
 const DEFAULTS = { budgetMs: 1000, maxBytes: 64 * 1024, codeHours: 24, repeat: { count: 3, minutes: 30 } };
-const CHAIN = /[;&|`\n<>]|\$\(/;
+const LEADS_OUT = /[;&|`\n<>$~*?[\]\\'"]|(?:^|[\s/=])\.\.(?=$|[\s/])|\s[/-]/;
 const RANK: Record<Mode, number> = { log: 0, warn: 1, ask: 2, deny: 3 };
 const RULES_LOOKED_MS = 3000;
 const SHOWN_CHARS = 4000;
@@ -111,6 +113,23 @@ export class Guard {
     const call = { seat, cli, command: `write ${path}`, cwd, dry: false, began: process.hrtime.bigint() };
     const real = (target: string) => this.deps.tools(seat).real(target);
     return this.judge(call, async (place) => ({ findings: writeFindings(path, text, place, cwd, real), doubts: [] }));
+  }
+
+  /** A file or folder a reading tool is about to open (Pi's and OpenCode's read, grep, find, list); `whole` when it reads every file under a folder. */
+  async checkRead(
+    seat: SeatRef | null,
+    cli: string,
+    path: string,
+    cwd: string | null,
+    whole: boolean,
+  ): Promise<Ruling> {
+    const call = { seat, cli, command: `read ${path}`, cwd, dry: false, began: process.hrtime.bigint() };
+    const real = (target: string) => this.deps.tools(seat).real(target);
+    return this.judge(call, async (place) => {
+      const secrets = place.guard?.secrets ?? [];
+      const found = [path, real(path)].find((at) => at !== null && secretAt(at, secrets, whole));
+      return { findings: found ? [findingOf("room.guard", "secret-read", found, `read ${path}`)] : [], doubts: [] };
+    });
   }
 
   /** The gate's settings at a place: the policy's, with the packs the place's project adds. */
@@ -287,12 +306,7 @@ function writeFindings(
   cwd: string | null,
   real: (path: string) => string | null,
 ): Finding[] {
-  const word = {
-    raw: path,
-    start: 0,
-    end: 0,
-    parts: [{ kind: "text" as const, text: path, quote: "single" as const }],
-  };
+  const word = textWord(path, "single");
   const found =
     guardOf({ text: path, prefix: path, quoted: true, glob: false, temp: false, word }, "write", { place, cwd }) ??
     (path.startsWith("/") ? guardThroughLinks(path, "write", { place }, real) : null);
@@ -301,27 +315,31 @@ function writeFindings(
     : [];
   if (text !== undefined && ATTRIBUTES_FILE.test(path) && namesDriver(text))
     hits.push({ pack: "room.guard", rule: "git-attributes-driver", at: path });
-  return hits.map((hit) => {
-    const rule = ruleOf(hit.pack, hit.rule)!;
-    return {
-      pack: hit.pack,
-      rule: hit.rule,
-      severity: rule.severity,
-      reason: `${rule.reason} (${hit.at})`,
-      explanation: rule.explanation,
-      safer: rule.safer,
-      text: `write ${path}`,
-    };
-  });
+  return hits.map((hit) => findingOf(hit.pack, hit.rule, hit.at, `write ${path}`));
+}
+
+/** A finding of a pack's rule at a path, as a file tool's call meets it. */
+function findingOf(pack: string, name: string, at: string, text: string): Finding {
+  const rule = ruleOf(pack, name)!;
+  return {
+    pack,
+    rule: name,
+    severity: rule.severity,
+    reason: `${rule.reason} (${at})`,
+    explanation: rule.explanation,
+    safer: rule.safer,
+    text,
+  };
 }
 
 const pass = (): Ruling => ({ allow: true, message: null, finding: null, code: null, grantor: null });
 const live = (e: AllowEntry) => !e.until || Date.parse(e.until) > Date.now();
 const inPaths = (e: AllowEntry, cwd: string | null) =>
   !e.paths?.length || (cwd !== null && e.paths.some((p) => within(cwd, p)));
+/** Whether an owner's entry lets a command run as is: the whole command, or its prefix followed by nothing that chains, expands, or leads out of what the prefix names. */
 const runsAsIs = (e: AllowEntry, command: string) =>
   e.command === command ||
-  (e.prefix !== undefined && command.startsWith(e.prefix) && !CHAIN.test(command.slice(e.prefix.length)));
+  (e.prefix !== undefined && command.startsWith(e.prefix) && !LEADS_OUT.test(command.slice(e.prefix.length)));
 
 /** The mode a rule has with no setting of the owner's: its own, else by its level. */
 function baseMode(key: string): Mode {

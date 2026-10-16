@@ -24,13 +24,13 @@ export interface Doubt {
   text: string;
 }
 
-/** The machine around a command: the seat's own temp folder, where its agent began it, the room's own files no seat writes (save `except`), the room's folder in each project, and the app's listen address. */
+/** The machine around a command: the seat's temp and start folders, the room's files no seat writes (save `except`) and the secrets none reads, its folder in each project, and the daemon's address. */
 export interface Place {
   home: string;
   project: string | null;
   tmp: string | null;
   start: string | null;
-  guard: { paths: string[]; except: string[] } | null;
+  guard: { paths: string[]; except: string[]; secrets?: readonly string[] } | null;
   roomFolder: string | null;
   daemon?: string | null;
 }
@@ -58,7 +58,7 @@ export interface Scene {
 /** What a word's value depends on besides its text: the variables set so far, the machine, the folder. */
 export type Known = Pick<Scene, "vars" | "place" | "cwd">;
 
-/** A word's value as far as the gate knows it before the shell runs: `text` is null when part of it is known only at run time, `prefix` is what comes before that part. */
+/** A word's value as far as the gate knows it before the shell runs; `text` is null when part of it waits for run time, `prefix` is what precedes that part. */
 export interface Value {
   text: string | null;
   prefix: string;

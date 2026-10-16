@@ -14,7 +14,7 @@ export interface Defs {
   maybe: boolean;
 }
 
-/** What the shell has been told so far on one line: folder, variables, functions, aliases, input, and files written from literals; `failedCwd` is where a cd into a folder not there leaves it. */
+/** What the shell has been told so far on one line; `failedCwd` is where a cd into a folder not there leaves it. */
 export interface State {
   cwd: string | null;
   failedCwd?: string | null;
@@ -69,6 +69,27 @@ export const fork = (state: State): State => ({
 const sameVar = (a: Variable | undefined, b: Variable | undefined): boolean =>
   a === b || (a !== undefined && b !== undefined && a.value === b.value && a.temp === b.temp);
 
+const identical = (a: unknown, b: unknown): boolean => a === b;
+
+/** The names one table does not hold alike in every state; a state that lacks a name disagrees with one that has it. */
+function disagreeing<V>(
+  states: readonly State[],
+  table: (state: State) => ReadonlyMap<string, V>,
+  same: (a: V | undefined, b: V | undefined) => boolean,
+): string[] {
+  const [first, ...rest] = states.map(table);
+  const names: string[] = [];
+  for (const [name, entry] of first)
+    for (const other of rest)
+      if (!same(other.get(name), entry)) {
+        names.push(name);
+        break;
+      }
+  const added = new Set<string>();
+  for (const other of rest) for (const name of other.keys()) if (!first.has(name)) added.add(name);
+  return [...names, ...added];
+}
+
 /** Makes `base` stand for itself and the `others` at once, as after branches of which one ran: what they agree on is kept, the rest is unknown. */
 export function meet(base: State, others: readonly State[]): void {
   if (!others.length) return;
@@ -76,15 +97,13 @@ export function meet(base: State, others: readonly State[]): void {
   const split = others.some((s) => s.cwd !== base.cwd);
   if (split) base.cwd = null;
   base.moved = split || all.some((s) => s.moved);
-  for (const name of new Set(all.flatMap((s) => [...s.vars.keys()])))
-    if (!all.every((s) => sameVar(s.vars.get(name), base.vars.get(name)))) base.vars.set(name, UNKNOWN);
-  for (const name of new Set(all.flatMap((s) => [...s.funcs.keys()]))) {
+  for (const name of disagreeing(all, (s) => s.vars, sameVar)) base.vars.set(name, UNKNOWN);
+  for (const name of disagreeing(all, (s) => s.funcs, identical)) {
     const entries = all.map((s) => s.funcs.get(name));
-    if (entries.every((e) => e === entries[0])) continue;
     const defs = [...new Set(entries.flatMap((e) => e?.defs ?? []))];
     base.funcs.set(name, { defs, maybe: entries.some((e) => !e || e.maybe) });
   }
-  for (const name of new Set(all.flatMap((s) => [...s.aliases.keys()])))
+  for (const name of disagreeing(all, (s) => s.aliases, identical))
     base.aliases.set(name, [...new Set(all.flatMap((s) => s.aliases.get(name) ?? []))]);
   for (const other of others) keepWrites(base, other);
 }
@@ -116,7 +135,10 @@ function stable(a: State, b: State): boolean {
   if (a.cwd !== b.cwd || a.vars.size !== b.vars.size || a.funcs.size !== b.funcs.size) return false;
   for (const [name, value] of a.vars) if (!sameVar(value, b.vars.get(name))) return false;
   for (const [name, entry] of a.funcs) if (entry !== b.funcs.get(name)) return false;
-  for (const [name, bodies] of a.aliases) if (bodies.join("\0") !== b.aliases.get(name)?.join("\0")) return false;
+  for (const [name, bodies] of a.aliases) {
+    const other = b.aliases.get(name);
+    if (bodies !== other && bodies.join("\0") !== other?.join("\0")) return false;
+  }
   return a.aliases.size === b.aliases.size;
 }
 
@@ -126,14 +148,6 @@ export function widened(start: State, end: State): State | null {
   meet(wide, [end]);
   return stable(wide, start) ? null : wide;
 }
-
-/** A word made up by the walk, as if the line had spelled it. */
-export const word = (text: string): Word => ({
-  raw: text,
-  start: 0,
-  end: 0,
-  parts: [{ kind: "text", text, quote: "none" }],
-});
 
 /** A word only known at run time: the input xargs feeds, the `{}` of find -exec. */
 export const dynamicWord = (): Word => ({

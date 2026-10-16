@@ -5,7 +5,7 @@ import { inRoom, ROOM_PROJECT } from "../../shared/workflow";
 
 /** The registry of projects (projects.json) and what each project keeps under .seatwork/. */
 
-interface ProjectEntry {
+export interface ProjectEntry {
   name: string;
   cwd: string;
 }
@@ -141,8 +141,8 @@ export function findRoomMarker(cwd: string): (ProjectFiles & { root: string }) |
   return root ? { root, ...readProjectFiles(root, root.split("/").pop() ?? root) } : null;
 }
 
-/** The same place in the main checkout of the linked git worktree a folder lies in, read from the `.git` file at the worktree's top; null for a folder in none. */
-export function inMainCheckout(cwd: string): string | null {
+/** The same place in the main checkout of the linked git worktree a folder lies in; null for a folder in none. */
+function inMainCheckout(cwd: string): string | null {
   const real = realOrSelf(cwd);
   let dir = real;
   for (let i = 0; i < 64; i += 1) {
@@ -171,7 +171,7 @@ export function inMainCheckout(cwd: string): string | null {
   return null;
 }
 
-/** The project a folder lies in, by the registry or by the room's marker above it, or else those of the main checkout of its git worktree; only its root. */
+/** The root of the project a folder lies in: by the registry, else the room's marker above it, else the same by its git worktree's main checkout. */
 export function projectRootOf(cwd: string): string | null {
   const registry = loadRegistry();
   const rootOf = (folder: string) => (registry ? entryFor(registry, folder)?.cwd : undefined) ?? markerRoot(folder);

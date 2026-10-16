@@ -12,7 +12,7 @@ export interface Passed {
   lapsed: Lapsed[];
 }
 
-/** One open work store per project, opened on first use; `policy` is the room's, undefined when its files predate the work store; `leased` says which holders are seats of the room, whose claims carry a lease. */
+/** One open work store per project, made on first use; `policy` is undefined when the room's files predate the work store. */
 export class WorkStores {
   private readonly open = new Map<string, WorkStore>();
   private sweeping = false;
@@ -29,7 +29,7 @@ export class WorkStores {
     const rules = projectPolicy(root, this.policy);
     let store = this.open.get(root);
     if (!store) {
-      store = new WorkStore(join(root, WORK_DIR), rules, undefined, undefined, this.leased);
+      store = new WorkStore(join(root, WORK_DIR), rules, undefined, this.leased);
       try {
         store.leaseHeld();
       } catch (error) {
@@ -61,7 +61,7 @@ export class WorkStores {
     return gone;
   }
 
-  /** The minute's pass over the leases in these projects' stores: where one is due, `seating` is read once, the seats it lists are pushed on and the issues of a seat it does not list go back to the board; null leaves every lease. One pass at a time. */
+  /** The minute's pass over these projects' leases: when one is due, `seating` is read once, its seats are renewed and the issues of unlisted seats go back to the board; null leaves every lease. */
   async leases(roots: readonly string[], seating: () => Promise<Seating | null>): Promise<Passed[]> {
     if (this.sweeping) return [];
     this.sweeping = true;

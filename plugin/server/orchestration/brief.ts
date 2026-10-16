@@ -42,9 +42,9 @@ const LABELS: readonly [RegExp, BriefField][] = [
   [/^inputs$/, "inputs"],
   [/^lane$/, "lane"],
 ];
-const LABEL_LINE = /^\s*(?:[-*>]\s+)?[*_`"']*([a-z][a-z /_-]{0,40}?)[*_]*\s*:\s*(.*)$/i;
+const LABEL_LINE = /^\s*(?:[-*>]\s+)?[*_`"']*([a-z][a-z /_-]{0,40}?)[*_]*(?:\s*\([^()\n]{0,80}\))?[*_]*\s*:\s*(.*)$/i;
 
-/** The fields a brief holds; a value runs to the next label, and a later label of a field wins. */
+/** The fields a brief holds; a label may carry a note in brackets, a value runs to the next label with its blank lines kept as one, and a later label of a field wins. */
 export function briefFields(text: string): Partial<Record<BriefField, string>> {
   const lines: Partial<Record<BriefField, string[]>> = {};
   let open: string[] | null = null;
@@ -53,9 +53,9 @@ export function briefFields(text: string): Partial<Record<BriefField, string>> {
     const label = match?.[1].trim().toLowerCase();
     const field = label ? LABELS.find(([pattern]) => pattern.test(label))?.[1] : undefined;
     if (field) open = lines[field] = match![2].trim() ? [match![2].trim()] : [];
-    else if (open && line.trim()) open.push(line.trim());
+    else if (open && (line.trim() || open.at(-1))) open.push(line.trim());
   }
-  return Object.fromEntries(Object.entries(lines).map(([field, own]) => [field, own.join("\n")]));
+  return Object.fromEntries(Object.entries(lines).map(([field, own]) => [field, own.join("\n").trim()]));
 }
 
 /** Whether a prompt was written from the room's template: it holds at least three of its labels, not one stray one. */
@@ -73,10 +73,20 @@ export function quotedCommands(text: string): string[] {
     });
 }
 
-/** The globs of a write scope, split on commas and new lines. */
+/** The globs of a write scope's first paragraph: its parts, split on commas, semicolons and new lines, each giving the paths it names before any word that turns it down (not, never, except, nothing). */
 export function scopeGlobs(writeScope: string): string[] {
+  const bare = (word: string) => word.replace(/^[`"'(]+|[`"'),.;:]+$/g, "");
   return writeScope
-    .split(/[,\n]/)
-    .map((part) => part.trim().replace(/^[`"']|[`"']$/g, ""))
-    .filter((part) => part && !/\s/.test(part));
+    .split(/\n\s*\n/)[0]
+    .split(/[,;\n]/)
+    .flatMap((part) => {
+      const words = part.trim().split(/\s+/).filter(Boolean);
+      if (words.length === 1) return bare(words[0]) ? [bare(words[0])] : [];
+      const paths: string[] = [];
+      for (const word of words) {
+        if (/^(not|never|except|nothing|no|don't|dont)$/i.test(bare(word))) break;
+        if (/[/*]|\.\w+$/.test(bare(word))) paths.push(bare(word));
+      }
+      return paths;
+    });
 }

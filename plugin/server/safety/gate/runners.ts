@@ -3,8 +3,8 @@ import { INLINE_FLAGS, languageOf, type Language } from "./embedded";
 import { baseName, programNames, valueWord } from "./normalize";
 import { valueOf } from "./paths";
 import { program, scriptFile, SHELLS, shellWord, stdinProgram } from "./programs";
-import { literal, type Simple, type Word } from "./shell";
-import { dynamicWord, fork, word, type Context, type Reader, type State } from "./state";
+import { literal, textWord, type Simple, type Word } from "./shell";
+import { dynamicWord, fork, type Context, type Reader, type State } from "./state";
 import type { Scene } from "./types";
 
 /** Commands that run other commands: shells, interpreters, eval, xargs, find -exec, ssh, package scripts. */
@@ -193,7 +193,7 @@ async function xargs(rd: Reader, scene: Scene, state: State, ctx: Context): Prom
   if (!inner.length) return;
   const ended = inner.some((w) => literal(w) === "--");
   const name = baseName(literal(inner[0]) ?? "");
-  const tail = name === "rm" && !ended ? [word("-r"), dynamicWord()] : [dynamicWord()];
+  const tail = name === "rm" && !ended ? [textWord("-r"), dynamicWord()] : [dynamicWord()];
   await synthetic(rd, [...inner, ...tail], state, ctx);
 }
 

@@ -1,21 +1,31 @@
 import { ROOM_HOME, shipSql } from "./support/room";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { existsSync, lstatSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import fs, {
+  existsSync,
+  lstatSync,
+  mkdirSync,
+  readFileSync,
+  rmSync,
+  symlinkSync,
+  utimesSync,
+  writeFileSync,
+} from "node:fs";
 import { join } from "node:path";
 import { test } from "node:test";
 import { packsInForce } from "../server/safety/gate/packs";
 import { handInLine, handInReturn, inspectHandIn, workDigest, type Lookups } from "../server/safety/handin";
 import { Safety } from "../server/safety/index";
+import { changedSince, snapshot } from "../server/safety/council/git";
 import { buildControl } from "../server/safety/control";
 import { SafetyStore } from "../server/safety/store";
-import { machineTools } from "../server/safety/system";
+import { claudeRc, machineTools } from "../server/safety/system";
 
 shipSql();
 
 let repos = 0;
-/** A git repository with one commit of a small project, and a store that knows a seat started there. */
-function project(files: Record<string, string>) {
+/** A git repository with one commit of a small project, and a store that knows a seat started in `start`, a folder of it. */
+function project(files: Record<string, string>, start = "") {
   const dir = join(ROOM_HOME, `handin-${(repos += 1)}`);
   rmSync(dir, { recursive: true, force: true });
   mkdirSync(dir, { recursive: true });
@@ -37,9 +47,9 @@ function project(files: Record<string, string>) {
   git("add", "-A");
   git("commit", "-qm", "start");
   const store = new SafetyStore(join(dir, ".store"), 1000);
-  store.noteStart("seat", dir, git("rev-parse", "HEAD"));
+  store.noteStart("seat", join(dir, start), git("rev-parse", "HEAD"));
   const gate = {
-    place: { home: "/Users/u", project: dir, tmp: null, start: dir, guard: null, roomFolder: ".seatwork" },
+    place: { home: "/Users/u", project: dir, tmp: null, start: join(dir, start), guard: null, roomFolder: ".seatwork" },
     config: { packs: packsInForce(), exempt: {}, budgetMs: 1000, maxBytes: 65536 },
     tools: machineTools(() => null),
   };
@@ -199,6 +209,17 @@ test("the hand-in counts test lines, names what decides the checks, a test's ans
   );
 });
 
+test("a package added to NuGet's central package file is a new dependency", async () => {
+  const props = (...names: string[]) =>
+    `<Project>\n  <ItemGroup>\n${names.map((name) => `    <PackageVersion Include="${name}" Version="1.0.0" />\n`).join("")}  </ItemGroup>\n</Project>\n`;
+  const { dir, check } = project({ "Directory.Packages.props": props("Serilog") });
+  write(dir, { "Directory.Packages.props": props("Serilog", "Dapper") });
+  assert.deepEqual(
+    (await check()).dependencies?.map(({ name }) => name),
+    ["Dapper"],
+  );
+});
+
 test("a control is the project at the writer's start with only its tests laid in, and the project's own tree is left as it was", async () => {
   const { dir, git } = project(START);
   const head = git("rev-parse", "HEAD");
@@ -229,6 +250,65 @@ test("a control is the project at the writer's start with only its tests laid in
   assert.match(
     String(await buildControl(plain, plainGit("rev-parse", "HEAD"), join(ROOM_HOME, "controls-test", "two"))),
     /changed no test/,
+  );
+});
+
+test("a control of a writer that started in a folder of its repository is the whole repository, run from that folder", async () => {
+  const { dir, git } = project({
+    "app/src/sum.ts": START["src/sum.ts"],
+    "app/test/sum.test.ts": START["test/sum.test.ts"],
+  });
+  const head = git("rev-parse", "HEAD");
+  mkdirSync(join(dir, "app", "node_modules", "jest"), { recursive: true });
+  write(dir, { "app/test/new.test.ts": 'test("new", () => expect(1).toBe(1));\n' });
+  const to = join(ROOM_HOME, "controls-test", "below");
+  const made = await buildControl(join(dir, "app"), head, to);
+  assert.deepEqual(made, { path: join(to, "app"), base: head, tests: ["app/test/new.test.ts"], sources: [] });
+  assert.ok(existsSync(join(to, "app/src/sum.ts")) && existsSync(join(to, "app/test/new.test.ts")));
+  assert.ok(lstatSync(join(to, "app", "node_modules")).isSymbolicLink());
+});
+
+test("the room's own folder, and work another seat left in the tree, are no change of a seat's turn", async () => {
+  const { dir, check } = project(START);
+  write(dir, {
+    ".seatwork/mission.md": "the mission\n",
+    ".seatwork/room.json": "{}\n",
+    "src/new.ts": "export const n = 1;\n",
+  });
+  assert.equal((await check()).files, 1);
+  const found = await snapshot(dir);
+  write(dir, { ".seatwork/law.md": "the law\n" });
+  assert.deepEqual(await changedSince(found!), [], "what was there before the turn is no change of it");
+  write(dir, { "src/new.ts": "export const n = 2;\n", "src/other.ts": "export const o = 1;\n" });
+  assert.deepEqual((await changedSince(found!))?.sort(), ["src/new.ts", "src/other.ts"], "what the turn changed is");
+});
+
+test("a hand-in that goes up with blocking findings, as when the check only warns, names them to the seat above", () => {
+  const row = (rule: string, line: number) => ({
+    seat: "s",
+    fingerprint: `${rule}${line}`,
+    rule,
+    severity: "block" as const,
+    path: "src/a.ts",
+    line,
+    text: "",
+    first_at: "",
+    last_at: "",
+    ack: null,
+    acked_at: null,
+  });
+  const line = handInLine({
+    state: "blocked",
+    files: 2,
+    open: [row("debugger", 3), row("focused-test", 9)],
+    acknowledged: [],
+    warnings: [],
+    why: null,
+    left: { block: 4, warn: 0 },
+  });
+  assert.match(
+    line ?? "",
+    /2 blocking finding\(s\) not acknowledged and 4 more left out: debugger src\/a\.ts:3; focused-test src\/a\.ts:9/,
   );
 });
 
@@ -309,12 +389,143 @@ test("a file with a name git would quote is read under its own name, and costs t
   );
 });
 
+test("a seat started below the repository root is read at the paths git names: tracked, new and outside its folder", async () => {
+  const { dir, check } = project(
+    {
+      "app/a.ts": "export const a = 1;\n",
+      "app/src/sum.ts": "export const sum = 1;\n",
+      "app/test/sum.test.ts": 'import { sum } from "../src/sum";\ntest("sum", () => expect(sum).toBe(1));\n',
+      "app/test/other.test.ts": 'import { sum } from "../src/sum";\ntest("o", () => expect(sum).toBe(1));\n',
+      "app/package.json": '{"name":"x","scripts":{"test":"jest"}}\n',
+      "lib/l.ts": "export const l = 1;\n",
+    },
+    "app",
+  );
+  write(dir, {
+    "app/a.ts": "export const a = 1;\nconst x = 2; // TODO real\n",
+    "app/src/sum.ts": "export const sum = 2;\n",
+    "app/test/other.test.ts": 'import { sum } from "../src/sum";\ntest("o", () => expect(sum).toBe(2));\n',
+    "app/package.json": '{"name":"x","scripts":{"test":"jest","clean":"rm -rf ~"},"dependencies":{"left-pad-x":"1"}}\n',
+    "app/b.ts": "const y = 3; // TODO new\n",
+    "lib/l.ts": "export const l = 1;\ndebugger;\n",
+  });
+  const result = await check();
+  assert.deepEqual(
+    {
+      found: result.open
+        .concat(result.warnings)
+        .map((r) => `${r.rule} ${r.path}:${r.line}`)
+        .sort(),
+      dependencies: result.dependencies?.map(({ name }) => name),
+      related: result.related,
+    },
+    {
+      found: [
+        "debugger lib/l.ts:2",
+        "destructive-script app/package.json:1",
+        "new-todo app/a.ts:2",
+        "new-todo app/b.ts:1",
+      ],
+      dependencies: ["left-pad-x"],
+      related: ["app/test/sum.test.ts"],
+    },
+  );
+});
+
 test("a link in the work tree is not followed to a file outside it", async () => {
   const { dir, check } = project(START);
   const outside = join(ROOM_HOME, `handin-outside-${repos}.ts`);
   writeFileSync(outside, "debugger;\n");
   symlinkSync(outside, join(dir, "link.ts"));
   assert.equal((await check()).state, "empty");
+});
+
+/** The paths under `dir` that `work` passes to `fs[call]`, in order. */
+async function pathsAsked(call: "readFileSync" | "readdirSync", dir: string, work: () => unknown): Promise<string[]> {
+  const asked: string[] = [];
+  const module = fs as unknown as Record<string, (...args: unknown[]) => unknown>;
+  const real = module[call];
+  module[call] = (path, ...rest) => {
+    if (String(path).startsWith(dir)) asked.push(String(path));
+    return real(path, ...rest);
+  };
+  try {
+    await work();
+  } finally {
+    module[call] = real;
+  }
+  return asked;
+}
+
+test("a hand-in reads each changed file once, a manifest and a script included", async () => {
+  const { dir, check } = project({
+    ...START,
+    "package.json": JSON.stringify({ scripts: { test: "jest" }, dependencies: { a: "1" } }) + "\n",
+  });
+  write(dir, {
+    "src/sum.ts": "export const sum = (a: number, b: number) => b + a;\n",
+    "src/new.ts": "export const fresh = 1;\n",
+    "package.json": JSON.stringify({ scripts: { test: "jest" }, dependencies: { a: "1", b: "2" } }) + "\n",
+  });
+  const read = await pathsAsked("readFileSync", dir, check);
+  assert.deepEqual(read.sort(), [join(dir, "package.json"), join(dir, "src/new.ts"), join(dir, "src/sum.ts")]);
+});
+
+test("a hand-in with more new files than the check reads is not verified, and none of them is read", async () => {
+  const { dir, check } = project(START);
+  write(dir, Object.fromEntries(Array.from({ length: 2100 }, (_, i) => [`gen/file${i}.txt`, "x\n"])));
+  const read = await pathsAsked("readFileSync", dir, async () => {
+    const result = await check();
+    assert.equal(result.state, "partial");
+    assert.match(handInLine(result) ?? "", /more than 2000 files changed; not verified/);
+  });
+  assert.equal(read.length, 0, "a check that cannot hold the files does not read them first");
+});
+
+test("one pass keeps a bounded number of findings and says how many it left out; blocking ones left out are not read as clean", async () => {
+  const { dir, check, store } = project(START);
+  write(dir, { "src/noisy.ts": "debugger;\n".repeat(5000), "src/notes.ts": "// TODO later\n".repeat(5000) });
+  const first = await check();
+  const [kept, noted] = [first.open.length, first.warnings.length];
+  assert.equal(first.state, "blocked");
+  assert.ok(kept < 5000 && noted < 5000, `${kept} blocking and ${noted} notes were kept`);
+  assert.deepEqual(first.left, { block: 5000 - kept, warn: 5000 - noted });
+  assert.match(handInReturn(first), /and 4980 more/);
+  assert.match(handInLine(first) ?? "", new RegExp(`${noted} note\\(s\\) and ${5000 - noted} more left out`));
+
+  for (const row of first.open) store.acknowledge("seat", row.fingerprint, "kept on purpose");
+  const second = await check();
+  assert.equal(second.state, "partial");
+  assert.match(handInLine(second) ?? "", new RegExp(`incomplete: ${5000 - kept} blocking finding\\(s\\) .*left out`));
+});
+
+test("the shell snapshot folder is listed once while it stands, and again when a snapshot comes, goes or changes", async () => {
+  const dir = join(ROOM_HOME, "snapshots-1");
+  rmSync(dir, { recursive: true, force: true });
+  mkdirSync(dir, { recursive: true });
+  const ago = (ms: number) => new Date(Date.now() - ms);
+  const snapshot = (name: string, alias: string, age: number) => {
+    writeFileSync(join(dir, name), `alias -- ${alias}='ls'\n`);
+    utimesSync(join(dir, name), ago(age), ago(age));
+  };
+  const newest: string[][] = [];
+  const listed = await pathsAsked("readdirSync", dir, () => {
+    const look = () => newest.push([...(claudeRc(dir)?.aliases.keys() ?? [])]);
+    snapshot("snapshot-zsh-1.sh", "old", 120_000);
+    snapshot("snapshot-zsh-2.sh", "one", 60_000);
+    utimesSync(dir, ago(60_000), ago(60_000));
+    look();
+    look();
+    snapshot("snapshot-zsh-2.sh", "two", 30_000);
+    look();
+    snapshot("snapshot-zsh-3.sh", "three", 0);
+    look();
+    rmSync(join(dir, "snapshot-zsh-3.sh"));
+    utimesSync(dir, ago(60_000), ago(60_000));
+    look();
+  });
+  assert.deepEqual(newest, [["one"], ["one"], ["two"], ["three"], ["two"]]);
+  assert.equal(listed.length, 4, "the second look at a folder that stood listed nothing");
 });
 
 test("the check reads scripts with the packs the project adds", async () => {

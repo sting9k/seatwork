@@ -146,40 +146,9 @@ test("a question to the room that is still unanswered is not asked again at the 
   }
 });
 
-test("a room that answers nothing for a moment, as it restarts, does not make the app chime again for what it already told", async () => {
+/** Watches a room that gives one of `answers` at each interval; how many questions were asked and sounds made once all were given. */
+async function watched(answers: { chime: boolean; waiting: { key: string }[] }[]) {
   mock.timers.enable({ apis: ["setInterval"] });
-  const answers = [
-    { chime: true, waiting: [{ key: "a" }] },
-    { chime: true, waiting: [{ key: "a" }, { key: "b" }] },
-    { chime: false, waiting: [] },
-    { chime: true, waiting: [{ key: "a" }, { key: "b" }] },
-  ];
-  let asked = 0;
-  let sounds = 0;
-  const stop = watchWaiting(
-    async () => answers[asked++],
-    async () => void (sounds += 1),
-    15_000,
-  );
-  try {
-    await new Promise((resolve) => setImmediate(resolve));
-    for (let beat = 0; beat < 3; beat += 1) {
-      mock.timers.tick(15_000);
-      await new Promise((resolve) => setImmediate(resolve));
-    }
-    assert.deepEqual([asked, sounds], [4, 1]);
-  } finally {
-    stop();
-    mock.timers.reset();
-  }
-});
-
-test("the app does not remember every turn that ever waited: a key long gone is news again", async () => {
-  mock.timers.enable({ apis: ["setInterval"] });
-  const answers = [
-    ...Array.from({ length: 1000 }, (_, n) => ({ chime: true, waiting: [{ key: `k${n}` }] })),
-    { chime: true, waiting: [{ key: "k1" }] },
-  ];
   let asked = 0;
   let sounds = 0;
   const stop = watchWaiting(
@@ -193,9 +162,27 @@ test("the app does not remember every turn that ever waited: a key long gone is 
       mock.timers.tick(15_000);
       await new Promise((resolve) => setImmediate(resolve));
     }
-    assert.deepEqual([asked, sounds], [1001, 1000]);
+    return { asked, sounds };
   } finally {
     stop();
     mock.timers.reset();
   }
+}
+
+test("a room that answers nothing for a moment, as it restarts, does not make the app chime again for what it already told", async () => {
+  const { asked, sounds } = await watched([
+    { chime: true, waiting: [{ key: "a" }] },
+    { chime: true, waiting: [{ key: "a" }, { key: "b" }] },
+    { chime: false, waiting: [] },
+    { chime: true, waiting: [{ key: "a" }, { key: "b" }] },
+  ]);
+  assert.deepEqual([asked, sounds], [4, 1]);
+});
+
+test("the app does not remember every turn that ever waited: a key long gone is news again", async () => {
+  const { asked, sounds } = await watched([
+    ...Array.from({ length: 1000 }, (_, n) => ({ chime: true, waiting: [{ key: `k${n}` }] })),
+    { chime: true, waiting: [{ key: "k1" }] },
+  ]);
+  assert.deepEqual([asked, sounds], [1001, 1000]);
 });

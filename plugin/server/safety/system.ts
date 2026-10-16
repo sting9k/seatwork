@@ -19,6 +19,7 @@ import { CLAUDE_HOME } from "../paths";
 const GIT_TIMEOUT_MS = 400;
 const MAX_SCRIPT = 256 * 1024;
 const MAX_SNAPSHOT = 1024 * 1024;
+const FRESH_MS = 2000;
 
 function git(args: string[], cwd: string | null): Promise<{ code: number; out: string }> {
   return runGit(cwd, args, { timeoutMs: GIT_TIMEOUT_MS, maxBytes: 1 << 20 });
@@ -58,6 +59,7 @@ class Recent<T> {
 
 const aliases = new Recent<string | null>(256, 60_000);
 const unchanged = new Recent<true>(256, 10_000);
+const commonDirs = new Recent<string | null>(256, 60_000);
 
 /** Whether git sees a file as new or changed; one it saw unchanged is not asked about again for a few seconds. */
 async function differsFromCommit(path: string, stat: Stats): Promise<boolean> {
@@ -70,18 +72,50 @@ async function differsFromCommit(path: string, stat: Stats): Promise<boolean> {
   return false;
 }
 
-let snapshot: { file: string; mtimeMs: number; rc: Rc } | null = null;
+interface Newest {
+  file: string;
+  mtimeMs: number;
+}
+
+let snapshot: (Newest & { rc: Rc }) | null = null;
+let listing: { dir: string; mtimeMs: number; newest: Newest | null } | null = null;
+
+/** Whether a snapshot file is as it was listed: there, unchanged and small enough. */
+function asListed(newest: Newest): boolean {
+  try {
+    const stat = statSync(newest.file);
+    return stat.mtimeMs === newest.mtimeMs && stat.size <= MAX_SNAPSHOT;
+  } catch {
+    return false;
+  }
+}
+
+/** The newest snapshot file of a folder, listed again only when the folder's timestamp moved or is too fresh to tell: every command asks. */
+function newestIn(dir: string): Newest | null {
+  const folder = statSync(dir);
+  if (
+    listing?.dir === dir &&
+    listing.mtimeMs === folder.mtimeMs &&
+    Date.now() - folder.mtimeMs > FRESH_MS &&
+    (!listing.newest || asListed(listing.newest))
+  )
+    return listing.newest;
+  let newest: Newest | null = null;
+  for (const name of readdirSync(dir)) {
+    if (!/^snapshot-.+\.sh$/.test(name)) continue;
+    const stat = statSync(join(dir, name));
+    if (stat.size <= MAX_SNAPSHOT && (!newest || stat.mtimeMs > newest.mtimeMs))
+      newest = { file: join(dir, name), mtimeMs: stat.mtimeMs };
+  }
+  listing = { dir, mtimeMs: folder.mtimeMs, newest };
+  return newest;
+}
 
 /** The aliases and functions in the newest shell snapshot Claude Code took of the user's rc, which its seats' shells start from; null when there is none. */
 export function claudeRc(dir = join(CLAUDE_HOME, "shell-snapshots")): Rc | null {
-  let newest: { file: string; mtimeMs: number } | null = null;
+  let newest: Newest | null;
   try {
-    for (const name of readdirSync(dir)) {
-      if (!/^snapshot-.+\.sh$/.test(name)) continue;
-      const stat = statSync(join(dir, name));
-      if (stat.size <= MAX_SNAPSHOT && (!newest || stat.mtimeMs > newest.mtimeMs))
-        newest = { file: join(dir, name), mtimeMs: stat.mtimeMs };
-    }
+    newest = newestIn(dir);
   } catch {
     return null;
   }
@@ -99,8 +133,31 @@ export function claudeRc(dir = join(CLAUDE_HOME, "shell-snapshots")): Rc | null 
   return snapshot.rc;
 }
 
-/** Tools for one seat: `since` is when it started; a file written after it may be the seat's own. */
-export function machineTools(since: () => number | null): Tools {
+/** Whether a committed file differs from the commit the room first saw its repository at: then the room's seats wrote it. */
+async function differsFromBase(
+  path: string,
+  stat: Stats,
+  baseOf: (commonDir: string) => string | null,
+): Promise<boolean> {
+  const dir = dirname(path);
+  let common = commonDirs.get(dir);
+  if (common === undefined) {
+    const done = await git(["rev-parse", "--path-format=absolute", "--git-common-dir"], dir);
+    common = done.code === 0 ? done.out.trim() || null : null;
+    commonDirs.set(dir, common);
+  }
+  const base = common ? baseOf(common) : null;
+  if (!base) return false;
+  const key = `${path}\0${stat.mtimeMs}\0${stat.size}\0${base}`;
+  if (unchanged.get(key)) return false;
+  const done = await git(["diff", "--quiet", base, "--", path], dir);
+  if (done.code === 1) return true;
+  unchanged.set(key, true);
+  return false;
+}
+
+/** Tools for one seat: `since` is when it started, a file written after it may be the seat's own; `baseOf` gives the commit the room first saw a repository at, whose later changes are the seats'. */
+export function machineTools(since: () => number | null, baseOf?: (commonDir: string) => string | null): Tools {
   return {
     async ignored(paths) {
       const dir = paths.length ? existingDir(dirname(paths[0])) : null;
@@ -183,7 +240,8 @@ export function machineTools(since: () => number | null): Tools {
         if (!s.isFile() || s.size > MAX_SCRIPT) return null;
         const start = since();
         const written = start !== null && s.mtimeMs >= start;
-        if (!written && !(await differsFromCommit(path, s))) return null;
+        if (!written && !(await differsFromCommit(path, s)) && !(baseOf && (await differsFromBase(path, s, baseOf))))
+          return null;
         return readFileSync(path, "utf8");
       } catch {
         return null;

@@ -3,7 +3,7 @@
 export type Language = "python" | "javascript" | "ruby" | "perl" | "php" | "lua";
 
 /** What a script does that the gate can read; `dynamicExec` names the calls that run a shell line built at run time. */
-export interface Embedded {
+interface Embedded {
   shell: string[];
   deletes: { path: string; recursive: boolean; how: string }[];
   writes: { path: string; append: boolean; how: string }[];

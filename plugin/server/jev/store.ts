@@ -49,24 +49,23 @@ export class JevStore extends Sqlite {
     dir: string,
     busyTimeoutMs: number,
     private readonly now: () => Date = () => new Date(),
-    scripts: string = join(SQL_DIR, "jev"),
   ) {
     mkdirSync(dir, { recursive: true, mode: 0o700 });
     super(join(dir, "decisions.db"), {
       busyTimeoutMs,
-      scripts,
+      scripts: join(SQL_DIR, "jev"),
       fail: (code, message) => new JevStoreError(code, message),
       name: "the decision log",
       now,
     });
   }
 
-  /** Logs one call with its answers and the state it read, and adds it to the month's and the day's totals; returns the ids. */
+  /** Logs one call with its answers and the state it read, and adds it to the month's and the day's totals; returns the id of each answer by question. */
   record(
     call: CallRow,
     answers: Record<string, Answer> = {},
     state?: { hash: string; text: string },
-  ): { callId: number; asks: Record<string, number> } {
+  ): Record<string, number> {
     const at = this.now().toISOString();
     return this.transaction("write", () => {
       // a state asked about again stays as long as from its last use
@@ -122,7 +121,7 @@ export class JevStore extends Sqlite {
         call.usd ?? 0,
         call.error === null ? 0 : 1,
       );
-      return { callId, asks };
+      return asks;
     });
   }
 
@@ -158,7 +157,7 @@ export class JevStore extends Sqlite {
       from,
       to,
     );
-    return { answers: answers.map(({ answer, suspect }) => ({ answer, suspect })), failed: failed?.n ?? 0 };
+    return { answers, failed: failed?.n ?? 0 };
   }
 
   /** Each district's calls and failed calls on one day. */

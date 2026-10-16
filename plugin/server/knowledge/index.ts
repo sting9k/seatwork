@@ -3,7 +3,7 @@ import { basename, join } from "node:path";
 import type { Message } from "../coordination/store";
 import type { TurnEvent } from "../host";
 import { redact } from "../redact";
-import { addressOf, entriesOf, parseAddress, turnRef, type EntryKind } from "./record";
+import { addressOf, ENTRY_KINDS, entriesOf, parseAddress, turnRef, type EntryKind } from "./record";
 import { DecisionBook } from "./decisions";
 import { Gate, type Judge } from "./gate";
 import { PairBook } from "./pairs";
@@ -76,7 +76,6 @@ const ADDRESS_CHARS = 500;
 const COMMAND = /^\/[\w:-]+(\s|$)/;
 const TELLING_MS = 30_000;
 const SUCCESSOR_CHARS = 2500;
-const KINDS: readonly EntryKind[] = ["owner", "prompt", "say", "shell", "change", "read", "tool", "mail"];
 
 /** A found entry as a seat reads it: where it is, when, whose, and the words. */
 function shown(found: Found, text: string) {
@@ -155,8 +154,8 @@ function searchAsked(
     .filter(Boolean);
   if (phrases.length === 0) throw new KnowledgeRefused("search: give the words to look for in `q`");
   const kinds = (Array.isArray(args.kinds) ? args.kinds : args.kind ? [args.kind] : []).map(String);
-  const unknown = kinds.find((kind) => !KINDS.includes(kind as EntryKind));
-  if (unknown) throw new KnowledgeRefused(`search: no entry kind ${unknown}; kinds are ${KINDS.join(", ")}`);
+  const unknown = kinds.find((kind) => !ENTRY_KINDS.includes(kind as EntryKind));
+  if (unknown) throw new KnowledgeRefused(`search: no entry kind ${unknown}; kinds are ${ENTRY_KINDS.join(", ")}`);
   const since = typeof args.since === "string" && args.since ? isoTime(args.since) : undefined;
   if (since === null)
     throw new KnowledgeRefused("search: `since` is an ISO date like 2026-10-01, or a time with its zone");
@@ -179,19 +178,10 @@ export class Knowledge {
   private readonly notes = new Map<string, { key: string; line: string }[]>();
   private readonly telling = new Map<string, { at: number; lost: boolean }>();
   private readonly searched = new Map<string, { store: KnowledgeStore; id: number; hits: string[]; left: number }>();
-  readonly decisions: DecisionBook;
-  readonly gate: Gate;
-  readonly pairs: PairBook;
+  private readonly decisions: DecisionBook;
 
   constructor(private readonly deps: KnowledgeDeps) {
     const judge = deps.judge ?? null;
-    this.gate = new Gate({
-      judge,
-      on: () => this.on && this.deps.policy()?.gate === true,
-      at: () => this.deps.policy()?.gateAt,
-      log: deps.log,
-    });
-    this.pairs = new PairBook({ judge, log: deps.log });
     this.decisions = new DecisionBook({
       book: () => this.storeOf(null),
       recordOf: (agent) => this.existing(deps.projectOf(agent)),
@@ -203,10 +193,25 @@ export class Knowledge {
       projectOf: deps.projectOf,
       projects: deps.projects,
       rootOf: deps.rootOf,
-      gate: this.gate,
-      pairs: this.pairs,
+      gate: new Gate({
+        judge,
+        on: () => this.on && this.deps.policy()?.gate === true,
+        at: () => this.deps.policy()?.gateAt,
+        log: deps.log,
+      }),
+      pairs: new PairBook({ judge, log: deps.log }),
       now: () => this.now(),
     });
+  }
+
+  /** Runs `work`; a failure is logged under `what` and gives undefined. */
+  private attempt<T>(what: string, work: () => T): T | undefined {
+    try {
+      return work();
+    } catch (error) {
+      this.deps.log(`knowledge: ${what}: ${(error as Error).message}`);
+      return undefined;
+    }
   }
 
   /** Whether the district runs: the policy turns it on and its numbers are in range. */
@@ -285,11 +290,9 @@ export class Knowledge {
       return false;
     } finally {
       // the decisions recorded in the turn settle on its person's words, kept or not
-      try {
-        this.decisions.turnEnded(turn.agent, owner, startedAt);
-      } catch (error) {
-        this.deps.log(`knowledge: the decisions of ${ref} did not settle: ${(error as Error).message}`);
-      }
+      this.attempt(`the decisions of ${ref} did not settle`, () =>
+        this.decisions.turnEnded(turn.agent, owner, startedAt),
+      );
       if (turn.events.some((event) => event.kind === "compaction")) this.compacted(turn.agent);
     }
   }
@@ -304,39 +307,34 @@ export class Knowledge {
   /** A seat's context was compacted, as its timeline or its reported context size shows: what it was told may be gone, so it is told again. */
   compacted(agent: string): void {
     if (!this.on) return;
-    try {
+    this.attempt(`${agent} is not told again after its compaction`, () => {
       this.decisions.compacted(agent);
       // a notice on its way may have reached the seat before the compaction, so it says nothing of the new context
       const flight = this.telling.get(agent);
       if (flight) flight.lost = true;
       this.retell(agent, this.existing(this.deps.projectOf(agent)));
-    } catch (error) {
-      this.deps.log(`knowledge: ${agent} is not told again after its compaction: ${(error as Error).message}`);
-    }
+    });
   }
 
-  /** What the seat that takes `agent`'s place is given: the decisions in force for the task, and where the old seat's record is read; null when there is nothing to give. */
+  /** What the seat that takes `agent`'s place is given: its task's decisions in force and where the old seat's record is read; null when there is none. */
   forSuccessor(agent: string): Inheritance | null {
     if (!this.on) return null;
-    try {
-      const block = this.decisions.forSuccessor(agent, SUCCESSOR_CHARS);
-      const record = this.recordPointer(agent);
-      if (!block && record.length === 0) return null;
-      return { lines: [...(block ? [block.text, ""] : []), ...record], shown: block?.held ?? [] };
-    } catch (error) {
-      this.deps.log(`knowledge: nothing could be kept for the successor of ${agent}: ${(error as Error).message}`);
-      return null;
-    }
+    return (
+      this.attempt(`nothing could be kept for the successor of ${agent}`, () => {
+        const block = this.decisions.forSuccessor(agent, SUCCESSOR_CHARS);
+        const record = this.recordPointer(agent);
+        if (!block && record.length === 0) return null;
+        return { lines: [...(block ? [block.text, ""] : []), ...record], shown: block?.held ?? [] };
+      }) ?? null
+    );
   }
 
   /** The successor stands: what its prompt told it of the decisions is marked told. */
   inherited(agent: string, kept: Inheritance): void {
     if (!this.on) return;
-    try {
-      this.decisions.givenInPrompt(agent, kept.shown);
-    } catch (error) {
-      this.deps.log(`knowledge: what ${agent} was given at its start was not marked: ${(error as Error).message}`);
-    }
+    this.attempt(`what ${agent} was given at its start was not marked`, () =>
+      this.decisions.givenInPrompt(agent, kept.shown),
+    );
   }
 
   /** Where the turns of a seat and the evidence of its task are read; none when the record holds no turn of it. */
@@ -353,22 +351,13 @@ export class Knowledge {
   /** The block of decisions a seat starting in `cwd` is given in its system prompt, held for its `launch`; null when there is none. */
   promptFor(cwd: string, launch: string): string | null {
     if (!this.on) return null;
-    try {
-      return this.decisions.promptFor(cwd, launch);
-    } catch (error) {
-      this.deps.log(`knowledge: no decisions for a new seat: ${(error as Error).message}`);
-      return null;
-    }
+    return this.attempt("no decisions for a new seat", () => this.decisions.promptFor(cwd, launch)) ?? null;
   }
 
   /** A new seat holds the decisions the prompt of its `launch` gave it; a store that fails costs the seat nothing but the mark. */
   opened(agent: string, launch: string | null): void {
     if (!this.on) return;
-    try {
-      this.decisions.opened(agent, launch);
-    } catch (error) {
-      this.deps.log(`knowledge: a new seat's decisions were not marked: ${(error as Error).message}`);
-    }
+    this.attempt("a new seat's decisions were not marked", () => this.decisions.opened(agent, launch));
   }
 
   /** What a seat should be told now, and the call that marks it told; one notice at a time, never in the way of the guard or the mail. */
@@ -390,15 +379,13 @@ export class Knowledge {
           if (this.telling.get(agent) === sent) this.telling.delete(agent);
           // a compaction came while it was on its way: what it held may be gone, so nothing is marked told
           if (sent.lost) return;
-          try {
+          this.attempt(`what ${agent} was told was not marked`, () => {
             if (notices) this.decisions.delivered(agent, notices);
             // only what this notice held is told: a note made while it was on its way waits for the next
             const left = (this.notes.get(agent) ?? []).filter((note) => !notes.includes(note));
             if (left.length) this.notes.set(agent, left);
             else this.notes.delete(agent);
-          } catch (error) {
-            this.deps.log(`knowledge: what ${agent} was told was not marked: ${(error as Error).message}`);
-          }
+          });
         },
       };
     } catch (error) {
@@ -438,11 +425,7 @@ export class Knowledge {
   tick(): void {
     if (!this.on) return;
     this.readMail();
-    try {
-      this.decisions.sweep();
-    } catch (error) {
-      this.deps.log(`knowledge: the decisions' pass failed: ${(error as Error).message}`);
-    }
+    this.attempt("the decisions' pass failed", () => this.decisions.sweep());
   }
 
   /** One call of the knowledge tool; `decide` and `withdraw` wait on the gate before they are kept, the rest are answered at once. */
@@ -458,15 +441,14 @@ export class Knowledge {
     const last = this.searched.get(agent);
     if (!last) return;
     if ((last.left -= 1) <= 0) this.searched.delete(agent);
-    if (args.do !== "view" && args.do !== "expand") return;
+    const how = args.do;
+    if (how !== "view" && how !== "expand") return;
     const address = String(args.address ?? "");
     if (!address || address.length > ADDRESS_CHARS) return;
-    try {
-      const rank = last.hits.indexOf(address);
-      last.store.opened(last.id, address, rank < 0 ? null : rank, args.do);
-    } catch (error) {
-      this.deps.log(`knowledge: what ${agent} opened after a search was not kept: ${(error as Error).message}`);
-    }
+    const rank = last.hits.indexOf(address);
+    this.attempt(`what ${agent} opened after a search was not kept`, () =>
+      last.store.opened(last.id, address, rank < 0 ? null : rank, how),
+    );
   }
 
   /** Reads the mail posted since the last read into each store, a few batches per store. */
@@ -474,11 +456,7 @@ export class Knowledge {
     if (!this.on) return 0;
     let added = 0;
     for (const root of [null, ...this.deps.projects()])
-      try {
-        added += this.readMailOf(root);
-      } catch (error) {
-        this.deps.log(`knowledge: the mail of ${root ?? "the room"} was not read: ${(error as Error).message}`);
-      }
+      added += this.attempt(`the mail of ${root ?? "the room"} was not read`, () => this.readMailOf(root)) ?? 0;
     return added;
   }
 
@@ -620,7 +598,7 @@ export class Knowledge {
     found: readonly { address: string }[],
     shown: number,
   ): void {
-    try {
+    this.attempt(`a search of ${agent} was not kept`, () => {
       const hits = found.map((hit) => hit.address);
       const id = store.logSearch({
         seat: agent,
@@ -631,9 +609,7 @@ export class Knowledge {
         shown: Math.min(shown, hits.length),
       });
       this.searched.set(agent, { store, id, hits, left: FOLLOWED_CALLS });
-    } catch (error) {
-      this.deps.log(`knowledge: a search of ${agent} was not kept: ${(error as Error).message}`);
-    }
+    });
   }
 
   /** The entries at an address and around it, held to ANSWER_CHARS, or that they are gone. */
@@ -705,11 +681,7 @@ export class Knowledge {
     this.telling.delete(agent);
     this.searched.delete(agent);
     if (!this.on) return;
-    try {
-      this.decisions.forget(agent);
-    } catch (error) {
-      this.deps.log(`knowledge: ${agent} was not forgotten everywhere: ${(error as Error).message}`);
-    }
+    this.attempt(`${agent} was not forgotten everywhere`, () => this.decisions.forget(agent));
   }
 
   /** Closes every store. */

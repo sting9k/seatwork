@@ -1,5 +1,6 @@
 import {
   chmodSync,
+  copyFileSync,
   cpSync,
   existsSync,
   mkdirSync,
@@ -12,8 +13,6 @@ import {
 import { join } from "node:path";
 import { stamp } from "../../gc";
 import { checkSetup, type RoomPlan, type Setup } from "./plan";
-
-export { stamp };
 
 const json = (value: unknown) => `${JSON.stringify(value, null, 2)}\n`;
 
@@ -37,8 +36,8 @@ export function readSetup(roomHome: string): Setup {
 }
 
 /** Moves a room home aside, whole, and returns where it went; it is kept for keepRemovedDays (shared/settings.json). */
-export function moveRoomHomeAside(roomHome: string, now = new Date()): string {
-  const target = `${roomHome}.removed-${stamp(now)}`;
+export function moveRoomHomeAside(roomHome: string): string {
+  const target = `${roomHome}.removed-${stamp()}`;
   renameSync(roomHome, target);
   return target;
 }
@@ -78,6 +77,7 @@ export function writeRoomHome(input: {
     if (existsSync(room)) renameSync(room, previous);
     renameSync(next, room);
     rmSync(previous, { recursive: true, force: true });
+    if (plan.keepAside) copyFileSync(join(roomHome, "policy.json"), join(roomHome, plan.keepAside));
     writePrivate(join(roomHome, "policy.json"), json(plan.policy));
     writePrivate(join(roomHome, "policy.shipped.json"), json(plan.shipped));
   }

@@ -32,16 +32,16 @@ function solve(tail: (p: number) => number, target: number): number {
 }
 
 /** The one-sided Clopper-Pearson lower bound of a rate with `hits` of `n`. */
-export function lowerBound(hits: number, n: number, confidence = CONFIDENCE): number {
+export function lowerBound(hits: number, n: number): number {
   if (n === 0 || hits === 0) return 0;
   const lf = logFactorials(n);
-  return solve((p) => upperTail(hits, n, p, lf), 1 - confidence);
+  return solve((p) => upperTail(hits, n, p, lf), 1 - CONFIDENCE);
 }
 
 /** The one-sided Clopper-Pearson upper bound of a rate with `hits` of `n`. */
-export function upperBound(hits: number, n: number, confidence = CONFIDENCE): number {
+export function upperBound(hits: number, n: number): number {
   if (n === 0 || hits >= n) return 1;
   const lf = logFactorials(n);
   // P(X <= hits) falls as p grows: its complement is the tail that rises
-  return solve((p) => upperTail(hits + 1, n, p, lf), confidence);
+  return solve((p) => upperTail(hits + 1, n, p, lf), CONFIDENCE);
 }

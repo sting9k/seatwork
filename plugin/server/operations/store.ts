@@ -18,11 +18,10 @@ export class OperationsError extends Error {
 /** Where an incident stands with the operator. */
 export type IncidentState = "open" | "acknowledged" | "snoozed" | "resolved";
 
-/** One kind of trouble the room met: how often, how often in the last hour, where it stands, what the decision model read it as, and when its operator was last told. */
+/** One kind of trouble the room met, `lastHour` of its `count` in the last hour; `kind` is what the decision model read it as (null where unsure), `toldAt` null until its operator is told. */
 export interface Incident {
   id: number;
   district: string;
-  firstAt: string;
   lastAt: string;
   count: number;
   lastHour: number;
@@ -68,8 +67,6 @@ export interface Tune {
 export interface Trace {
   id: number;
   incident: number | null;
-  openedAt: string;
-  seat: string;
   hypothesis: string;
   closedAt: string | null;
   conclusion: string | null;
@@ -83,10 +80,10 @@ export type TraceNoteKind = "evidence" | "eliminated" | "hypothesis";
 const SLICE = 2000;
 const NOTES_SHOWN = 12;
 const SPEND_ROWS = 2000;
-const INCIDENT = `i.id, i.district, i.first_at AS firstAt, i.last_at AS lastAt, i.count, i.line, i.state, i.note,
+const INCIDENT = `i.id, i.district, i.last_at AS lastAt, i.count, i.line, i.state, i.note,
   i.back, i.kind, i.told_at AS toldAt, (SELECT count(*) FROM log WHERE log.incident = i.id AND log.at >= ?) AS lastHour`;
 const TUNE = "id, at, seat, path, before, after, reason, evidence, baseline, trace, reverts";
-const TRACE = `t.id, t.incident, t.opened_at AS openedAt, t.seat, t.hypothesis, t.closed_at AS closedAt, t.conclusion,
+const TRACE = `t.id, t.incident, t.hypothesis, t.closed_at AS closedAt, t.conclusion,
   (SELECT count(*) FROM tunes u WHERE u.trace = t.id AND EXISTS (SELECT 1 FROM tunes r WHERE r.reverts = u.id)) AS undone`;
 
 /** An incident row as the district reads it. */
@@ -101,12 +98,11 @@ export class OperationsStore extends Sqlite {
     dir: string,
     busyTimeoutMs: number,
     private readonly now: () => Date = () => new Date(),
-    scripts: string = join(SQL_DIR, "operations"),
   ) {
     mkdirSync(dir, { recursive: true, mode: 0o700 });
     super(join(dir, "operations.db"), {
       busyTimeoutMs,
-      scripts,
+      scripts: join(SQL_DIR, "operations"),
       fail: (code, message) => new OperationsError(code, message),
       name: "the operations store",
       now,
@@ -118,7 +114,7 @@ export class OperationsStore extends Sqlite {
     return new Date(this.now().getTime() - 3_600_000).toISOString();
   }
 
-  /** Keeps a log line, and counts it under its incident key when it is one; a resolved incident seen again opens as back. `ask` false keeps a new incident from being put to the decision model. */
+  /** Keeps a log line, counted under its incident `key` when it has one; a resolved incident seen again opens as back; `ask` false keeps the decision model from reading it. */
   record(district: string, line: string, key: string | null, ask = true): void {
     const at = this.now().toISOString();
     this.transaction("write", () => {
@@ -232,7 +228,7 @@ export class OperationsStore extends Sqlite {
     return this.rows<{ id: number; district: string; line: string; count: number }>(
       "SELECT id, district, line, count FROM incidents WHERE asked = 0 ORDER BY id LIMIT ?",
       limit,
-    ).map(({ id, district, line, count }) => ({ id, district, line, count }));
+    );
   }
 
   /** What the decision model read each incident as, null where it was not sure; each is asked no more. */
@@ -267,7 +263,7 @@ export class OperationsStore extends Sqlite {
 
   /** The newest changes to the policy, newest first. */
   tunes(limit: number): Tune[] {
-    return this.rows<Tune>(`SELECT ${TUNE} FROM tunes ORDER BY id DESC LIMIT ?`, limit).map((row) => ({ ...row }));
+    return this.rows<Tune>(`SELECT ${TUNE} FROM tunes ORDER BY id DESC LIMIT ?`, limit);
   }
 
   /** Changes made since `since` that nothing undid yet, and that undo nothing: what the digest weighs against now. */
@@ -276,7 +272,7 @@ export class OperationsStore extends Sqlite {
       `SELECT ${TUNE} FROM tunes t INDEXED BY tunes_by_at WHERE at >= ? AND reverts IS NULL
          AND NOT EXISTS (SELECT 1 FROM tunes r WHERE r.reverts = t.id) ORDER BY id`,
       since,
-    ).map((row) => ({ ...row }));
+    );
   }
 
   /** The reverts of a key since `since`, newest first: what a change of it must answer. */
@@ -285,7 +281,7 @@ export class OperationsStore extends Sqlite {
       `SELECT ${TUNE} FROM tunes WHERE path = ? AND reverts IS NOT NULL AND at >= ? ORDER BY id DESC`,
       path,
       since,
-    ).map((row) => ({ ...row }));
+    );
   }
 
   /** Opens a trace on an incident, or on none, with its first hypothesis. */
@@ -326,17 +322,47 @@ export class OperationsStore extends Sqlite {
     );
   }
 
+  /** Closes, with `conclusion`, the open traces that no note and no change touched since `before`; how many were closed. */
+  closeIdleTraces(before: Date, conclusion: string): number {
+    const cut = before.toISOString();
+    return this.sliced(
+      `UPDATE traces SET closed_at = ?, conclusion = ? WHERE id IN (
+         SELECT t.id FROM traces t WHERE t.closed_at IS NULL AND t.opened_at < ?
+           AND coalesce((SELECT at FROM trace_notes WHERE trace = t.id ORDER BY id DESC LIMIT 1), '') < ?
+           AND coalesce((SELECT at FROM tunes WHERE trace = t.id ORDER BY id DESC LIMIT 1), '') < ? LIMIT ?)`,
+      this.now().toISOString(),
+      conclusion,
+      cut,
+      cut,
+      cut,
+    );
+  }
+
   /** One trace with its newest notes, in order. */
   trace(id: number): Trace | null {
     const row = this.row<Omit<Trace, "notes">>(`SELECT ${TRACE} FROM traces t WHERE t.id = ?`, id);
     return row ? { ...row, notes: this.notesOf(id) } : null;
   }
 
-  /** The traces still open, oldest first. */
+  /** The traces still open, oldest first, each with its newest notes from one read of them all. */
   openTraces(): Trace[] {
-    return this.rows<Omit<Trace, "notes">>(
+    const traces = this.rows<Omit<Trace, "notes">>(
       `SELECT ${TRACE} FROM traces t WHERE t.closed_at IS NULL ORDER BY t.opened_at`,
-    ).map((row) => ({ ...row, notes: this.notesOf(row.id) }));
+    );
+    // CROSS JOIN keeps the traces the outer loop: each one's newest notes are found by the index
+    const notes = this.rows<Trace["notes"][number] & { trace: number }>(
+      `SELECT n.trace, n.at, n.kind, n.text FROM traces t CROSS JOIN trace_notes n ON n.trace = t.id
+         AND n.id >= coalesce((SELECT id FROM trace_notes WHERE trace = t.id ORDER BY id DESC LIMIT 1 OFFSET ?), 0)
+         WHERE t.closed_at IS NULL ORDER BY n.trace, n.id`,
+      NOTES_SHOWN - 1,
+    );
+    const byTrace = new Map<number, Trace["notes"]>();
+    for (const { trace, at, kind, text } of notes) {
+      const kept = byTrace.get(trace) ?? [];
+      kept.push({ at, kind, text });
+      byTrace.set(trace, kept);
+    }
+    return traces.map((row) => ({ ...row, notes: byTrace.get(row.id) ?? [] }));
   }
 
   private notesOf(trace: number): Trace["notes"] {
@@ -358,7 +384,7 @@ export class OperationsStore extends Sqlite {
     this.run("DELETE FROM spend_seats WHERE seat = ?", seat);
   }
 
-  /** Adds a turn of a seat to a project's day, and to its `role`'s with the turn's output tokens, with the change in the seat's `total` since it was last read (none at its first reading, and a total that fell is a seat resumed); returns the day's sums. */
+  /** Counts a turn for a project's day and a `role`, costing the change in the seat's `total` since it was last read (nothing at a first reading; a fallen total is a seat resumed); returns the day's sums. */
   spend(project: string, day: string, seat: string, total: number | null, role?: string, outTokens?: number): Sums {
     return this.transaction("write", () => {
       let added = 0;
@@ -397,27 +423,32 @@ export class OperationsStore extends Sqlite {
 
   /** What each project spent on a UTC day. */
   spendOn(day: string): (Sums & { project: string })[] {
-    return this.rows<Sums & { project: string }>("SELECT project, usd, turns FROM spend WHERE day = ?", day).map(
-      ({ project, usd, turns }) => ({ project, usd, turns }),
-    );
+    return this.rows<Sums & { project: string }>("SELECT project, usd, turns FROM spend WHERE day = ?", day);
   }
 
-  /** What each project spent on each UTC day from `since` on. */
-  spendFrom(since: string): (Sums & { project: string; day: string })[] {
-    return this.rows<Sums & { project: string; day: string }>(
-      "SELECT project, day, usd, turns FROM spend WHERE day >= ? LIMIT ?",
+  /** What each project spent on each UTC day from `since` on, the newest days first and `SPEND_ROWS` rows at most; `leftOut` counts the older rows past them. */
+  spendFrom(since: string): { rows: (Sums & { project: string; day: string })[]; leftOut: number } {
+    const rows = this.rows<Sums & { project: string; day: string }>(
+      "SELECT project, day, usd, turns FROM spend WHERE day >= ? ORDER BY day DESC, project DESC LIMIT ?",
       since,
-      SPEND_ROWS,
-    ).map(({ project, day, usd, turns }) => ({ project, day, usd, turns }));
+      SPEND_ROWS + 1,
+    );
+    if (rows.length <= SPEND_ROWS) return { rows, leftOut: 0 };
+    const total = this.row<{ n: number }>("SELECT count(*) AS n FROM spend WHERE day >= ?", since)!.n;
+    return { rows: rows.slice(0, SPEND_ROWS), leftOut: total - SPEND_ROWS };
   }
 
   /** What each role's seats spent in each project on one UTC day. */
-  spendByRole(day: string): (Sums & { project: string; role: string; outTokens: number })[] {
+  spendByRole(
+    day: string,
+    projects: readonly string[],
+  ): (Sums & { project: string; role: string; outTokens: number })[] {
+    if (projects.length === 0) return [];
     return this.rows<Sums & { project: string; role: string; outTokens: number }>(
-      "SELECT project, role, usd, turns, out_tokens AS outTokens FROM spend_roles WHERE day = ? LIMIT ?",
+      `SELECT project, role, usd, turns, out_tokens AS outTokens FROM spend_roles WHERE day = ? AND project IN (${projects.map(() => "?").join(", ")})`,
       day,
-      SPEND_ROWS,
-    ).map(({ project, role, usd, turns, outTokens }) => ({ project, role, usd, turns, outTokens }));
+      ...projects,
+    );
   }
 
   /** Whether any day of a project's spend is kept. */
@@ -489,7 +520,7 @@ export class OperationsStore extends Sqlite {
     ).map(({ role, skill, loads }) => ({ role, skill, loads }));
   }
 
-  /** Drops log lines past their days and the store's size, incidents not seen within the days, and old closed traces; in slices. The record of changes stays. */
+  /** Drops, in slices, log lines past their days or the store's size, incidents not seen within the days and old closed traces; the record of changes stays. */
   expire(before: Date, most: number, tracesBefore: Date): number {
     const cut = before.toISOString();
     let gone = this.sliced("DELETE FROM log WHERE id IN (SELECT id FROM log WHERE at < ? LIMIT ?)", cut);

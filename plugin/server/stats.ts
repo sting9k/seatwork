@@ -28,8 +28,8 @@ function readJsonl<T>(file: string): T[] {
     });
 }
 
-/** The signal a mail subject opens with, "other" for none. */
-function signalOf(subject: string): string {
+/** The counted signal a mail subject opens with, "other" for none. */
+function countedSignal(subject: string): string {
   const upper = subject.toUpperCase();
   return COUNTED.find((s) => upper.startsWith(s)) ?? "other";
 }
@@ -43,7 +43,7 @@ function tally(lines: readonly LogLine[], cwdOf: ReadonlyMap<string, string>) {
     const candidates = [cwdOf.get(line.from), cwdOf.get(line.to)].filter((c): c is string => !!c);
     const project = candidates.find((c) => c !== own) ?? candidates[0] ?? "(unknown)";
     const counts = perProject.get(project) ?? new Map<string, number>();
-    const signal = signalOf(line.subject);
+    const signal = countedSignal(line.subject);
     counts.set(signal, (counts.get(signal) ?? 0) + 1);
     perProject.set(project, counts);
     if (signal === "REJECT") {
@@ -79,9 +79,9 @@ export function roomStats(
   mail: (since: string) => readonly string[] = () => [],
 ): string {
   const days = Math.min(Math.max(1, asked), KEEP_LOG_DAYS);
-  const since = Date.now() - days * 86_400_000;
-  const used = mail(new Date(since).toISOString());
-  const lines = posted(new Date(since).toISOString());
+  const since = new Date(Date.now() - days * 86_400_000).toISOString();
+  const used = mail(since);
+  const lines = posted(since);
   if (lines.length === 0) return [`no mail in the last ${days} days`, ...used].join("\n");
 
   const cwdOf = new Map<string, string>();

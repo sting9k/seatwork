@@ -485,7 +485,7 @@
     },
     "seatwork_seats": {
       "callers": "spawners",
-      "description": "The open seats under you, one line each: role, title, id; at work or at rest and for how long, waiting for a permission, failed, or waiting for the room's retry; context held and cost; the signal its last turn ended with; the rejections of its task since its last ACCEPT; mail held for it; the answers it owes. A seat past {{rotate_k}}K tokens of context is marked: each step rereads the whole context, so its next task belongs to a fresh seat.",
+      "description": "The open seats under you, one line each: role, title, id; at work or at rest and for how long, waiting for a permission, failed, or waiting for the room's retry; context held and cost; the signal its last turn ended with; the rejections of its task since its last ACCEPT; mail held for it; the answers it owes. A seat past {{rotate_k}}K tokens of context is marked: each step rereads the whole context, so seatwork_rotate moves its work to a fresh seat.",
       "inputSchema": {
         "type": "object",
         "properties": {},

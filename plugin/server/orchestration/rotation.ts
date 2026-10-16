@@ -212,7 +212,7 @@ export class Rotations {
   }
 }
 
-/** What starting a successor needs: the app, the mail engine, the table in force at a folder (`fit`, and `up` for the model of the tier above a model), and the moving of what the room keeps for the old seat (`handOver`). */
+/** What starting a successor needs: the app, the mail engine, the table in force at a folder (`fit`, `up`), and moving what the room keeps for the old seat (`handOver`). */
 interface RotateDeps {
   host: Host;
   engine: MailEngine;
@@ -222,7 +222,7 @@ interface RotateDeps {
   handOver(from: string, to: string): void;
 }
 
-/** Starts a seat's successor on its brief, its handoff and the lines of `kept`, hands it over, archives the seat. A task sent back twice (`rejected`) starts its successor a tier up where the table lists one. */
+/** Starts a seat's successor on its brief, handoff and `kept` lines, hands it over and archives the seat; a task sent back twice (`rejected`) starts a tier up where the table lists one. */
 export async function rotate(
   deps: RotateDeps,
   old: SeatRecord,
@@ -301,7 +301,7 @@ export async function rotate(
   return { id, file, model: model || "its provider's default", raised: higher !== undefined, left };
 }
 
-/** Whether the decision model reads a seat's last message as a milestone, for a seat whose context is over a share of the rotation line and not yet past it. */
+/** Whether the decision model reads a seat's last message as a milestone; asked only while its context is over a share of the rotation line and not yet past it. */
 export async function atMilestone(
   forks: Pick<Forks, "take">,
   seat: { role: string; tokens: number | null; message: string },

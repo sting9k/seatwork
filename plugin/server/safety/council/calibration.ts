@@ -13,15 +13,14 @@ export interface Label {
   tier: "fact" | "juror";
 }
 
-/** What a member needs to reach each level above 0: labels, tasks they span, and a lower bound on its right rate. */
-export const BARS: readonly { level: number; labels: number; tasks: number; lower: number }[] = council.bars;
+const BARS: readonly { level: number; labels: number; tasks: number; lower: number }[] = council.bars;
 const RECENT = 20;
 const AGREEMENT = { least: 10, rate: 0.8 };
 
 const isExplicit = (source: string): boolean => source.startsWith("seat:");
 
 /** The implied sources whose labels agree with the seats' own on the same readings, often enough to count. */
-export function trustedSources(labels: readonly Label[]): Set<string> {
+function trustedSources(labels: readonly Label[]): Set<string> {
   const said = new Map<number, string>();
   for (const label of labels) if (isExplicit(label.source)) said.set(label.reading, label.value);
   const tally = new Map<string, { same: number; all: number }>();

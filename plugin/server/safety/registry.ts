@@ -45,7 +45,6 @@ function earliest(dates: unknown[]): string | null {
   return times.length ? new Date(Math.min(...times)).toISOString() : null;
 }
 
-/** Each registry's way to its first release; a manager missing here has no registry to ask. */
 const READERS: Partial<Record<Manager, (name: string) => Promise<string | null>>> = {
   npm: async (name) =>
     (await get(`https://registry.npmjs.org/${encodeURIComponent(name).replace(/^%40/, "@")}`))?.time?.created ?? null,
@@ -89,7 +88,7 @@ const READERS: Partial<Record<Manager, (name: string) => Promise<string | null>>
   },
 };
 
-/** A package's first release as its registry gives it, or null when it cannot say in time; dates are kept. */
+/** A package's first release as its registry gives it, or null when it cannot say in time or the manager has no registry here; dates are kept. */
 export function firstRelease(manager: Manager, name: string): Promise<string | null> {
   const key = `${manager}:${name}`;
   const known = kept.get(key);

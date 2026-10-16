@@ -1,7 +1,7 @@
 import { spawn } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
-import { dirname, join } from "node:path";
-import { GIT_SAFE_ARGS, GIT_SAFE_ENV } from "../git";
+import { dirname, join, relative, resolve } from "node:path";
+import { GIT_SAFE_ARGS, GIT_SAFE_ENV, runGit } from "../git";
 import { changesSince, isTestPath } from "./handin";
 
 /** A control for a candidate's tests: the project as it was when the writer started, with only the candidate's tests laid in. */
@@ -10,7 +10,7 @@ const ARCHIVE_MS = 60_000;
 const SHARED = ["node_modules", ".venv", "venv"];
 
 /** What a control holds: its folder, the commit it stands on, the tests laid in, and the changed sources left as they were. */
-export interface Control {
+interface Control {
   path: string;
   base: string;
   tests: string[];
@@ -43,30 +43,34 @@ async function archive(cwd: string, head: string, to: string): Promise<void> {
     );
 }
 
-/** Builds a control in `to` for the work in `cwd` since `head`; a string says why there is none. */
+/** Builds a control in `to` for the work in `cwd` since `head`: the whole repository, its tests run from `cwd`'s place in it; a string says why there is none. */
 export async function buildControl(cwd: string, head: string, to: string): Promise<Control | string> {
   const changes = await changesSince(cwd, head);
   if (typeof changes === "string") return changes;
+  const up = await runGit(cwd, ["rev-parse", "--show-cdup"], { timeoutMs: ARCHIVE_MS, maxBytes: 1 << 16 });
+  if (up.code !== 0) return "git rev-parse failed";
+  const root = resolve(cwd, up.out.trim());
+  const here = join(to, relative(root, cwd));
   const tests = changes.filter((change) => isTestPath(change.path));
   const sources = changes.filter((change) => !isTestPath(change.path)).map((change) => change.path);
   if (tests.length === 0) return "the work changed no test: there is nothing to run against the base";
   mkdirSync(to, { recursive: true });
   try {
-    await archive(cwd, head, to);
+    await archive(root, head, to);
     for (const test of tests) {
       const target = join(to, test.path);
       if (test.deleted) rmSync(target, { force: true });
       else {
         mkdirSync(dirname(target), { recursive: true });
-        writeFileSync(target, test.text ?? readFileSync(join(cwd, test.path)));
+        writeFileSync(target, test.text ?? readFileSync(test.file));
       }
     }
     // the project's installed dependencies serve the copy too: nothing is installed for it
     for (const name of SHARED)
-      if (existsSync(join(cwd, name)) && !existsSync(join(to, name))) symlinkSync(join(cwd, name), join(to, name));
+      if (existsSync(join(cwd, name)) && !existsSync(join(here, name))) symlinkSync(join(cwd, name), join(here, name));
   } catch (error) {
     rmSync(to, { recursive: true, force: true });
     throw error;
   }
-  return { path: to, base: head, tests: tests.map((test) => test.path).sort(), sources: sources.sort() };
+  return { path: here, base: head, tests: tests.map((test) => test.path).sort(), sources: sources.sort() };
 }

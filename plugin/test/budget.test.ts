@@ -149,10 +149,33 @@ test("the budget reading ranks projects by today's spend and is bounded", () => 
     ops.opened(`s${i}`);
     ops.spent(`s${i}`, i + 1);
   }
-  const view = budget();
+  const view = budget() as ReturnType<typeof budget> & { projectsLeftOut?: string };
   assert.equal(view.projects.length, 20, "the reading is bounded");
   assert.equal(view.projects[0].project, "/p/24");
   assert.equal(view.projects.at(-1)?.project, "/p/5");
+  assert.match(view.projectsLeftOut ?? "", /^5 more projects/, "and says what it left out");
+  ops.close();
+});
+
+test("a reading over more days of spend than it holds keeps the newest days of every project and says how many rows it left out", () => {
+  const { ops, budget, state, at } = rig();
+  const days = ["09", "10", "11", "12", "13", "14", "15"].map((day) => `2026-10-${day}`);
+  const projects = 360;
+  days.forEach((day, d) => {
+    at(`${day}T10:00:00.000Z`);
+    for (let i = 0; i < projects; i += 1) {
+      state.projects[`s${i}`] = `/many/${i}`;
+      if (d === 0) ops.opened(`s${i}`);
+      // every project spends i + 1 cents a day, so the dearest today are the highest numbers
+      ops.spent(`s${i}`, ((d + 1) * (i + 1)) / 100);
+    }
+  });
+  const view = budget() as ReturnType<typeof budget> & { leftOut?: string };
+  assert.equal(view.projects.length, 20);
+  assert.equal(view.projects[0].project, "/many/359");
+  for (const one of view.projects)
+    assert.match(one.recent[0], /^2026-10-14 /, `${one.project} lost its newest day before today`);
+  assert.match(view.leftOut ?? "", /^520 rows/);
   ops.close();
 });
 
@@ -239,7 +262,7 @@ test("the hold is kept by a restart, ends at the next UTC day, and ends at once 
   first.ops.spent("a1", 6);
   first.ops.close();
 
-  const { ops, policy, at, lifted, dir } = rig({ dir: first.dir, policy: first.policy });
+  const { ops, at, lifted, dir } = rig({ dir: first.dir, policy: first.policy });
   assert.ok(ops.holds("a1"), "a restart keeps the hold");
   at("2026-10-15T23:59:00.000Z");
   assert.ok(ops.holds("a1"));
@@ -420,7 +443,7 @@ test("the retention of the spend rows: days past the keep, a seat's total unseen
   store.spend("/p/a", "2026-09-30", "s2", 2);
   assert.equal(store.expireSpend("2026-09-10", "2026-09-10T00:00:00.000Z"), 1 + 1 + 1);
   assert.deepEqual(
-    store.spendFrom("2000-01-01").map((row) => [row.day, row.usd]),
+    store.spendFrom("2000-01-01").rows.map((row) => [row.day, row.usd]),
     [["2026-09-30", 1]],
   );
   assert.equal(store.holdRows().length, 0);
@@ -434,7 +457,7 @@ test("every statement of the spend ledger and the skill loads reads by an index"
   store.baseline("s1");
   store.spend("/p/a", "2026-10-15", "s1", 2, "peer", 900);
   store.spendOn("2026-10-15");
-  store.spendByRole("2026-10-15");
+  store.spendByRole("2026-10-15", ["/p/a"]);
   store.spendFrom("2026-10-09");
   store.knowsProject("/p/a");
   store.addHold({ project: "/p/a", day: "2026-10-15", since: "2026-10-15T00:00:00.000Z", reason: "r" });
@@ -553,15 +576,16 @@ test("at most a batch of new incidents is asked in a minute, the oldest first", 
 
 let gates = 0;
 
-test("a seat the gate holds takes no mail until the hold ends; its mail waits in the store and none is lost", async () => {
+/** A mail engine with one seat of `role` in `status`, held by the gate for as long as `why()` gives a reason; `got` keeps what the seat is sent. */
+function gated(role: string, status: string, why: () => string | null) {
   gates += 1;
-  const id = `lead-gate-${gates}`;
+  const id = `${role}-gate-${gates}`;
   const got: string[] = [];
   const paseo = {
     agents: {
       ref: () => ({
         refresh: async () => {},
-        current: () => ({ status: "idle" }),
+        current: () => ({ status }),
         send: async (text: string) => void got.push(text),
       }),
     },
@@ -570,12 +594,11 @@ test("a seat the gate holds takes no mail until the hold ends; its mail waits in
   engine.rememberSeat({
     agentId: id,
     parentAgentId: null,
-    role: "lead",
-    provider: "claude-lead",
-    title: "[lead] gate",
+    role,
+    provider: `claude-${role}`,
+    title: `[${role}] gate`,
   });
-  let why: string | null = "the project passed its cap";
-  engine.holds = (seat) => (seat === id ? why : null);
+  engine.holds = (seat) => (seat === id ? why() : null);
   const post = (subject: string, more: object = {}) =>
     engine.post({
       from: { agentId: "room", role: "system" },
@@ -586,6 +609,12 @@ test("a seat the gate holds takes no mail until the hold ends; its mail waits in
       needs: "nothing",
       ...more,
     });
+  return { id, got, engine, post };
+}
+
+test("a seat the gate holds takes no mail until the hold ends; its mail waits in the store and none is lost", async () => {
+  let why: string | null = "the project passed its cap";
+  const { id, got, engine, post } = gated("lead", "idle", () => why);
   await post("FYI: first");
   await post("STOP: now", { urgent: true });
   await engine.sweep();
@@ -600,37 +629,7 @@ test("a seat the gate holds takes no mail until the hold ends; its mail waits in
 });
 
 test("a running seat of a held project still takes a stop order, which ends its spending; its other mail waits", async () => {
-  gates += 1;
-  const id = `peer-gate-${gates}`;
-  const got: string[] = [];
-  const paseo = {
-    agents: {
-      ref: () => ({
-        refresh: async () => {},
-        current: () => ({ status: "running" }),
-        send: async (text: string) => void got.push(text),
-      }),
-    },
-  };
-  const engine = new MailEngine(hostOf(paseo), MAIL_POLICY, () => {});
-  engine.rememberSeat({
-    agentId: id,
-    parentAgentId: null,
-    role: "peer",
-    provider: "claude-peer",
-    title: "[peer] gate",
-  });
-  engine.holds = (seat) => (seat === id ? "the project passed its cap" : null);
-  const post = (subject: string, more: object = {}) =>
-    engine.post({
-      from: { agentId: "room", role: "system" },
-      to: id,
-      priority: "action",
-      subject,
-      body: `body of ${subject}`,
-      needs: "nothing",
-      ...more,
-    });
+  const { id, got, engine, post } = gated("peer", "running", () => "the project passed its cap");
   await post("FYI: later");
   await engine.sweep();
   assert.deepEqual(got, [], "mail that is no stop order waits");

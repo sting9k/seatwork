@@ -25,6 +25,7 @@ const LINKS: Record<string, string> = {
   "/Users/u/proj/hooks": "/Users/u/proj/.git/hooks",
   "/Users/u/proj/creds": "/Users/u/.aws/credentials",
   "/Users/u/proj/shared": "/Users/u/shared",
+  "/Users/u/proj/cred": "/Users/u/.paseo/local-credential",
 };
 
 const tools: Tools = {
@@ -49,6 +50,19 @@ async function rules(command: string, cwd: string | null = PROJECT): Promise<str
   );
   return [...found.findings.map((f) => `${f.pack}:${f.rule}`), ...found.doubts.map(() => "doubt")].sort();
 }
+
+/** A guard over these tools with a store of its own. */
+function guardAt(name: string): Guard {
+  const store = new SafetyStore(join(ROOM_HOME, name), 1000);
+  return new Guard({
+    store: () => store,
+    policy: () => ({}),
+    tools: () => tools,
+    place: () => place,
+    repeated: () => {},
+  });
+}
+const seat = { id: "peer", role: "peer", project: PROJECT, tmp: null, start: PROJECT };
 
 const PASEO = ["room.guard:paseo-cli"];
 
@@ -267,14 +281,7 @@ test("the guard reads .gitattributes by the rule of the hand-in check, and only 
     lines.map((line) => namesDriver(line)),
     [false, false, false, false, false, false, false, true, true, true, false],
   );
-  const guard = new Guard({
-    store: () => new SafetyStore(join(ROOM_HOME, "holes-attributes"), 1000),
-    policy: () => ({}),
-    tools: () => tools,
-    place: () => place,
-    repeated: () => {},
-  });
-  const seat = { id: "peer", role: "peer", project: PROJECT, tmp: null, start: PROJECT };
+  const guard = guardAt("holes-attributes");
   const ruling = await guard.check(seat, "claude", "echo '* filter=x' >> .gitattributes", PROJECT);
   assert.equal(ruling.allow, false);
   assert.equal(ruling.finding?.rule, "git-attributes-driver");
@@ -524,14 +531,7 @@ test("a write through a link that leads into a protected place is a write into i
     "echo x > cfg2/notes.txt",
   ])
     assert.deepEqual(await rules(line), [], line);
-  const guard = new Guard({
-    store: () => new SafetyStore(join(ROOM_HOME, "holes-links"), 1000),
-    policy: () => ({}),
-    tools: () => tools,
-    place: () => place,
-    repeated: () => {},
-  });
-  const seat = { id: "peer", role: "peer", project: PROJECT, tmp: null, start: PROJECT };
+  const guard = guardAt("holes-links");
   const through = await guard.checkWrite(seat, "claude", `${PROJECT}/cfg/gh/hosts.yml`, PROJECT);
   assert.equal(through.allow, false);
   assert.equal(through.finding?.rule, "credential-file-write");
@@ -539,14 +539,7 @@ test("a write through a link that leads into a protected place is a write into i
 });
 
 test("a file tool that adds a filter or driver to .gitattributes is stopped, by the text it shows", async () => {
-  const guard = new Guard({
-    store: () => new SafetyStore(join(ROOM_HOME, "holes-tools"), 1000),
-    policy: () => ({}),
-    tools: () => tools,
-    place: () => place,
-    repeated: () => {},
-  });
-  const seat = { id: "peer", role: "peer", project: PROJECT, tmp: null, start: PROJECT };
+  const guard = guardAt("holes-tools");
   const attributes = `${PROJECT}/.gitattributes`;
   const payloads: [Cli, Record<string, unknown>, boolean][] = [
     [
@@ -605,4 +598,33 @@ test("a file tool that adds a filter or driver to .gitattributes is stopped, by 
     const answered = await answerHook(guard, cli, { ...body, cwd: PROJECT }, seat);
     assert.equal(/block":true|"deny"/.test(answered.text), stopped, `${cli} ${JSON.stringify(body)}`);
   }
+});
+
+test("a reading tool meets the daemon's and the room's secrets as a shell does, and a question tool is sent to mail", async () => {
+  const secrets = ["/Users/u/.paseo/local-credential", "/Users/u/.paseo/config.json", "/Users/u/.config/room/jev/"];
+  const store = new SafetyStore(join(ROOM_HOME, "secrets"), 1000);
+  const guard = new Guard({
+    store: () => store,
+    policy: () => ({}),
+    tools: () => tools,
+    place: () => ({ ...place, guard: { paths: [], except: [], secrets } }),
+    repeated: () => {},
+  });
+  const payloads: [Cli, Record<string, unknown>, boolean][] = [
+    ["pi", { tool: "read", input: { path: "/Users/u/.paseo/local-credential" } }, true],
+    ["pi", { tool: "read", input: { path: "cred" } }, true],
+    ["pi", { tool: "grep", input: { pattern: "key", path: "/Users/u" } }, true],
+    ["pi", { tool: "ls", input: { path: "/Users/u/.paseo" } }, false],
+    ["pi", { tool: "read", input: { path: "src/a.ts" } }, false],
+    ["opencode", { tool: "read", input: { path: "/Users/u/.config/room/jev/openrouter.key" } }, true],
+    ["opencode", { tool: "glob", input: { pattern: "**/*.ts", path: "/Users/u/proj" } }, false],
+    ["codex", { tool_name: "Bash", tool_input: { command: "cat ~/.paseo/config.json" } }, true],
+    ["codex", { tool_name: "request_user_input_async", tool_input: { questions: [] } }, true],
+  ];
+  for (const [cli, body, stopped] of payloads) {
+    const answered = await answerHook(guard, cli, { ...body, cwd: PROJECT }, seat);
+    assert.equal(/block":true|"deny"/.test(answered.text), stopped, `${cli} ${JSON.stringify(body)}`);
+  }
+  const asked = await answerHook(guard, "codex", { tool_name: "request_user_input", tool_input: {} }, seat);
+  assert.match(asked.text, /seatwork_mail/);
 });

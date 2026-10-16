@@ -5,7 +5,7 @@ import type { Scene } from "../types";
 
 /** The statements a database client is given, against the database packs in force. */
 
-export interface DatabaseHit {
+interface DatabaseHit {
   pack: string;
   rule: string;
 }

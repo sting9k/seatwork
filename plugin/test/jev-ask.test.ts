@@ -15,7 +15,6 @@ function model() {
     decide: async (_caller: string, state: State) => {
       states.push(state as Record<string, unknown>);
       return {
-        callId: 1,
         model: "m",
         answers: { calls: { type: "noul" as const, noul: 0.9 } },
         asks: {},

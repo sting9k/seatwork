@@ -4,7 +4,8 @@ import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { test } from "node:test";
 import type { MailError } from "../server/coordination/address";
-import { MailEngine, type SeatRecord } from "../server/coordination/engine";
+import { MailEngine, type EngineOptions, type SeatRecord } from "../server/coordination/engine";
+import { Collector, KEEP_LOG_DAYS } from "../server/gc";
 import type { LiveSeat } from "../server/host";
 import type { RoomContext } from "../server/room/context";
 import { sendMail } from "../server/room/mail-tools";
@@ -31,10 +32,10 @@ const seat = (agentId: string, role: string, parent: string | null, title = `[${
 });
 
 /** A room with a mail engine over these agents; its host lists `open` (or fails) and counts the lists it gives. */
-function roomOf(handles: Record<string, object>, open: string[] | Error) {
+function roomOf(handles: Record<string, object>, open: string[] | Error, options: EngineOptions = {}) {
   const missing = { refresh: async () => null, current: () => null };
   const paseo = { agents: { ref: (id: string) => handles[id] ?? missing } };
-  const engine = new MailEngine(hostOf(paseo), MAIL_POLICY, () => {}, {});
+  const engine = new MailEngine(hostOf(paseo), MAIL_POLICY, () => {}, options);
   const asked = { live: 0 };
   const room = {
     engine,
@@ -179,6 +180,33 @@ test("a refusal that lists the seats one may write to asks the app for the open 
   assert.equal(unknown.code, "UNKNOWN_RECIPIENT");
   assert.deepEqual(unknown.fix, reachable);
   assert.equal(asked.live, 3);
+});
+
+test("a mail to a seat the room has forgotten is refused with a message, as one to a seat the app lost is", async () => {
+  const id = names("lead", "peer", "boss");
+  let at = Date.now();
+  const { room, engine } = roomOf({ [id.boss]: idle, [id.lead]: idle }, [id.boss, id.lead], {
+    now: () => new Date(at),
+  });
+  tree(engine, id, [[id.peer, "[Peer] indexer"]]);
+  const policy = { idleHoursBeforeArchive: {}, deleteOrphanHeartbeats: false, tellParent: false };
+  const gc = new Collector(
+    room.host as never,
+    engine,
+    policy as never,
+    () => {},
+    () => {},
+  );
+  const refused = () => refusedWith(sendMail(room, id.lead, { ...note, to: id.peer }));
+
+  await gc.run();
+  assert.equal((await refused()).code, "RECIPIENT_GONE");
+  at += (KEEP_LOG_DAYS + 1) * 86_400_000;
+  await gc.run();
+  const forgotten = await refused();
+  assert.equal(forgotten.code, "UNKNOWN_RECIPIENT");
+  assert.match(forgotten.message, /names no seat you can write to/);
+  assert.deepEqual(forgotten.fix, { to: [`owner (supervisor ${id.boss.slice(0, 8)}: ${id.boss})`] });
 });
 
 test("when the app lists no seats, or cannot, every seat of the room counts as open", async () => {

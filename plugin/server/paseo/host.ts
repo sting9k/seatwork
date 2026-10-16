@@ -3,7 +3,15 @@ import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSy
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import callLimits from "../../shared/host.json";
-import type { Host, LiveSeat, NewSeat, SeatState, SeatUsage, TurnEvent } from "../host";
+import {
+  HostNotReady,
+  type Host,
+  type LiveSeat,
+  type NewSeat,
+  type SeatState,
+  type SeatUsage,
+  type TurnEvent,
+} from "../host";
 import { latestTurn } from "./timeline";
 import { PASEO_HOME, PASEO_SCHEDULES } from "../paths";
 import type { PaseoApi } from "./api";
@@ -145,7 +153,7 @@ export class PaseoHost implements Host {
   }
 
   private sdk(): PaseoApi {
-    if (!this.client) throw new Error("Paseo has handed the room no client yet");
+    if (!this.client) throw new HostNotReady("Paseo has handed the room no client yet");
     return this.client;
   }
 

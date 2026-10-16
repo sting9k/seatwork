@@ -154,7 +154,7 @@ export class Budget {
     this.deps.store.dropSeat(seat);
   }
 
-  /** A turn of a seat of `role` ended with its total cost so far and its output tokens, when known: it counts for the seat's project and role, and a project past its cap is held. */
+  /** A turn of a seat of `role` ended with its total cost so far and output tokens, when known; a project past its cap is held. */
   spent(seat: string, total: number | undefined, role?: string, outTokens?: number): void {
     const project = this.deps.projectOf(seat) ?? "";
     const day = this.day();
@@ -236,43 +236,53 @@ export class Budget {
     this.deps.store.toldHold(hold.project);
   }
 
-  /** The reading: today's sums of each project that spent, in all and by role, its last days, ranked by today's dollars, with its cap and the projects held. */
+  /** The reading: today's sums of each project that spent, in all and by role, its last days, ranked by today's dollars, with its cap, the projects held and how many rows of older days it left out. */
   reading(): Record<string, unknown> {
     const day = this.day();
     const today = this.today(day);
-    const roles = new Map<string, Record<string, { usd: number; turns: number; outputTokens: number }>>();
-    for (const row of this.deps.store.spendByRole(day))
-      roles.set(row.project, {
-        ...roles.get(row.project),
-        [row.role]: { usd: rounded(row.usd), turns: row.turns, outputTokens: row.outTokens },
-      });
     const days = new Map<string, { day: string; usd: number; turns: number }[]>();
-    for (const row of this.deps.store.spendFrom(shiftDay(day, 1 - settings.spendRecentDays))) {
+    const ledger = this.deps.store.spendFrom(shiftDay(day, 1 - settings.spendRecentDays));
+    for (const row of ledger.rows) {
       const rows = days.get(row.project) ?? [];
       rows.push(row);
       days.set(row.project, rows);
     }
     const total = (project: string) => (days.get(project) ?? []).reduce((sum, row) => sum + row.usd, 0);
     const spent = (project: string) => today.get(project)?.usd ?? 0;
-    const projects = [...days.keys()]
-      .sort((a, b) => spent(b) - spent(a) || total(b) - total(a) || a.localeCompare(b))
-      .slice(0, settings.spendProjectsShown)
-      .map((project) => {
-        const cap = project ? this.capOf(project) : null;
-        const now = today.get(project);
-        return {
-          project: project || NO_PROJECT,
-          today: { usd: rounded(now?.usd ?? 0), turns: now?.turns ?? 0 },
-          ...(roles.has(project) ? { byRole: roles.get(project) } : {}),
-          cap,
-          recent: (days.get(project) ?? [])
-            .filter((row) => row.day !== day)
-            .sort((a, b) => b.day.localeCompare(a.day))
-            .map((row) => `${row.day} $${row.usd.toFixed(2)} ${turnsOf(row.turns)}`),
-        };
+    const ranked = [...days.keys()].sort((a, b) => spent(b) - spent(a) || total(b) - total(a) || a.localeCompare(b));
+    const shown = ranked.slice(0, settings.spendProjectsShown);
+    const roles = new Map<string, Record<string, { usd: number; turns: number; outputTokens: number }>>();
+    for (const row of this.deps.store.spendByRole(day, shown))
+      roles.set(row.project, {
+        ...roles.get(row.project),
+        [row.role]: { usd: rounded(row.usd), turns: row.turns, outputTokens: row.outTokens },
       });
+    const projects = shown.map((project) => {
+      const cap = project ? this.capOf(project) : null;
+      const now = today.get(project);
+      return {
+        project: project || NO_PROJECT,
+        today: { usd: rounded(now?.usd ?? 0), turns: now?.turns ?? 0 },
+        ...(roles.has(project) ? { byRole: roles.get(project) } : {}),
+        cap,
+        recent: (days.get(project) ?? [])
+          .filter((row) => row.day !== day)
+          .sort((a, b) => b.day.localeCompare(a.day))
+          .map((row) => `${row.day} $${row.usd.toFixed(2)} ${turnsOf(row.turns)}`),
+      };
+    });
     return {
       day,
+      ...(ledger.leftOut > 0
+        ? {
+            leftOut: `${ledger.leftOut} rows of daily spend, the oldest days of the last ${settings.spendRecentDays}, are not in this reading`,
+          }
+        : {}),
+      ...(ranked.length > shown.length
+        ? {
+            projectsLeftOut: `${ranked.length - shown.length} more projects spent in the last ${settings.spendRecentDays} days`,
+          }
+        : {}),
       held: [...this.held.values()]
         .filter((hold) => this.stands(hold, day))
         .map(({ project, since, reason }) => ({ project, since, reason })),

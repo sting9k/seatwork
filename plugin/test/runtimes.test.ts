@@ -105,6 +105,12 @@ const cases: { name: string; user: string; seat: string; policy?: Partial<CodexR
     seat: "[agents]\nenabled = false\n\n[features]\nmulti_agent = false\nmulti_agent_v2 = false\n",
     policy: { multiAgentV2Off: true, agentsOff: true },
   },
+  {
+    name: "a tool the policy turns off is off in [tools], beside the user's own tools",
+    user: "[tools]\nview_image = true\n",
+    seat: `[tools]\nview_image = true\n\n[tools.experimental_request_user_input]\nenabled = false\n\n${OFF}`,
+    policy: { toolsOff: ["experimental_request_user_input"] },
+  },
 ];
 
 for (const { name, user, seat: expected, policy } of cases) {
@@ -198,7 +204,7 @@ test("a seat's home holds the guard's hook when the guard is on: Codex's hooks.j
   writeFileSync(userConfig, "");
   const on = homes("on");
   const [hook] = JSON.parse(readFileSync(on.codexHooks, "utf8")).hooks.PreToolUse;
-  assert.equal(hook.matcher, "^(Bash|apply_patch)$");
+  assert.equal(hook.matcher, "^(Bash|apply_patch|request_user_input|request_user_input_async)$");
   assert.match(hook.hooks[0].command, /^\/bin\/sh -c '[\s\S]+' room-guard codex$/);
   assert.match(
     on.codexConfig,
@@ -244,6 +250,10 @@ test("a Codex, Pi or OpenCode seat is shown the room's skills only: the user's o
     assert.deepEqual(JSON.parse(readFileSync(join(home("pi"), "settings.json"), "utf8")).skills, [`!${mine}/**`]);
     assert.deepEqual(JSON.parse(readFileSync(join(home("opencode"), "opencode.json"), "utf8")).permission, {
       task: "deny",
+      question: "deny",
+      todowrite: "deny",
+      repo_clone: "deny",
+      repo_overview: "deny",
       skill: { "*": "deny", "blast-radius": "allow", "test-audit": "allow" },
     });
   } finally {

@@ -2,7 +2,7 @@ import { createHash, randomInt } from "node:crypto";
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { SQL_DIR } from "../paths";
-import { Sqlite, type SqliteFailure } from "../sqlite";
+import { Sqlite, type Param, type SqliteFailure } from "../sqlite";
 import type { Label } from "./council/calibration";
 
 /** The safety store in the room home: decisions, codes, start commits, hand-in findings, the council's log and its appeals to the chair. */
@@ -21,7 +21,7 @@ export class SafetyError extends Error {
 export type Grantor = "owner" | "human";
 
 /** One decision of the guard about a call. */
-export interface DecisionRow {
+interface DecisionRow {
   seat: string | null;
   role: string | null;
   cli: string;
@@ -53,7 +53,7 @@ export interface CodeRow {
 }
 
 /** A seat's work as kept: the digest handed in, the last verdict and the digest it was given on. */
-export interface SeatWork {
+interface SeatWork {
   handed: string | null;
   verdict: "accepted" | "returned" | null;
   verdictDigest: string | null;
@@ -128,7 +128,7 @@ export interface MemberCount {
 }
 
 /** One appeal to the chair: who it is about, what was appealed, the evidence sent, and how it stands. */
-export interface AppealRow {
+interface AppealRow {
   id: number;
   at: string;
   due_at: string;
@@ -356,6 +356,23 @@ export class SafetyStore extends Sqlite {
     });
   }
 
+  /** Notes the commit a repository stands at when it has none yet; a later start there only keeps it seen. */
+  noteBase(commonDir: string, head: string): void {
+    this.transaction("write", () =>
+      this.run(
+        "INSERT INTO repo_bases (common_dir, head, seen_at) VALUES (?, ?, ?) ON CONFLICT(common_dir) DO UPDATE SET seen_at = excluded.seen_at",
+        commonDir,
+        head,
+        this.stamp(),
+      ),
+    );
+  }
+
+  /** The commit the room first saw a repository at, by its git common folder. */
+  baseOf(commonDir: string): string | null {
+    return this.row<{ head: string }>("SELECT head FROM repo_bases WHERE common_dir = ?", commonDir)?.head ?? null;
+  }
+
   /** Where a seat began, if the room saw it. */
   startOf(agentId: string): { cwd: string; start_head: string | null; started_at: string } | null {
     return this.row("SELECT cwd, start_head, started_at FROM seats WHERE agent_id = ?", agentId) ?? null;
@@ -433,17 +450,10 @@ export class SafetyStore extends Sqlite {
   /** Drops decisions, escalations and findings older than `before`, codes that ran out by then and seats not seen since; decisions a slice at a time. */
   expire(before: Date): number {
     const at = before.toISOString();
-    let gone = 0;
-    for (;;) {
-      const slice = this.transaction(
-        "write",
-        () =>
-          this.run("DELETE FROM decisions WHERE id IN (SELECT id FROM decisions WHERE at < ? LIMIT ?)", at, PRUNE_BATCH)
-            .changes,
-      );
-      gone += slice;
-      if (slice < PRUNE_BATCH) break;
-    }
+    const gone = this.deleteInSlices(
+      "DELETE FROM decisions WHERE id IN (SELECT id FROM decisions WHERE at < ? LIMIT ?)",
+      at,
+    );
     return (
       gone +
       this.transaction("write", () =>
@@ -452,6 +462,7 @@ export class SafetyStore extends Sqlite {
           this.run("DELETE FROM escalations WHERE at < ?", at),
           this.run("DELETE FROM findings WHERE last_at < ?", at),
           this.run("DELETE FROM seats WHERE seen_at < ?", at),
+          this.run("DELETE FROM repo_bases WHERE seen_at < ?", at),
         ].reduce((n, done) => n + done.changes, 0),
       )
     );
@@ -485,6 +496,17 @@ export class SafetyStore extends Sqlite {
         r.evidence === null ? null : r.evidence.slice(0, 2000),
       ),
     ).lastInsertRowid;
+  }
+
+  /** Notes that these readings reached the seat above. */
+  markShown(ids: readonly number[]): void {
+    if (!ids.length) return;
+    this.transaction("write", () =>
+      this.run(
+        "UPDATE council_readings SET shown = 1 WHERE id IN (SELECT value FROM json_each(?))",
+        JSON.stringify(ids),
+      ),
+    );
   }
 
   /** The seat a council reading is about; null when no such reading is kept. */
@@ -690,23 +712,27 @@ export class SafetyStore extends Sqlite {
 
   /** Drops readings before `before` that no label holds, a slice at a time, and the appeals before it; an appeal whose time is up is marked lapsed first. */
   expireCouncil(before: Date): number {
-    let gone = this.transaction("write", () => {
+    const appeals = this.transaction("write", () => {
       this.run("UPDATE council_appeals SET status = 'lapsed' WHERE status = 'open' AND due_at <= ?", this.stamp());
       return this.run("DELETE FROM council_appeals WHERE at < ?", before.toISOString()).changes;
     });
+    return (
+      appeals +
+      this.deleteInSlices(
+        `DELETE FROM council_readings WHERE id IN (
+           SELECT r.id FROM council_readings r WHERE r.at < ?
+             AND NOT EXISTS (SELECT 1 FROM council_labels l WHERE l.reading_id = r.id)
+           LIMIT ?)`,
+        before.toISOString(),
+      )
+    );
+  }
+
+  /** Runs a delete whose last parameter is its `LIMIT`, a write lock to a slice, until a slice comes up short; the rows gone. */
+  private deleteInSlices(sql: string, ...params: Param[]): number {
+    let gone = 0;
     for (;;) {
-      const slice = this.transaction(
-        "write",
-        () =>
-          this.run(
-            `DELETE FROM council_readings WHERE id IN (
-               SELECT r.id FROM council_readings r WHERE r.at < ?
-                 AND NOT EXISTS (SELECT 1 FROM council_labels l WHERE l.reading_id = r.id)
-               LIMIT ?)`,
-            before.toISOString(),
-            PRUNE_BATCH,
-          ).changes,
-      );
+      const slice = this.transaction("write", () => this.run(sql, ...params, PRUNE_BATCH).changes);
       gone += slice;
       if (slice < PRUNE_BATCH) return gone;
     }

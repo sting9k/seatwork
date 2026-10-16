@@ -1,8 +1,9 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import assert from "node:assert/strict";
 import test from "node:test";
+import { DatabaseSync } from "node:sqlite";
 import { Sqlite, readScripts, storeStats, type Row, type SqliteFailure } from "../server/sqlite";
 
 const base = mkdtempSync(join(tmpdir(), "seatwork-sqlite-"));
@@ -19,9 +20,9 @@ class Failure extends Error {
 
 /** A store that only shows what its layout came to. */
 class Probe extends Sqlite {
-  constructor(file: string, scripts: string) {
+  constructor(file: string, scripts: string, busyTimeoutMs = 2000) {
     super(file, {
-      busyTimeoutMs: 2000,
+      busyTimeoutMs,
       scripts,
       name: "the probe",
       fail: (code, message) => new Failure(code, message),
@@ -128,8 +129,9 @@ test("a store at a newer layout than this plugin writes is refused", () => {
 });
 
 test("the scripts that ship are well formed: one per version, named for what they do", () => {
-  for (const store of ["work", "mail"]) {
-    const scripts = readScripts(join(__dirname, "..", "room", "sql", store));
+  const sql = join(__dirname, "..", "room", "sql");
+  for (const store of readdirSync(sql)) {
+    const scripts = readScripts(join(sql, store));
     assert.ok(scripts.length > 0, store);
     assert.deepEqual(
       scripts.map((script) => script.version),
@@ -148,7 +150,7 @@ test("a store keeps a bounded number of prepared statements, however many differ
   store.close();
 });
 
-test("a store hands the disk back after a large write: its write-ahead log is cut to a limit once it is checkpointed", () => {
+test("a store limits its write-ahead log, so a large write does not keep its size on disk", () => {
   const { file, dir } = fresh({ "V1__layout.sql": "CREATE TABLE things (id INTEGER PRIMARY KEY);" });
   const store = new Probe(file, dir);
   const limit = Number(
@@ -174,4 +176,26 @@ test("an open store is counted call by call with its slowest and its write-ahead
     storeStats().some((one) => one.file === file),
     false,
   );
+});
+
+test("a store closes even when another connection holds the write lock while it refreshes its statistics", () => {
+  const { file, dir } = fresh({
+    "V1__t.sql": "CREATE TABLE t (id INTEGER PRIMARY KEY, k TEXT); CREATE INDEX t_k ON t (k);",
+  });
+  const store = new Probe(file, dir, 50);
+  for (let i = 0; i < 500; i += 1) store.raw(`INSERT INTO t (k) VALUES ('k${i % 7}')`);
+  store.ask("SELECT id FROM t WHERE k = 'k1'");
+  const other = new DatabaseSync(file);
+  other.exec("PRAGMA busy_timeout = 50; BEGIN IMMEDIATE");
+  try {
+    store.close();
+  } finally {
+    other.exec("ROLLBACK");
+    other.close();
+  }
+  assert.equal(
+    storeStats().some((one) => one.file === file),
+    false,
+  );
+  assert.throws(() => store.ask("SELECT 1"), /not open/i, "the connection is shut");
 });

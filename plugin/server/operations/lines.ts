@@ -18,12 +18,12 @@ const KNOWN = new Set([
   "room",
 ]);
 const TROUBLE =
-  /\b(fail(?:ed|s|ure)?|not (?:kept|read|marked|expired|forgotten|told|logged|asked|mailed again|settle)|could not|cannot|did not|damaged|refused|out of range|is down|slow|not checkpointed)\b/i;
+  /\b(fail(?:ed|s|ure)?|not (?:kept|read|marked|expired|forgotten|told|logged|asked|settle)|could not|cannot|did not|damaged|refused|out of range|is down|slow|not checkpointed)\b/i;
 const VARYING = [
   /"[^"]*"|'[^']*'|`[^`]*`/g,
   /\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/gi,
-  /\b\d{4}-\d{2}-\d{2}T[\d:.]+Z?\b/g,
-  /(?:~|\/)[\w.@~-]*(?:\/[\w.@~-]+)+/g,
+  /\b\d{4}-\d{2}-\d{2}T[\d:.]+(?:Z|[+-]\d{2}:?\d{2})?/g,
+  /(?:~|\/)?[\w.@~-]*(?:\/[\w.@~-]+)+/g,
   /\b(?=[\w-]*\d)[\w-]{6,}\b/g,
   /\d+(?:\.\d+)?/g,
 ];

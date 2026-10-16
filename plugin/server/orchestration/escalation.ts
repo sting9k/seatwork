@@ -15,12 +15,12 @@ const WHY = {
 } as const;
 
 /** What the sender's mail becomes, and what its receipt says of it. */
-export interface Rerouted {
+interface Rerouted {
   draft: NewMail;
   note: string;
 }
 
-/** The seat above a mail's sender that must answer it, among those the workflow lets the sender mail: the mail goes to it with the Owner copied. Null keeps the mail as sent. */
+/** Redirects a question to the seat that must answer it among those the workflow lets the sender mail, the Owner copied; null keeps the mail as sent. */
 export async function routeUp(
   room: {
     engine: Pick<MailEngine, "seat" | "parentOf" | "folderOf" | "recipientStatus">;

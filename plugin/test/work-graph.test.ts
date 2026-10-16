@@ -2,6 +2,7 @@ import { ROOM_HOME, shipSql } from "./support/room";
 import assert from "node:assert/strict";
 import { join } from "node:path";
 import { test } from "node:test";
+import vocabulary from "../shared/work.json";
 import { alerts, blockerChain, next, plan, triage, unreadScopes } from "../server/tasks/graph";
 import { WorkStore } from "../server/tasks/store";
 
@@ -176,6 +177,39 @@ test("write scopes collide however a path is written: ./, a line number, a glob 
   ])
     assert.ok(pairs.includes([a, b].sort().join(" ")), `${a} and ${b}`);
   assert.ok(!pairs.some((pair) => pair.includes(prose)));
+});
+
+test("a plan lists the most colliding pairs first, up to a bound, and counts the rest, however many ready issues share a folder", () => {
+  const store = new WorkStore(join(ROOM_HOME, `graph-test-${(stores += 1)}`), TIMING, () => NOW);
+  const shape = store.create({ title: "shape" }, "lead");
+  store.close();
+  const issue = (id: string, write_scope: string) => ({ ...shape, id, title: id, write_scope });
+  // every one of 120 shares `src`, and the two `sw-z` issues share three files, though their ids sort last
+  const issues = [
+    ...Array.from({ length: 120 }, (_, i) => issue(`sw-${String(i).padStart(3, "0")}`, "src/")),
+    issue("sw-z1", "lib/x.ts lib/y.ts lib/z.ts"),
+    issue("sw-z2", "lib/x.ts lib/y.ts lib/z.ts"),
+  ];
+  const work = {
+    issues,
+    dependencies: [],
+    ready: new Set(issues.map(({ id }) => id)),
+    blocked: new Map<string, string[]>(),
+  };
+
+  const made = plan(work, NOW);
+  const pairs = (120 * 119) / 2 + 1;
+  assert.equal(made.overlaps.length, vocabulary.triage.overlapsShown);
+  assert.equal(made.moreOverlaps, pairs - vocabulary.triage.overlapsShown);
+  assert.deepEqual(
+    [made.overlaps[0].a, made.overlaps[0].b, made.overlaps[0].paths],
+    ["sw-z1", "sw-z2", ["lib/x.ts", "lib/y.ts", "lib/z.ts"]],
+  );
+  assert.ok(JSON.stringify(made).length < 20_000, `${JSON.stringify(made).length} characters`);
+
+  const few = plan({ ...work, issues: issues.slice(0, 5) }, NOW);
+  assert.equal(few.overlaps.length, 10);
+  assert.equal("moreOverlaps" in few, false, "an answer that lost nothing says nothing of the rest");
 });
 
 test("the pairs whose scopes no path can tell are found in time with the issues, not with all their pairs", () => {

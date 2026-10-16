@@ -559,7 +559,6 @@ function RoomSetup({
   const running = applied ? runningTable(data) : null;
   const busy = init.isPending || remove.isPending;
 
-  // what Apply would change, by name
   const waiting =
     !applied || !running
       ? []
@@ -596,71 +595,66 @@ function RoomSetup({
 
   const pad = fit.narrow ? 12 : 20;
   const main = (
-    <>
-      <Card colors={c}>
-        <CardHead
-          title="Models"
-          sub={
-            applied && data.projects.length
-              ? `The room's table. ${OWN} and ${sharing} of ${data.projects.length} projects run on it.`
-              : `The room's table: what each role runs on. ${OWN} and every project without models of its own follow it.`
-          }
-          right={fit.narrow ? undefined : <Legend table={table} harnesses={data.harnesses} colors={c} />}
-          colors={c}
-        />
-        <View style={{ paddingHorizontal: pad, paddingBottom: 18 }}>
-          <RoleTree
-            mode="room"
-            base={shipped}
-            choices={values.models}
-            running={running}
-            harnesses={data.harnesses}
-            onChange={(models) => save({ ...values, models: models as RoomChoices["models"] })}
-            where="the room's table"
-            compact={fit.narrow}
-            colors={c}
-          />
-        </View>
-        <TableFoot
-          text={
-            applied
-              ? "A change reaches seats opened after Apply. Seats already open keep their model."
-              : "Press a role to change what it runs on. You can change it again later."
-          }
-          right={
-            Object.keys(values.models).length ? (
-              <Link
-                label="Back to the shipped table"
-                icon="RotateCcw"
-                onPress={() => save({ ...values, models: {} })}
-                colors={c}
-              />
-            ) : undefined
-          }
-          colors={c}
-        />
-      </Card>
-    </>
-  );
-
-  const projects = (
-    <>
-      {applied && running ? (
-        <ProjectsCard
-          projects={data.projects}
+    <Card colors={c}>
+      <CardHead
+        title="Models"
+        sub={
+          applied && data.projects.length
+            ? `The room's table. ${OWN} and ${sharing} of ${data.projects.length} projects run on it.`
+            : `The room's table: what each role runs on. ${OWN} and every project without models of its own follow it.`
+        }
+        right={fit.narrow ? undefined : <Legend table={table} harnesses={data.harnesses} colors={c} />}
+        colors={c}
+      />
+      <View style={{ paddingHorizontal: pad, paddingBottom: 18 }}>
+        <RoleTree
+          mode="room"
+          base={shipped}
+          choices={values.models}
           running={running}
           harnesses={data.harnesses}
-          open={open}
-          fit={fit}
+          onChange={(models) => save({ ...values, models: models as RoomChoices["models"] })}
+          where="the room's table"
+          compact={fit.narrow}
           colors={c}
         />
-      ) : (
-        <Card colors={c} style={RAIL}>
-          <Text style={small(c)}>Projects appear here once the room is set up: press Init under Settings.</Text>
-        </Card>
-      )}
-    </>
+      </View>
+      <TableFoot
+        text={
+          applied
+            ? "A change reaches seats opened after Apply. Seats already open keep their model."
+            : "Press a role to change what it runs on. You can change it again later."
+        }
+        right={
+          Object.keys(values.models).length ? (
+            <Link
+              label="Back to the shipped table"
+              icon="RotateCcw"
+              onPress={() => save({ ...values, models: {} })}
+              colors={c}
+            />
+          ) : undefined
+        }
+        colors={c}
+      />
+    </Card>
   );
+
+  const projects =
+    applied && running ? (
+      <ProjectsCard
+        projects={data.projects}
+        running={running}
+        harnesses={data.harnesses}
+        open={open}
+        fit={fit}
+        colors={c}
+      />
+    ) : (
+      <Card colors={c} style={RAIL}>
+        <Text style={small(c)}>Projects appear here once the room is set up: press Init under Settings.</Text>
+      </Card>
+    );
 
   const rail = (
     <>

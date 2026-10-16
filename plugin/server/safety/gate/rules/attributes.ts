@@ -10,7 +10,7 @@ export const ATTRIBUTES_FILE = new RegExp(rule.path!);
 const DRIVER = new RegExp(rule.pattern, rule.flags ?? "");
 const BLANK_ESCAPE = /\\(?:[ntr]|x20|040)/g;
 
-/** Whether text written to an attributes file names such a driver on one of its lines, read with the blank escapes of echo and printf turned to blanks. */
+/** Whether text written to an attributes file names such a driver on one of its lines, the whitespace escapes of echo and printf read as line breaks. */
 export function namesDriver(text: string): boolean {
   return text
     .replace(BLANK_ESCAPE, "\n")

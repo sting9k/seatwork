@@ -1,5 +1,5 @@
 import { checkAnswers, DecisionError, isRecord, type Question, type Reply, type State } from "./contract";
-import type { Wire, WireRequest } from "./dialects";
+import { asText, postTo, type Wire, type WireRequest } from "./dialects";
 
 /** Chat Completions as a decision wire: each question is one call asked for a single token, its answer read from the log probabilities of that token. */
 
@@ -15,8 +15,6 @@ interface Answers {
   keys: string[];
   lines: string[];
 }
-
-const asText = (value: unknown): string => (typeof value === "string" ? value : JSON.stringify(value));
 
 /** The one-token answers of a question: yes or no, a letter for each label, a digit for each level. */
 function answersOf(id: string, question: Question): Answers {
@@ -60,9 +58,7 @@ function answersOf(id: string, question: Question): Answers {
 export function chatRequest(wire: Wire, state: State, id: string, question: Question): WireRequest {
   const { lines } = answersOf(id, question);
   const shown = lines.map((line) => line.split(":")[0]);
-  const headers: Record<string, string> = { "Content-Type": "application/json", Accept: "application/json" };
-  if (wire.key) headers.Authorization = `Bearer ${wire.key}`;
-  const body = {
+  return postTo(wire, {
     model: wire.model,
     messages: [
       {
@@ -85,8 +81,7 @@ export function chatRequest(wire: Wire, state: State, id: string, question: Ques
     max_tokens: 1,
     logprobs: true,
     top_logprobs: TOP_TOKENS,
-  };
-  return { url: wire.url, headers, body: JSON.stringify(body) };
+  });
 }
 
 /** The answer to one question from its reply: the weight of each answer's token variants, a floor for those not seen, made to sum to one. */
@@ -97,7 +92,7 @@ export function chatReply(id: string, question: Question, json: unknown): Reply 
     ?.content?.[0]?.top_logprobs;
   if (!Array.isArray(first) || first.length === 0)
     throw new DecisionError(
-      "CONTRACT",
+      "NO_LOGPROBS",
       `${id}: the reply holds no log probabilities; openai-chat needs an endpoint that gives them`,
     );
   const { tokens, keys } = answersOf(id, question);
@@ -142,4 +137,68 @@ export function chatReply(id: string, question: Question, json: unknown): Reply 
     outputTokens: count(usage.completion_tokens),
     costUsd: null,
   };
+}
+
+/** What a Chat Completions endpoint gives the decision wire: whether it fits, how many likely tokens it shows, their summed weight, and how long a call takes. */
+export interface ChatProbe {
+  fits: boolean;
+  topLogprobs: number | null;
+  weight: number | null;
+  latencyMs: number;
+  notes: string[];
+}
+
+const PROBES = {
+  sharp: "Answer with one word, yes or no: is water wet?",
+  even: "Answer with one word, yes or no: is a hot dog a sandwich?",
+};
+
+/** Asks an endpoint two one-token questions, the most likely tokens first at 20, then at 5: what the wire needs of it, measured. */
+export async function probeChat(wire: Wire, send: typeof fetch = fetch): Promise<ChatProbe> {
+  const notes: string[] = [];
+  const ask = async (content: string, top: number) => {
+    const request = postTo(wire, {
+      model: wire.model,
+      messages: [{ role: "user", content }],
+      temperature: 0,
+      max_tokens: 1,
+      logprobs: true,
+      top_logprobs: top,
+    });
+    const started = Date.now();
+    const response = await send(request.url, { method: "POST", headers: request.headers, body: request.body });
+    const text = await response.text();
+    const latencyMs = Date.now() - started;
+    let json: unknown = null;
+    try {
+      json = JSON.parse(text);
+    } catch {
+      // the status and the text say what went wrong
+    }
+    const shown = (json as { choices?: { logprobs?: { content?: { top_logprobs?: { logprob?: unknown }[] }[] } }[] })
+      ?.choices?.[0]?.logprobs?.content?.[0]?.top_logprobs;
+    const logprobs = Array.isArray(shown)
+      ? shown.map((one) => one?.logprob).filter((lp) => typeof lp === "number")
+      : [];
+    return { status: response.status, text: asText(text).slice(0, 200), latencyMs, logprobs: logprobs as number[] };
+  };
+  let sharp = await ask(PROBES.sharp, TOP_TOKENS);
+  if (sharp.status === 400) sharp = await ask(PROBES.sharp, 5);
+  const none = { fits: false, topLogprobs: null, weight: null, latencyMs: sharp.latencyMs };
+  if (sharp.status !== 200) return { ...none, notes: [`HTTP ${sharp.status}: ${sharp.text}`] };
+  if (sharp.logprobs.length < 2)
+    return { ...none, notes: ["the endpoint answers without the log probabilities of the tokens it might have given"] };
+  const weight = sharp.logprobs.reduce((sum, lp) => sum + Math.exp(lp), 0);
+  const fits = weight <= 1.05 && sharp.logprobs.every((lp) => lp <= 0);
+  if (!fits) notes.push(`the values shown sum to ${weight.toFixed(2)}: they are no log probabilities`);
+  if (sharp.logprobs.length < TOP_TOKENS)
+    notes.push(`it shows ${sharp.logprobs.length} likely tokens; a choice of more labels than that loses weight`);
+  const even = await ask(PROBES.even, sharp.logprobs.length);
+  if (
+    even.status === 200 &&
+    Math.exp(Math.max(...even.logprobs)) >= 0.999 &&
+    Math.exp(Math.max(...sharp.logprobs)) >= 0.999
+  )
+    notes.push("it is all but certain of an open question too: its answers may carry little");
+  return { fits, topLogprobs: sharp.logprobs.length, weight, latencyMs: sharp.latencyMs, notes };
 }

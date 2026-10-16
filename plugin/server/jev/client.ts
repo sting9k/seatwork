@@ -5,7 +5,7 @@ import { replyOf, requestOf, type Dialect, type Wire, type WireRequest } from ".
 
 /** One decision call: a deadline, retries on what may pass, the reply read into the room's shape. */
 
-/** How one call goes: time per attempt and in all, retries, the caller's signal, and stand-ins for fetch, sleep and random. */
+/** How one call goes: time per attempt and in all, retries, the caller's signal, and stand-ins for fetch and sleep. */
 export interface CallOptions {
   attemptMs: number;
   retries: number;
@@ -13,7 +13,6 @@ export interface CallOptions {
   signal?: AbortSignal;
   fetch?: typeof fetch;
   sleep?: (ms: number, signal: AbortSignal | undefined) => Promise<void>;
-  random?: () => number;
 }
 
 /** A reply with how long the call took and how many attempts it made. */
@@ -125,7 +124,6 @@ async function attempt(
 async function sent(request: WireRequest, read: (json: unknown) => Reply, options: CallOptions): Promise<CallResult> {
   const send = options.fetch ?? fetch;
   const sleep = options.sleep ?? pause;
-  const random = options.random ?? Math.random;
   const caller = options.signal;
   const started = Date.now();
   const deadline = started + options.deadlineMs;
@@ -164,7 +162,7 @@ async function sent(request: WireRequest, read: (json: unknown) => Reply, option
         if (!RETRIED(status) && !(status === 402 && wait !== null)) throw last;
       }
       if (tried === options.retries) break;
-      const backoff = Math.min(BACKOFF.maxMs, BACKOFF.firstMs * 2 ** tried) * (1 - random() * BACKOFF.jitter);
+      const backoff = Math.min(BACKOFF.maxMs, BACKOFF.firstMs * 2 ** tried) * (1 - Math.random() * BACKOFF.jitter);
       const delay = Math.max(backoff, wait ?? 0);
       if (Date.now() + delay >= deadline) break;
       await sleep(delay, caller);
@@ -174,6 +172,14 @@ async function sent(request: WireRequest, read: (json: unknown) => Reply, option
     if (error instanceof DecisionError) error.attempts = attempts;
     throw error;
   }
+}
+
+/** A Chat Completions endpoint's refusal of log probabilities, which no retry or other call mends, read as such. */
+function refusesLogprobs(error: unknown): unknown {
+  if (!(error instanceof DecisionError) || error.status !== 400 || !/logprob/i.test(error.message)) return error;
+  const refused = new DecisionError("NO_LOGPROBS", error.message, error.status);
+  refused.attempts = error.attempts;
+  return refused;
 }
 
 /** One decision: one request on most wires, one request a question on Chat Completions, a few at a time; any that fails fails the decision. */
@@ -189,6 +195,7 @@ export async function call(
   const started = Date.now();
   const stop = new AbortController();
   const cancel = () => stop.abort();
+  if (options.signal?.aborted) stop.abort();
   options.signal?.addEventListener("abort", cancel, { once: true });
   const asked = Object.entries(questions);
   const parts: CallResult[] = [];
@@ -202,7 +209,7 @@ export async function call(
               signal: stop.signal,
             }).catch((error: unknown) => {
               stop.abort();
-              throw error;
+              throw refusesLogprobs(error);
             }),
           ),
         )),

@@ -10,6 +10,7 @@ import {
   realOrSelf,
   roomProjectDir,
   writeRegistryFile,
+  type ProjectEntry,
 } from "./registry";
 import { rolesWhere } from "../../shared/workflow";
 import { enabledSeats } from "./seats";
@@ -19,15 +20,10 @@ import { enabledSeats } from "./seats";
 /** The projects the app knows, by name and folder. */
 type ProjectList = () => Promise<{ name: string; path: string }[]>;
 
-interface RegistryEntry {
-  name: string;
-  cwd: string;
-}
-
 const enabledProviders = () => enabledSeats().map((seat) => seat.provider);
 
 /** The app's projects, without the room's own. */
-async function appProjects(list: ProjectList): Promise<{ name: string; path: string }[]> {
+async function appProjects(list: ProjectList) {
   const own = roomProjectDir();
   return (await list()).map((p) => ({ name: p.name, path: realOrSelf(p.path) })).filter((p) => p.path !== own);
 }
@@ -46,8 +42,8 @@ function writeMarker(root: string, content: Record<string, unknown>): void {
 }
 
 /** The projects of the registry file as written. */
-function registryEntries(raw: Record<string, unknown>): RegistryEntry[] {
-  return (Array.isArray(raw.projects) ? raw.projects : []) as RegistryEntry[];
+function registryEntries(raw: Record<string, unknown>): ProjectEntry[] {
+  return (Array.isArray(raw.projects) ? raw.projects : []) as ProjectEntry[];
 }
 
 /** Writes a project's own model table, or takes it out; returns the seats set up for it. */
@@ -85,33 +81,22 @@ interface ProjectTable {
 /** Every registered project with the model table of its own, if it has one. */
 export function projectTables(): ProjectTable[] {
   const providers = enabledProviders();
-  return (loadRegistry()?.projects ?? []).map((entry) => {
+  return (loadRegistry()?.projects ?? []).map(({ name, cwd: root }): ProjectTable => {
+    let models: unknown;
     try {
-      const { models } = readRoomJson(entry.cwd);
-      const own = models !== undefined;
-      const table = {
-        name: entry.name,
-        root: entry.cwd,
-        own,
-        models: (own && typeof models === "object" && models !== null && !Array.isArray(models)
-          ? models
-          : {}) as Record<string, unknown>,
-      };
-      try {
-        projectModels(models, providers, ".seatwork/room.json");
-        return { ...table, error: null };
-      } catch (error) {
-        return { ...table, error: error instanceof Error ? error.message : String(error) };
-      }
+      models = readRoomJson(root).models;
     } catch (error) {
-      return {
-        name: entry.name,
-        root: entry.cwd,
-        own: true,
-        models: {},
-        error: `.seatwork/room.json cannot be read: ${error instanceof Error ? error.message : String(error)}`,
-      };
+      const why = error instanceof Error ? error.message : String(error);
+      return { name, root, own: true, models: {}, error: `.seatwork/room.json cannot be read: ${why}` };
     }
+    let error: string | null = null;
+    try {
+      projectModels(models, providers, ".seatwork/room.json");
+    } catch (thrown) {
+      error = thrown instanceof Error ? thrown.message : String(thrown);
+    }
+    const table = typeof models === "object" && models !== null && !Array.isArray(models) ? models : {};
+    return { name, root, own: models !== undefined, models: table as Record<string, unknown>, error };
   });
 }
 
@@ -158,8 +143,8 @@ export async function describeProjects(list: ProjectList): Promise<string> {
     .join("\n");
 }
 
-/** Checks a project against the registry's entries: refused when another holds its name or it is listed under another; returns its own entry, if any. */
-function claimOf(entries: readonly RegistryEntry[], name: string, path: string): { known: RegistryEntry | undefined } {
+/** Refuses a project whose name another holds or that is listed under another name; returns its own entry, if any. */
+function claimOf(entries: readonly ProjectEntry[], name: string, path: string): { known: ProjectEntry | undefined } {
   const clash = entries.find((e) => e.name === name && realOrSelf(e.cwd) !== path);
   if (clash) throw new Error(`the name ${name} already belongs to ${clash.cwd}; give another name`);
   const known = entries.find((e) => realOrSelf(e.cwd) === path);
@@ -167,7 +152,7 @@ function claimOf(entries: readonly RegistryEntry[], name: string, path: string):
   return { known };
 }
 
-/** Registers a project the app knows (marker, mission, law, own table, registry line), repeatably; the registry is read and written in one step, so projects registered at once all stay. */
+/** Registers a project the app knows (marker, mission, law, own table, registry line), repeatably; the registry is read and written in one step so concurrent registrations all stay. */
 export async function registerProject(
   list: ProjectList,
   args: { path: string; name?: string; mission?: string; law?: string; models?: unknown },
@@ -200,7 +185,7 @@ export async function registerProject(
   return `${known ? "already registered" : "registered"}: ${name} at ${project.path}. ${modelsLine(project.path)}.${seats} ${missing.length ? `Still missing: ${missing.join("; ")}.` : "Mission and law are in place."}`;
 }
 
-/** Takes a project out of the registry; refused while a seat of it is open. The file is read and written in one step, after the open seats are asked. */
+/** Takes a project out of the registry, refused while a seat of it is open; the file is read and written after the open seats are asked. */
 export async function unregisterProject(
   project: string,
   openSeats: () => Promise<{ title: string; cwd: string }[]>,

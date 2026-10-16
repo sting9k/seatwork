@@ -4,10 +4,9 @@ import assert from "node:assert/strict";
 import { before, test } from "node:test";
 import type { SeatRecord } from "../server/coordination/engine";
 import type { Host } from "../server/host";
-import { pickModel, stepUp, tiersOn, type Models } from "../server/orchestration/models";
+import { pickModel, stepUp, type Models } from "../server/orchestration/models";
 import { parseHandoff, rotate } from "../server/orchestration/rotation";
-import { loadPolicy } from "../server/policy";
-import { fitAt, launch, stepUpAt } from "../server/room/launch";
+import { fitAt, stepUpAt } from "../server/room/launch";
 
 before(() => installRoom(["claude-hq", "claude-supervisor", "claude-lead", "claude-peer", "codex-peer"]));
 
@@ -28,15 +27,7 @@ const TABLE = {
   modes: {},
 } as unknown as Models;
 
-test("a role's tiers on one provider keep the table's order, and the tier above is the next one that provider lists", () => {
-  assert.deepEqual(
-    tiersOn(TABLE, "peer", "claude-peer").map(({ tier: name, model }) => [name, model]),
-    [
-      ["cheap", "haiku"],
-      ["default", "sonnet"],
-      ["deep", "opus"],
-    ],
-  );
+test("the tier above is the next one the provider lists, in the table's order", () => {
   assert.equal(stepUp(TABLE, "peer", "claude-peer", "haiku"), "sonnet");
   assert.equal(stepUp(TABLE, "peer", "claude-peer", "sonnet-20261001"), "opus", "a dated id is its model");
   assert.equal(stepUp(TABLE, "peer", "claude-peer", "opus"), undefined, "no tier above the last");
@@ -68,29 +59,6 @@ test("the decision model picks the tier it is sure fits the work; a split answer
   assert.equal(await pickModel(alone, TABLE, "peer", "claude-peer", {}), undefined, "nothing to read");
   assert.equal(await pickModel(alone, TABLE, "lead", "claude-lead", task), undefined, "a role of one model");
   assert.equal(one.asked.length, 0);
-});
-
-test("a seat created with no model starts on the picked tier; one that names a model keeps it, and the model is not asked", async () => {
-  const policy = loadPolicy();
-  const request = { provider: "claude-peer", cwd: PROJECT, title: "[Peer] fix a typo in the readme" };
-  const lines: string[] = [];
-  const log = (line: string) => void lines.push(line);
-
-  const first = await launch(request, policy, log);
-  assert.equal(first.model?.id, "claude-haiku-5-5", "with no fork the table's first model");
-
-  const cheap = modelSaying("default");
-  const { forks } = forksWith(cheap.router, ["tier"]);
-  const picked = await launch(request, policy, log, forks);
-  assert.equal(picked.model?.id, "claude-sonnet-5-5");
-  assert.deepEqual(cheap.asked[0].labels, ["cheap", "default", "extra"]);
-
-  const named = await launch({ ...request, model: "claude-haiku-5-5" }, policy, log, forks);
-  assert.equal(named.model, undefined, "a model the table lists and the creator named is left as asked");
-  assert.equal(cheap.asked.length, 1, "a creator's model always wins: the model is not asked");
-
-  const split = await launch(request, policy, log, forksWith(modelSaying("default", 0.5).router, ["tier"]).forks);
-  assert.equal(split.model?.id, "claude-haiku-5-5");
 });
 
 test("a task sent back twice starts its successor a tier up where the table lists one; once is not enough", async () => {

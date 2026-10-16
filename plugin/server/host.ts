@@ -58,9 +58,12 @@ export type TurnEvent =
 /** How a turn ended. */
 export type TurnOutcome = { kind: "completed" } | { kind: "canceled" } | { kind: "failed"; error: string };
 
+/** A call the app cannot answer yet: it has not handed the room its client, as at the room's first minute. */
+export class HostNotReady extends Error {}
+
 export interface Host {
   state(agentId: string): Promise<SeatState>;
-  /** Hands text to a seat; `interrupt` ends a running turn first, else it steers. The app hands over once what comes again under its `id` with the same text and `interrupt`. */
+  /** Hands text to a seat (`interrupt` ends a running turn first, else it steers); asked again with the same `id`, text and `interrupt`, it hands over once. */
   send(agentId: string, text: string, interrupt: boolean, id?: string): Promise<void>;
   /** Moves the app's own record of a seat's parent. */
   reparent(child: string, parent: string): Promise<void>;

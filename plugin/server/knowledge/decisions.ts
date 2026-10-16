@@ -116,8 +116,8 @@ export interface DecisionDeps {
   projectOf(agent: string): string | null;
   projects(): string[];
   rootOf(cwd: string): string | null;
-  gate: Gate | null;
-  pairs: PairBook | null;
+  gate: Gate;
+  pairs: PairBook;
   now(): Date;
 }
 
@@ -326,7 +326,7 @@ export class DecisionBook {
     });
     if (read) {
       this.nearShown.delete(agent);
-      this.deps.pairs?.keep(book, { id: pending.id, text: textOf(pending) }, read.olds, agent, read.reading);
+      this.deps.pairs.keep(book, { id: pending.id, text: textOf(pending) }, read.olds, agent, read.reading);
     }
     if (needsPerson && !source)
       return {
@@ -385,13 +385,11 @@ export class DecisionBook {
     args: Record<string, unknown>,
   ): Promise<{ olds: Older[]; reading: Reading | null }> {
     const { olds, byId } = this.oldsOf(agent, key, decision, current, args.new_topic === true);
-    const verdict = this.deps.gate
-      ? await this.deps.gate.check(
-          this.deps.book(),
-          { text: textOf(decision), facts: { scope: key.split(":")[0] } },
-          olds,
-        )
-      : { kept: true as const, reading: null };
+    const verdict = await this.deps.gate.check(
+      this.deps.book(),
+      { text: textOf(decision), facts: { scope: key.split(":")[0] } },
+      olds,
+    );
     if ("noise" in verdict)
       throw new KnowledgeRefused(
         `not recorded: it reads as ${verdict.noise.label}, ${verdict.noise.meaning}. A decision is a rule that later work follows; if the person meant one, restate it as that rule.`,
@@ -587,7 +585,7 @@ export class DecisionBook {
     const at = this.now();
     const scopes =
       args.all === true && this.deps.isRoomSeat(agent)
-        ? ["room", ...this.deps.projects().flatMap((root) => [`project:${root}`])]
+        ? ["room", ...this.deps.projects().map((root) => `project:${root}`)]
         : this.scopesOf(agent);
     return {
       now: at,

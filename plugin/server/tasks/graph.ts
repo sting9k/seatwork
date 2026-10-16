@@ -11,8 +11,16 @@ export interface Work {
   blocked: ReadonlyMap<string, readonly string[]>;
 }
 
-const { weights, urgentLabels, impactShare, unblockBoost, readyBoost, exactBetweennessUpTo, sampledSources } =
-  config.triage;
+const {
+  weights,
+  urgentLabels,
+  impactShare,
+  unblockBoost,
+  readyBoost,
+  exactBetweennessUpTo,
+  sampledSources,
+  overlapsShown,
+} = config.triage;
 const URGENT = new Set(urgentLabels);
 
 /** Open issues by number: blockers[i] is what i waits for, dependents[i] what waits for i, parent[i] its parent. */
@@ -307,8 +315,8 @@ const scopeOf = (issue: Issue) =>
     .map((token) => (/[*?[{]/.test(token) ? token.replace(/\/?[^/]*[*?[{].*$/, "") : token.replace(/\/+$/, "")))
     .filter((token) => /[A-Za-z0-9]/.test(token));
 
-/** Pairs of issues whose write scopes share a path or hold one inside the other. */
-function collisions(issues: readonly Issue[]): { a: string; b: string; paths: string[] }[] {
+/** Pairs of issues whose write scopes share a path or hold one inside the other: the `overlapsShown` sharing most paths, and how many more there are. */
+function collisions(issues: readonly Issue[]): { listed: Plan["overlaps"]; more: number } {
   const owners = new Map<string, Set<string>>();
   const scopes = issues.map((issue) => [issue.id, scopeOf(issue)] as const);
   for (const [id, paths] of scopes) for (const path of paths) owners.set(path, (owners.get(path) ?? new Set()).add(id));
@@ -323,10 +331,16 @@ function collisions(issues: readonly Issue[]): { a: string; b: string; paths: st
           pairs.set(key, (pairs.get(key) ?? new Set()).add(outer));
         }
       }
-  return [...pairs].map(([key, paths]) => ({ a: key.split("|")[0], b: key.split("|")[1], paths: [...paths].sort() }));
+  const worst = [...pairs]
+    .sort(([keyA, a], [keyB, b]) => b.size - a.size || keyA.localeCompare(keyB))
+    .slice(0, overlapsShown);
+  return {
+    listed: worst.map(([key, paths]) => ({ a: key.split("|")[0], b: key.split("|")[1], paths: [...paths].sort() })),
+    more: pairs.size - worst.length,
+  };
 }
 
-/** What a plan answers: the tracks that can run side by side, the counts and the scopes that collide. */
+/** What a plan answers: the tracks that can run side by side, the counts and the scopes that collide; `moreOverlaps` counts the pairs left unlisted, absent when none is. */
 export interface Plan {
   tracks: {
     track: string;
@@ -335,6 +349,7 @@ export interface Plan {
   ready: number;
   blocked: number;
   overlaps: { a: string; b: string; paths: string[]; read?: string }[];
+  moreOverlaps?: number;
 }
 
 /** Pairs of a plan's issues whose overlap no path can tell, one side's scope naming none; none when there are more than `most`. */
@@ -402,11 +417,13 @@ export function plan(work: Work, now: Date): Plan {
       track: `track-${index + 1}`,
       items: items.map(({ id, title, priority, status, unblocks }) => ({ id, title, priority, status, unblocks })),
     }));
+  const { listed, more } = collisions(can.map((one) => graph.issues[graph.at.get(one.id)!]));
   return {
     tracks,
     ready: can.filter((one) => one.status === "open").length,
     blocked: scored.length - can.length,
-    overlaps: collisions(can.map((one) => graph.issues[graph.at.get(one.id)!])),
+    overlaps: listed,
+    ...(more > 0 ? { moreOverlaps: more } : {}),
   };
 }
 

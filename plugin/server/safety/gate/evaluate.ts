@@ -12,6 +12,7 @@ import { gitRules, givesProgram, PROGRAM_VARIABLES, type GitTools } from "./rule
 import { namesDriver, ATTRIBUTES_FILE } from "./rules/attributes";
 import { cliWords, namesPaseo, paseoCommand, reachesDaemon, startsPaseo } from "./rules/paseo";
 import { rmRules, wouldBlockAsRm, type RmTools } from "./rules/rm";
+import { namesSecret, readsFolders, secretAt } from "./rules/secrets";
 import { execFlags, runners } from "./runners";
 import { writtenTexts } from "./writes";
 import {
@@ -45,7 +46,7 @@ import type { Doubt, Finding, Known, Place, Scene, Variable } from "./types";
 
 /** Walks a command line as the shell would; the rules are those of DCG, a destructive command guard, and the packs. */
 
-/** What the rules ask of the machine: git, the file system, the files changed since the last commit, and the real file a command word runs. */
+/** What the rules ask of the machine: git, the file system, the files the room's seats changed, and the real file a command word runs. */
 export interface Tools extends RmTools, GitTools, FileTools {
   changed(path: string): Promise<string | null>;
   folder?(path: string): boolean;
@@ -59,7 +60,7 @@ export interface Rc {
   functions: string;
 }
 
-const seededFunctions = new WeakMap<Rc, Map<string, Defs>>();
+const seededTables = new WeakMap<Rc, { aliases: Map<string, string[]>; funcs: Map<string, Defs> }>();
 
 /** The packs in force, the owner's exemptions (`pack:rule` to target globs), and the limits on a line. */
 export interface GateConfig {
@@ -105,9 +106,8 @@ export async function evaluate(
 
 /** A line's start with the aliases and functions of the user's rc: what they run is judged where the line calls them. */
 async function seed(state: State, rc: Rc, place: Place, config: GateConfig, tools: Tools): Promise<void> {
-  for (const [name, value] of rc.aliases) state.aliases.set(name, [value]);
-  let functions = seededFunctions.get(rc);
-  if (!functions) {
+  let seeded = seededTables.get(rc);
+  if (!seeded) {
     // read apart: a line of the rc the room cannot parse is no doubt about the seat's command
     const scratch = startState(null);
     await new Walk(place, config, { ...tools, rc: undefined }, Date.now() + config.budgetMs).text(
@@ -115,10 +115,25 @@ async function seed(state: State, rc: Rc, place: Place, config: GateConfig, tool
       scratch,
       0,
     );
-    functions = scratch.funcs;
-    seededFunctions.set(rc, functions);
+    const aliases = new Map([...rc.aliases].map(([name, value]): [string, string[]] => [name, [value]]));
+    seeded = { aliases, funcs: scratch.funcs };
+    seededTables.set(rc, seeded);
   }
-  for (const [name, defs] of functions) state.funcs.set(name, defs);
+  state.aliases = new Map(seeded.aliases);
+  state.funcs = new Map(seeded.funcs);
+}
+
+/** Whether a glob of the shell's would name a path: `*` and `?` within one folder, a class as written. */
+function globMatches(glob: string, path: string): boolean {
+  const source = glob
+    .replace(/[.+^${}()|\\]/g, "\\$&")
+    .replace(/\*/g, "[^/]*")
+    .replace(/\?/g, "[^/]");
+  try {
+    return new RegExp(`^${source}$`).test(path);
+  } catch {
+    return false;
+  }
 }
 
 /** One evaluation: reads the line, keeps the state the shell would, and judges each simple command. */
@@ -280,7 +295,7 @@ class Walk implements Reader {
     }
   }
 
-  /** The bodies of a compound command: a branch starts where its condition left the line, a loop body is read again, and what follows stands after any branch or none. */
+  /** The bodies of a compound command: a branch starts where its condition left the line, and a loop body is read again. */
   private async bodies(command: Compound, state: State, fed: boolean, ctx: Context): Promise<void> {
     if (command.kind === "arith") {
       for (const body of command.bodies) await this.nested(body, state, ctx);
@@ -389,7 +404,17 @@ class Walk implements Reader {
     const call = invocationOf(simple);
     if (call.query) return;
     if (call.name === null && call.command) return this.dynamicCommand(simple, call, state, ctx);
-    const scene = this.scene(simple, this.named(throughUnread(call), state), state, ctx);
+    const through = throughUnread(call);
+    // behind a wrapper, a word known only at run time may be the program itself
+    const hidden = through === call && call.unread ? call.args.findIndex((w) => literal(w) === null) : -1;
+    if (hidden >= 0)
+      await this.dynamicCommand(
+        simple,
+        { ...call, name: null, command: call.args[hidden], args: call.args.slice(hidden + 1) },
+        state,
+        ctx,
+      );
+    const scene = this.scene(simple, this.named(through, state), state, ctx);
     this.seenNames.add(scene.call.name ?? "");
     await this.builtins(scene, state, ctx);
     await this.judge(scene, state, ctx);
@@ -397,7 +422,7 @@ class Walk implements Reader {
     await this.call(scene, state, ctx);
   }
 
-  /** An alias defined on the line, replaced by its text where it stands first, once; where the line may not have defined it, the command also stays as it is. */
+  /** An alias on the line, replaced once by its text where it heads a command; where the line may not have defined it, the command also stays as written. */
   private async expand(name: string, bodies: string[], simple: Simple, state: State, ctx: Context): Promise<void> {
     const first = simple.words[0];
     const spelled = simple.end > simple.start;
@@ -581,7 +606,7 @@ class Walk implements Reader {
     this.noteWrites(scene, state);
   }
 
-  /** The text of files this command writes from literals, for a shell or interpreter that runs them later; a `.gitattributes` that names a driver is a finding, and one written with text the room cannot read is a doubt. */
+  /** The text of files this command writes from literals; a `.gitattributes` that names a driver is a finding, and one written with text the room cannot read a doubt. */
   private noteWrites(scene: Scene, state: State): void {
     const known = this.known(state);
     const read = new Set<string>();
@@ -637,6 +662,8 @@ class Walk implements Reader {
       this.out.add("room.guard", "paseo-cli", scene.text, "a link to the Paseo CLI");
     const reach = reachesDaemon(this.spelled(scene, state), this.place);
     if (reach) this.out.add("room.guard", "paseo-daemon", scene.text, reach);
+    const secret = this.secretRead(scene, state);
+    if (secret) this.out.add("room.guard", "secret-read", scene.text, secret);
     this.copies.note(scene);
     for (const hit of declaredHits(scene, this.config.packs)) this.out.add(hit.pack, hit.rule, scene.text);
     // files written earlier on the line are not read for a client, so its input stays unverified
@@ -645,7 +672,7 @@ class Walk implements Reader {
     await execFlags(this, scene, state, ctx);
   }
 
-  /** The programs git is given through its variables: the ones that name a program, and `GIT_CONFIG_KEY_n` and `_VALUE_n` pairs that set a key that does; one only known at run time is a finding. */
+  /** The programs git is given through its variables and `GIT_CONFIG_KEY_n`/`_VALUE_n` pairs; one only known at run time is a finding. */
   private gitPrograms(scene: Scene, state: State): string[] {
     const known = this.known(state);
     const read = (name: string): string | null | undefined => {
@@ -683,6 +710,28 @@ class Walk implements Reader {
     const known = this.known(state);
     const words = [scene.call.command, ...scene.call.args, ...scene.simple.redirects.map((r) => r.target)];
     return [scene.text, ...words.map((word) => (word ? (valueOf(word, known).text ?? "") : ""))].join("\n");
+  }
+
+  /** The secret a command reads: one a word or a redirect names as a path, a glob may match or a folder read whole holds, or one its line spells; null for none. */
+  private secretRead(scene: Scene, state: State): string | null {
+    const secrets = this.place.guard?.secrets;
+    if (!secrets?.length) return null;
+    const known = this.known(state);
+    const values = scene.call.args.map((word) => valueOf(word, known));
+    const sources = readsFolders(
+      scene.call.name,
+      values.map((value) => value.text),
+    );
+    const targets = scene.simple.redirects.flatMap((r) => (r.target ? [valueOf(r.target, known)] : []));
+    for (const [at, value] of [...values, ...targets].entries()) {
+      const path = absolute(value, state.cwd);
+      if (!path) continue;
+      const found = value.glob
+        ? secrets.find((s) => (s.endsWith("/") && `${path}/`.startsWith(s)) || globMatches(path, s.replace(/\/$/, "")))
+        : secretAt(path, secrets, at < values.length && sources(at));
+      if (found) return found;
+    }
+    return namesSecret(this.spelled(scene, state), secrets, this.place.home);
   }
 
   /** A start of the Paseo CLI: stopped when the words after it name a command. */

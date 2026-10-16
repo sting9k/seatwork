@@ -1,5 +1,5 @@
 {
-  "$comment": "Files whose writing gives a foothold; paths under home are relative to it, names compare without case. append and free: still writable (appended to, or by glob); envRoots: the folder under home a variable names; anchors and anchorFiles: names read as under home; roomHomeFiles: the room's own; gitRuns: patterns of the paths inside a .git folder that git reads programs from.",
+  "$comment": "Files whose writing gives a foothold, and secrets no seat reads; paths under home are relative to it, names compare without case. append and free: still writable (appended to, or by glob); envRoots: the folder under home a variable names; anchors and anchorFiles: names read as under home; roomHomeFiles: the room's own; roomFolderOpen: the files of the room's folder in a project that seats keep for the person; gitRuns: patterns of the paths inside a .git folder that git reads programs from. secrets: the daemon's files in its home (paseoHome) and the room's key folders (roomHome), never read by a seat: with them a program is the daemon's owner or spends the room's keys; named: their names, which stand for them wherever they are spelled.",
   "homeDirs": [".ssh", ".gnupg", ".bashrc.d", ".zshrc.d", ".password-store", ".config/gcloud/legacy_credentials"],
   "homeFiles": [
     ".aws/credentials",
@@ -54,11 +54,17 @@
   "anchors": [".ssh", ".gnupg", ".aws", ".kube", ".docker", ".bashrc.d", ".zshrc.d", ".git"],
   "anchorFiles": [".bashrc", ".bash_profile", ".bash_login", ".profile", ".zshrc", ".zshenv", ".zprofile", ".zlogin"],
   "roomHomeFiles": [".gitconfig", ".config/git/config"],
+  "roomFolderOpen": ["status.md"],
   "gitRuns": [
     "^$",
     "^config(\\.worktree)?$",
     "^hooks(/|$)",
     "^info/attributes$",
     "^(modules|worktrees)/.+/(config(\\.worktree)?|hooks(/.*)?|info/attributes)$"
-  ]
+  ],
+  "secrets": {
+    "paseoHome": ["local-credential", "config.json", "daemon-keypair.json", "cli-client-id", "server-id"],
+    "roomHome": ["jev", "watch"],
+    "named": ["local-credential", "daemon-keypair.json"]
+  }
 }

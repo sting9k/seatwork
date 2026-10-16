@@ -50,7 +50,9 @@ function daemonPattern(listen: string | null | undefined, home: string): RegExp 
     const at = listen.lastIndexOf(":");
     const port = /^\d+$/.test(listen.trim()) ? listen.trim() : listen.slice(at + 1);
     const host = at < 0 ? "" : listen.slice(0, at).replace(/^\[(.*)\]$/, "$1");
-    const hosts = host && !new RegExp(`^(?:${LOOPBACK}|::)$`).test(host) ? `${LOOPBACK}|${escape(host)}` : LOOPBACK;
+    const named = host && !new RegExp(`^(?:${LOOPBACK}|::)$`).test(host) ? `${LOOPBACK}|${escape(host)}` : LOOPBACK;
+    // a host only known at run time may be this machine
+    const hosts = `${named}|\\$\\{?[A-Za-z_]\\w*\\}?`;
     if (/^\d+$/.test(port)) re = new RegExp(`(?<![\\w.:-])\\[?(?:${hosts})\\]?(?::|/|[\\s'",]+)${port}(?!\\d)`);
   }
   pattern = { key, re };

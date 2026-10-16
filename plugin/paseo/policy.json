@@ -93,10 +93,9 @@
     }
   },
   "claude": {
-    "$comment": "Claude Code's permission syntax. A tool sits in one named set; a role is denied the sets it lists, in that order. paseoShell: Paseo from the shell; HQ and the Supervisor may read and lose only the commands that act (paseoShellActs). ownOrchestration: Claude's own scheduling, messaging, teams and task list. ownDialogs: what Claude Code opens toward its own user or keeps for itself; behind its question dialog a seat stays in its turn and the room hears nothing, so a seat asks in its final message or by mail.",
+    "$comment": "Claude Code's permission syntax. launch.extraArgs.tools is every Claude Code tool a seat has; the room's and Paseo's tools come over MCP. A role is denied the shell sets it lists. nestedHarness: another agent CLI. paseoShell: Paseo from the shell; HQ and the Supervisor may read and lose only the commands that act (paseoShellActs). A seat asks in its final message or by mail: behind Claude Code's own question dialog it stays in its turn and the room hears nothing.",
     "disallowedTools": {
       "sets": {
-        "subAgents": ["Agent", "Task"],
         "nestedHarness": ["Bash(claude:*)", "Bash(codex:*)", "Bash(pi:*)", "Bash(opencode:*)"],
         "paseoShellActs": [
           "Bash(paseo run:*)",
@@ -105,41 +104,13 @@
           "Bash(paseo agent:*)",
           "Bash(paseo schedule:*)"
         ],
-        "paseoShell": ["Bash(paseo:*)"],
-        "ownOrchestration": [
-          "ScheduleWakeup",
-          "CronCreate",
-          "CronDelete",
-          "CronList",
-          "Workflow",
-          "SendMessage",
-          "ListAgents",
-          "TeamCreate",
-          "TeamDelete",
-          "TaskCreate",
-          "TaskGet",
-          "TaskList",
-          "TaskUpdate",
-          "TaskStop",
-          "TaskOutput",
-          "RemoteTrigger",
-          "Monitor"
-        ],
-        "ownDialogs": [
-          "AskUserQuestion",
-          "EnterPlanMode",
-          "ExitPlanMode",
-          "EnterWorktree",
-          "ExitWorktree",
-          "PushNotification",
-          "DesignSync"
-        ]
+        "paseoShell": ["Bash(paseo:*)"]
       },
       "roles": {
-        "hq": ["subAgents", "nestedHarness", "paseoShellActs", "ownOrchestration", "ownDialogs"],
-        "supervisor": ["subAgents", "nestedHarness", "paseoShellActs", "ownOrchestration", "ownDialogs"],
-        "lead": ["subAgents", "nestedHarness", "paseoShell", "ownOrchestration", "ownDialogs"],
-        "peer": ["subAgents", "nestedHarness", "paseoShell", "ownOrchestration", "ownDialogs"]
+        "hq": ["nestedHarness", "paseoShellActs"],
+        "supervisor": ["nestedHarness", "paseoShellActs"],
+        "lead": ["nestedHarness", "paseoShell"],
+        "peer": ["nestedHarness", "paseoShell"]
       }
     },
     "launch": {
@@ -154,7 +125,8 @@
       },
       "extraArgs": {
         "setting-sources": "project,local",
-        "strict-mcp-config": null
+        "strict-mcp-config": null,
+        "tools": "Bash,Edit,Glob,Grep,Read,Skill,Write,WebFetch,WebSearch"
       }
     },
     "$comment_launch": "How a seat starts. Claude seats run on the user's ~/.claude: extraArgs keep the sign-in only (no user settings, no personal MCP server) and env turns off what Claude Code adds itself; strict-mcp-config alone still loads claude.ai connectors. Paseo's own settings flag (fastMode) replaces any other, so the Co-Authored-By reminder is called off in room/harness/claude-system.md instead. Other harnesses get a home of their own: {runtime} is ~/.config/seatwork/runtimes/<harness>/<role>. Setup writes each launch block into the harness's providers (env; extraArgs under options), so a seat starts this way with the plugin off too.",
@@ -172,9 +144,11 @@
       "security-review",
       "review",
       "batch",
-      "debug"
+      "debug",
+      "design",
+      "doctor"
     ],
-    "$comment_deniedSkills": "Bundled Claude Code skills that overlap the room, denied as Skill(skill:<name>) in the provider's disallowedTools: the guard for a Claude Code that does not know CLAUDE_CODE_DISABLE_BUNDLED_SKILLS."
+    "$comment_deniedSkills": "Skills Claude Code brings itself that overlap the room, denied as Skill(skill:<name>) in the provider's disallowedTools: CLAUDE_CODE_DISABLE_BUNDLED_SKILLS does not turn off every one."
   },
   "codex": {
     "launch": {
@@ -199,9 +173,13 @@
         "computer_use",
         "apps",
         "memories",
-        "plugins"
+        "plugins",
+        "goals",
+        "sleep_tool"
       ],
-      "$comment_featuresOff": "plugins: off, because with it on Codex syncs its marketplace into every seat's home at each start and a seat gets no plugin from it. An owner who sets sharePlugins removes it from this list.",
+      "$comment_featuresOff": "plugins: off, because with it on Codex syncs its marketplace into every seat's home at each start and a seat gets no plugin from it. An owner who sets sharePlugins removes it from this list. goals and sleep_tool: Codex's own goals and its sleep, which the room's tasks and wakes hold.",
+      "toolsOff": ["experimental_request_user_input"],
+      "$comment_toolsOff": "Codex's [tools] a seat goes without: its question tool keeps it in its turn while nobody in the room sees the question; a seat asks in its final message or by mail.",
       "multiAgentV2Off": true,
       "agentsOff": true
     }
@@ -234,7 +212,11 @@
       "config": {
         "$schema": "https://opencode.ai/config.json",
         "permission": {
-          "task": "deny"
+          "task": "deny",
+          "question": "deny",
+          "todowrite": "deny",
+          "repo_clone": "deny",
+          "repo_overview": "deny"
         },
         "agent": {
           "general": {
@@ -295,21 +277,36 @@
         "rebuilt": [".tmp", "tmp", "shell_snapshots", "logs_2.sqlite", "logs_2.sqlite-shm", "logs_2.sqlite-wal"],
         "sessions": ["sessions", "archived_sessions"]
       },
-      "pi": { "rebuilt": [], "sessions": ["sessions"] },
-      "opencode": { "rebuilt": [], "sessions": [] }
+      "pi": {
+        "rebuilt": [],
+        "sessions": ["sessions"]
+      },
+      "opencode": {
+        "rebuilt": [],
+        "sessions": []
+      }
     }
   },
   "safety": {
     "$comment": "The room's guard. rules: \"pack:rule\" or \"pack:*\" to deny, ask, warn or log; a pack-wide one never lowers a critical rule. allow and exempt are the person's to write. handin.mode: block, warn or off. handin.registry: a new dependency's first release is read from its public registry (npm, PyPI, crates.io).",
     "mode": "on",
-    "packs": { "add": [], "remove": [] },
+    "packs": {
+      "add": [],
+      "remove": []
+    },
     "rules": {},
     "allow": [],
     "exempt": {},
     "budgetMs": 1000,
     "codeHours": 24,
-    "repeat": { "count": 3, "minutes": 30 },
-    "handin": { "mode": "block", "registry": true },
+    "repeat": {
+      "count": 3,
+      "minutes": 30
+    },
+    "handin": {
+      "mode": "block",
+      "registry": true
+    },
     "council": {
       "$comment": "The council that reads each turn of a briefed, writing or reviewing seat (shared/safety/council.json). levels: a member's level on this machine, over the shipped one, at most 2 (labels alone earn the level that sends a hand-in back). Readings no label holds are kept keepDays; tickSeconds paces the look at running turns. chairMinutes: how long an appeal waits for the chair's ruling before it lapses, 30 when not set.",
       "mode": "on",
@@ -336,10 +333,21 @@
         "keyEnv": "",
         "usdPerMillionInput": 0.042
       },
-      "custom": { "url": "", "model": "", "dialect": "systemone", "keyEnv": "", "usdPerMillionInput": 0 }
+      "custom": {
+        "url": "",
+        "model": "",
+        "dialect": "systemone",
+        "keyEnv": "",
+        "usdPerMillionInput": 0
+      }
     },
     "monthlyCapUsd": 10,
-    "dailyCapUsd": { "council": 0.25, "knowledge": 0.1, "forks": 0.25, "seats": 0.25 },
+    "dailyCapUsd": {
+      "council": 0.25,
+      "knowledge": 0.1,
+      "forks": 0.25,
+      "seats": 0.25
+    },
     "attemptSeconds": 10,
     "retries": 2,
     "keepDays": 90,

@@ -19,7 +19,7 @@ export class PairBook {
     item: { id: number; text: string },
     olds: readonly Older[],
     seat: string,
-    reading: Reading | null = null,
+    reading: Reading | null,
   ): void {
     if (olds.length === 0) return;
     try {

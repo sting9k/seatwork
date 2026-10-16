@@ -1,7 +1,8 @@
 import { runGit } from "../git";
+import { NOT_ROOM_FOLDER } from "../paths";
 import { createHash } from "node:crypto";
 import { lstatSync, readFileSync } from "node:fs";
-import { basename, dirname, extname, join } from "node:path";
+import { basename, dirname, extname, join, resolve } from "node:path";
 import table from "../../shared/safety/handin.json";
 import type { Manager } from "./registry";
 import { ASSERTION, gamingOf, type GamingEvidence } from "./council/gaming";
@@ -23,7 +24,7 @@ interface Found {
   hint: string;
 }
 
-/** The check's result for a seat; `partial` is never read as clean; `gaming`: tests bent to pass; `related`: unchanged tests naming a change. */
+/** The check's result for a seat; `partial` is never read as clean; `left`: findings past the most one pass keeps, by level; `gaming`: tests bent to pass; `related`: unchanged tests naming a change. */
 export interface HandIn {
   state: "clean" | "blocked" | "partial" | "empty";
   files: number;
@@ -31,6 +32,7 @@ export interface HandIn {
   acknowledged: FindingRow[];
   warnings: FindingRow[];
   why: string | null;
+  left?: Record<Level, number>;
   gaming?: GamingEvidence | null;
   related?: string[];
   tests?: TestCount;
@@ -38,7 +40,7 @@ export interface HandIn {
 }
 
 /** The test lines a hand-in added and removed, in how many test files, beside how many changed source files. */
-export interface TestCount {
+interface TestCount {
   added: number;
   removed: number;
   files: number;
@@ -49,8 +51,6 @@ export interface TestCount {
 export interface Dependency {
   manager: Manager;
   name: string;
-  path: string;
-  line: number;
   firstRelease: string | null;
 }
 
@@ -72,9 +72,10 @@ interface Rule {
   hint: string;
 }
 
-/** A file's changes since the start: its added lines with their numbers, its removed lines, whether it is gone. */
+/** A file's changes since the start: its added lines with their numbers, its removed lines, whether it is gone; `path` is the work tree's own, `file` is where it is read. */
 export interface Change {
   path: string;
+  file: string;
   added: [number, string][];
   removed: string[];
   deleted: boolean;
@@ -95,7 +96,7 @@ export const isTestPath = (path: string): boolean => TESTS.some((p) => p.test(pa
 const CHECK_CONFIG = table.checkConfig.map((p) => new RegExp(p));
 const CHECK_KEYS = new RegExp(table.checkKeys);
 const MANIFEST =
-  /(^|\/)(package\.json|composer\.json|pom\.xml|(build|settings)\.gradle(\.kts)?|Gemfile|Package\.swift|go\.mod|Cargo\.toml|pyproject\.toml|requirements[^/]*\.(txt|in))$|\.(csproj|fsproj|vbproj)$/;
+  /(^|\/)(package\.json|composer\.json|pom\.xml|(build|settings)\.gradle(\.kts)?|Gemfile|Package\.swift|go\.mod|Cargo\.toml|pyproject\.toml|Directory\.Packages\.props|requirements[^/]*\.(txt|in))$|\.(csproj|fsproj|vbproj)$/;
 const LITERAL = /"(?:[^"\\\n]|\\.){2,}"|'(?:[^'\\\n]|\\.){2,}'|\b\d{3,}(?:\.\d+)?\b|\b\d+\.\d+\b/g;
 const ASSERTIONS_MOST = 2000;
 const DEPENDENCIES_MOST = 30;
@@ -108,6 +109,7 @@ const EXTENSIONS = new Map(
 );
 const MAX_FILE = 1024 * 1024;
 const MAX_FILES = 2000;
+const FINDINGS_MOST = 500;
 const MAX_BYTES = 32 * 1024 * 1024;
 const GIT_MS = 15_000;
 const SHOWN = 20;
@@ -153,8 +155,13 @@ function readFile(path: string): { text: string; size: number } | null {
   }
 }
 
-/** The tracked files' added and removed lines out of a unified diff with no context lines. */
-function parseDiff(diff: string): Map<string, Change> {
+/** A change's file text, read once per pass; an untracked file brought its own, and "" stands for one that cannot be read. */
+function textOf(change: Change): string {
+  return (change.text ??= readFile(change.file)?.text ?? "");
+}
+
+/** The tracked files' added and removed lines out of a unified diff with no context lines; git names them from the work tree's top, `root`. */
+function parseDiff(diff: string, root: string): Map<string, Change> {
   const changes = new Map<string, Change>();
   let current: Change | null = null;
   let inHunk = false;
@@ -163,7 +170,10 @@ function parseDiff(diff: string): Map<string, Change> {
     if (raw.startsWith("diff --git ")) {
       // a path git still quotes does not match; its lines are dropped rather than given to the file before it
       const path = DIFF_HEADER.exec(raw)?.[2];
-      current = path && !SKIP.some((p) => p.test(path)) ? { path, added: [], removed: [], deleted: false } : null;
+      current =
+        path && !SKIP.some((p) => p.test(path))
+          ? { path, file: join(root, path), added: [], removed: [], deleted: false }
+          : null;
       if (current) changes.set(current.path, current);
       inHunk = false;
     } else if (!current) continue;
@@ -179,39 +189,53 @@ function parseDiff(diff: string): Map<string, Change> {
   return changes;
 }
 
-/** The changes since a commit: tracked edits, and new files git does not ignore. */
+/** The changes since a commit: tracked edits, and new files git does not ignore; every path is named from the work tree's top. */
 export async function changesSince(cwd: string, head: string): Promise<Change[] | string> {
-  const diff = await git(
-    [
-      "-c",
-      "core.quotePath=false",
-      "diff",
-      "--no-color",
-      "--no-ext-diff",
-      "--no-textconv",
-      "-U0",
-      "--no-renames",
-      head,
-      "--",
-    ],
-    cwd,
-  );
+  const [diff, untracked, up] = await Promise.all([
+    git(
+      [
+        "-c",
+        "core.quotePath=false",
+        "diff",
+        "--no-color",
+        "--no-ext-diff",
+        "--no-textconv",
+        "-U0",
+        "--no-renames",
+        head,
+        "--",
+        NOT_ROOM_FOLDER,
+      ],
+      cwd,
+    ),
+    git(["ls-files", "--others", "--exclude-standard", "--full-name", "-z", "--", NOT_ROOM_FOLDER], cwd),
+    git(["rev-parse", "--show-cdup"], cwd),
+  ]);
   if (!diff.ok) return `git diff from ${head.slice(0, 8)} failed`;
-  const changes = parseDiff(diff.out);
-  const untracked = await git(["ls-files", "--others", "--exclude-standard", "-z"], cwd);
   if (!untracked.ok) return "git ls-files failed";
+  if (!up.ok) return "git rev-parse failed";
+  const root = resolve(cwd, up.out.trim());
+  const changes = parseDiff(diff.out, root);
+  const fresh = untracked.out.split("\0").filter((path) => path && !SKIP.some((p) => p.test(path)));
+  if (changes.size + fresh.length > MAX_FILES) return `more than ${MAX_FILES} files changed`;
   let bytes = diff.out.length;
-  for (const path of untracked.out.split("\0")) {
-    if (!path || SKIP.some((p) => p.test(path))) continue;
-    const file = readFile(join(cwd, path));
-    if (!file) continue;
-    bytes += file.size;
+  for (const path of fresh) {
+    const file = join(root, path);
+    const read = readFile(file);
+    if (!read) continue;
+    bytes += read.size;
     if (bytes > MAX_BYTES) return `more than ${MAX_BYTES >> 20} MB changed`;
     // a binary file counts as a change but has no lines to read
-    const lines = file.text.includes("\0") ? [] : file.text.replace(/\n$/, "").split("\n");
-    changes.set(path, { path, added: lines.map((l, i) => [i + 1, l]), removed: [], deleted: false, text: file.text });
+    const lines = read.text.includes("\0") ? [] : read.text.replace(/\n$/, "").split("\n");
+    changes.set(path, {
+      path,
+      file,
+      added: lines.map((l, i) => [i + 1, l]),
+      removed: [],
+      deleted: false,
+      text: read.text,
+    });
   }
-  if (changes.size > MAX_FILES) return `more than ${MAX_FILES} files changed`;
   return [...changes.values()];
 }
 
@@ -311,11 +335,21 @@ export async function inspectHandIn(
   const changes = await changesSince(start.cwd, start.start_head);
   if (typeof changes === "string") return { ...base, state: "partial", why: changes };
   store.noteHandIn(seat, digestOf(changes));
-  const found: Found[] = [];
-  for (const change of changes) for (const one of await inspectFile(change, start.cwd, gate)) found.push(one);
   if (!changes.length) return { ...base, state: "empty", why: null };
-  for (const change of changes) found.push(...checkConfigFindings(change));
-  found.push(...answersInSource(changes));
+  const found: Found[] = [];
+  const seen: Record<Level, number> = { block: 0, warn: 0 };
+  let skipped = 0;
+  const keep = (one: Found) => {
+    if (one.rule === "test-skipped" || one.rule === "test-focused") skipped += 1;
+    if ((seen[one.level] += 1) <= FINDINGS_MOST) found.push(one);
+  };
+  for (const change of changes) for (const one of await inspectFile(change, start.cwd, gate)) keep(one);
+  for (const change of changes) checkConfigFindings(change).forEach(keep);
+  answersInSource(changes).forEach(keep);
+  const left: Record<Level, number> = {
+    block: Math.max(0, seen.block - FINDINGS_MOST),
+    warn: Math.max(0, seen.warn - FINDINGS_MOST),
+  };
   const ordinals = new Map<string, number>();
   const rows = store.noteFindings(
     seat,
@@ -338,14 +372,17 @@ export async function inspectHandIn(
     testsNaming(changes, start.cwd),
     newDependencies(changes, start.cwd, start.start_head, lookups),
   ]);
-  const skipped = found.filter((f) => f.rule === "test-skipped" || f.rule === "test-focused").length;
   return {
-    state: open.length ? "blocked" : "clean",
+    state: open.length ? "blocked" : left.block ? "partial" : "clean",
     files: changes.length,
     open,
     acknowledged: rows.filter((r) => r.severity === "block" && r.ack),
     warnings: rows.filter((r) => r.severity === "warn"),
-    why: null,
+    why:
+      open.length || !left.block
+        ? null
+        : `${left.block} blocking finding(s) past the first ${FINDINGS_MOST} were left out`,
+    left,
     gaming: gamingOf(
       changes.map((change) => ({
         path: change.path,
@@ -511,22 +548,13 @@ function mavenNames(text: string | null): Set<string> {
   return names;
 }
 
-/** The manifests read whole, old against new: their manager and the names they declare. */
-const WHOLE: Record<
-  string,
-  { manager: Manager; names: (text: string | null) => Set<string>; mark: (name: string) => string }
-> = {
-  "package.json": {
-    manager: "npm",
-    names: (text) => jsonNames(text, DEPENDENCY_SECTIONS),
-    mark: (name) => `"${name}"`,
-  },
+const WHOLE: Record<string, { manager: Manager; names: (text: string | null) => Set<string> }> = {
+  "package.json": { manager: "npm", names: (text) => jsonNames(text, DEPENDENCY_SECTIONS) },
   "composer.json": {
     manager: "packagist",
     names: (text) => new Set([...jsonNames(text, ["require", "require-dev"])].filter((name) => name.includes("/"))),
-    mark: (name) => `"${name}"`,
   },
-  "pom.xml": { manager: "maven", names: mavenNames, mark: (name) => name.split(":")[1] },
+  "pom.xml": { manager: "maven", names: mavenNames },
 };
 
 /** The dependencies the changes add to manifests, each with its first release where its registry says. */
@@ -538,17 +566,13 @@ async function newDependencies(
 ): Promise<Dependency[]> {
   const found: Omit<Dependency, "firstRelease">[] = [];
   for (const change of changes) {
-    if (change.deleted || found.length >= DEPENDENCIES_MOST) continue;
-    const text = change.text ?? readFile(join(cwd, change.path))?.text ?? "";
+    if (change.deleted || found.length >= DEPENDENCIES_MOST || !MANIFEST.test(change.path)) continue;
+    const text = textOf(change);
     const whole = WHOLE[basename(change.path)];
     if (whole) {
       const before = await git(["show", `${head}:${change.path}`], cwd);
       const old = whole.names(before.ok ? before.out : null);
-      for (const name of whole.names(text)) {
-        if (old.has(name)) continue;
-        const line = change.added.find(([, added]) => added.includes(whole.mark(name)))?.[0] ?? 0;
-        found.push({ manager: whole.manager, name, path: change.path, line });
-      }
+      for (const name of whole.names(text)) if (!old.has(name)) found.push({ manager: whole.manager, name });
       continue;
     }
     const gone = new Set(
@@ -556,8 +580,7 @@ async function newDependencies(
     );
     for (const [line, added] of change.added) {
       const named = nameOn(change.path, text, line, added);
-      if (named && !gone.has(named.name) && !found.some((one) => one.name === named.name))
-        found.push({ ...named, path: change.path, line });
+      if (named && !gone.has(named.name) && !found.some((one) => one.name === named.name)) found.push(named);
     }
   }
   const kept = found.slice(0, DEPENDENCIES_MOST);
@@ -597,8 +620,8 @@ async function testsNaming(changes: readonly Change[], cwd: string): Promise<str
   if (!names.size) return [];
   const quiet = ["-c", "core.quotePath=false"];
   const [inText, files] = await Promise.all([
-    git([...quiet, "grep", "-l", "-w", "-F", ...[...names].flatMap((name) => ["-e", name]), "--"], cwd),
-    git([...quiet, "ls-files"], cwd),
+    git([...quiet, "grep", "--full-name", "-l", "-w", "-F", ...[...names].flatMap((name) => ["-e", name]), "--"], cwd),
+    git([...quiet, "ls-files", "--full-name"], cwd),
   ]);
   const matchers = [...names].map((name) => ({
     word: new RegExp(`(^|[^A-Za-z0-9])${basename(name).replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}([^A-Za-z0-9]|$)`),
@@ -636,7 +659,7 @@ async function inspectFile(change: Change, cwd: string, gate: Gate): Promise<Fou
           },
         ]
       : [];
-  const text = change.text ?? readFile(join(cwd, path))?.text ?? "";
+  const text = textOf(change);
   if (text.includes("\0")) return [];
   const out = lineFindings(change, text, language, isTest);
   if (isTest && language) out.push(...assertionsDropped(change));
@@ -716,7 +739,7 @@ function assertionsDropped(change: Change): Found[] {
 /** The shell lines a change adds to a script or CI file, with their line numbers. */
 function scriptLines(change: Change, text: string): { line: number; command: string }[] {
   const path = change.path;
-  const base = path.split("/").pop()!;
+  const base = basename(path);
   const commands: { line: number; command: string }[] = [];
   if (base === "package.json") {
     try {
@@ -785,6 +808,13 @@ export function handInLine(result: HandIn): string | null {
   if (result.state === "partial") return `hand-in check incomplete: ${result.why}; not verified`;
   if (result.state === "empty") return "hand-in check: no change found since this seat started";
   const parts: string[] = [];
+  if (result.open.length)
+    parts.push(
+      `${result.open.length} blocking finding(s) not acknowledged${result.left?.block ? ` and ${result.left.block} more left out` : ""}: ${result.open
+        .slice(0, SHOWN)
+        .map((r) => `${r.rule} ${r.path}:${r.line}`)
+        .join("; ")}`,
+    );
   if (result.acknowledged.length)
     parts.push(
       `${result.acknowledged.length} finding(s) acknowledged by the seat: ${result.acknowledged
@@ -808,7 +838,7 @@ export function handInLine(result: HandIn): string | null {
     );
   if (result.warnings.length)
     parts.push(
-      `${result.warnings.length} note(s): ${result.warnings
+      `${result.warnings.length} note(s)${result.left?.warn ? ` and ${result.left.warn} more left out` : ""}: ${result.warnings
         .slice(0, 8)
         .map((r) => `${r.rule} ${r.path}:${r.line}`)
         .join("; ")}`,
@@ -817,9 +847,9 @@ export function handInLine(result: HandIn): string | null {
 }
 
 /** A new dependency as the hand-in line names it: its manager and, where the registry said, how old it is. */
-function dependencyLine(one: Dependency, now = Date.now()): string {
+function dependencyLine(one: Dependency): string {
   if (!one.firstRelease) return `${one.name} (${one.manager})`;
-  const days = Math.floor((now - Date.parse(one.firstRelease)) / 86_400_000);
+  const days = Math.floor((Date.now() - Date.parse(one.firstRelease)) / 86_400_000);
   return `${one.name} (${one.manager}, first published ${one.firstRelease.slice(0, 10)}, ${days} day(s) ago)`;
 }
 
@@ -828,9 +858,10 @@ export function handInReturn(result: HandIn): string {
   const lines = result.open
     .slice(0, SHOWN)
     .map((r) => `- ${r.fingerprint} ${r.rule} at ${r.path}${r.line ? `:${r.line}` : ""}: ${r.text}`);
-  if (result.open.length > SHOWN) lines.push(`- and ${result.open.length - SHOWN} more`);
+  const total = result.open.length + (result.left?.block ?? 0);
+  if (total > SHOWN) lines.push(`- and ${total - SHOWN} more`);
   return [
-    `The room's hand-in check found ${result.open.length} problem(s) in what you changed since you started:`,
+    `The room's hand-in check found ${total} problem(s) in what you changed since you started:`,
     ...lines,
     "Fix each one, or acknowledge it with seatwork_safety (action ack, the id, and why it must stay), then hand in again.",
   ].join("\n");

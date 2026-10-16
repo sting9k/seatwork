@@ -9,9 +9,9 @@ import { districtOf, incidentOf } from "./lines";
 import type { Vitals } from "./vitals";
 import { OperationsStore, type Incident, type IncidentState, type Trace, type TraceNoteKind, type Tune } from "./store";
 
-/** The Operations district: the room's log and incidents, told to its operator seat, the traces of their causes, the policy that seat tunes from measurement, and the spend of each project against its cap. */
+/** The Operations district: the room's log and incidents told to its operator seat, the traces of their causes, the policy that seat tunes, and each project's spend against its cap. */
 
-/** What the district takes from the room: its folder and policy, the operators, mail, the districts' readings, vital signs, what the budget needs of seats and projects, and the decision model. */
+/** What the district takes from the room: its folder and policy, the operators and mail, the districts' readings, vitals, what the budget needs of seats and projects, and the decision model. */
 export interface OperationsDeps {
   dir: string;
   busyTimeoutMs: number;
@@ -49,7 +49,7 @@ export class OperationsRefused extends Error {
   }
 }
 
-/** A policy key the operator may tune: its district, its type, its range, and whether it may only be lowered. A path with `[*]` stands for the keys of every project. */
+/** A policy key the operator may tune, with its range and whether it may only be lowered; `[*]` in a path stands for every project's folder. */
 interface Tunable {
   district: string;
   type: "integer" | "number" | "boolean" | "forks";
@@ -188,7 +188,13 @@ export class Operations {
   private readonly readings: Record<string, () => unknown>;
 
   constructor(private readonly deps: OperationsDeps) {
-    this.store = new OperationsStore(deps.dir, deps.busyTimeoutMs, () => this.now());
+    try {
+      this.store = new OperationsStore(deps.dir, deps.busyTimeoutMs, () => this.now());
+    } catch (error) {
+      // a store that cannot open leaves the vitals' timer to nobody
+      deps.vitals?.close();
+      throw error;
+    }
     this.budget = new Budget({
       store: this.store,
       policy: deps.policy,
@@ -254,7 +260,7 @@ export class Operations {
     this.readThisTurn.delete(agent);
   }
 
-  /** The minute's pass: what is watched is logged, the budget's holds are kept, new incidents are read, incidents go to the operators at most every few minutes, the digest once a period. */
+  /** The minute's pass: vitals are logged, the budget's holds kept, new incidents read; incidents go to the operators every few minutes at most, the digest once a period. */
   async tick(): Promise<void> {
     if (this.sending) return;
     this.sending = true;
@@ -499,7 +505,7 @@ export class Operations {
       ...(trace.closedAt ? { closed: trace.conclusion } : {}),
       ...(trace.undone >= settings.undoneMost
         ? {
-            next: `${trace.undone} changes made for this trace were undone: the cause is likely in the code or the design. Write Human the trace.`,
+            next: `${trace.undone} changes made for this trace were undone: the cause is likely in the code or the design. Write your Owner the trace.`,
           }
         : {}),
     };
@@ -567,7 +573,7 @@ export class Operations {
     const trace = args.trace === undefined ? null : this.openTrace(args.trace);
     if (trace && trace.undone >= settings.undoneMost)
       throw new OperationsRefused(
-        `${trace.undone} changes made for trace #${trace.id} were undone: write Human the trace instead of another change`,
+        `${trace.undone} changes made for trace #${trace.id} were undone: write your Owner the trace instead of another change`,
       );
     // a key whose changes keep being undone needs evidence that answers why they were
     const reverts = this.store.revertsOf(
@@ -637,9 +643,13 @@ export class Operations {
     return { id: kept.id, line: `Reverted: ${tuneLine(kept)}` };
   }
 
-  /** Drops log lines, incidents, closed traces and days of spend past their keep; the GC calls it. */
+  /** Drops log lines, incidents, closed traces and days of spend past their keep, and closes the open traces nobody touched for the log's days; the GC calls it. */
   expire(): number {
     const now = this.now().getTime();
+    this.store.closeIdleTraces(
+      new Date(now - settings.logKeepDays * DAY),
+      `Left open for ${settings.logKeepDays} days with no note and no change made for it; the room closed it.`,
+    );
     return (
       this.store.expire(
         new Date(now - settings.logKeepDays * DAY),
@@ -660,7 +670,7 @@ export class Operations {
     this.counting(`the cost of ${seat} was not marked`, () => this.budget.opened(seat));
   }
 
-  /** A turn of a seat of `role` ended with the total cost it has so far and its output tokens, when known: it counts for the seat's project and role, and a project past its cap is held. */
+  /** A turn of a seat of `role` ended with its total cost so far and output tokens, when known; the budget counts it. */
   spent(seat: string, totalUsd: number | undefined, role?: string, outputTokens?: number): void {
     this.counting(`the spend of a turn of ${seat} was not kept`, () =>
       this.budget.spent(seat, totalUsd, role, outputTokens),

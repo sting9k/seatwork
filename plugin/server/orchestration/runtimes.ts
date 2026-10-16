@@ -12,7 +12,6 @@ import {
 } from "node:fs";
 import { isAbsolute, join } from "node:path";
 import {
-  CLAUDE_HOME,
   CODEX_HOME,
   OPENCODE_CONFIG_HOME,
   PI_HOME,
@@ -25,7 +24,7 @@ import {
 } from "../paths";
 import { loadPolicy, type RuntimePolicy } from "../policy";
 import { codexHooks, codexTrust, openCodePlugin, piExtension } from "../safety/hooks";
-import { localSkills, localSkillsOf } from "./local-skills";
+import { localSkills, localSkillsOf, skillsIn } from "./local-skills";
 import type { TurnEvent } from "../host";
 import type { Harness, Seat } from "./seats";
 import { formatToml, parseToml, type TomlTable } from "../toml";
@@ -110,7 +109,6 @@ function skillFiles(dir: string, depth = 0, found: string[] = []): string[] {
 
 /** A Codex seat's home: the user's config without MCP servers, plugins and hooks, with the policy's switches and shares. */
 function buildCodex(runtime: string, policy: RuntimePolicy["codex"], guarded: boolean): void {
-  // the user's config without MCP servers, plugins and hooks, and with Codex's own agent features off
   const file = join(CODEX_HOME, "config.toml");
   let config: TomlTable;
   try {
@@ -131,6 +129,7 @@ function buildCodex(runtime: string, policy: RuntimePolicy["codex"], guarded: bo
   };
   if (policy.agentsOff) table("agents").set("enabled", "false");
   for (const feature of policy.featuresOff) table("features").set(feature, "false");
+  for (const tool of policy.toolsOff ?? []) table("tools").set(tool, new Map([["enabled", "false"]]));
   if (policy.multiAgentV2Off) {
     const v2 = table("features").get("multi_agent_v2");
     if (v2 instanceof Map) v2.set("enabled", "false");
@@ -166,7 +165,6 @@ function buildCodex(runtime: string, policy: RuntimePolicy["codex"], guarded: bo
 
 /** A Pi seat's home: the user's settings with the policy's laid over them, and what the policy shares. */
 function buildPi(runtime: string, policy: RuntimePolicy["pi"], guarded: boolean): void {
-  // credentials and the model catalog are shared; settings are copied with the policy's laid over them
   // the user's ~/.agents/skills is left out; the room's skills sit in this home's skills/
   writeJson(join(runtime, "settings.json"), {
     ...readJsonObject(join(PI_HOME, "settings.json")),
@@ -181,10 +179,7 @@ function buildPi(runtime: string, policy: RuntimePolicy["pi"], guarded: boolean)
 
 /** An OpenCode seat's home: the policy's config, only the role's skills allowed, and the user's shares. */
 function buildOpenCode(runtime: string, role: string, policy: RuntimePolicy["opencode"], guarded: boolean): void {
-  // the seat gets an empty config dir plus what policy shares; auth and storage stay shared, not isolated
-  const permission = { ...(policy.config.permission as Record<string, unknown> | undefined) };
-  permission.skill = { "*": "deny", ...Object.fromEntries(roleSkillNames(role).map((name) => [name, "allow"])) };
-  writeJson(join(runtime, "opencode.json"), { ...policy.config, permission });
+  writeJson(join(runtime, "opencode.json"), { ...policy.config, permission: openCodePermission(role, policy) });
   if (guarded) lay(runtime, "plugins/room-guard.ts", openCodePlugin());
   if (!existsSync(OPENCODE_CONFIG_HOME)) return;
   for (const name of policy.shareEntries) share(runtime, OPENCODE_CONFIG_HOME, name);
@@ -206,12 +201,6 @@ function installRoleSkills(runtime: string, seat: Pick<Seat, "harness" | "role">
   for (const name of localSkills(role)) share(target, localSkillsOf(role), name);
 }
 
-/** The skills in a folder of the room's skills: each a folder holding a SKILL.md. */
-function skillsIn(dir: string): string[] {
-  if (!existsSync(dir)) return [];
-  return readdirSync(dir).filter((name) => existsSync(join(dir, name, "SKILL.md")));
-}
-
 /** A role's own skills, in its folder. */
 const ownSkills = (role: string): string[] => skillsIn(join(ROOM_DIR, "skills", role));
 
@@ -224,6 +213,14 @@ function sharedSkills(role: string): string[] {
     const given = roles[name];
     return Array.isArray(given) && given.includes(role);
   });
+}
+
+/** An OpenCode seat's permissions: the policy's, and only its role's skills; its home's config, its provider and its start all carry them, since OpenCode 2 reads them from the session. */
+export function openCodePermission(role: string, policy: RuntimePolicy["opencode"]): Record<string, unknown> {
+  return {
+    ...(policy.config.permission as Record<string, unknown> | undefined),
+    skill: { "*": "deny", ...Object.fromEntries(roleSkillNames(role).map((name) => [name, "allow"])) },
+  };
 }
 
 /** The names of the skills the room gives a role: its own, the shared ones it is given, and the ones its room seat added. */
@@ -273,7 +270,7 @@ function fingerprint(
     .digest("hex");
 }
 
-/** A seat's home with its role's skills, rebuilt when its fingerprint changes; null for Claude, whose skills sit in a folder of their own. */
+/** Lays out a seat's home and its role's skills, rebuilding the home when its fingerprint changes; null for Claude, which has none. */
 export function ensureRuntime(seat: Pick<Seat, "harness" | "role">, policy: RuntimePolicy): string | null {
   if (seat.harness === "claude") {
     installRoleSkills("", seat);
@@ -297,8 +294,8 @@ export function ensureRuntime(seat: Pick<Seat, "harness" | "role">, policy: Runt
   return dir;
 }
 
-/** The instruction files the policy gives every seat, as text after the room's prompt: a path in the room home, or one under ~/ of the user's. */
-export function sharedInstructions(policy: RuntimePolicy = loadPolicy()): string | null {
+/** The policy's instruction files as one text after the room's prompt: paths in the room home, absolute, or under the user's ~/. */
+export function sharedInstructions(policy: RuntimePolicy): string | null {
   const texts = (policy.room.instructions ?? [])
     .map((name) =>
       name.startsWith("~/") ? join(USER_HOME, name.slice(2)) : isAbsolute(name) ? name : join(ROOM_HOME, name),
@@ -309,10 +306,7 @@ export function sharedInstructions(policy: RuntimePolicy = loadPolicy()): string
 }
 
 /** The environment every session of a seat opens with (policy `launch.env`), `{runtime}` filled with the seat's home. */
-export function envFor(
-  seat: Pick<Seat, "harness" | "role">,
-  policy: RuntimePolicy = loadPolicy(),
-): Record<string, string> {
+export function envFor(seat: Pick<Seat, "harness" | "role">, policy: RuntimePolicy): Record<string, string> {
   const home = seat.harness === "claude" ? "" : runtimeDir(seat);
   return Object.fromEntries(
     Object.entries(policy.launch[seat.harness].env).map(([name, value]) => [name, value.replaceAll("{runtime}", home)]),
@@ -329,7 +323,7 @@ export function describeIsolation(policy: RuntimePolicy = loadPolicy()): string 
   ].join(" | ");
 }
 
-/** The skills a turn loaded, each agent CLI's way: Claude's Skill tool and OpenCode's skill tool by their label, Codex reading a SKILL.md in a shell, Pi reading one. */
+/** The skills a turn loaded, each agent CLI's way: a skill tool's label, or a SKILL.md read in a shell or by file. */
 export function skillsLoaded(events: readonly TurnEvent[]): string[] {
   const names = new Set<string>();
   for (const event of events) {
@@ -341,7 +335,7 @@ export function skillsLoaded(events: readonly TurnEvent[]): string[] {
   return [...names].filter(Boolean).sort();
 }
 
-/** The skills of a project, in the folders the agent CLIs read, named like one the room gives `role`: on Claude the project's hides the room's. */
+/** The project's skills named like one the room gives `role`: on Claude the project's hides the room's. */
 export function projectSkillsShadowing(root: string, role: string): { name: string; folder: string }[] {
   const given = new Set(roleSkillNames(role));
   return PROJECT_SKILL_FOLDERS.flatMap((folder) =>

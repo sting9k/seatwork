@@ -1,4 +1,4 @@
-import { hostOf, MAIL_POLICY, ROOM_HOME, shipSql } from "./support/room";
+import { hostOf, MAIL_POLICY, PROJECT, ROOM_HOME, shipSql } from "./support/room";
 import assert from "node:assert/strict";
 import {
   chmodSync,
@@ -14,11 +14,20 @@ import {
 } from "node:fs";
 import { join } from "node:path";
 import { test } from "node:test";
-import { collectFiles, Collector, dropSeatTmp, KEEP_LOG_DAYS, sweepRuntimes } from "../server/gc";
+import { collectFiles, Collector, dropSeatTmp, KEEP_LOG_DAYS, sweepRuntimes, type DistrictRecords } from "../server/gc";
 import { MailEngine } from "../server/coordination/engine";
 import { roomStats } from "../server/stats";
 
 shipSql();
+
+/** One GC pass over the seats `paseo` lists. */
+const pass = (
+  paseo: object,
+  engine: MailEngine,
+  policy: object,
+  log: (line: string) => void = () => {},
+  districts: readonly DistrictRecords[] = [],
+) => new Collector(hostOf(paseo), engine, policy as never, log, () => {}, undefined, undefined, districts).run();
 
 test("GC archives a seat that is at rest, never one that waits on someone or went back to work", async () => {
   const longAgo = new Date(Date.now() - 72 * 3_600_000).toISOString();
@@ -53,13 +62,7 @@ test("GC archives a seat that is at rest, never one that waits on someone or wen
     tellParent: false,
   };
 
-  await new Collector(
-    hostOf(paseo),
-    engine,
-    policy as never,
-    () => {},
-    () => {},
-  ).run();
+  await pass(paseo, engine, policy);
 
   assert.deepEqual(archived, ["idle", "closed", "error"]);
 });
@@ -255,13 +258,7 @@ test("GC clears what agent CLIs left in a seat's home once no seat of it is open
   const paseo = { agents: { list: async () => ({ entries: [{ agent: seat }] }) } };
   const engine = new MailEngine(hostOf(paseo), MAIL_POLICY, () => {});
   const policy = { idleHoursBeforeArchive: {}, deleteOrphanHeartbeats: false, tellParent: false, runtimes: table };
-  await new Collector(
-    hostOf(paseo),
-    engine,
-    policy as never,
-    () => {},
-    () => {},
-  ).run();
+  await pass(paseo, engine, policy);
   assert.deepEqual([existsSync(scratch("codex/lens")), existsSync(scratch("codex/peer"))], [false, true]);
 });
 
@@ -291,13 +288,7 @@ test("GC deletes a project's handoffs once older than the logs are kept, and lea
     cwd: project,
   });
   const policy = { idleHoursBeforeArchive: {}, deleteOrphanHeartbeats: false, tellParent: false };
-  await new Collector(
-    hostOf(paseo),
-    engine,
-    policy as never,
-    () => {},
-    () => {},
-  ).run();
+  await pass(paseo, engine, policy);
   assert.deepEqual(readdirSync(handoffs).sort(), [".gitignore", "2026-10-14-10-00_bbbbbbbb.md"]);
 });
 
@@ -332,24 +323,15 @@ test("one step of a GC pass that fails is logged and the others still run", asyn
     engine.rememberSeat(seat);
     const log: string[] = [];
     const ran: string[] = [];
-    await new Collector(
-      hostOf(paseo),
-      engine,
-      policy as never,
-      (message) => void log.push(message),
-      () => {},
-      undefined,
-      undefined,
-      [
-        {
-          what: "guard records",
-          expire: () => {
-            throw new Error("disk full");
-          },
+    await pass(paseo, engine, policy, (message) => void log.push(message), [
+      {
+        what: "guard records",
+        expire: () => {
+          throw new Error("disk full");
         },
-        { what: "decision states", expire: () => (ran.push("ran"), 0) },
-      ],
-    ).run();
+      },
+      { what: "decision states", expire: () => (ran.push("ran"), 0) },
+    ]);
 
     assert.deepEqual(ran, ["ran"], "a district after the failing one was skipped");
     assert.deepEqual(readdirSync(handoffs), [], "the step after the failing ones did not run");
@@ -433,6 +415,66 @@ test(
   },
 );
 
+test("GC lets the room forget a seat the app has not listed for the keep, but not one the room still needs", async () => {
+  const day = 86_400_000;
+  let at = Date.now();
+  const listed = new Set(["boss-f", "lead-f", "peer-f-live"]);
+  const paseo = {
+    agents: {
+      list: async () => ({
+        entries: [...listed].map((id) => ({ agent: { id, status: "idle", updatedAt: new Date(at).toISOString() } })),
+      }),
+      // an app that does not say what a seat is: its mail waits
+      ref: () => ({
+        refresh: async () => {
+          throw new Error("no answer");
+        },
+      }),
+    },
+  };
+  const [one, other] = [join(PROJECT, "forget-one"), join(PROJECT, "forget-other")];
+  const engine = new MailEngine(hostOf(paseo), MAIL_POLICY, () => {}, {
+    now: () => new Date(at),
+    rootOf: (cwd) => cwd,
+  });
+  const seat = (agentId: string, role: string, parentAgentId: string | null, cwd = one) =>
+    engine.rememberSeat({ agentId, parentAgentId, role, provider: `claude-${role}`, title: null, cwd });
+  // the newest seat of a folder stays, so the one that goes is registered before the others
+  seat("peer-f-gone", "peer", "lead-f");
+  seat("peer-f-waiting", "peer", "lead-f");
+  seat("lead-f-gone", "lead", "boss-f");
+  seat("peer-f-live", "peer", "lead-f-gone");
+  seat("lead-f", "lead", "boss-f");
+  seat("boss-f", "supervisor", null);
+  seat("boss-f-other", "supervisor", null, other);
+  await engine.post({
+    from: { agentId: "lead-f", role: "lead" },
+    to: "peer-f-waiting",
+    priority: "action",
+    subject: "INSTRUCTION: go on",
+    body: "Go on.",
+    needs: "nothing",
+  });
+  const policy = { idleHoursBeforeArchive: {}, deleteOrphanHeartbeats: false, tellParent: false };
+  const known = () => engine.allSeats().map((one) => one.agentId);
+  const all = known();
+
+  await pass(paseo, engine, policy);
+  at += (KEEP_LOG_DAYS - 1) * day;
+  await pass(paseo, engine, policy);
+  assert.deepEqual(known(), all, "a seat gone for less than the keep stays");
+
+  at += 2 * day;
+  await pass(paseo, engine, policy);
+  assert.deepEqual(
+    known(),
+    all.filter((id) => id !== "peer-f-gone"),
+    "gone past the keep and needed by none, it leaves; a seat with mail waiting, one with a live seat below it, and the last of a folder, stay",
+  );
+  assert.equal(engine.projectOf("peer-f-gone"), null, "nothing of it is remembered");
+  assert.equal(engine.canWrite("lead-f", "peer-f-gone").ok, false);
+});
+
 test("an archived seat whose parent could not be told does not keep the other idle seats from being archived", async () => {
   const longAgo = new Date(Date.now() - 72 * 3_600_000).toISOString();
   const archived: string[] = [];
@@ -461,13 +503,7 @@ test("an archived seat whose parent could not be told does not keep the other id
   const log: string[] = [];
   const policy = { idleHoursBeforeArchive: { peer: 48 }, deleteOrphanHeartbeats: false, tellParent: true };
 
-  await new Collector(
-    hostOf(paseo),
-    engine,
-    policy as never,
-    (line) => void log.push(line),
-    () => {},
-  ).run();
+  await pass(paseo, engine, policy, (line) => void log.push(line));
 
   assert.deepEqual(archived.sort(), ["peer-t1", "peer-t2"]);
   assert.ok(

@@ -105,6 +105,13 @@
             "seatwork_mail writes to your Owner or to a seat you launched",
             "Ask your Owner; the person works with the daemon"
           ]
+        },
+        "secret-read": {
+          "severity": "critical",
+          "grant": "human",
+          "reason": "a seat reading a key the daemon or the room holds",
+          "explanation": "With the daemon's credential a program acts as its owner: it prompts, starts and stops agents and changes the daemon. With the room's keys it spends the room's money. None of the room's checks stand between.",
+          "safer": ["Leave the daemon's and the room's files alone; what you need from them, ask your Owner"]
         }
       }
     },

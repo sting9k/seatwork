@@ -66,6 +66,7 @@ export type DecisionFailure =
   | "INVALID"
   | "TOO_LARGE"
   | "CONTRACT"
+  | "NO_LOGPROBS"
   | "HTTP"
   | "TIMEOUT"
   | "NETWORK"

@@ -28,7 +28,14 @@ export interface WireRequest {
   body: string;
 }
 
-const asText = (value: unknown): string => (typeof value === "string" ? value : JSON.stringify(value));
+export const asText = (value: unknown): string => (typeof value === "string" ? value : JSON.stringify(value));
+
+/** A JSON POST of `body` to a wire, with its key when it has one. */
+export function postTo(wire: Wire, body: unknown): WireRequest {
+  const headers: Record<string, string> = { "Content-Type": "application/json", Accept: "application/json" };
+  if (wire.key) headers.Authorization = `Bearer ${wire.key}`;
+  return { url: wire.url, headers, body: JSON.stringify(body) };
+}
 
 /** OpenAI's Decisions take one instruction string: a noul's criteria join it as plain lines. */
 function openAiQuestion(id: string, question: Question): Record<string, unknown> {
@@ -80,9 +87,8 @@ function fromOpenAi(answers: unknown): Record<string, unknown> {
 export function requestOf(dialect: Dialect, wire: Wire, state: State, questions: Questions): WireRequest {
   if (dialect === "openai-chat")
     throw new DecisionError("INVALID", "a Chat Completions wire is asked one question a call: chatRequest");
-  const headers: Record<string, string> = { "Content-Type": "application/json", Accept: "application/json" };
-  if (wire.key) headers.Authorization = `Bearer ${wire.key}`;
-  const body =
+  return postTo(
+    wire,
     dialect === "openai-decisions"
       ? {
           model: wire.model,
@@ -95,8 +101,8 @@ export function requestOf(dialect: Dialect, wire: Wire, state: State, questions:
           questions,
           // OpenRouter routes only to an endpoint that keeps no prompt and collects no data
           ...(dialect === "openrouter" ? { provider: { zdr: true, data_collection: "deny" } } : {}),
-        };
-  return { url: wire.url, headers, body: JSON.stringify(body) };
+        },
+  );
 }
 
 /** A provider's JSON reply, checked against the questions asked. */

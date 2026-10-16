@@ -7,7 +7,7 @@ import { guardOf, guardOfPath, type Guarded, type WriteMode } from "./protected"
 
 /** DCG's core.filesystem rules besides rm, and every write to a protected file. */
 
-export interface FileHit {
+interface FileHit {
   pack: string;
   rule: string;
   detail: string;
@@ -221,17 +221,15 @@ function rsyncRootDest(dest: Value, scene: Scene): boolean {
   return SYSTEM_ROOTS.some((r) => within(path, r));
 }
 
+const READING = new Set<string>(["<", "<<<", "<&", "<>"]);
+
+/** Whether a redirect has a target the command writes to, not one it reads from. */
+const putsInFile = (redirect: Redirect): redirect is Redirect & { target: Word } =>
+  !!redirect.target && !redirect.heredoc && !READING.has(redirect.op);
+
 /** DCG's redirect rules: truncating the system or a home, git internals, run-time targets. */
 function redirectRule(redirect: Redirect, scene: Scene, tools: FileTools): string | null {
-  if (
-    !redirect.target ||
-    redirect.heredoc ||
-    redirect.op === "<" ||
-    redirect.op === "<<<" ||
-    redirect.op === "<&" ||
-    redirect.op === "<>"
-  )
-    return null;
+  if (!putsInFile(redirect)) return null;
   const target = valueOf(redirect.target, scene);
   if (redirect.op === ">&" && /^(\d+|-)$/.test(target.text ?? "")) return null;
   const append = redirect.op === ">>" || redirect.op === "&>>";
@@ -244,7 +242,7 @@ function redirectRule(redirect: Redirect, scene: Scene, tools: FileTools): strin
     if (isTemp(target, scene)) return null;
     return "redirect-truncate-dynamic-path";
   }
-  if (PSEUDO_DEVICES.has(text) || NET_DEVICE.test(text)) return null;
+  if (PSEUDO_DEVICES.has(text) || NET_DEVICE.test(text) || isTemp(target, scene)) return null;
   if (!sensitive(target, scene, scene.moved)) return null;
   const path = absolute(target, scene.cwd);
   if (path && within(path, scene.place.home) && newFileUnderHome(path, tools)) return null;
@@ -265,7 +263,7 @@ export function writesOf(scene: Scene): { value: Value; mode: WriteMode; how: st
   const out: { value: Value; mode: WriteMode; how: string }[] = [];
   const add = (word: Word, mode: WriteMode, how: string) => out.push({ value: valueOf(word, scene), mode, how });
   for (const r of scene.simple.redirects) {
-    if (!r.target || r.heredoc || r.op === "<" || r.op === "<<<" || r.op === "<&" || r.op === "<>") continue;
+    if (!putsInFile(r)) continue;
     if (r.op === ">&" && /^(\d+|-)$/.test(literal(r.target) ?? "")) continue;
     add(r.target, r.op === ">>" || r.op === "&>>" ? "append" : "write", r.op);
   }

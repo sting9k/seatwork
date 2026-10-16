@@ -242,6 +242,10 @@ async function wakeUps(room: RoomContext, me: string, action: string, args: Reco
   });
 }
 
+/** The receipt for a mail the room already holds: the same text again, or the same key. */
+const replay = (mail: Mail) =>
+  JSON.stringify({ sent: mail.id, thread: mail.thread, replayed: true, state: mail.state });
+
 /** seatwork_mail: checks a seat's mail against the routes, posts it, returns a receipt; with `action` wake, wakes or unwake, a timed wake-up instead. */
 export async function sendMail(room: RoomContext, from: string, args: Record<string, unknown>): Promise<string> {
   const eng = room.engine;
@@ -314,7 +318,7 @@ export async function sendMail(room: RoomContext, from: string, args: Record<str
     ...(typeof args.key === "string" && args.key.trim() ? { key: args.key.trim().slice(0, 255) } : {}),
   };
   const again = stops ? null : eng.repeatOf(draft);
-  if (again) return JSON.stringify({ sent: again.id, thread: again.thread, replayed: true, state: again.state });
+  if (again) return replay(again);
   if (signal && to.length === 1 && eng.parentOf(from) === to[0]) {
     room.mailedUp.set(from, (room.mailedUp.get(from) ?? new Set()).add(signal));
     // "my work is finished" is true only once the turn has ended: the report is kept until then
@@ -336,8 +340,7 @@ export async function sendMail(room: RoomContext, from: string, args: Record<str
   const routed = await routeUp(room, from, draft, signal);
   const outgoing = routed?.draft ?? draft;
   const repeated = routed ? eng.repeatOf(outgoing) : null;
-  if (repeated)
-    return JSON.stringify({ sent: repeated.id, thread: repeated.thread, replayed: true, state: repeated.state });
+  if (repeated) return replay(repeated);
   // an ACK, or a receipt for work under review, asks nothing of anyone: neither starts a turn
   const waits =
     team ||

@@ -1,8 +1,7 @@
-import { existsSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { readFileSync, renameSync, writeFileSync } from "node:fs";
 
 /** A JSON file the room keeps across restarts: unreadable or absent, it starts as `empty`. */
 export function readJson<T>(file: string, empty: T): T {
-  if (!existsSync(file)) return empty;
   try {
     return JSON.parse(readFileSync(file, "utf8")) as T;
   } catch {

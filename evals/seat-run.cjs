@@ -187,10 +187,18 @@ function projectNow(base) {
   };
 }
 
-/** Runs a harness's process in the project, its events kept line by line, cut at the run's time or once `enough` has what a dry run came for. */
-function harnessProcess(command, argv, env, enough = () => false) {
+/** Runs a harness's process in the project, its events kept line by line, cut at the run's time or once a dry run's endpoint has its first model call. */
+function harnessProcess(command, argv, env) {
   return new Promise((done) => {
     const child = spawn(command, argv, { cwd: PROJECT, env, stdio: ["ignore", "pipe", "pipe"], detached: true });
+    const kill = () => {
+      try {
+        process.kill(-child.pid, "SIGKILL");
+      } catch {
+        // gone already
+      }
+    };
+    if (dry) dry.stop = kill;
     const events = [];
     let buffer = "";
     const out = fs.createWriteStream(join(outDir, "events.jsonl"));
@@ -203,20 +211,12 @@ function harnessProcess(command, argv, env, enough = () => false) {
       for (const line of parts)
         try {
           events.push(JSON.parse(line));
-          // a dry run has what it came for once the CLI shows its start or its first call to the dead port
-          if (enough(events[events.length - 1])) process.kill(-child.pid, "SIGKILL");
         } catch {
           // a line that is no JSON is the CLI's own talk
         }
     });
     child.stderr.pipe(err);
-    const timer = setTimeout(() => {
-      try {
-        process.kill(-child.pid, "SIGKILL");
-      } catch {
-        // gone already
-      }
-    }, run.timeoutMs);
+    const timer = setTimeout(kill, run.timeoutMs);
     child.on("close", (code) => {
       clearTimeout(timer);
       out.end();
@@ -274,12 +274,12 @@ async function runClaude(seat, prompt, paseoServer) {
     "--max-budget-usd",
     String(run.budget),
   ];
-  const { events, code } = await harnessProcess(
-    "claude",
-    argv,
-    { ...process.env, ...seat.env, ...DRY, ...claudeLogin() },
-    (event) => !!run.dry && event.type === "system" && event.subtype === "init",
-  );
+  const { events, code } = await harnessProcess("claude", argv, {
+    ...process.env,
+    ...seat.env,
+    ...(dry ? { ANTHROPIC_BASE_URL: dry.url } : {}),
+    ...claudeLogin(),
+  });
   const calls = [];
   let result = null;
   const init = events.find((event) => event.type === "system" && event.subtype === "init") ?? null;
@@ -297,6 +297,7 @@ async function runClaude(seat, prompt, paseoServer) {
     final: String(result?.result ?? ""),
     init: init && {
       tools: init.tools,
+      offered: offered(dry?.request),
       mcp: init.mcp_servers,
       skills: init.skills,
       mode: init.permissionMode,
@@ -317,9 +318,58 @@ function claudeLogin() {
   return { ...own, CLAUDE_CODE_OAUTH_TOKEN: token };
 }
 
-// a dry run starts the CLI whole and sends its first model call to a port nothing answers: no model is paid
-const DRY = run.dry ? { ANTHROPIC_BASE_URL: "http://127.0.0.1:9", OPENAI_BASE_URL: "http://127.0.0.1:9/v1" } : {};
+let dry = null;
+
+/** A dry run's model endpoint: it keeps the first model call the CLI makes, with the tools it offers, refuses it and stops the CLI; no model is paid. */
+function dryEndpoint() {
+  const endpoint = { url: "", request: null, stop: () => {} };
+  const server = http.createServer((req, res) => {
+    const chunks = [];
+    req.on("data", (chunk) => chunks.push(chunk));
+    req.on("end", () => {
+      let parsed = null;
+      try {
+        parsed = JSON.parse(Buffer.concat(chunks).toString("utf8"));
+      } catch {
+        // not a model call
+      }
+      const tools =
+        Array.isArray(parsed?.tools) ||
+        (Array.isArray(parsed?.input) && parsed.input.some((item) => item?.type === "additional_tools"));
+      if (!endpoint.request && tools) {
+        endpoint.request = { path: req.url, body: parsed };
+        write(join(outDir, "request.json"), JSON.stringify(endpoint.request, null, 2));
+        setTimeout(() => endpoint.stop(), 100);
+      }
+      res.writeHead(400, { "content-type": "application/json" });
+      res.end(JSON.stringify({ type: "error", error: { type: "invalid_request_error", message: "dry run" } }));
+    });
+  });
+  return new Promise((done) =>
+    server.listen(0, "127.0.0.1", () => {
+      endpoint.url = `http://127.0.0.1:${server.address().port}`;
+      endpoint.close = () => server.close();
+      done(endpoint);
+    }),
+  );
+}
+
+/** The tools a dry run's model call offered, namespaces opened: Anthropic's shape, the Responses API's, and Codex's in its input, with the tools its `exec` holds. */
+function offered(request) {
+  const names = [];
+  const walk = (tools, prefix = "") => {
+    for (const tool of tools ?? [])
+      if (tool.type === "namespace") walk(tool.tools, `${tool.name}.`);
+      else names.push(`${prefix}${tool.name ?? tool.type}`);
+  };
+  walk(request?.body.tools);
+  for (const item of request?.body.input ?? []) if (item.type === "additional_tools") walk(item.tools);
+  const nested = JSON.stringify(request?.body ?? {}).match(/### `[\w.]+`/g) ?? [];
+  return [...names, ...nested.map((heading) => `exec.${heading.slice(5, -1)}`)];
+}
+
 const READ_SHELL = [
+  "cd",
   "git",
   "ls",
   "cat",
@@ -350,7 +400,7 @@ async function runCodex(seat, prompt, paseoServer) {
     "-m",
     config.model ?? run.model,
     "-s",
-    c.writes ? "workspace-write" : "read-only",
+    c.writes ? "danger-full-access" : "read-only",
     "-c",
     `model_reasoning_effort=${toml(run.effort ?? config.thinkingOptionId ?? "high")}`,
     "-c",
@@ -369,24 +419,19 @@ async function runCodex(seat, prompt, paseoServer) {
     'mcp_servers.seatwork.default_tools_approval_mode="approve"',
     "-c",
     'mcp_servers.paseo.default_tools_approval_mode="approve"',
-    // a dry run talks to a provider of its own on a port nothing answers, never the user's
+    // a dry run talks to a provider of its own, the run's endpoint, never the user's
     ...(run.dry
       ? [
           "-c",
           'model_provider="dry"',
           "-c",
-          'model_providers.dry={name="dry",base_url="http://127.0.0.1:9/v1",wire_api="responses"}',
+          `model_providers.dry={name="dry",base_url=${toml(`${dry.url}/v1`)},wire_api="responses"}`,
         ]
       : []),
     prompt,
   ];
   write(join(outDir, "codex-argv.json"), JSON.stringify(argv, null, 2));
-  const { events, code } = await harnessProcess(
-    "codex",
-    argv,
-    { ...process.env, ...seat.env, ...DRY },
-    (event) => !!run.dry && event.type === "error",
-  );
+  const { events, code } = await harnessProcess("codex", argv, { ...process.env, ...seat.env });
   const calls = [];
   let final = "";
   let usage = null;
@@ -403,7 +448,8 @@ async function runCodex(seat, prompt, paseoServer) {
       calls.push({ name: "Edit", input: { file_path: (item.changes ?? []).map((one) => one.path).join(" ") } });
     else if (item.type === "agent_message") final = String(item.text ?? "");
   }
-  return { finished: !!usage && !failed, exit: code, cost: null, calls, final };
+  const init = dry?.request ? { offered: offered(dry.request) } : null;
+  return { finished: !!usage && !failed, exit: code, cost: null, calls, final, ...(init ? { init } : {}) };
 }
 
 /** A scripted seat, its right turn or its wrong one, run against the real room: a case is proved, its graders seen red, with no model. */
@@ -472,6 +518,7 @@ async function main() {
   if (!scripted && !run.spend && !run.dry)
     throw new Error("a run on a real agent CLI costs money: the runner passes --spend");
   installRoom();
+  if (run.dry) dry = await dryEndpoint();
   const base = makeProject();
   const stand = standInPaseo();
   const { fakeServer } = require(join(PLUGIN, "test", "support", "server.ts"));
@@ -503,6 +550,7 @@ async function main() {
       parentAgentId: parent,
       status: options.status ?? "idle",
       updatedAt: new Date().toISOString(),
+      ...(options.usage ? { lastUsage: options.usage } : {}),
     });
     const agent = { id, parentAgentId: parent, provider, cwd, title, workspaceId: null };
     await side.call("on agent.created", { agent }, stand.context);
@@ -676,6 +724,7 @@ async function main() {
     write(join(outDir, "outcome.json"), JSON.stringify(outcome, null, 2));
   } finally {
     control.close();
+    dry?.close();
     await stop();
   }
 }

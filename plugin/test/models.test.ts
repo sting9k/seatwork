@@ -1,7 +1,7 @@
 import "./support/room";
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { familyOf, modelAllowed, type Models, promptVars } from "../server/orchestration/models";
+import { familyOf, fitSeat, type Models, promptVars } from "../server/orchestration/models";
 
 test("a project's model table matches a model id whole, slashes included", () => {
   const seat = { provider: "claude-lead/opus", thinking: "high" };
@@ -27,7 +27,8 @@ test("a project's model table matches a model id whole, slashes included", () =>
     ["codex-peer", "gpt-6", true],
   ];
   for (const [provider, model, allowed] of cases) {
-    assert.equal(modelAllowed(table, "peer", provider, model).ok, allowed, `${provider}/${model}`);
+    const fit = fitSeat(table, "peer", provider, model);
+    assert.equal(fit.ok && fit.model === undefined, allowed, `${provider}/${model}`);
   }
 });
 

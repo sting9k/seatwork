@@ -1,7 +1,6 @@
 import { ROOM_HOME, shipSql } from "./support/room";
 import assert from "node:assert/strict";
-import { spawn } from "node:child_process";
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
 import {
   chmodSync,
   copyFileSync,
@@ -17,6 +16,7 @@ import { DatabaseSync } from "node:sqlite";
 import { basename, dirname, join } from "node:path";
 import { test } from "node:test";
 import vocabulary from "../shared/work.json";
+import { Sqlite, keptOutOfGit } from "../server/sqlite";
 import { WorkError, WorkStore } from "../server/tasks/store";
 import { WorkStores } from "../server/tasks/stores";
 import { work } from "../server/tasks/tools";
@@ -270,7 +270,6 @@ test("every query the store runs is served by an index, but the whole-store ones
   store.list({ status: "open" });
   store.list({ limit: 5 });
   store.titles("open", 5);
-  store.heldBy("p1");
   store.get(b.id.slice(0, 6));
   store.blockers(c.id);
   store.comments(b.id, 5, 1);
@@ -287,6 +286,11 @@ test("every query the store runs is served by an index, but the whole-store ones
     .filter(({ plan }) => /\bSCAN (issues|dependencies|comments|events)\b(?! USING)/.test(plan))
     .filter(({ sql }) => !whole.some((known) => sql.startsWith(known)));
   assert.deepEqual(scans, []);
+  // the graph reads start from the open issues: a pass over every edge of a kind would grow with closed work
+  assert.deepEqual(
+    store.plans().filter(({ plan }) => /dependencies_by_type \(type=\?\)/.test(plan)),
+    [],
+  );
 });
 
 test("the store's checks take every word of shared/work.json", () => {
@@ -688,31 +692,6 @@ test("a store whose text copy cannot be written is closed all the same", () => {
   assert.throws(() => store.count(), /not open/);
 });
 
-test("the issue a seat holds is read as one row by its assignee, the first the list would give", () => {
-  const { store } = fresh();
-  const low = store.create({ title: "low", priority: 3 }, "lead");
-  const high = store.create({ title: "high", priority: 1 }, "lead");
-  store.create({ title: "idle" }, "lead");
-  assert.equal(store.heldBy("p1"), undefined);
-  store.claim(low.id, "p1");
-  store.claim(high.id, "p1");
-  store.claim(store.create({ title: "other seat's" }, "lead").id, "p2");
-  assert.equal(store.heldBy("p1"), high.id);
-  assert.equal(store.heldBy("p1"), store.list({ assignee: "p1", status: "in_progress", limit: 1 }).issues[0].id);
-  store.update(high.id, { assignee: null }, "p1");
-  assert.equal(store.heldBy("p1"), low.id);
-  store.closeIssue(low.id, "done in 4f2a91c, tests green", "lead", { ...POLICY, forbidSelfClose: false });
-  assert.equal(store.heldBy("p1"), undefined);
-  assert.match(
-    store
-      .plans()
-      .filter(({ sql }) => sql.includes("INDEXED BY issues_by_assignee"))
-      .map(({ plan }) => plan)
-      .join(" | "),
-    /SEARCH issues USING INDEX issues_by_assignee \(assignee=\? AND status=\?\)/,
-  );
-});
-
 test("a list counts the issues that match only when its page is full", () => {
   const { store } = fresh();
   for (const title of ["a", "b", "c"]) store.create({ title }, "lead");
@@ -807,7 +786,12 @@ test("a work store made before the order index is brought to it when it opens, w
   const shipped = join(ROOM_HOME, "room", "sql", "work");
   for (const name of readdirSync(shipped).filter((script) => !/^V[34]__/.test(script)))
     copyFileSync(join(shipped, name), join(earlier, name));
-  new WorkStore(dir, TIMING, undefined, earlier).close();
+  new Sqlite(join(keptOutOfGit(dir), "work.db"), {
+    busyTimeoutMs: TIMING.busyTimeoutMs,
+    scripts: earlier,
+    name: "the earlier work store",
+    fail: (_code, message) => new Error(message),
+  }).close();
   // the store of today writes the lease column: the issues of the older layout are written under it
   const raw = new DatabaseSync(join(dir, "work.db"));
   const insert = raw.prepare(

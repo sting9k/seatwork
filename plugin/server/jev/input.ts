@@ -1,4 +1,5 @@
 import { notEnglish } from "../english";
+import { redact } from "../redact";
 import { DecisionError, type Questions, type State } from "./contract";
 
 /** What a caller hands the model, made safe before it is sent: shape and size bounded, text cleaned, tricks named. */
@@ -28,23 +29,20 @@ const ADDRESSED = [
   /\b(system prompt|you are an? (ai|assistant|language model|classifier|judge))\b/i,
 ] as const;
 
-/** One text cleaned of hidden letters, masked, quoted foreign words left out, blank runs shortened, cut with the cut said. */
-function cleanText(
-  text: string,
-  mask: (text: string) => string = (same) => same,
-  most: number = INPUT.textChars,
-): string {
-  // hidden letters go before the mask, so a secret split by one is still found
-  const clean = mask(text.normalize("NFC").replace(HIDDEN, ""))
+/** One text cleaned of hidden letters, secrets, quoted foreign words and blank runs, cut with the cut said. */
+function cleanText(text: string): string {
+  // hidden letters go first, so a secret split by one is still found
+  const clean = redact(text.normalize("NFC").replace(HIDDEN, ""))
     // a product's own words quoted in a note stay in the room: the model reads only that something was quoted
     .replace(QUOTED, (quoted) => (notEnglish(quoted) ? "`(words in another language)`" : quoted))
     .replace(BLANK_RUN, "\n\n")
     .replace(SPACE_RUN, "    ");
+  const most = INPUT.textChars;
   return clean.length <= most ? clean : `${clean.slice(0, most)} … (${clean.length - most} characters cut)`;
 }
 
 /** The first phrase of a text that speaks to the model, or null. */
-export function addressed(text: string): string | null {
+function addressed(text: string): string | null {
   for (const words of ADDRESSED) {
     const found = words.exec(text);
     if (found) return found[0].slice(0, 80);
@@ -53,10 +51,7 @@ export function addressed(text: string): string | null {
 }
 
 /** A state made safe: refused if misshapen or too large, else cleaned; `suspect` names the text that speaks to the model. */
-export function cleanState(
-  state: State,
-  mask: (text: string) => string = (same) => same,
-): { state: State; suspect: string | null } {
+export function cleanState(state: State): { state: State; suspect: string | null } {
   let suspect: string | null = null;
   let [chars, nodes] = [0, 0];
   const walk = (value: unknown, path: string, depth: number): unknown => {
@@ -64,7 +59,7 @@ export function cleanState(
     if ((nodes += 1) > INPUT.nodes)
       throw new DecisionError("TOO_LARGE", `the state holds more than ${INPUT.nodes} values`);
     if (typeof value === "string") {
-      const text = cleanText(value, mask);
+      const text = cleanText(value);
       if ((chars += text.length) > INPUT.totalChars)
         throw new DecisionError("TOO_LARGE", `the state's text is longer than ${INPUT.totalChars} characters`);
       const spoken = suspect === null ? addressed(text) : null;
@@ -88,10 +83,10 @@ export function cleanState(
       return Object.fromEntries(
         entries.map(([key, inner]) => {
           // a key is the caller's own word: one shaped like a secret is refused, never sent
-          if (key.length > INPUT.keyChars || !KEY.test(key) || mask(key) !== key)
+          if (key.length > INPUT.keyChars || !KEY.test(key) || redact(key) !== key)
             throw new DecisionError(
               "INVALID",
-              `${path ? `${path}.` : ""}${mask(key).slice(0, 40)} is no key a state may use`,
+              `${path ? `${path}.` : ""}${redact(key).slice(0, 40)} is no key a state may use`,
             );
           return [key, walk(inner, path ? `${path}.${key}` : key, depth + 1)];
         }),

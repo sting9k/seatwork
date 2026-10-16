@@ -13,7 +13,7 @@ Each case opens one seat of a role in a real room and grades its turn. The plugi
 | `node evals/run.cjs --list` | the runs a label would make | nothing |
 | `node evals/run.cjs --harness script --label check` | every case's right turn, scripted, against the real room | nothing |
 | `node evals/run.cjs --harness wrong --label wrong` | every case's wrong turn: each must come out `caught` | nothing |
-| `node evals/run.cjs --dry --label start` | every seat started whole on its CLI, its model calls sent to a port nothing answers: its prompt, tools, MCP servers and skills, each `started` | nothing |
+| `node evals/run.cjs --dry --label start` | every seat started whole on its CLI; its first model call is kept in `request.json` and refused: the prompt and tools its model is given, each `started` | nothing |
 | `node evals/run.cjs --spend --label <name>` | the seats on their agent CLIs | model calls; only on the owner's word |
 | `node evals/run.cjs --regrade <name>` | a label's saved outcomes graded again | nothing |
 
@@ -45,7 +45,8 @@ Cases live in `cases.cjs`. A case has:
 - `prompt`: text, or `ctx.delivered()` for the mail the room handed the seat;
 - `grades`: built with `g` from `graders.cjs`;
 - `script`: the turn a right answer takes, and `wrong`: one that breaks the rule;
-- `writes`: true for a seat that may edit; it then runs in the real seat's permission mode, and every other case is held to reading.
+- `writes`: true for a seat that may edit; it then runs in the real seat's permission mode, and every other case is held to reading;
+- `policy`: keys laid over the room's policy for this case.
 
 Add a case when a rule of a role page, spec or skill has no run that would catch its loss.
 
@@ -62,6 +63,8 @@ What a run leaves out against a real seat:
 - Paseo's permission flow;
 - other seats acting: fixture seats only hold state.
 
-A Claude seat runs with a Claude folder of the run's own and the login Paseo gives its seats (`CLAUDE_CODE_OAUTH_TOKEN`, from the environment or Paseo's `claude` provider); the user's `~/.claude` is not touched. A dry run's Codex seat talks to a provider of its own on the dead port, and Codex's events show no MCP servers, so `--dry` proves less for Codex than for Claude.
+A Claude seat runs with a Claude folder of the run's own and the login Paseo gives its seats (`CLAUDE_CODE_OAUTH_TOKEN`, from the environment or Paseo's `claude` provider); the user's `~/.claude` is not touched. A dry run's Codex seat talks to a provider of its own, the run's endpoint. Codex in code mode lists the room's MCP tools to its model only on request (`ALL_TOOLS` in its `exec` tool), so a dry run shows its own tools, not the room's.
 
-Codex runs on the room's runtime home for its role. Its sandbox is `workspace-write` for a case that writes and `read-only` otherwise, where a real seat runs with full access.
+Run a spending run from a clean environment (`env -i HOME=… USER=… PATH=… TMPDIR=…`): an agent CLI started from inside another agent's session inherits that session's variables.
+
+Codex runs on the room's runtime home for its role, with full access for a case that writes, as a real seat runs (its `workspace-write` sandbox keeps `.git` read-only, so no commit), and `read-only` otherwise; the room's guard hook checks its commands as in a real seat.

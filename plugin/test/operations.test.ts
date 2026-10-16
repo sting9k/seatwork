@@ -1,13 +1,14 @@
 import { ROOM_HOME, shipSql } from "./support/room";
 import assert from "node:assert/strict";
-import { rmSync } from "node:fs";
+import { rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import { test } from "node:test";
 import { Operations, OperationsRefused } from "../server/operations/index";
 import { districtOf, incidentOf } from "../server/operations/lines";
 import { OperationsStore } from "../server/operations/store";
 import { Vitals } from "../server/operations/vitals";
-import type { StoreStat } from "../server/sqlite";
+import { storeStats, type StoreStat } from "../server/sqlite";
 
 shipSql();
 let homes = 0;
@@ -37,7 +38,7 @@ function operations(operators: string[] = ["hq-1"]) {
     now: () => now,
   });
   const at = (iso: string) => (now = new Date(iso));
-  return { ops, policy, persisted, mailed, echoed, at, spent };
+  return { ops, dir, policy, persisted, mailed, echoed, at, spent };
 }
 
 const GROUNDS = {
@@ -213,7 +214,7 @@ test("the digest weighs each change still standing against its baseline; a key r
   ops.close();
 });
 
-test("a trace keeps its hypothesis and what it learned; after three undone changes it sends the operator to Human", () => {
+test("a trace keeps its hypothesis and what it learned; after three undone changes it sends the operator to its Owner", () => {
   const { ops } = operations();
   ops.log(LOCKED(1));
   const opened = ops.act("hq-1", {
@@ -252,19 +253,80 @@ test("a trace keeps its hypothesis and what it learned; after three undone chang
     "hypothesis: The minute's pass and the GC run at the same moment.",
   ]);
   assert.equal(trace.undone, 3);
-  assert.match(String(trace.next), /Write Human the trace/);
+  assert.match(String(trace.next), /Write your Owner the trace/);
   assert.throws(
     () =>
       ops.act("hq-1", { do: "tune", path: "jev.monthlyCapUsd", value: 9, trace: opened.id, revisit: true, ...GROUNDS }),
-    /write Human the trace instead/,
+    /write your Owner the trace instead/,
   );
-  ops.act("hq-1", { do: "close", id: opened.id, conclusion: "The fault is in the code; the trace went to Human." });
+  ops.act("hq-1", { do: "close", id: opened.id, conclusion: "The fault is in the code; the trace went to the Owner." });
   assert.deepEqual(ops.act("hq-1", { do: "traces" }).traces, []);
   assert.throws(
     () => ops.act("hq-1", { do: "close", id: opened.id, conclusion: "Closing it a second time." }),
     /is closed/,
   );
   ops.close();
+});
+
+test("an open trace nobody touched for the log's days is closed by the room with its reason, then goes like a closed one; a noted or tuned trace stays", () => {
+  const { ops, dir, at } = operations();
+  const open = (hypothesis: string) => ops.act("hq-1", { do: "trace", hypothesis }).id as number;
+  at("2026-10-15T00:00:00.000Z");
+  const idle = open("Nobody looked at this hypothesis after it was written.");
+  const noted = open("A hypothesis that gets a note two days in.");
+  const tuned = open("A hypothesis that a change is made for two days in.");
+  at("2026-10-17T00:00:00.000Z");
+  ops.act("hq-1", { do: "trace", id: noted, kind: "evidence", text: "The log shows the lock at each minute's pass." });
+  readJev(ops);
+  ops.act("hq-1", { do: "tune", path: "jev.monthlyCapUsd", value: 11, trace: tuned, ...GROUNDS });
+
+  at("2026-10-18T01:00:00.000Z");
+  ops.expire();
+  const openIds = () => (ops.act("hq-1", { do: "traces" }).traces as { id: number }[]).map((one) => one.id);
+  assert.deepEqual(openIds(), [noted, tuned]);
+  assert.throws(() => ops.act("hq-1", { do: "close", id: idle, conclusion: "Closing it a second time." }), /is closed/);
+  const file = new DatabaseSync(join(dir, "operations.db"), { readOnly: true });
+  const left = file.prepare("SELECT conclusion FROM traces WHERE id = ?").get(idle) as { conclusion: string };
+  file.close();
+  assert.match(left.conclusion, /Left open for 3 days with no note and no change/);
+
+  // a month on, the room's closed trace is gone as any closed one; the two touched ones have gone idle in their turn
+  at("2026-11-18T00:00:00.000Z");
+  ops.expire();
+  assert.deepEqual(openIds(), []);
+  assert.throws(
+    () => ops.act("hq-1", { do: "trace", id: idle, kind: "evidence", text: "Looking at it after it went." }),
+    new RegExp(`no trace #${idle} is open`),
+  );
+  ops.close();
+});
+
+test("reading the open traces costs the same statements however many are open, and shows each its newest twelve notes", () => {
+  const calls = (dir: string) => storeStats().find((one) => one.file === join(dir, "operations.db"))!.calls;
+  const measure = (traces: number) => {
+    const { ops, dir } = operations();
+    for (let i = 0; i < traces; i += 1) {
+      const id = ops.act("hq-1", { do: "trace", hypothesis: `Hypothesis number ${i} of the same incident.` }).id;
+      for (let note = 1; note <= 14; note += 1)
+        ops.act("hq-1", { do: "trace", id, kind: "evidence", text: `Evidence ${note} of trace number ${i}.` });
+    }
+    const before = calls(dir);
+    const listed = ops.act("hq-1", { do: "traces" }).traces as { notes: string[] }[];
+    const used = calls(dir) - before;
+    ops.close();
+    return { listed, used };
+  };
+  const few = measure(2);
+  const many = measure(30);
+  assert.deepEqual([few.listed.length, many.listed.length], [2, 30]);
+  assert.equal(many.used, few.used);
+  for (const [i, one] of many.listed.entries()) {
+    assert.equal(one.notes.length, 12);
+    assert.deepEqual(
+      [one.notes[0], one.notes.at(-1)],
+      [`evidence: Evidence 3 of trace number ${i}.`, `evidence: Evidence 14 of trace number ${i}.`],
+    );
+  }
 });
 
 test("the log keeps its days and its size; incidents not seen within the days and old closed traces go", () => {
@@ -325,6 +387,7 @@ test("every statement of the log, the incidents, the tunes and the traces reads 
   store.revertsOf("room.work.busyTimeoutMs", "2026-10-01");
   store.trace(trace.id);
   store.openTraces();
+  store.closeIdleTraces(new Date("2026-10-01T00:00:00.000Z"), "left open and untouched");
   store.closeTrace(trace.id, "the timeout was raised");
   store.expire(new Date("2026-10-01T00:00:00.000Z"), 5, new Date("2026-10-01T00:00:00.000Z"));
   // newest first to their limit: the log of all districts, and the tunes
@@ -339,6 +402,35 @@ test("every statement of the log, the incidents, the tunes and the traces reads 
     .filter(({ sql }) => !whole.some((known) => sql.startsWith(known)));
   assert.deepEqual(scans, []);
   store.close();
+});
+
+test("a district whose store cannot open lets go of the vitals it was given", () => {
+  const blocker = join(ROOM_HOME, "operations-blocker");
+  writeFileSync(blocker, "");
+  const vitals = new Vitals();
+  const close = vitals.close.bind(vitals);
+  let closed = 0;
+  vitals.close = () => {
+    closed += 1;
+    close();
+  };
+  assert.throws(
+    () =>
+      new Operations({
+        dir: join(blocker, "store"),
+        busyTimeoutMs: 1000,
+        policy: () => ({}),
+        persist() {},
+        operators: () => [],
+        mail: async () => {},
+        readings: {},
+        echo() {},
+        vitals,
+      }),
+    /ENOTDIR/,
+  );
+  assert.equal(closed, 1);
+  close();
 });
 
 test("a measure whose low point keeps rising is told once a window; one that rises and falls back is not", () => {

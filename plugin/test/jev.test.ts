@@ -5,6 +5,7 @@ import { chmodSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { DatabaseSync } from "node:sqlite";
 import { test } from "node:test";
+import { probeChat } from "../server/jev/chat";
 import { call } from "../server/jev/client";
 import { DecisionError, type Questions } from "../server/jev/contract";
 import { Jev, type JevPolicy, type ProviderName } from "../server/jev/index";
@@ -26,6 +27,8 @@ const QUESTIONS: Questions = {
   },
   size: { type: "score", instructions: "How large is the change?", criteria: ["small", "medium", "large"] },
 };
+const RAN: Questions = { ran: QUESTIONS.ran };
+const WIRE = { url: "https://ts.test/v1/systemone", model: "m" };
 
 /** The answers a System One provider gives to QUESTIONS. */
 const SYSTEM_ONE = {
@@ -164,11 +167,9 @@ test("each provider is sent its own request and read into one shape of answers",
 test("a call retries what may pass, stops at what will not, and never outlives its deadline", async () => {
   const options = { attemptMs: 100, retries: 2, deadlineMs: 2000, sleep: async () => {} };
   const ok = () => json({ model: "m", answers: { ran: { type: "noul", noul: 1 } }, usage: {} });
-  const one: Questions = { ran: QUESTIONS.ran };
-  const wire = { url: "https://ts.test/v1/systemone", model: "m" };
 
   const busy = provider(json({}, 429, { "retry-after": "0" }), json({}, 503), ok);
-  assert.equal((await call("systemone", wire, "s", one, { ...options, fetch: busy.fetch })).attempts, 3);
+  assert.equal((await call("systemone", WIRE, "s", RAN, { ...options, fetch: busy.fetch })).attempts, 3);
 
   for (const [replies, sends, status] of [
     [[json({}, 500), json({}, 502), json({}, 503), ok], 3, 503],
@@ -176,14 +177,14 @@ test("a call retries what may pass, stops at what will not, and never outlives i
     [[json({}, 402), ok], 1, 402],
   ] as const) {
     const failing = provider(...replies);
-    const error = await call("systemone", wire, "s", one, { ...options, fetch: failing.fetch }).catch((e) => e);
+    const error = await call("systemone", WIRE, "s", RAN, { ...options, fetch: failing.fetch }).catch((e) => e);
     assert.deepEqual([error.code, error.status, failing.sent.length], ["HTTP", status, sends]);
   }
   const refilling = provider(json({}, 402, { "retry-after": "1" }), ok);
-  assert.equal((await call("systemone", wire, "s", one, { ...options, fetch: refilling.fetch })).attempts, 2);
+  assert.equal((await call("systemone", WIRE, "s", RAN, { ...options, fetch: refilling.fetch })).attempts, 2);
 
   const wrong = provider(json({ model: "m", answers: { ran: { type: "choice", choice: "x" } } }), ok);
-  await assert.rejects(call("systemone", wire, "s", one, { ...options, fetch: wrong.fetch }), { code: "CONTRACT" });
+  await assert.rejects(call("systemone", WIRE, "s", RAN, { ...options, fetch: wrong.fetch }), { code: "CONTRACT" });
   assert.equal(wrong.sent.length, 1, "a reply off the contract is not asked again");
 
   const stalls = (async (_url: string, init: RequestInit) =>
@@ -192,31 +193,29 @@ test("a call retries what may pass, stops at what will not, and never outlives i
     )) as typeof fetch;
   const started = Date.now();
   await assert.rejects(
-    call("systemone", wire, "s", one, { attemptMs: 50, retries: 5, deadlineMs: 300, fetch: stalls }),
+    call("systemone", WIRE, "s", RAN, { attemptMs: 50, retries: 5, deadlineMs: 300, fetch: stalls }),
     { code: "TIMEOUT" },
   );
   assert.ok(Date.now() - started < 1000, "the deadline holds across retries and backoff");
   const cancel = new AbortController();
   setTimeout(() => cancel.abort(), 20);
   await assert.rejects(
-    call("systemone", wire, "s", one, { ...options, attemptMs: 1000, fetch: stalls, signal: cancel.signal }),
+    call("systemone", WIRE, "s", RAN, { ...options, attemptMs: 1000, fetch: stalls, signal: cancel.signal }),
     { code: "ABORTED" },
   );
 });
 
 test("a call leaves no listener on a signal that outlives it, and refuses a reply past its size unread", async () => {
   const room = new AbortController();
-  const wire = { url: "https://ts.test/v1/systemone", model: "m" };
-  const one: Questions = { ran: QUESTIONS.ran };
   const options = { attemptMs: 100, retries: 0, deadlineMs: 1000, signal: room.signal };
   for (let i = 0; i < 50; i += 1) {
     const reply = provider(i % 2 ? json({ model: "m", answers: { ran: { type: "noul", noul: 1 } } }) : json({}, 400));
-    await call("systemone", wire, "s", one, { ...options, fetch: reply.fetch }).catch(() => {});
+    await call("systemone", WIRE, "s", RAN, { ...options, fetch: reply.fetch }).catch(() => {});
   }
   assert.equal(getEventListeners(room.signal, "abort").length, 0);
 
   const huge = provider(() => new Response(`{"model":"${"x".repeat(3 * 1024 * 1024)}"}`, { status: 200 }));
-  await assert.rejects(call("systemone", wire, "s", one, { ...options, fetch: huge.fetch }), /larger than/);
+  await assert.rejects(call("systemone", WIRE, "s", RAN, { ...options, fetch: huge.fetch }), /larger than/);
   assert.equal(huge.sent.length, 1);
 });
 
@@ -247,7 +246,7 @@ test("a request no provider would take is refused before anything is sent", asyn
     [Object.fromEntries(Array.from({ length: 40 }, (_, i) => [`k${i}`, "x".repeat(6000)])), /longer than 200000/],
     [{ f: () => 1 }, /holds a function/],
   ] as const)
-    await assert.rejects(jev.decide("t", state as never, { ran: QUESTIONS.ran }), why);
+    await assert.rejects(jev.decide("t", state as never, RAN), why);
   assert.equal(none.sent.length, 0);
 });
 
@@ -563,9 +562,7 @@ test("calls already out when the provider is held off do not hold it longer, and
     return json({}, 503);
   }) as unknown as typeof globalThis.fetch;
   const { jev } = district({ ...POLICY("jev"), retries: 0, attemptSeconds: 30 }, failing, true, () => now);
-  const calls = Array.from({ length: 8 }, (_, i) =>
-    jev.decide("t", `state ${i}`, { ran: QUESTIONS.ran }).catch((e) => e),
-  );
+  const calls = Array.from({ length: 8 }, (_, i) => jev.decide("t", `state ${i}`, RAN).catch((e) => e));
   await new Promise((resolve) => setTimeout(resolve, 20));
   while (held.length) {
     held.shift()!();
@@ -577,9 +574,9 @@ test("calls already out when the provider is held off do not hold it longer, and
   );
   assert.match(String(jev.why()), /after 2026-10-15T10:00:30/, "eight failures of one burst hold it off once");
   now = new Date("2026-10-15T10:00:31Z");
-  const trying = jev.decide("t", "probe", { ran: QUESTIONS.ran }).catch((e) => e);
+  const trying = jev.decide("t", "probe", RAN).catch((e) => e);
   await new Promise((resolve) => setTimeout(resolve, 10));
-  await assert.rejects(jev.decide("t", "meanwhile", { ran: QUESTIONS.ran }), /another call is trying the provider/);
+  await assert.rejects(jev.decide("t", "meanwhile", RAN), /another call is trying the provider/);
   held.shift()!();
   assert.equal((await trying).code, "HTTP");
   assert.match(String(jev.why()), /after 2026-10-15T10:01:31/);
@@ -599,7 +596,7 @@ test("a provider that fails three calls in a row is held off, longer each time, 
     () => now,
     (line) => lines.push(line),
   );
-  const ask = (state: string) => jev.decide("t", state, { ran: QUESTIONS.ran });
+  const ask = (state: string) => jev.decide("t", state, RAN);
   for (const state of ["a", "b", "c"]) await assert.rejects(ask(state), { code: "HTTP" });
   await assert.rejects(ask("d"), { code: "DOWN" });
   assert.match(String(jev.why()), /failed 3 times in a row; it is asked again after 2026-10-15T10:00:30/);
@@ -628,10 +625,10 @@ test("at most eight calls are in flight: more wait their turn, and past the queu
     return json(ok);
   }) as unknown as typeof globalThis.fetch;
   const { jev } = district({ ...POLICY("jev"), retries: 0, attemptSeconds: 30 }, slow);
-  const calls = Array.from({ length: 40 }, (_, i) => jev.decide("t", `state ${i}`, { ran: QUESTIONS.ran }));
+  const calls = Array.from({ length: 40 }, (_, i) => jev.decide("t", `state ${i}`, RAN));
   await new Promise((resolve) => setTimeout(resolve, 20));
   assert.equal(held.length, 8);
-  await assert.rejects(jev.decide("t", "one too many", { ran: QUESTIONS.ran }), { code: "BUSY" });
+  await assert.rejects(jev.decide("t", "one too many", RAN), { code: "BUSY" });
   while (held.length) {
     held.shift()!();
     await new Promise((resolve) => setTimeout(resolve, 2));
@@ -640,10 +637,10 @@ test("at most eight calls are in flight: more wait their turn, and past the queu
   assert.equal(done.length, 40);
   await assert.rejects(
     (async () => {
-      const blocking = Array.from({ length: 8 }, (_, i) => jev.decide("t", `block ${i}`, { ran: QUESTIONS.ran }));
+      const blocking = Array.from({ length: 8 }, (_, i) => jev.decide("t", `block ${i}`, RAN));
       await new Promise((resolve) => setTimeout(resolve, 20));
       try {
-        return await jev.decide("t", "late", { ran: QUESTIONS.ran }, { deadlineMs: 30 });
+        return await jev.decide("t", "late", RAN, { deadlineMs: 30 });
       } finally {
         while (held.length) held.shift()!();
         await Promise.all(blocking);
@@ -767,7 +764,7 @@ test("a Chat Completions answer is refused when the endpoint gives no log probab
   const wire = { url: "http://127.0.0.1:8000/v1/chat/completions", model: "qwen-chat" };
   const options = { attemptMs: 1000, retries: 0, deadlineMs: 2000 };
   await assert.rejects(call("openai-chat", wire, "s", one, { ...options, fetch: chatEndpoint(() => null).fetch }), {
-    code: "CONTRACT",
+    code: "NO_LOGPROBS",
     message: /no log probabilities/,
   });
   const elsewhere = chatEndpoint(() => [
@@ -788,4 +785,73 @@ test("a Chat Completions answer is refused when the endpoint gives no log probab
   await assert.rejects(call("openai-chat", wire, "s", many, { ...options, fetch: elsewhere.fetch }), {
     code: "INVALID",
   });
+});
+
+test("a Chat Completions endpoint that gives no log probabilities is asked once, until the provider's model or url changes", async () => {
+  let sent = 0;
+  const refuse = (async () => {
+    sent += 1;
+    return json({ error: { message: "logprobs are not supported with reasoning models" } }, 400);
+  }) as typeof globalThis.fetch;
+  const policy = POLICY("custom");
+  policy.providers.custom = {
+    ...policy.providers.custom,
+    dialect: "openai-chat",
+    url: "http://127.0.0.1:8000/v1/chat/completions",
+  };
+  const { jev } = district(policy, refuse);
+  await assert.rejects(jev.decide("t", { said: "done" }, RAN), { code: "NO_LOGPROBS" });
+  await assert.rejects(jev.decide("t", { said: "done" }, RAN), { code: "OFF", message: /gives no log probabilities/ });
+  assert.match(jev.why() ?? "", /set a model or an endpoint that gives them/);
+  assert.equal(sent, 1, "the endpoint is not asked again for what it cannot give");
+  policy.providers.custom.model = "qwen-instruct";
+  await assert.rejects(jev.decide("t", { said: "done" }, RAN), { code: "NO_LOGPROBS" });
+  assert.equal(sent, 2, "another model is tried");
+  jev.close();
+});
+
+test("a Chat Completions call whose caller has already given up sends nothing", async () => {
+  const endpoint = chatEndpoint(() => [{ token: "yes", p: 1 }]);
+  const wire = { url: "http://127.0.0.1:8000/v1/chat/completions", model: "qwen-chat" };
+  await assert.rejects(
+    call("openai-chat", wire, "s", RAN, {
+      attemptMs: 1000,
+      retries: 0,
+      deadlineMs: 2000,
+      signal: AbortSignal.abort(),
+      fetch: endpoint.fetch,
+    }),
+    { code: "ABORTED" },
+  );
+  assert.equal(endpoint.sent.length, 0);
+});
+
+test("a probe of a Chat Completions endpoint says whether it gives what the wire reads", async () => {
+  const wire = { url: "http://127.0.0.1:8000/v1/chat/completions", model: "qwen-chat" };
+  const answering = (top: { token: string; p: number }[] | null) =>
+    (async () =>
+      json({
+        choices: [
+          {
+            logprobs: top && {
+              content: [{ top_logprobs: top.map(({ token, p }) => ({ token, logprob: Math.log(p) })) }],
+            },
+          },
+        ],
+      })) as typeof fetch;
+  const tops = (p: number) => ({
+    fetch: answering([
+      { token: "yes", p },
+      { token: "no", p: (1 - p) / 2 },
+    ]),
+  });
+  const good = await probeChat(wire, tops(0.8).fetch);
+  assert.deepEqual([good.fits, good.topLogprobs], [true, 2]);
+  assert.match(good.notes.join(" "), /shows 2 likely tokens/);
+  assert.match((await probeChat(wire, tops(0.9995).fetch)).notes.join(" "), /all but certain of an open question/);
+  const bare = await probeChat(wire, answering(null));
+  assert.deepEqual([bare.fits, bare.topLogprobs], [false, null]);
+  assert.match(bare.notes[0], /without the log probabilities/);
+  const refused = (async () => json({ error: { message: "logprobs are not supported" } }, 400)) as typeof fetch;
+  assert.match((await probeChat(wire, refused)).notes[0], /HTTP 400: .*logprobs are not supported/);
 });

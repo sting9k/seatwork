@@ -24,8 +24,8 @@ function piVersion(): Promise<string> {
 }
 
 /** What is wrong with this machine's Pi, or null: a Pi seat needs Pi's built-in MCP, there from 0.99. */
-export async function piProblem(version: Promise<string> = piVersion()): Promise<string | null> {
-  const found = await version;
+export async function piProblem(): Promise<string | null> {
+  const found = await piVersion();
   return atLeast(found, [0, 99])
     ? null
     : `a Pi seat needs Pi 0.99 or later to get the room's tools; found ${found || "no pi on PATH"}`;
@@ -43,8 +43,9 @@ export async function setupChecks(
     behind: string | undefined;
   },
 ): Promise<{ id: string; label: string; ok: boolean | null; detail: string }[]> {
+  const { pluginDir, setup, seats, version, olderSeats, behind } = room;
   const { config } = await paseo.config.get();
-  const switches = readSwitches(PASEO_HOME, room.pluginDir);
+  const switches = readSwitches(PASEO_HOME, pluginDir);
   const tools = (config.mcp as { enabled?: boolean } | undefined)?.enabled ?? switches.paseoTools;
   const checks = [
     {
@@ -57,13 +58,12 @@ export async function setupChecks(
           : "Seats create and reach each other through them.",
     },
   ];
-  const { setup, version, olderSeats } = room;
   if (setup && setup.version !== version) {
     checks.push({
       id: "version",
       label: "Room files",
       ok: false,
-      detail: `Set up by ${setup.version ? `version ${setup.version}` : "an earlier version"}; Apply brings them to ${version}.${room.behind ? ` The plugin tried by itself and could not: ${room.behind}` : ""}`,
+      detail: `Set up by ${setup.version ? `version ${setup.version}` : "an earlier version"}; Apply brings them to ${version}.${behind ? ` The plugin tried by itself and could not: ${behind}` : ""}`,
     });
   }
   if (olderSeats.length) {
@@ -75,7 +75,7 @@ export async function setupChecks(
       detail: `${olderSeats.length} open seat${many ? "s" : ""} got ${many ? "their" : "its"} prompt from an earlier version of the plugin and ${many ? "keep" : "keeps"} it: ${olderSeats.slice(0, 5).join(", ")}${olderSeats.length > 5 ? ", …" : ""}. Archive a seat and create it again to have it on ${version}.`,
     });
   }
-  if (room.seats.some((seat) => seat.startsWith("pi-"))) {
+  if (seats.some((seat) => seat.startsWith("pi-"))) {
     const problem = await piProblem();
     checks.push({
       id: "pi",

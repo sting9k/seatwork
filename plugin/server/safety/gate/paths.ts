@@ -91,7 +91,7 @@ export function substitution(script: Script, known: Known): Variable & { text: s
   return none;
 }
 
-/** The program a lookup command (`which`, `command -v`, `type -p`, `readlink`, `realpath`) names, which stands for the path it prints; null for any other command. */
+/** The program a lookup command (`which`, `command -v`, `type -p`, `readlink`, `realpath`) names, standing for the path it prints; null for any other command. */
 function lookup(words: Word[], name: string | undefined, known: Known): string | null {
   const flags = name === "command" ? ["-v"] : name === "type" ? ["-p", "-P"] : null;
   const start = flags ? (flags.includes(literal(words[1] ?? words[0]) ?? "") ? 2 : -1) : 1;
@@ -125,7 +125,9 @@ export function tempPath(path: string): boolean {
 export function isTemp(value: Value, known: Known): boolean {
   const tmp = known.place.tmp;
   if (value.text === null) {
-    if (value.temp && !value.glob) return !value.prefix || (tmp !== null && within(value.prefix, tmp));
+    // a glob after a mktemp folder stays in it unless it climbs out
+    if (value.temp && (!value.glob || !value.word.raw.includes("..")))
+      return !value.prefix || (tmp !== null && within(value.prefix, tmp));
     return (
       tmp !== null &&
       value.prefix.length > tmp.length &&

@@ -92,16 +92,20 @@ async function readOverlaps(room: RoomContext, work: () => Work, plan: Plan): Pr
   return read.length ? { ...plan, overlaps: [...plan.overlaps, ...read] } : plan;
 }
 
+const said = (value: unknown) => String(value ?? "").trim();
+const reasonOf = (args: Record<string, unknown>) => said(args.reason).slice(0, MOST_REASON_CHARS);
+const idOf = (args: Record<string, unknown>) => Number(String(args.id ?? "").replace(/^#/, ""));
+
 /** seatwork_safety: one action of the room's guard for the seat `me`. */
 async function safetyTool(room: RoomContext, me: string, args: Record<string, unknown>): Promise<string> {
   const action = String(args.action ?? "");
   if (action === "check") {
-    const command = String(args.command ?? "").trim();
+    const command = said(args.command);
     if (!command) throw new Error("seatwork_safety check: give the `command`");
     return room.safety.explain(me, command, room.engine.seat(me)?.cwd ?? null);
   }
   if (action === "grant") {
-    const code = String(args.code ?? "").trim();
+    const code = said(args.code);
     if (!/^\d{6}$/.test(code)) throw new Error("seatwork_safety grant: give the six-digit `code`");
     return room.safety.grant(code, me);
   }
@@ -119,10 +123,8 @@ async function safetyTool(room: RoomContext, me: string, args: Record<string, un
       .join("\n");
   }
   if (action === "ack") {
-    const id = String(args.id ?? "").trim();
-    const reason = String(args.reason ?? "")
-      .trim()
-      .slice(0, MOST_REASON_CHARS);
+    const id = said(args.id);
+    const reason = reasonOf(args);
     if (!id || reason.length < 10)
       throw new Error("seatwork_safety ack: give the finding's `id` and a `reason` of a sentence");
     return room.safety.acknowledge(me, id, reason)
@@ -131,11 +133,9 @@ async function safetyTool(room: RoomContext, me: string, args: Record<string, un
   }
   if (action === "council") return room.safety.councilLines(Number(args.days) > 0 ? Number(args.days) : 30);
   if (action === "label") {
-    const id = Number(String(args.id ?? "").replace(/^#/, ""));
+    const id = idOf(args);
     const value = String(args.value ?? "");
-    const reason = String(args.reason ?? "")
-      .trim()
-      .slice(0, MOST_REASON_CHARS);
+    const reason = reasonOf(args);
     if (!Number.isInteger(id) || (value !== "right" && value !== "wrong") || reason.length < 10)
       throw new Error(
         "seatwork_safety label: give the finding's `id`, `value` right or wrong, and a `reason` of a sentence",
@@ -143,10 +143,8 @@ async function safetyTool(room: RoomContext, me: string, args: Record<string, un
     return room.safety.label(me, id, value, reason);
   }
   if (action === "rule") {
-    const id = Number(String(args.id ?? "").replace(/^#/, ""));
-    const reason = String(args.reason ?? "")
-      .trim()
-      .slice(0, MOST_REASON_CHARS);
+    const id = idOf(args);
+    const reason = reasonOf(args);
     if (!Number.isInteger(id) || typeof args.send_back !== "boolean" || reason.length < 10)
       throw new Error(
         "seatwork_safety rule: give the appeal's `id`, `send_back` true or false, and a `reason` of a sentence",
@@ -154,7 +152,7 @@ async function safetyTool(room: RoomContext, me: string, args: Record<string, un
     return room.safety.rule(me, id, args.send_back, reason);
   }
   if (action === "control") {
-    const writer = String(args.seat ?? "").trim();
+    const writer = said(args.seat);
     const owner = room.engine.parentOf(writer);
     if (!room.engine.seat(writer) || !owner || (me !== owner && room.engine.parentOf(me) !== owner))
       throw new Error("seatwork_safety control: give the `seat` of a writer under you, or beside you under one Owner");
@@ -315,7 +313,7 @@ export function registerTools(room: RoomContext, mcp: McpHttpServer): void {
       to: target,
       priority: "action",
       subject: "HANDOFF: write your handoff; a fresh seat continues your work",
-      body: handoffRequest(clip(String(args.why ?? "").trim(), MOST_WHY_CHARS)),
+      body: handoffRequest(clip(said(args.why), MOST_WHY_CHARS)),
       needs: "reply",
       why: "the seat above you is replacing this seat with a fresh one, for the size of its context",
     });

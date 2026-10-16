@@ -12,7 +12,7 @@ import { parseSeat } from "../orchestration/seats";
 import { handInLine, handInReturn, type HandIn } from "../safety/handin";
 import { asksOwner, DECIDES, signalOf, subjectSignal } from "../signals";
 import type { Finding } from "../safety/council/council";
-import { fromRoom, releaseWork, taskOf, type RoomContext } from "./context";
+import { errorText, fromRoom, releaseWork, taskOf, type RoomContext } from "./context";
 import { councilLine, councilRead } from "./council";
 import { fitAt, stepUpAt } from "./launch";
 
@@ -48,7 +48,6 @@ interface Gathered {
 }
 
 const ALIKE_SHARE = 0.6;
-const errorText = (error: unknown) => (error instanceof Error ? error.message : String(error));
 
 /** True when a turn was started by mail and none of it asked the seat for anything. */
 function askedNothing(wake: readonly Mail[]): boolean {
@@ -86,7 +85,9 @@ function reportOf(room: RoomContext, end: TurnEnd, about: Gathered): NewMail | n
     needs = "decision";
     quiet = progress = false;
   } else if (signal ? mailed.has(signal) : kept) {
-    room.log(`turn end of ${seat.id} not mailed again: the seat mailed ${signal ?? "its report"} to its parent itself`);
+    room.log(
+      `turn end of ${seat.id}: the seat mailed ${signal ?? "its report"} to its parent itself, so nothing more goes up`,
+    );
     return null;
   } else if (signal && signal !== "STATUS" && signal !== "ACK") {
     priority = "action";
@@ -257,7 +258,7 @@ async function findingsOf(room: RoomContext, end: TurnEnd, role: string, task: s
   }
 }
 
-/** Puts under what goes up the room's own lines: the guard's, the council's, the task's round, a context past the rotation line or at a milestone before it. A line that cannot be made is left out; the report goes up. */
+/** Puts the room's own lines under what goes up (the guard's, the council's, the round's, the context's); true when the council's is among them, and a line that cannot be made is left out. */
 function addRoomLines(
   room: RoomContext,
   up: NewMail,
@@ -270,13 +271,15 @@ function addRoomLines(
     check: HandIn | null;
     findings: readonly Finding[];
   },
-): void {
+): boolean {
   const { role, id, task, contextTokens, early, check, findings } = about;
+  let lined = false;
   try {
     const guarded = [check ? handInLine(check) : null, room.safety.blocksLine(id), councilLine(findings)].filter(
       (line): line is string => !!line,
     );
     if (guarded.length) up.why = [up.why, ...guarded].filter(Boolean).join("; ");
+    lined = findings.length > 0;
     const candidate = subjectSignal(up.subject) === "CANDIDATE";
     const line = ownerNote({
       role,
@@ -289,6 +292,16 @@ function addRoomLines(
     if (line) up.why = [up.why, line.replace(/\s*\n\s*/g, " ")].filter(Boolean).join("; ");
   } catch (error) {
     room.log(`the room's own lines under the report of ${id} were not all added: ${errorText(error)}`);
+  }
+  return lined;
+}
+
+/** Notes that the council's findings reached the seat above; a note that is not kept only lets them be said once more. */
+function noteShown(room: RoomContext, findings: readonly Finding[]): void {
+  try {
+    room.safety.council.shown(findings);
+  } catch (error) {
+    room.log(`the council's findings told to the seat above were not noted: ${errorText(error)}`);
   }
 }
 
@@ -431,7 +444,7 @@ export async function turnEnded(room: RoomContext, end: TurnEnd): Promise<void> 
     role && up && outcome.kind === "completed" && !room.rotations.get(id)
       ? await atMilestone(room.forks, { role, tokens: contextTokens, message: end.text }, room.rotateAt)
       : false;
-  if (role && up) addRoomLines(room, up, { role, id, task, contextTokens, early, check, findings });
+  const lined = role && up ? addRoomLines(room, up, { role, id, task, contextTokens, early, check, findings }) : false;
   if (up && subjectSignal(up.subject) === "REVIEW") await holdForRound(room, up, id);
   const asked = room.rotations.get(id);
   const record = eng.seat(id);
@@ -459,7 +472,7 @@ export async function turnEnded(room: RoomContext, end: TurnEnd): Promise<void> 
       needs: "reply",
       why: "the room reads a candidate before its Owner does",
     });
-  for (const finding of findings.filter((one) => one.level >= 2 && reportsTo))
+  for (const finding of findings.filter((one) => one.level >= 2 && reportsTo)) {
     await eng.post({
       from: fromRoom,
       to: reportsTo!,
@@ -469,6 +482,8 @@ export async function turnEnded(room: RoomContext, end: TurnEnd): Promise<void> 
       needs: "nothing",
       why: "the room's council read a turn of a seat under you",
     });
+    noteShown(room, [finding]);
+  }
   // held mail may now start the next turn
   await eng.deliver(id);
   if (!reportsTo) return;
@@ -477,4 +492,5 @@ export async function turnEnded(room: RoomContext, end: TurnEnd): Promise<void> 
   // the report the seat mailed before its turn ended goes out now, however the turn ended
   if (kept) await eng.postReport({ ...kept, to: reportsTo });
   if (report) await eng.post(report);
+  if (lined) noteShown(room, findings);
 }

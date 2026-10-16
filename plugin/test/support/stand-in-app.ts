@@ -3,7 +3,7 @@ import { join } from "node:path";
 import type { PaseoApi } from "../../server/paseo/api";
 import { PASEO_SCHEDULES } from "../../server/paths";
 
-/** A stand-in for the Paseo app on the SDK's own types, with a paseo CLI over the same agents: what a Host reads and writes, receipts and starts kept by key as the app keeps them, and calls made to hang, answer late, or lose track of a message (`forget` counts the next new ids it loses). */
+/** A stand-in Paseo app on the SDK's own types, with a paseo CLI over the same agents: it keeps receipts and starts by key as the app does, and a call can hang, answer late, or lose a message (`forget` counts the next new ids it loses). */
 
 type Agents = PaseoApi["agents"];
 type Handle = ReturnType<Agents["ref"]>;

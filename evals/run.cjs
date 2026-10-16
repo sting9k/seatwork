@@ -5,7 +5,7 @@
  *   node evals/run.cjs --list                                   # the runs a label would make
  *   node evals/run.cjs --harness script --label check           # every case's scripted turn, no model: proves the cases and the harness
  *   node evals/run.cjs --spend --label baseline [--harness claude|codex] [--tiers default,cheap] [--effort high] [--only <regex>] [--jobs 2] [--budget 4] [--timeout 20]
- *   node evals/run.cjs --dry --label start [--harness claude|codex] # each seat started whole, its model call sent to a dead port: what it is given, for free
+ *   node evals/run.cjs --dry --label start [--harness claude|codex] # each seat started whole, its first model call kept and refused: what it is given, for free
  *   node evals/run.cjs --regrade baseline                       # grade saved outcomes again with the graders as they are now
  */
 const { spawn } = require("node:child_process");

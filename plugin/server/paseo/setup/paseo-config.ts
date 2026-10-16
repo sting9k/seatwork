@@ -1,13 +1,12 @@
 import { copyFileSync, chmodSync, existsSync, readFileSync, realpathSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { PaseoApi } from "../api";
+import { stamp } from "../../gc";
 import { isRoomProvider } from "../../orchestration/seats";
 import type { RoomPlan } from "./plan";
-import { stamp } from "./room-home";
 
 /** Whether a profile is the room's own, by the id prefixes the room has written. */
 const isOwnProfile = (id: string) => id.startsWith("agent_profile_seatwork_") || id.startsWith("agent_profile_slp_");
-const isRoomSeat = isRoomProvider;
 const NO_BUNDLED_SKILLS = { mode: "custom", skills: [] as string[] };
 
 type Json = Record<string, any>;
@@ -35,7 +34,7 @@ export async function applyWithSdk(
 ): Promise<{ removed: string[] }> {
   const { config } = await paseo.config.get();
   const current = (config.providers ?? {}) as Record<string, unknown>;
-  const removed = Object.keys(current).filter((id) => isRoomSeat(id) && !(id in plan.providers));
+  const removed = Object.keys(current).filter((id) => isRoomProvider(id) && !(id in plan.providers));
   // Paseo merges a patched provider into the one it has: one that dropped a key is removed first
   const rewritten = Object.keys(current).filter(
     (id) => id in plan.providers && dropsKeys(current[id], plan.providers[id]),
@@ -64,7 +63,7 @@ export async function applyWithSdk(
 /** Takes the room's seats and profiles out of a running daemon. */
 export async function removeWithSdk(paseo: PaseoApi): Promise<{ removed: string[] }> {
   const { config } = await paseo.config.get();
-  const removed = Object.keys((config.providers ?? {}) as Json).filter(isRoomSeat);
+  const removed = Object.keys((config.providers ?? {}) as Json).filter(isRoomProvider);
   const kept = ((config.agentProfiles ?? []) as { id: string }[]).filter((profile) => !isOwnProfile(profile.id));
   await paseo.config.patch({ removeProviders: removed, agentProfiles: kept as never });
   return { removed };
@@ -83,7 +82,7 @@ function mergeIntoConfig(config: Json, plan: RoomPlan): Json {
     ...plan.profiles,
   ];
   next.agents.providers = {
-    ...Object.fromEntries(Object.entries((next.agents.providers ?? {}) as Json).filter(([id]) => !isRoomSeat(id))),
+    ...Object.fromEntries(Object.entries((next.agents.providers ?? {}) as Json).filter(([id]) => !isRoomProvider(id))),
     ...plan.providers,
   };
   next.daemon.mcp = { ...(next.daemon.mcp ?? {}), enabled: true, injectIntoAgents: true };
@@ -120,7 +119,6 @@ export interface DaemonSwitches {
   paseoTools: boolean | null;
   dictation: boolean | null;
   voiceMode: boolean | null;
-  bundledSkillsOff: boolean | null;
 }
 
 /** This daemon's config.json, only when it lists the plugin at its own folder: then it is surely this daemon's. */
@@ -141,21 +139,21 @@ function ownConfig(paseoHome: string, pluginDir: string): { file: string; config
 /** The daemon switches as this daemon's config.json has them; null for each where the file does not say. */
 export function readSwitches(paseoHome: string, pluginDir: string): DaemonSwitches {
   const own = ownConfig(paseoHome, pluginDir);
-  if (!own) return { paseoTools: null, dictation: null, voiceMode: null, bundledSkillsOff: null };
+  if (!own) return { paseoTools: null, dictation: null, voiceMode: null };
   const { config } = own;
-  const selection = config.agents?.skills?.selection;
   return {
     paseoTools: config.daemon?.mcp?.enabled ?? true,
     dictation: config.features?.dictation?.enabled ?? null,
     voiceMode: config.features?.voiceMode?.enabled ?? null,
-    bundledSkillsOff: selection?.mode === "custom" && Array.isArray(selection.skills) && selection.skills.length === 0,
   };
 }
 
 /** Keeps Paseo's bundled skills out of agents by writing config.json; true when a daemon reload is now due. */
 export function turnBundledSkillsOff(paseoHome: string, pluginDir: string): boolean {
   const own = ownConfig(paseoHome, pluginDir);
-  if (!own || readSwitches(paseoHome, pluginDir).bundledSkillsOff) return false;
+  if (!own) return false;
+  const selection = own.config.agents?.skills?.selection;
+  if (selection?.mode === "custom" && Array.isArray(selection.skills) && selection.skills.length === 0) return false;
   const next = structuredClone(own.config);
   next.agents = { ...(next.agents ?? {}), skills: { ...(next.agents?.skills ?? {}), selection: NO_BUNDLED_SKILLS } };
   writeConfig(own.file, next);

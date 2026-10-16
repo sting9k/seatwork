@@ -35,7 +35,7 @@ export class Vitals {
     this.timer.unref();
   }
 
-  /** The minute's lines of trouble: an event loop held too long, a store with new slow statements, a write-ahead log grown large, a measure whose low point keeps rising. */
+  /** The minute's lines of trouble: an event loop held too long, new slow statements, a large write-ahead log, a measure whose low point keeps rising. */
   minute(): string[] {
     const lines: string[] = [];
     this.last = { maxMs: this.lagMs };

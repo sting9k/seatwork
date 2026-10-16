@@ -1,11 +1,11 @@
 import { absolute, isTemp, lossOf, valueOf, within } from "../paths";
 import { literal, type Word } from "../shell";
-import type { Scene, Value } from "../types";
+import type { Scene } from "../types";
 import { protectedTarget } from "./protected";
 
 /** `rm` read as GNU and BSD rm read their options, judged by what it would remove (DCG). */
 
-export interface RmHit {
+interface RmHit {
   rule: string;
   detail: string;
 }

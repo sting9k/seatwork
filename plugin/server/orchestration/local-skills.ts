@@ -22,7 +22,7 @@ export interface SkillSource {
 }
 
 /** A local skill as its record keeps it: the sha-256 of each file, its source, why it was added, by whom and when. */
-export interface SkillRecord {
+interface SkillRecord {
   files: Record<string, string>;
   source: SkillSource;
   why: string;
@@ -50,25 +50,24 @@ function keep(all: Record<string, SkillRecord>): void {
   renameSync(`${file}.next`, file);
 }
 
-/** The names of the skills the room ships, for every role. */
-function shipped(): Set<string> {
-  const dirs = [...ROLES, "shared"].map((role) => join(ROOM_DIR, "skills", role));
-  return new Set(dirs.flatMap((dir) => (existsSync(dir) ? readdirNames(dir) : [])));
-}
-
-/** The folders of a directory that hold a SKILL.md. */
-function readdirNames(dir: string): string[] {
+/** The skills in a folder: each a subfolder holding a SKILL.md. */
+export function skillsIn(dir: string): string[] {
+  if (!existsSync(dir)) return [];
   return readdirSync(dir).filter((name) => existsSync(join(dir, name, "SKILL.md")));
 }
 
-/** The local skills of a role, by name. */
-export function localSkills(role: string): string[] {
-  const dir = join(LOCAL_SKILLS_DIR, role);
-  return existsSync(dir) ? readdirNames(dir).sort() : [];
+/** The names of the skills the room ships, for every role. */
+function shipped(): Set<string> {
+  return new Set([...ROLES, "shared"].flatMap((role) => skillsIn(join(ROOM_DIR, "skills", role))));
 }
 
 /** The folder a role's local skills sit in. */
 export const localSkillsOf = (role: string): string => join(LOCAL_SKILLS_DIR, role);
+
+/** The local skills of a role, by name. */
+export function localSkills(role: string): string[] {
+  return skillsIn(localSkillsOf(role)).sort();
+}
 
 /** Adds or replaces a role's local skill; its files are checked first and its record kept. */
 export function addSkill(input: {

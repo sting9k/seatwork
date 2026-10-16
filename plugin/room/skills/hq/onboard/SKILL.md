@@ -10,7 +10,7 @@ Done when `seatwork_projects` shows the project registered with mission yes and 
 1. `seatwork_projects`. The project is absent → your Owner adds the folder to Paseo first; stop. Several unregistered and none named → ask which.
 2. **Mission**: read the README and manifest (a few reads), draft 3 to 6 lines: what the project is for, who uses it, what done looks like, what is out of bounds. Show your Owner and take their yes or corrections. Never invent a goal the files do not support; ask.
 3. **Law**: what the repository answers, you fill; the rest is one numbered list of questions to your Owner, each with your recommendation:
-   - when seats commit, and whether anything may push;
+   - where accepted work lands and whether anything may push (a Peer always commits its candidate, and its Lead accepts that commit);
    - compatibility: hard cut, or a window with a removal date;
    - how deep review goes, and what needs a person;
    - the test command, and any area seats must not touch.

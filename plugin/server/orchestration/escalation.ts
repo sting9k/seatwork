@@ -54,9 +54,15 @@ export async function routeUp(
   targets.set("person", open.at(-1) ?? above[0]);
 
   const words = meanings("escalate");
+  const seat = (one: SeatRecord | undefined) => (one ? { role: one.role, title: clip(one.title ?? "", 120) } : null);
   const picked = await room.forks.take(
     "escalate",
-    { message: { signal, subject: clip(draft.subject, 200), body: excerpt(draft.body, 1500) } },
+    {
+      message: { signal, subject: clip(draft.subject, 200), body: excerpt(draft.body, 1500) },
+      sender: seat(sender),
+      owner: seat(above[0]),
+      above: seat(above[1]),
+    },
     Object.fromEntries([...targets.keys()].map((label) => [label, words[label]])),
   );
   const target = picked && picked !== "owner" ? targets.get(picked) : undefined;

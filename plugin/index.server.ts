@@ -33,7 +33,7 @@ import {
 } from "./shared/setup";
 import { ROOM_PROJECT } from "./shared/workflow";
 
-const VERSION = "0.38.0";
+const VERSION = "0.39.0";
 const PLUGIN_ID = "seatwork";
 
 /** Seatwork on Paseo: the setup screen first; the room once it is set up. */

@@ -1,5 +1,5 @@
 {
-  "$comment": "The tier fork: what a Peer seat on claude-peer is about to start on. The labels are the tiers room/models.json lists on that provider, with what each is for. expect: the tier that fits.",
+  "$comment": "The tier fork: what a Peer seat on claude-peer is about to start on. The labels are the tiers room/models.json lists on that provider, with what each is for. expect: the tier that fits. Cases whose id starts with held- are kept out of tuning the question.",
   "cases": [
     {
       "id": "rename",
@@ -74,6 +74,55 @@
       "title": "Write the changelog entry",
       "brief": "Add an entry to CHANGELOG.md for the 2.3.0 release from the merged pull request titles.",
       "expect": "cheap"
+    },
+    {
+      "id": "held-copyright",
+      "title": "Update the copyright year",
+      "brief": "Change 2025 to 2026 in the header comment of every file under src/.",
+      "expect": "cheap"
+    },
+    {
+      "id": "held-csv-validation",
+      "title": "Validate CSV imports",
+      "brief": "Check each row of an import against the schema, report bad rows with their line numbers, and add tests.",
+      "expect": "default"
+    },
+    {
+      "id": "held-event-store",
+      "title": "Choose the audit trail design",
+      "spec": "arch",
+      "brief": "Decide between an append-only event log and snapshot tables for the audit trail; weigh replay cost against storage and write down the decision.",
+      "expect": "extra"
+    },
+    {
+      "id": "held-env-rename",
+      "title": "Rename the database variable",
+      "brief": "Rename DB_URL to DATABASE_URL in the code, the docs and the example env file.",
+      "expect": "cheap"
+    },
+    {
+      "id": "held-memory-leak",
+      "title": "Fix the worker's memory leak",
+      "brief": "The worker's memory grows by 50 MB an hour; find the leak and fix it, with a test.",
+      "expect": "default"
+    },
+    {
+      "id": "held-double-charge",
+      "title": "Can the retry charge twice?",
+      "brief": "Argue whether the payment retry can charge a card twice when the provider times out after charging: find the case, or show why it cannot happen.",
+      "expect": "extra"
+    },
+    {
+      "id": "held-sort-imports",
+      "title": "Sort the imports",
+      "brief": "Run the import sorter over src/ and commit the result.",
+      "expect": "cheap"
+    },
+    {
+      "id": "held-session-expiry",
+      "title": "Find out how sessions expire",
+      "brief": "Read the session code and write down when a session expires and what renews it.",
+      "expect": "default"
     }
   ]
 }

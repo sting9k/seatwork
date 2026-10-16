@@ -1,5 +1,5 @@
 {
-  "$comment": "The wake fork: an FYI or HANDOFF mail to an idle seat. expect: act or nothing. A body may be {head, pad, tail}.",
+  "$comment": "The wake fork: an FYI or HANDOFF mail to an idle seat. expect: act or nothing. A body may be {head, pad, tail}. Cases whose id starts with held- are kept out of tuning the question.",
   "cases": [
     {
       "id": "deploy-time",
@@ -72,7 +72,11 @@
     {
       "id": "long-notes",
       "subject": "HANDOFF: reading notes",
-      "body": { "head": "Notes for later, nothing to do now.", "pad": 1700, "tail": "That is all; no reply needed." },
+      "body": {
+        "head": "Notes for later, nothing to do now.",
+        "pad": 1700,
+        "tail": "That is all; no reply needed."
+      },
       "expect": "nothing"
     },
     {
@@ -92,6 +96,54 @@
       "body": "Nothing to do here for now. One small thing though: please delete the old fixtures folder today.",
       "expect": "act",
       "why": "says nothing to do, then asks"
+    },
+    {
+      "id": "held-flaky-yours",
+      "subject": "FYI: your test is flaky",
+      "body": "checkout.test.ts, which you wrote, fails one run in five on CI.",
+      "expect": "act"
+    },
+    {
+      "id": "held-new-runners",
+      "subject": "FYI: CI moved to new runners",
+      "body": "CI runs on the new runners from today; nothing changes for you.",
+      "expect": "nothing"
+    },
+    {
+      "id": "held-export-bug-yours",
+      "subject": "HANDOFF: the export bug",
+      "body": "The export bug is yours now; the failing case is in issue sw-88.",
+      "expect": "act"
+    },
+    {
+      "id": "held-new-teammate",
+      "subject": "FYI: a new teammate",
+      "body": "A second Peer joins the team tomorrow for the search work.",
+      "expect": "nothing"
+    },
+    {
+      "id": "held-merge-conflict",
+      "subject": "FYI: your branch conflicts with main",
+      "body": "Your branch no longer merges cleanly after today's changes to router.ts.",
+      "expect": "act"
+    },
+    {
+      "id": "held-cache-ttl",
+      "subject": "HANDOFF: context on the cache",
+      "body": "For later reference: the cache TTL is 60 s, set in config/cache.ts.",
+      "expect": "nothing"
+    },
+    {
+      "id": "held-advisory",
+      "subject": "FYI: security advisory",
+      "body": "The lodash version in your package.json has a known vulnerability; 4.17.21 fixes it.",
+      "expect": "act"
+    },
+    {
+      "id": "held-demo-praise",
+      "subject": "FYI: the demo went well",
+      "body": "The person said the demo of your export work went well.",
+      "expect": "nothing"
     }
   ]
 }

@@ -48,7 +48,7 @@ function openAiQuestion(id: string, question: Question): Record<string, unknown>
   if (question.type === "choice") {
     const choices = Object.entries(question.criteria).map(([value, description]) => ({
       value,
-      description: description ?? "",
+      description: description === null ? "" : asText(description),
     }));
     if (choices.length < 2) throw new DecisionError("INVALID", `${id}: OpenAI's Decisions need 2 labels or more`);
     return { type: "choice", name: id, instructions, choices };

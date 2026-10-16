@@ -1,5 +1,5 @@
 {
-  "$comment": "Small choices about mail, work, seats and incidents put to the decision model: a label at sharpAt or more, the same with the labels listed either way round, is acted on, anything less keeps the room's own rule. deadlineMs: how long a call may take. Empty criteria: the labels come with the call. escalate.signals: the subjects it reads. policy.jev.forks lists the forks that are on; a required fork is on whatever it lists, since the room needs it. label and about: how the Seatwork screen names a fork.",
+  "$comment": "Small choices about mail, work, seats and incidents put to the decision model: a label at sharpAt or more, the same with the labels listed either way round, is acted on, anything less keeps the room's own rule. deadlineMs: how long a call may take. Empty criteria: the labels come with the call. A label's words may be fields: what it covers, what it is not for, examples, for labels the model would otherwise mix up. escalate.signals: the subjects it reads. policy.jev.forks lists the forks that are on; a required fork is on whatever it lists, since the room needs it. label and about: how the Seatwork screen names a fork.",
   "forks": {
     "report": {
       "label": "Reports with nothing new",
@@ -20,15 +20,15 @@
     "wake": {
       "label": "Mail that can wait",
       "about": "Lets an idle seat sleep through mail that only informs.",
-      "version": 2,
+      "version": 3,
       "sharpAt": 0.8,
       "deadlineMs": 5000,
       "question": {
         "type": "choice",
-        "instructions": "`subject` and `body` are a mail one software agent sent another that is idle. Say what the mail asks of its reader.",
+        "instructions": "`subject` and `body` are a mail one software agent sent another that is idle. Does the mail ask its reader for something, or point to a problem in the reader's own work? Say what the mail asks of its reader.",
         "criteria": {
-          "act": "to do, change, check, decide or answer something",
-          "nothing": "nothing: it only informs, and can wait for the reader's next mail"
+          "act": "to do, change, check, decide or answer something, or to fix a problem the mail finds in the reader's own work",
+          "nothing": "nothing: it only informs, and nothing in it is the reader's to fix or answer"
         }
       }
     },
@@ -110,18 +110,34 @@
     "escalate": {
       "label": "Who answers a question",
       "about": "Sends a question past the Owner when only a seat above can settle it.",
-      "version": 1,
+      "version": 2,
       "sharpAt": 0.9,
       "deadlineMs": 5000,
       "signals": ["BLOCKED", "QUESTION", "DECISION_NEEDED"],
       "question": {
         "type": "choice",
-        "instructions": "`message` is a mail a software agent sent its Owner, the seat directly above it, because it is blocked, has a question or needs a decision. Say who must answer it.",
+        "instructions": "`message` is a mail a software agent (`sender`) sent its Owner (`owner`), the seat directly above it, because it is blocked, has a question or needs a decision. `above` is the seat above the Owner. A seat's title names its work. Say who must answer `message`.",
         "criteria": {
-          "owner": "its Owner can answer it",
-          "above": "its Owner cannot settle it alone: it reaches past the Owner's own work, and the seat above the Owner must answer",
-          "room": "the cause is a fault of the room itself, its tools, mail, limits or settings, not of the work",
-          "person": "only a person can decide it: money, scope, direction, access, or a rule the seats may not change"
+          "owner": {
+            "covers": "a choice or a fact inside the work `owner`'s title names",
+            "not_for": "money, licenses, access, the room's own tools, or work another team owns",
+            "examples": ["whether a helper belongs in utils or in its module", "which of two error messages to show"]
+          },
+          "above": {
+            "covers": "something outside the work `owner`'s title names: another team's code or data, two Owners at odds, a plan set above `owner`",
+            "not_for": "a choice inside `owner`'s own work",
+            "examples": ["a change to an API another team owns", "two teams editing one service at once"]
+          },
+          "room": {
+            "covers": "a tool of the room that runs the agents (seatwork_mail, seatwork_work and the other seatwork_ tools), or one of its leases, limits or settings, failing or stopping the sender",
+            "not_for": "a failing test, a bug, or a choice in the project's own code",
+            "examples": ["the room's search tool times out on every call", "the room stops every turn after a minute"]
+          },
+          "person": {
+            "covers": "money, a license or legal approval, an access or a secret no seat holds, or a change customers or users would notice, such as a breaking change to a public API",
+            "not_for": "a choice the seats may make themselves",
+            "examples": ["a paid plan for a mapping service", "an account on a vendor's site"]
+          }
         }
       }
     },

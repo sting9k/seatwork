@@ -1,6 +1,7 @@
 /**
  * Measures what the room asks the decision model against labelled cases in evals/jev: each choice asked in its listed order and reversed, each juror asked as written and reworded, and the input variants (where a long text is cut, what else rides in the state). It calls the provider in force with the key in the room home, and writes nothing there.
- *   node --require ./test/register.cjs tools/jev-eval.ts [--only <site>] [--label <name>] [--dry]
+ *   node --require ./test/register.cjs tools/jev-eval.ts [--only <site>] [--variants <regex>] [--questions <file>] [--label <name>] [--dry]
+ * --questions names a JSON file of rewordings to try beside the shipped questions: { "<site>": { "<name>": { "question" or "nouls", "reworded"?, "with"? } } }.
  */
 import { mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -11,7 +12,15 @@ import knowledgeCatalog from "../shared/knowledge.json";
 import councilCatalog from "../shared/safety/council.json";
 import { excerpt } from "../server/excerpt";
 import { call } from "../server/jev/client";
-import { LIMITS, tokensOf, type Answer, type Question, type Questions, type State } from "../server/jev/contract";
+import {
+  LIMITS,
+  tokensOf,
+  type Answer,
+  type Meaning,
+  type Question,
+  type Questions,
+  type State,
+} from "../server/jev/contract";
 import type { Dialect } from "../server/jev/dialects";
 import { cleanState, guarded } from "../server/jev/input";
 import { merged, REVERSED, withReversed } from "../server/jev/order";
@@ -31,6 +40,14 @@ interface Probe {
   expect: Record<string, string>;
   sharpAt: number;
   band?: [number, number];
+  nouls?: Nouls;
+}
+
+/** A choice asked as one noul a label instead: the first label in `order` whose noul is sure is acted on, `otherwise` stands when none holds. */
+interface Nouls {
+  order: string[];
+  otherwise: string;
+  questions: Record<string, Question>;
 }
 
 /** How one answer was read: its label, how sure, whether sure enough to act on, and whether right. */
@@ -40,6 +57,14 @@ interface Read {
   sharp: boolean;
   correct: boolean;
   parted?: boolean;
+}
+
+/** A rewording to try beside a site's shipped question: the question, a juror's second reading, and case fields its state also carries. */
+interface Candidate {
+  question?: Question;
+  reworded?: Question;
+  with?: string[];
+  nouls?: Nouls;
 }
 
 /** A site of the room that asks the model: its cases built into requests, one at a time or, for a batched site, all at once. */
@@ -80,7 +105,7 @@ function text(value: unknown): string {
 }
 
 /** A fork's question with `{{id}}` filled and, when given, the labels the call brings. */
-function forkQuestion(name: keyof typeof FORKS, id: string, labels?: Record<string, string | null>): Question {
+function forkQuestion(name: keyof typeof FORKS, id: string, labels?: Record<string, Meaning>): Question {
   const question = FORKS[name].question as unknown as Question;
   return {
     ...question,
@@ -99,7 +124,7 @@ const cuts = (build: (cut: (value: string, most: number) => string) => Record<st
 function forkSite(
   name: keyof typeof FORKS,
   build: (one: Case, cut: (v: string, most: number) => string) => Record<string, unknown>,
-  labels?: (one: Case) => Record<string, string | null>,
+  labels?: (one: Case) => Record<string, Meaning>,
 ): Site {
   return {
     probes: (one) =>
@@ -193,11 +218,20 @@ const SITES: Record<string, Site> = {
   }),
   escalate: forkSite(
     "escalate",
-    (one) => ({
-      message: { signal: one.signal, subject: clip(String(one.subject), 200), body: clip(String(one.body), 1500) },
-    }),
+    (one, cut) => {
+      const seat = (value: unknown) => {
+        const given = value as { role: string; title: string } | undefined;
+        return given ? { role: given.role, title: clip(given.title, 120) } : null;
+      };
+      return {
+        message: { signal: one.signal, subject: clip(String(one.subject), 200), body: cut(String(one.body), 1500) },
+        sender: seat(one.sender),
+        owner: seat(one.owner),
+        above: seat(one.above),
+      };
+    },
     (one) => {
-      const words = FORKS.escalate.question.criteria as Record<string, string>;
+      const words = FORKS.escalate.question.criteria as Record<string, Meaning>;
       const targets = (one.targets as string[] | undefined) ?? Object.keys(words);
       return Object.fromEntries(targets.map((label) => [label, words[label]]));
     },
@@ -355,6 +389,46 @@ const SITES: Record<string, Site> = {
   },
 };
 
+/** A probe asked another way: each question replaced by the candidate's, a choice keeping the probe's labels unless the candidate words them, and the candidate's case fields added to the state. */
+function tryOn(probe: Probe, name: string, candidate: Candidate, cases: Map<string, Case>): Probe {
+  const one = probe.cases.length === 1 ? cases.get(`${probe.site}\u0000${probe.cases[0]}`) : undefined;
+  const added = Object.fromEntries((candidate.with ?? []).map((field) => [field, one?.[field] ?? null]));
+  const variant = `${probe.variant}+${name}`;
+  if (candidate.nouls) {
+    const [qid] = Object.keys(probe.expect);
+    const questions = Object.fromEntries(
+      Object.entries(candidate.nouls.questions).map(([label, question]) => [`${qid}.${label}`, question]),
+    );
+    return { ...probe, variant, state: { ...probe.state, ...added }, questions, nouls: candidate.nouls };
+  }
+  const questions: Record<string, Question> = {};
+  for (const [qid, shipped] of Object.entries(probe.questions)) {
+    if (qid.endsWith(REWORDED)) {
+      if (candidate.reworded) questions[qid] = candidate.reworded;
+      continue;
+    }
+    const { instructions } = candidate.question!;
+    const asked = {
+      ...candidate.question!,
+      instructions: typeof instructions === "string" ? instructions.replaceAll("{{id}}", qid) : instructions,
+    } as Question;
+    const worded = asked.type === "choice" ? (asked.criteria as Record<string, unknown>) : {};
+    questions[qid] =
+      shipped.type === "choice" && asked.type === "choice"
+        ? ({
+            ...asked,
+            criteria: Object.fromEntries(
+              Object.entries(shipped.criteria).map(([key, was]) => [key, worded[key] ?? was]),
+            ),
+          } as Question)
+        : asked;
+  }
+  const expect = Object.fromEntries(
+    Object.entries(probe.expect).filter(([qid]) => !qid.endsWith(REWORDED) || candidate.reworded),
+  );
+  return { ...probe, variant, state: { ...probe.state, ...added }, questions, expect };
+}
+
 /** The label an answer gives and its weight: a choice's most likely option, a noul's side of a half. */
 function labelOf(answer: { type: string; noul?: number; probabilities?: Record<string, number> }): {
   label: string;
@@ -376,6 +450,23 @@ const sureOf = (probe: Probe, p: number, yes?: number) =>
 /** The ways one probe's answers are read: as asked, reversed, the two averaged; or a juror as written, reworded, and both. */
 function readings(probe: Probe, answers: Record<string, any>): { qid: string; mode: string; read: Read }[] {
   const out: { qid: string; mode: string; read: Read }[] = [];
+  if (probe.nouls) {
+    const [qid, expect] = Object.entries(probe.expect)[0];
+    const yes = (label: string) => (answers[`${qid}.${label}`] as { noul: number }).noul;
+    const held = probe.nouls.order.find((label) => yes(label) >= 0.5);
+    const acted = probe.nouls.order.find((label) => yes(label) >= probe.sharpAt);
+    const clear = probe.nouls.order.every((label) => yes(label) <= 1 - probe.sharpAt);
+    const label = held ?? probe.nouls.otherwise;
+    const p = held ? yes(held) : Math.min(...probe.nouls.order.map((one) => 1 - yes(one)));
+    const read = {
+      label: acted ?? label,
+      p: acted ? yes(acted) : p,
+      sharp: !!acted || clear,
+      correct: (acted ?? label) === expect,
+    };
+    for (const mode of ["asked", "both"]) out.push({ qid, mode, read });
+    return out;
+  }
   for (const [qid, expect] of Object.entries(probe.expect)) {
     if (qid.endsWith(REWORDED)) continue;
     const first = labelOf(answers[qid]);
@@ -433,6 +524,10 @@ async function main(): Promise<void> {
   const args = process.argv.slice(2);
   const option = (name: string) => (args.includes(name) ? args[args.indexOf(name) + 1] : undefined);
   const only = option("--only");
+  const variants = option("--variants");
+  const tried = option("--questions");
+  const candidates: Record<string, Record<string, Candidate>> = tried ? JSON.parse(readFileSync(tried, "utf8")) : {};
+  const cases = new Map<string, Case>();
   const label = option("--label") ?? new Date().toISOString().slice(0, 16).replace(/[:T]/g, "-");
   const probes: Probe[] = [];
   for (const file of readdirSync(CASES)
@@ -442,8 +537,17 @@ async function main(): Promise<void> {
     const site = SITES[name];
     if (!site) throw new Error(`no site ${name} for ${file}`);
     if (only && !new RegExp(only).test(name)) continue;
-    const cases = (JSON.parse(readFileSync(join(CASES, file), "utf8")) as { cases: Case[] }).cases;
-    probes.push(...(site.batch ? site.batch(cases) : cases.flatMap((one) => site.probes(one))));
+    const read = (JSON.parse(readFileSync(join(CASES, file), "utf8")) as { cases: Case[] }).cases;
+    for (const one of read) cases.set(`${name}\u0000${one.id}`, one);
+    const built = (site.batch ? site.batch(read) : read.flatMap((one) => site.probes(one))).filter(
+      (probe) => !variants || new RegExp(variants).test(probe.variant),
+    );
+    probes.push(
+      ...built,
+      ...Object.entries(candidates[name] ?? {}).flatMap(([tag, candidate]) =>
+        built.map((probe) => tryOn(probe, tag, candidate, cases)),
+      ),
+    );
   }
   // a choice is asked in its listed order and reversed in the same request, as the room asks it
   for (const probe of probes) probe.questions = withReversed(probe.questions as Questions, LIMITS.questions);

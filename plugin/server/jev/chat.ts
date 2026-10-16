@@ -40,7 +40,7 @@ function answersOf(id: string, question: Question): Answers {
       keys: labels,
       lines: labels.map((label, at) => {
         const meaning = question.criteria[label];
-        return `${CODES[at]}: ${label}${meaning ? ` (${meaning})` : ""}`;
+        return `${CODES[at]}: ${label}${meaning ? ` (${asText(meaning)})` : ""}`;
       }),
     };
   }

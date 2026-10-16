@@ -1,4 +1,5 @@
 import { ROOM_HOME, shipSql } from "./support/room";
+import forkCatalog from "../shared/forks.json";
 import { forksWith, modelSaying } from "./forks-support";
 import assert from "node:assert/strict";
 import { join } from "node:path";
@@ -190,7 +191,7 @@ test("an issue that needs a decision is sent to the claimer's Owner, and where t
   const said = await claims(both.deps, store, second.id);
   assert.deepEqual(
     model.asked.map((one) => one.caller),
-    ["forks.gaps@1", "forks.escalate@1"],
+    ["forks.gaps@1", `forks.escalate@${forkCatalog.forks.escalate.version}`],
   );
   assert.deepEqual(both.posted[0].to, ["boss"], "the top of the chain, said to be a person's to decide");
   assert.deepEqual(both.posted[0].cc, ["lead"]);

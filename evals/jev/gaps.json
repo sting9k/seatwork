@@ -1,5 +1,5 @@
 {
-  "$comment": "The gaps fork: an issue a seat has just taken. expect: ready, unclear, no-acceptance, needs-decision or too-big. An empty field is sent as (none), as the room sends it.",
+  "$comment": "The gaps fork: an issue a seat has just taken. expect: ready, unclear, no-acceptance, needs-decision or too-big. An empty field is sent as (none), as the room sends it. Cases whose id starts with held- are kept out of tuning the question.",
   "cases": [
     {
       "id": "410-ready",
@@ -151,6 +151,57 @@
         "write_scope": "src/"
       },
       "expect": "too-big"
+    },
+    {
+      "id": "held-big-and-no-acceptance",
+      "issue": {
+        "title": "Rework the admin area",
+        "description": "Rebuild the admin user list, the role editor, the audit log viewer and the billing screens on the new design system.",
+        "acceptance": "",
+        "write_scope": "src/admin/"
+      },
+      "expect": "too-big",
+      "why": "too big and no acceptance; the room reads too-big as what matters most here"
+    },
+    {
+      "id": "held-ready-small",
+      "issue": {
+        "title": "Show the order id in the confirmation email",
+        "description": "The confirmation email leaves out the order id; add it under the greeting.",
+        "acceptance": "The email shows the order id; the email test checks for it.",
+        "write_scope": "src/email/confirmation.ts, test/email/"
+      },
+      "expect": "ready"
+    },
+    {
+      "id": "held-decision-currency",
+      "issue": {
+        "title": "Prices in more currencies",
+        "description": "Show prices in EUR and GBP. Nobody has said whether prices convert at today's rate or are set by hand per currency, and the two need different data.",
+        "acceptance": "Prices show in EUR and GBP.",
+        "write_scope": "src/pricing/"
+      },
+      "expect": "needs-decision"
+    },
+    {
+      "id": "held-unclear-slow",
+      "issue": {
+        "title": "The app is slow",
+        "description": "Some users say the app is slow.",
+        "acceptance": "",
+        "write_scope": ""
+      },
+      "expect": "unclear"
+    },
+    {
+      "id": "held-no-acceptance-retry",
+      "issue": {
+        "title": "Retry failed uploads",
+        "description": "When an upload fails, retry it up to three times with a short wait.",
+        "acceptance": "",
+        "write_scope": "src/upload/"
+      },
+      "expect": "no-acceptance"
     }
   ]
 }

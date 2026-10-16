@@ -1,4 +1,5 @@
 import catalog from "../../shared/forks.json";
+import type { Meaning } from "../jev/contract";
 
 /** Small choices about mail and work put to the decision model: a sharp answer is acted on, a split one keeps the room's rule. */
 
@@ -56,8 +57,8 @@ export function clip(text: string, most: number): string {
 export const required = (name: ForkName): boolean => "required" in FORKS[name] && FORKS[name].required === true;
 
 /** The words the catalog gives a fork's labels; empty for a fork whose labels come with the call. */
-export function meanings(name: ForkName): Record<string, string> {
-  return FORKS[name].question.criteria as Record<string, string>;
+export function meanings(name: ForkName): Record<string, Meaning> {
+  return FORKS[name].question.criteria as Record<string, Meaning>;
 }
 
 /** The catalog of forks asked of the decision model; an answer that fails or is split leaves the room's own rule. */
@@ -102,11 +103,7 @@ export class Forks {
   }
 
   /** One fork: its sharp label, or null to keep the room's own rule; `labels` stand in for a choice's own when given. */
-  async take(
-    name: ForkName,
-    state: Record<string, unknown>,
-    labels?: Record<string, string | null>,
-  ): Promise<string | null> {
+  async take(name: ForkName, state: Record<string, unknown>, labels?: Record<string, Meaning>): Promise<string | null> {
     return (await this.takeMany(name, state, ["fork"], labels))[0];
   }
 
@@ -115,7 +112,7 @@ export class Forks {
     name: ForkName,
     state: Record<string, unknown>,
     ids: readonly string[],
-    labels?: Record<string, string | null>,
+    labels?: Record<string, Meaning>,
   ): Promise<(string | null)[]> {
     if (ids.length === 0 || !this.open(name)) return ids.map(() => null);
     const fork = FORKS[name];

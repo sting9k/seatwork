@@ -14,6 +14,7 @@ import { after, before, test } from "node:test";
 import contribute from "../index.server";
 import { fakeServer } from "./support/server";
 import { DatabaseSync } from "node:sqlite";
+import councilCatalog from "../shared/safety/council.json";
 
 const paseoSide = fakeServer();
 const { call } = paseoSide;
@@ -1335,8 +1336,8 @@ test("a council member that has earned the level that sends work back asks the r
   await new Promise((resolve) => setTimeout(resolve, 300));
   const db = new DatabaseSync(join(ROOM_HOME, "safety", "safety.db"));
   db.prepare(
-    "INSERT OR REPLACE INTO council_members (member, version, level, hi, labels, moved_at) VALUES ('gaming', 1, 3, 0.9, 60, ?)",
-  ).run(new Date().toISOString());
+    "INSERT OR REPLACE INTO council_members (member, version, level, hi, labels, moved_at) VALUES ('gaming', ?, 3, 0.9, 60, ?)",
+  ).run(councilCatalog.members.gaming.version, new Date().toISOString());
   db.close();
 
   // the Peer bends its tests: the room's own check returns the hand-in, the Peer keeps the finding on purpose

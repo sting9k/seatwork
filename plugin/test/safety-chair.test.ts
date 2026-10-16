@@ -188,7 +188,7 @@ function earnLevel3(h: Harness, member: string, labels = 60): void {
   for (let i = 0; i < labels; i += 1) {
     const id = h.store.read({
       member,
-      version: 1,
+      version: (councilCatalog.members as Record<string, { version: number }>)[member].version,
       seat: `s${i % 8}`,
       role: "peer",
       task: `task-${i % 8}`,

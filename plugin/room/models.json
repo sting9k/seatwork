@@ -46,7 +46,7 @@
       "extra": {
         "providers": ["claude-peer/claude-opus-5-5"],
         "thinking": "high",
-        "use": "the other of two lenses on another model family, a third lens, the hardest Claude-side judgement",
+        "use": "the hardest judgement: deciding a design or an architecture, arguing whether code is correct under concurrency or failure, a third lens, or the other of two lenses on another model family",
         "never": "routine implementation"
       }
     }

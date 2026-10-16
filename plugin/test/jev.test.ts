@@ -753,6 +753,52 @@ function chatEndpoint(tops: (asked: string) => { token: string; p: number }[] | 
   return { fetch: send, sent };
 }
 
+test("an option's words given as fields reach every wire as text", async () => {
+  const kind: Questions = {
+    kind: {
+      type: "choice",
+      instructions: "What kind of change?",
+      criteria: { fix: { covers: "a repair", examples: ["a crash fixed"] }, feature: null },
+    },
+  };
+  const options = { attemptMs: 1000, retries: 0, deadlineMs: 2000 };
+  const decisions = provider(
+    json({
+      model: "qwen",
+      answers: [
+        {
+          type: "choice",
+          name: "kind",
+          choice: "fix",
+          probabilities: [
+            { value: "fix", probability: 0.9 },
+            { value: "feature", probability: 0.1 },
+          ],
+          confidence: 0.8,
+        },
+      ],
+    }),
+  );
+  await call("openai-decisions", { url: "http://127.0.0.1:8000/v1/decisions", model: "qwen" }, "s", kind, {
+    ...options,
+    fetch: decisions.fetch,
+  });
+  const choices = (decisions.sent[0].body.questions as { choices: { description: unknown }[] }[])[0].choices;
+  assert.deepEqual(
+    choices.map((choice) => choice.description),
+    ['{"covers":"a repair","examples":["a crash fixed"]}', ""],
+  );
+  const endpoint = chatEndpoint(() => [{ token: "A", p: 0.9 }]);
+  await call("openai-chat", { url: "http://127.0.0.1:8000/v1/chat/completions", model: "qwen-chat" }, "s", kind, {
+    ...options,
+    fetch: endpoint.fetch,
+  });
+  assert.match(
+    String((endpoint.sent[0].messages as { content: string }[])[1].content),
+    /A: fix \(\{"covers":"a repair","examples":\["a crash fixed"\]\}\)\nB: feature\n/,
+  );
+});
+
 test("a Chat Completions endpoint is asked one question a call for one token, and each answer is read from that token's weights", async () => {
   const questions: Questions = {
     passed: { type: "noul", instructions: "Did the tests pass?" },

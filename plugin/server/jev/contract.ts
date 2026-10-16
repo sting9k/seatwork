@@ -9,10 +9,13 @@ export interface NoulQuestion {
   criteria?: { true?: string; false?: string };
 }
 
+/** What a choice's option means: a line, or fields such as what it covers, what it is not for and examples; null when its name says it all. */
+export type Meaning = string | Record<string, unknown> | null;
+
 export interface ChoiceQuestion {
   type: "choice";
   instructions: Instructions;
-  criteria: Record<string, string | null>;
+  criteria: Record<string, Meaning>;
 }
 
 export interface ScoreQuestion {

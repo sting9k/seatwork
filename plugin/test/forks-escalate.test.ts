@@ -1,4 +1,5 @@
 import { hostOf, MAIL_POLICY, shipSql } from "./support/room";
+import forkCatalog from "../shared/forks.json";
 import { forksWith, modelSaying } from "./forks-support";
 import assert from "node:assert/strict";
 import { test } from "node:test";
@@ -70,7 +71,7 @@ const reached = (engine: MailEngine, at: string, sent: number) =>
     .map(({ seat: who, kind }) => `${who}:${kind}`)
     .sort();
 
-test("a question the decision model reads as only a person's goes to the top seat the workflow lets the sender mail, the Owner copied", async () => {
+test("a question the decision model reads as only a person's goes to the top seat the workflow lets the sender mail, the Owner copied; the model reads whose work it is in", async () => {
   const model = modelSaying("person");
   const { room, engine, id } = roomOf(forksWith(model.router, ["escalate"]).forks);
   const sent = JSON.parse(await sendMail(room, id.peer, ask));
@@ -80,9 +81,12 @@ test("a question the decision model reads as only a person's goes to the top sea
   assert.match(engine.storeOf(id.boss, false)!.get(sent.sent)!.why, /only a person can decide: bring it to the person/);
   // the labels are the seats the workflow lets a Peer mail: not the room's own seat, whose route is closed
   assert.deepEqual(model.asked[0].labels, ["owner", "above", "person"]);
-  assert.equal(model.asked[0].caller, "forks.escalate@1");
+  assert.equal(model.asked[0].caller, `forks.escalate@${forkCatalog.forks.escalate.version}`);
   assert.deepEqual(model.asked[0].state, {
     message: { signal: "QUESTION", subject: ask.subject, body: ask.body },
+    sender: { role: "peer", title: `[peer] ${id.peer}` },
+    owner: { role: "lead", title: `[lead] ${id.lead}` },
+    above: { role: "supervisor", title: `[supervisor] ${id.boss}` },
   });
 });
 

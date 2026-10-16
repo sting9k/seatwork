@@ -121,6 +121,7 @@ export async function program(
   for (const line of found.shell) await rd.text(line, fork(state), depth);
   for (const del of found.deletes) {
     const value = valueOf(textWord(del.path, "single"), known);
+    rd.noteChange(value, known);
     const how = `${language} ${del.how} ${del.path}`;
     if (del.recursive) {
       if (isTemp(value, known)) continue;
@@ -128,8 +129,11 @@ export async function program(
       rd.out.add("core.filesystem", severe ? "rm-rf-root-home" : "rm-rf-general", scene.text, how);
     } else if (guardOf(value, "remove", known)) rd.out.add("core.filesystem", "rm-protected-file", scene.text, how);
   }
+  if (found.unreadWrite) rd.noteChange(null, known);
   for (const write of found.writes) {
-    const guard = guardOf(valueOf(textWord(write.path, "single"), known), write.append ? "append" : "write", known);
+    const value = valueOf(textWord(write.path, "single"), known);
+    rd.noteChange(value, known);
+    const guard = guardOf(value, write.append ? "append" : "write", known);
     if (guard) rd.out.add(guard.pack, guard.rule, scene.text, `${language} ${write.how} ${write.path}`);
   }
   if (found.dynamicExec.length)

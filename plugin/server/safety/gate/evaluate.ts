@@ -1,9 +1,10 @@
+import { posix } from "node:path";
 import { languageOf } from "./embedded";
 import { Findings } from "./findings";
 import { treeGlob } from "./glob";
 import { baseName, invocationOf, valueWord, type Invocation } from "./normalize";
 import { DECLARED_COMMANDS, declaredHits } from "./packs";
-import { absolute, homeOf, substitution, valueOf } from "./paths";
+import { absolute, homeOf, isTemp, substitution, valueOf, within } from "./paths";
 import { SHELLS, stdinText } from "./programs";
 import { CopyTrail } from "./rules/copies";
 import { databaseHits, scanDeletesKeys } from "./rules/databases";
@@ -42,7 +43,7 @@ import {
   type State,
   type Defs,
 } from "./state";
-import type { Doubt, Finding, Known, Place, Scene, Variable } from "./types";
+import type { Doubt, Finding, Known, Place, Scene, Value, Variable } from "./types";
 
 /** Walks a command line as the shell would; the rules are those of DCG, a destructive command guard, and the packs. */
 
@@ -70,9 +71,11 @@ export interface GateConfig {
   maxBytes: number;
 }
 
+/** What a line holds for the rules, what the gate could not read, and whether the line writes or removes a file of the seat's tree. */
 export interface Evaluation {
   findings: Finding[];
   doubts: Doubt[];
+  changes: boolean;
 }
 
 const MAX_DEPTH = 8;
@@ -149,6 +152,7 @@ class Walk implements Reader {
   private calls = 0;
   private callsCut = false;
   private outOfTime = false;
+  private changes = false;
 
   constructor(
     private readonly place: Place,
@@ -158,7 +162,19 @@ class Walk implements Reader {
   ) {}
 
   result(): Evaluation {
-    return { findings: this.out.found, doubts: this.out.doubts };
+    return { findings: this.out.found, doubts: this.out.doubts, changes: this.changes };
+  }
+
+  /** Notes a file the line writes or removes in the seat's tree, outside the room's folder and git's; null is a program's write whose path waits for run time, counted where the program runs. */
+  noteChange(value: Value | null, known: Known): void {
+    if (this.changes || (value && isTemp(value, known))) return;
+    const spelled = value ? (value.text ?? value.prefix) : "";
+    if (spelled.startsWith("~")) return;
+    const path = spelled.startsWith("/") ? posix.normalize(spelled) : known.cwd ? posix.join(known.cwd, spelled) : null;
+    const parts = path?.split("/") ?? [];
+    if (!path || parts.includes(".git") || (this.place.roomFolder !== null && parts.includes(this.place.roomFolder)))
+      return;
+    this.changes = [this.place.project, this.place.start].some((root) => root !== null && within(path, root));
   }
 
   /** A shell line read and walked; what bash cannot parse is scanned for risky words. */
@@ -620,6 +636,7 @@ class Walk implements Reader {
         this.out.add("room.guard", "git-attributes-driver", scene.text, spelled);
     }
     for (const write of writesOf(scene)) {
+      this.noteChange(write.value, scene);
       const spelled = write.value.text ?? write.value.prefix;
       if (write.mode !== "remove" && ATTRIBUTES_FILE.test(spelled) && !read.has(spelled))
         this.out.doubt(
@@ -633,6 +650,8 @@ class Walk implements Reader {
   private async judge(scene: Scene, state: State, ctx: Context): Promise<void> {
     const name = scene.call.name;
     if (name === "rm" || name === "rimraf" || name === "grm") {
+      for (const word of scene.call.args)
+        if (!literal(word)?.startsWith("-")) this.noteChange(valueOf(word, scene), scene);
       const found = await rmRules(
         name === "grm" ? { ...scene, call: { ...scene.call, name: "rm" } } : scene,
         this.rmTools(),

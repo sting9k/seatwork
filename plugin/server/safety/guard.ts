@@ -48,13 +48,14 @@ export interface SeatRef {
   start: string | null;
 }
 
-/** The guard's answer to one call: whether it runs, what the seat is told, and the code that lets it run once. */
+/** The guard's answer to one call: whether it runs, what the seat is told, the code that lets it run once, and `changes` when a line that runs writes the seat's tree. */
 export interface Ruling {
   allow: boolean;
   message: string | null;
   finding: Finding | null;
   code: string | null;
   grantor: Grantor | null;
+  changes?: boolean;
 }
 
 /** What the guard needs of the room; `repeated` lets a seat's Owner hear of a rule the seat keeps hitting. */
@@ -112,7 +113,11 @@ export class Guard {
   ): Promise<Ruling> {
     const call = { seat, cli, command: `write ${path}`, cwd, dry: false, began: process.hrtime.bigint() };
     const real = (target: string) => this.deps.tools(seat).real(target);
-    return this.judge(call, async (place) => ({ findings: writeFindings(path, text, place, cwd, real), doubts: [] }));
+    return this.judge(call, async (place) => ({
+      findings: writeFindings(path, text, place, cwd, real),
+      doubts: [],
+      changes: false,
+    }));
   }
 
   /** A file or folder a reading tool is about to open (Pi's and OpenCode's read, grep, find, list); `whole` when it reads every file under a folder. */
@@ -128,7 +133,11 @@ export class Guard {
     return this.judge(call, async (place) => {
       const secrets = place.guard?.secrets ?? [];
       const found = [path, real(path)].find((at) => at !== null && secretAt(at, secrets, whole));
-      return { findings: found ? [findingOf("room.guard", "secret-read", found, `read ${path}`)] : [], doubts: [] };
+      return {
+        findings: found ? [findingOf("room.guard", "secret-read", found, `read ${path}`)] : [],
+        doubts: [],
+        changes: false,
+      };
     });
   }
 
@@ -159,12 +168,13 @@ export class Guard {
     const lifted = (f: Finding) =>
       (policy.allow ?? []).some((e) => live(e) && e.rule === `${f.pack}:${f.rule}` && inPaths(e, cwd));
     const rules = { ...this.rulesOf(place.project).rules, ...(policy.rules ?? {}) };
-    return this.conclude(
+    const ruling = this.conclude(
       call,
       found.findings.filter((f) => !lifted(f)),
       found.doubts,
       { ...policy, rules },
     );
+    return ruling.allow && found.changes ? { ...ruling, changes: true } : ruling;
   }
 
   /** Ranks what was found by how the rules treat it: a deny or an ask stops the call, anything else lets it run. */

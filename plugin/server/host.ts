@@ -44,12 +44,20 @@ export interface NewSeat {
 /** How a tool call ended, as the app records it. */
 export type ToolStatus = "running" | "completed" | "failed" | "canceled";
 
-/** One step of a seat's turn, read from the app's history; `at` only where the app dates it. */
+/** One step of a seat's turn, read from the app's history; `at` only where the app dates it, `writes` on a shell line the room's guard saw write the seat's tree. */
 export type TurnEvent =
   | { kind: "prompt"; text: string; at?: string }
   | { kind: "say"; text: string; at?: string }
   | { kind: "think"; text: string; at?: string }
-  | { kind: "shell"; command: string; exitCode: number | null; output: string; status: ToolStatus; at?: string }
+  | {
+      kind: "shell";
+      command: string;
+      exitCode: number | null;
+      output: string;
+      status: ToolStatus;
+      at?: string;
+      writes?: boolean;
+    }
   | { kind: "change"; path: string; status: ToolStatus; at?: string }
   | { kind: "read"; path: string; at?: string }
   | { kind: "tool"; name: string; label?: string; status: ToolStatus; at?: string }

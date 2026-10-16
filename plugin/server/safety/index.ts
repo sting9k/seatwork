@@ -105,7 +105,9 @@ export class Safety {
   ): Promise<{ type: string; text: string; noted: boolean }> {
     if (!this.on)
       return { type: "text/plain", text: cli === "pi" || cli === "opencode" ? '{"block":false}' : "", noted: false };
-    return answerHook(this.guard, cli, body, agentId ? this.seatRef(agentId) : null, note);
+    const answered = await answerHook(this.guard, cli, body, agentId ? this.seatRef(agentId) : null, note);
+    if (answered.wrote && agentId) this.council.wrote(agentId, answered.wrote);
+    return answered;
   }
 
   /** What the guard would make of a command, without running it or keeping anything. */

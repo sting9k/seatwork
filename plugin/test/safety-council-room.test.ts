@@ -1,8 +1,9 @@
 import { installRoom, PROJECT, ROOM_HOME } from "./support/room";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { appendFileSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import { after, before, test } from "node:test";
 import contribute from "../index.server";
 import { fakeServer } from "./support/server";
@@ -117,4 +118,43 @@ test("a finding held back with a candidate the hand-in check sends back is told 
   await turn(peer, MESSAGE, "t3");
   assert.equal(candidates(lead).length, 1);
   assert.match(candidates(lead)[0], COUNCIL);
+});
+
+test("a Peer that edits only through its shell is held to the checks it ran after the edit the guard saw", async () => {
+  const dir = repo("council-shell");
+  const lead = await seat("lead-shell", "claude-lead", null, "[Lead] stream", dir);
+  const peer = await seat("peer-shell", "claude-peer", lead.agent.id, "[Peer] parser shell", dir);
+  await new Promise((resolve) => setTimeout(resolve, 300));
+  const edit = "python3 - <<'EOF'\np='src/parse.js'\nopen(p,'a').write('const z = 9;\\n')\nEOF";
+  const shell = (command: string) => ({
+    type: "tool_call",
+    status: "completed",
+    detail: { type: "shell", command, exitCode: 0, output: "ok" },
+  });
+  const store = new DatabaseSync(join(ROOM_HOME, "safety", "safety.db"), { readOnly: true });
+  const zone = store.prepare("SELECT zone FROM council_readings WHERE member = 'claims' AND seat = ? AND turn = ?");
+  for (const [id, steps, read] of [
+    ["t1", ["npm test", edit], "found"],
+    ["t2", [edit, "npm test"], "clear"],
+  ] as const) {
+    await call("on agent.turn_started", { agent: peer.agent, turnId: id }, context);
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    await peer.hook("Bash", { command: edit });
+    appendFileSync(join(dir, "src", "parse.js"), "const z = 9;\n");
+    await call(
+      "on agent.turn_ended",
+      {
+        agent: peer.agent,
+        turnId: id,
+        outcome: { kind: "completed" },
+        timeline: [
+          ...steps.map(shell),
+          { type: "assistant_message", text: "CANDIDATE: parser fixed\nAll tests pass." },
+        ],
+      },
+      context,
+    );
+    assert.equal((zone.get(peer.agent.id, id) as { zone: string } | undefined)?.zone, read, steps.join(" then "));
+  }
+  store.close();
 });

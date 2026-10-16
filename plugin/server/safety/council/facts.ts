@@ -30,6 +30,15 @@ function isCheck(command: string, named: readonly string[]): boolean {
   return CHECKS.some((pattern) => pattern.test(flat)) || runsOneOf(flat, named);
 }
 
+/** Where a turn last changed its tree, or -1: an edit tool's call, or a shell line the guard saw write it that is no check itself. */
+function lastChangeIn(events: readonly TurnEvent[], named: readonly string[]): number {
+  return events.findLastIndex((event) =>
+    event.kind === "change"
+      ? event.status === "completed"
+      : event.kind === "shell" && event.writes === true && !isCheck(event.command, named),
+  );
+}
+
 /** A command with its quoted text blanked, so a quoted `|` or `;` is read as part of a word. */
 const unquoted = (command: string) =>
   command.replace(/'[^']*'|"(?:[^"\\]|\\.)*"/g, (quote) => "_".repeat(quote.length));
@@ -101,7 +110,7 @@ export function testsNotRun(
   tests: readonly string[],
   root: string,
 ): string[] {
-  const lastChange = events.findLastIndex((event) => event.kind === "change" && event.status === "completed");
+  const lastChange = lastChangeIn(events, named);
   const ran: string[] = [];
   for (const [index, event] of events.entries()) {
     if (index < lastChange || event.kind !== "shell" || event.status === "running" || event.exitCode !== 0) continue;
@@ -160,7 +169,7 @@ export function unborneIn(
   root: string,
 ): Unborne[] {
   const out: Unborne[] = [];
-  const lastChange = events.findLastIndex((event) => event.kind === "change" && event.status === "completed");
+  const lastChange = lastChangeIn(events, named);
   const touched = (path: string) =>
     events.some(
       (event) =>
@@ -227,14 +236,12 @@ interface TurnFacts {
 
 /** The turn's changes, the checks it ran, and those after its last change; `lastChange` is -1 for none. */
 export function turnFacts(events: readonly TurnEvent[], named: readonly string[]): TurnFacts {
-  let lastChange = -1;
+  const lastChange = lastChangeIn(events, named);
   const changed = new Set<string>();
   const runs: { at: number; run: CheckRun }[] = [];
   events.forEach((event, index) => {
-    if (event.kind === "change" && event.status === "completed") {
-      lastChange = index;
-      changed.add(event.path);
-    } else if (event.kind === "shell" && event.status !== "running" && isCheck(event.command, named))
+    if (event.kind === "change" && event.status === "completed") changed.add(event.path);
+    else if (event.kind === "shell" && event.status !== "running" && isCheck(event.command, named))
       runs.push({
         at: index,
         run: {

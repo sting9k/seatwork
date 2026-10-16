@@ -1,6 +1,6 @@
 import type { Findings } from "./findings";
 import type { Command, Pipeline, Simple, Word } from "./shell";
-import type { Known, Variable } from "./types";
+import type { Known, Value, Variable } from "./types";
 
 /** A function the line defined: its body, and the text the body's positions point into. */
 export interface Def {
@@ -42,6 +42,7 @@ export interface Reader {
   known(state: State): Known;
   changed(path: string): Promise<string | null>;
   real(path: string): string | null;
+  noteChange(value: Value | null, known: Known): void;
 }
 
 export const UNKNOWN: Variable = { value: null, temp: false };

@@ -106,22 +106,24 @@ function patchTargets(patch: string): string[] {
   return [...out];
 }
 
-/** Checks one hook payload and answers in the shape that CLI reads. */
+/** Checks one hook payload and answers in the shape that CLI reads; `wrote` is the shell line that runs and writes the seat's tree. */
 export async function answerHook(
   guard: Guard,
   cli: Cli,
   body: Record<string, unknown>,
   seat: SeatRef | null,
   note?: string,
-): Promise<{ type: string; text: string; noted: boolean }> {
+): Promise<{ type: string; text: string; noted: boolean; wrote: string | null }> {
   const call = callOf(body);
   if (call.refused)
     return {
       ...render(cli, { allow: false, message: call.refused, finding: null, code: null, grantor: null }),
       noted: false,
+      wrote: null,
     };
   let ruling: Ruling | null = null;
   if (call.shell !== null) ruling = await guard.check(seat, cli, call.shell, call.cwd);
+  const wrote = ruling?.allow && ruling.changes ? call.shell : null;
   if (call.read) {
     const { path, whole } = call.read;
     const abs = path.startsWith("/") || !call.cwd ? path : `${call.cwd}/${path}`;
@@ -134,10 +136,10 @@ export async function answerHook(
     // the first denial answers; failing that, the first file the guard let through with a note
     if (!found.allow || !ruling || (!ruling.message && found.message)) ruling = found;
   }
-  if (!note || (ruling && !ruling.allow)) return { ...render(cli, ruling), noted: false };
+  if (!note || (ruling && !ruling.allow)) return { ...render(cli, ruling), noted: false, wrote };
   const message = [ruling?.message, note].filter(Boolean).join("\n\n");
   ruling = ruling ? { ...ruling, message } : { allow: true, message, finding: null, code: null, grantor: null };
-  return { ...render(cli, ruling), noted: true };
+  return { ...render(cli, ruling), noted: true, wrote };
 }
 
 /** A ruling in the shape its CLI reads: hook JSON for Claude and Codex, a block flag for Pi and OpenCode. */

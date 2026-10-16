@@ -124,6 +124,14 @@ interface Reading {
 type BriefFields = ReturnType<typeof briefFields>;
 
 const shortHash = (text: string) => createHash("sha1").update(text).digest("hex").slice(0, 12);
+/** A shell line's key, spaces folded and a quote escaped inside single quotes read as the quote, so the line its hook gave and the line the app's history keeps meet. */
+const lineKey = (command: string) =>
+  shortHash(
+    command
+      .replace(/'\\''|'"'"'/g, "'")
+      .replace(/\s+/g, " ")
+      .trim(),
+  );
 const namedChecks = (fields: BriefFields) =>
   quotedCommands([fields.acceptance, fields.contract].filter(Boolean).join("\n"));
 const acceptanceOf = (verdict: Verdict) =>
@@ -134,6 +142,7 @@ type Pending = Reading | (() => Promise<Reading>);
 
 const JUROR_DEADLINE_MS = 8000;
 const MAX_JURORS_IN_FLIGHT = 8;
+const WROTE_MOST = 200;
 const REPORT_CHARS = 6000;
 const COMMANDS_SHOWN = 10;
 const COMMAND_CHARS = 200;
@@ -162,7 +171,7 @@ const IMPLIED = { acceptanceRun: "implied:acceptance-run", nextVerdict: "implied
 
 /** The council over the store: it reads turns, logs every reading, and weighs each member by the labels it gets. */
 export class Council {
-  private readonly started = new Map<string, { at: number; snapshot: Promise<Snapshot | null> }>();
+  private readonly started = new Map<string, { at: number; snapshot: Promise<Snapshot | null>; wrote: Set<string> }>();
   private inFlight = 0;
 
   constructor(
@@ -219,7 +228,15 @@ export class Council {
       this.deps.log(`council: seat ${seat} was not noted as seen: ${String(error)}`);
     }
     const snapshot = this.on && this.deps.snapshot ? this.deps.snapshot(cwd).catch(() => null) : Promise.resolve(null);
-    this.started.set(seat, { at: this.now(), snapshot });
+    this.started.set(seat, { at: this.now(), snapshot, wrote: new Set() });
+  }
+
+  /** A shell line of the seat's running turn that the guard saw write its tree; the turn's end reads it as a change, the latest lines kept. */
+  wrote(seat: string, command: string): void {
+    const lines = this.started.get(seat)?.wrote;
+    if (!lines) return;
+    if (lines.size >= WROTE_MOST) lines.delete(lines.values().next().value!);
+    lines.add(lineKey(command));
   }
 
   /** When the seat's running turn began, if the room saw it begin. */
@@ -241,8 +258,16 @@ export class Council {
 
   /** Reads an ended turn; returns what is to be shown with its report, a member's line at a time. */
   async endOfTurn(input: TurnInput): Promise<Finding[]> {
+    const wrote = this.started.get(input.seat.id)?.wrote;
     this.started.delete(input.seat.id);
     if (!this.on) return [];
+    if (wrote?.size)
+      input = {
+        ...input,
+        events: input.events.map((event) =>
+          event.kind === "shell" && wrote.has(lineKey(event.command)) ? { ...event, writes: true } : event,
+        ),
+      };
     this.implied(input);
     const diff = signalOf(input.text) === "CANDIDATE" ? (this.deps.diffOf?.(input.seat.id) ?? null) : null;
     const fields = input.brief ? briefFields(input.brief) : {};
@@ -537,15 +562,16 @@ export class Council {
   private readClaims(input: TurnInput, fields: BriefFields): Pending[] {
     const named = namedChecks(fields);
     const facts = turnFacts(input.events, named);
-    const writes = input.seat.traits.writes === true;
-    // a writer's checks count after its last change; a reviewer changes nothing, so any check counts
-    const after = writes ? facts.checksAfterChange : facts.checks;
-    if (writes && facts.lastChange < 0) return [{ tier: "fact", zone: "skipped" }];
+    const edited = input.seat.traits.writes === true && facts.lastChange >= 0;
+    // a writer's checks count after its last change, any check where git saw nothing change; else the change is not placed
+    const after = edited ? facts.checksAfterChange : facts.checks;
+    if (!edited && input.seat.traits.writes === true && input.changed?.length !== 0)
+      return [{ tier: "fact", zone: "skipped" }];
     if (after.some((run) => run.exitCode === 0 && run.masked === null))
       return [{ tier: "fact", zone: "clear", evidence: { checks: after } }];
     const claims = claimsIn(input.text);
     const masked = after.find((run) => run.exitCode === 0 && run.masked !== null);
-    const where = `${writes ? "after the last change" : "in the turn"}${masked ? ` (${quoted(masked.command)}: ${masked.masked})` : ""}`;
+    const where = `${edited ? "after the last change" : "in the turn"}${masked ? ` (${quoted(masked.command)}: ${masked.masked})` : ""}`;
     if (claims.length)
       return [
         {

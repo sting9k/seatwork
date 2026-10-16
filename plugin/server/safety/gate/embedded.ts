@@ -2,12 +2,13 @@
 
 export type Language = "python" | "javascript" | "ruby" | "perl" | "php" | "lua";
 
-/** What a script does that the gate can read; `dynamicExec` names the calls that run a shell line built at run time. */
+/** What a script does that the gate can read; `dynamicExec` names the calls that run a shell line built at run time, `unreadWrite` is a file write whose path waits for run time. */
 interface Embedded {
   shell: string[];
   deletes: { path: string; recursive: boolean; how: string }[];
   writes: { path: string; append: boolean; how: string }[];
   dynamicExec: string[];
+  unreadWrite: boolean;
 }
 
 /** shell: a backtick or qx/%x literal, which runs its text; template: a JS template literal. */
@@ -103,7 +104,7 @@ const MAX_SOURCE = 256 * 1024;
 
 /** Reads a script for calls that run shell lines, delete trees or write files with literals. */
 export function scanEmbedded(language: Language, source: string): Embedded {
-  const out: Embedded = { shell: [], deletes: [], writes: [], dynamicExec: [] };
+  const out: Embedded = { shell: [], deletes: [], writes: [], dynamicExec: [], unreadWrite: false };
   if (source.length > MAX_SOURCE) return out;
   const tokens = tokenize(language, source);
   for (let i = 0; i < tokens.length; i += 1) {
@@ -167,10 +168,12 @@ export function scanEmbedded(language: Language, source: string): Embedded {
       out.deletes.push({ path: first.value, recursive: false, how: t.text });
       continue;
     }
-    if (WRITE[language].has(method) && first?.kind === "string" && !first.dynamic) {
+    if (WRITE[language].has(method)) {
       const mode = args[1]?.kind === "string" ? args[1].value : "";
       if (method === "open" && !/[wax+]/.test(mode)) continue;
-      out.writes.push({ path: first.value, append: /^a/.test(mode) || /append/i.test(method), how: t.text });
+      if (first?.kind === "string" && !first.dynamic)
+        out.writes.push({ path: first.value, append: /^a/.test(mode) || /append/i.test(method), how: t.text });
+      else out.unreadWrite = true;
     }
   }
   return out;

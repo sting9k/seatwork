@@ -3,12 +3,13 @@ import { join } from "node:path";
 import { PROJECT } from "./support/room";
 import type { fakeServer } from "./support/server";
 
-/** A seat made through the plugin's hooks: its inbox, and a caller of the room's tools over its own MCP server. */
+/** A seat made through the plugin's hooks: its inbox, a caller of the room's tools over its own MCP server, and its Claude hook's question to the guard. */
 export interface TestSeat {
   agent: { id: string; parentAgentId: string | null; provider: string; cwd: string; title: string; workspaceId: null };
   inbox: string[];
   call(name: string, args: Record<string, unknown>): Promise<string>;
   mail(args: Record<string, unknown>): Promise<string>;
+  hook(tool: string, input: Record<string, unknown>): Promise<string>;
 }
 
 /** The seats of a room served through `call`: the app's handles of them, the context the hooks are given, and the verbs a test needs. */
@@ -52,7 +53,16 @@ export function roomSeats(call: ReturnType<typeof fakeServer>["call"]) {
       if (result.isError) throw new Error(result.content[0].text);
       return result.content[0].text;
     };
-    return { agent, inbox, call: tool, mail: (args) => tool("seatwork_mail", args) };
+    const gate = `${made.config.mcpServers.seatwork.url.replace(/\/mcp\/([^/]+)\/[^/]+$/, "/gate/$1")}?cli=claude`;
+    const hook = async (tool_name: string, tool_input: Record<string, unknown>) => {
+      const response = await fetch(gate, {
+        method: "POST",
+        headers: { "content-type": "application/json", "x-seat": id },
+        body: JSON.stringify({ tool_name, tool_input, cwd }),
+      });
+      return response.text();
+    };
+    return { agent, inbox, call: tool, mail: (args) => tool("seatwork_mail", args), hook };
   }
 
   const turnEnds = (who: TestSeat, text: string) =>

@@ -281,6 +281,28 @@ test("every member that watches a seat logs its reading; one that only logs show
   ]);
 });
 
+test("a writer's turn that changed nothing is held to any check it ran; one whose changes no step explains is skipped", async () => {
+  const found = async (events: TurnEvent[], changed: string[]) => {
+    const { council, store } = councilWith();
+    await council.endOfTurn({ ...peerTurn(events, "REVIEW: ACCEPT\nAll tests pass."), changed });
+    return store.councilCounts("2000-01-01").find((row) => row.member === "claims")?.found;
+  };
+  assert.equal(await found([say("read it")], []), 1, "a claim with no check in a turn that changed nothing");
+  assert.equal(await found([shell("npm test")], []), 0);
+  assert.equal(await found([say("read it")], ["src/cli.js"]), 0, "git saw a change no step made: skipped");
+});
+
+test("a line its hook gave as written meets the same line kept with its single quotes escaped, as Codex's wrapper keeps it", async () => {
+  const { council, store } = councilWith();
+  const edit = "sed -i 's/a/b/' src/cli.js";
+  council.turnStarted("peer-1", ROOT);
+  council.wrote("peer-1", edit);
+  await council.endOfTurn(
+    peerTurn([shell("npm test"), shell(edit.replaceAll("'", "'\\''"))], "CANDIDATE: hours added\nAll tests pass."),
+  );
+  assert.equal(store.councilCounts("2000-01-01").find((row) => row.member === "claims")?.found, 1);
+});
+
 test("a member that has earned its level speaks once per finding: the same thing found again is not shown again", async () => {
   const { council } = councilWith({ claims: 1, scope: 1 });
   const turn = peerTurn([change(`${ROOT}/src/cli.js`)], "CANDIDATE: hours added\nAll tests pass.");

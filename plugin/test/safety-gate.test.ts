@@ -555,3 +555,22 @@ test("git is asked once about an rm whose two readings agree, and twice when the
   await hits("rm -r dist -f", [], counting);
   assert.equal(asked.length, 2);
 });
+
+test("a line that writes or removes a file of the seat's tree is told apart from one that only reads it", async () => {
+  const cases: [string, boolean][] = [
+    ["python3 - <<'EOF'\np='test/cli.test.js'\ns=open(p).read()\nopen(p,'w').write(s.replace('a','b'))\nEOF", true],
+    ["sed -i '' 's/a/b/' src/cli.js", true],
+    ["printf 'x' > src/new.js", true],
+    ["cd test && rm old.test.js", true],
+    ["node -e \"require('fs').writeFileSync(process.argv[1], '')\" src/a.js", true],
+    ["for f in a b; do cp src/$f.js src/$f.bak; done", true],
+    ["cat src/cli.js && git diff --stat", false],
+    ["python3 - <<'EOF'\nprint(open('src/cli.js').read())\nEOF", false],
+    ["npm test > $TMPDIR/out.txt 2>&1", false],
+    ["git show HEAD:src/cli.js > /tmp/old.js", false],
+    ["echo done > .seatwork/status.md", false],
+    ["echo x > /dev/null", false],
+  ];
+  for (const [command, changes] of cases)
+    assert.equal((await evaluate(command, PROJECT, place, config(), tools())).changes, changes, command);
+});

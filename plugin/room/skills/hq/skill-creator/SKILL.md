@@ -34,11 +34,11 @@ Where it belongs instead:
 ## From outside
 
 Read all of it first. The license decides what you may take:
-- MIT or Apache-2.0: text, keeping the notice (`plugin/room/skills/NOTICE.md`);
+- MIT or Apache-2.0: text, with its license's notice as `LICENSE.txt` in the skill and its repository and commit in `source`;
 - no license: ideas only.
 
 Drop scripts, network calls and installs. Never download anything yourself.
 
-## Hand over
+## Install
 
-You never edit the plugin. Give your Owner the draft, the failures it answers (record addresses, log lines), and the structural fix you ruled out and why. Your Owner installs it. Afterwards, read the same signal again; `NO_CHANGE` is not an improvement, and a skill that changed nothing goes.
+Add it with `seatwork_room` (`do: skill`, `action: add`) for one role, with the failures it answers (record addresses, log lines) and the structural fix you ruled out as the `reason`. You never edit the plugin. Tell your Owner what you added, for which role and why. Afterwards, read the same signal again; `NO_CHANGE` is not an improvement, and a skill that changed nothing goes (`action: remove`).

@@ -1,0 +1,16 @@
+{
+  "$comment": "Model families, by the words a model id starts its parts with; a seat whose model is not known takes its agent CLI's family, where the CLI has one. Answers to one question from one family that agree are weak evidence.",
+  "families": {
+    "anthropic": ["claude", "opus", "sonnet", "haiku"],
+    "openai": ["gpt", "codex", "o1", "o3", "o4"],
+    "google": ["gemini", "gemma"],
+    "alibaba": ["qwen"],
+    "deepseek": ["deepseek"],
+    "meta": ["llama"],
+    "mistral": ["mistral", "codestral", "devstral"],
+    "xai": ["grok"],
+    "moonshot": ["kimi"],
+    "zhipu": ["glm"]
+  },
+  "byHarness": { "claude": "anthropic", "codex": "openai" }
+}

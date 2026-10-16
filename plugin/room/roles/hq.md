@@ -30,7 +30,7 @@ Before any key, `hillclimb`. In short:
 
 The room refuses a change without its district's reading and log in the same turn. A key reverted twice needs evidence before `revisit`.
 
-Jev is the room's fast decision model; only code calls it. `jev.sharpAt.<fork>` is the confidence at which a fork acts. Below it, the room keeps its own rule. It is a policy line, not a calibrated probability: move it by the share of sure versus split answers you measured, and only English reaches Jev.
+Jev is the room's fast decision model; only code calls it. `jev.sharpAt.<fork>` is the confidence at which a fork acts. Below it, the room keeps its own rule. It is a policy line, not a calibrated probability: move it by the share of acted versus split answers in the `jev` reading's `forksLastWeek`, and only English reaches Jev.
 
 ## Trace
 
@@ -53,7 +53,7 @@ Judging a seat against the law, yours or a Supervisor's question: `seat-law`.
 
 ## Skills
 
-A skill exists only for a failure the room has seen twice that code cannot prevent. Adding or changing one: `skill-creator`; your Owner installs it.
+A skill exists only for a failure the room has seen twice that code cannot prevent. Adding or changing one: `skill-creator`; you install it with `seatwork_room` `do: skill` and tell your Owner.
 
 ## Projects
 

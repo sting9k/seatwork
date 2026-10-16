@@ -263,7 +263,7 @@ test(
   { timeout: 5000 },
   async () => {
     let answering = false;
-    const host = new PaseoHost({ readSeconds: 0.03, historySeconds: 0.03, writeSeconds: 0.03 });
+    const host = new PaseoHost({ readSeconds: 0.03, historySeconds: 0.03, writeSeconds: 0.03, startSeconds: 0.03 });
     host.use({
       agents: {
         list: () =>

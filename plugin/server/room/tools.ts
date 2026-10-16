@@ -151,7 +151,14 @@ async function safetyTool(room: RoomContext, me: string, args: Record<string, un
       );
     return room.safety.rule(me, id, args.send_back, reason);
   }
-  throw new Error("seatwork_safety: `action` is check, grant, waiting, ack, council, label or rule");
+  if (action === "control") {
+    const writer = String(args.seat ?? "").trim();
+    const owner = room.engine.parentOf(writer);
+    if (!room.engine.seat(writer) || !owner || (me !== owner && room.engine.parentOf(me) !== owner))
+      throw new Error("seatwork_safety control: give the `seat` of a writer under you, or beside you under one Owner");
+    return room.safety.control(writer);
+  }
+  throw new Error("seatwork_safety: `action` is check, grant, waiting, ack, council, label, rule or control");
 }
 
 /** The open seats under `me`, each below its Owner, in the order the room registered them. */

@@ -250,6 +250,7 @@ export async function rotate(
   const owner = engine.parentOf(old.agentId);
   const title = nextTitle(old.title);
   const id = await host.create({
+    key: `rotation:${old.agentId}:${stamp}`,
     provider: old.provider,
     ...(model ? { model } : {}),
     ...(now.mode ? { mode: now.mode } : {}),

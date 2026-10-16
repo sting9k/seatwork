@@ -10,7 +10,10 @@ import {
   writeFileSync,
 } from "node:fs";
 import { join } from "node:path";
+import { stamp } from "../../gc";
 import { checkSetup, type RoomPlan, type Setup } from "./plan";
+
+export { stamp };
 
 const json = (value: unknown) => `${JSON.stringify(value, null, 2)}\n`;
 
@@ -38,12 +41,6 @@ export function moveRoomHomeAside(roomHome: string, now = new Date()): string {
   const target = `${roomHome}.removed-${stamp(now)}`;
   renameSync(roomHome, target);
   return target;
-}
-
-/** A local date and time for a file name: 20261012-145625. */
-export function stamp(now = new Date()): string {
-  const two = (n: number) => String(n).padStart(2, "0");
-  return `${now.getFullYear()}${two(now.getMonth() + 1)}${two(now.getDate())}-${two(now.getHours())}${two(now.getMinutes())}${two(now.getSeconds())}`;
 }
 
 /** Whether a room is set up in this home: the plugin stays asleep until it is. */

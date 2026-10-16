@@ -183,13 +183,13 @@
     },
     "seatwork_room": {
       "callers": "room",
-      "description": "Run the room itself. `do` is the action. health: incidents of the last day by district, open traces, the readings there are. A reading by its name (budget, jev, knowledge, mail, safety, seats, host): that district's numbers now. log: the room's log, newest first, narrowed by `district`, `since`, `q`. incidents: troubles of the last `days`, each with its id, how often, how often in the last hour, and where it stands. ack, snooze (`hours`), resolve: set where incident `id` stands, with a `note` (for resolve, its cause). trace: open one on an `incident` with a `hypothesis`, or add to trace `id` a note of `kind` evidence, eliminated or hypothesis with its `text`; traces: the open ones; close: end trace `id` with its `conclusion`. policy: the keys you may tune, their values and ranges, the last changes. tune: set one key's `value`; it needs the key's district read and its log read in this turn, a `reason` and the `evidence` you measured, in English, and may name the `trace` it serves; a key reverted twice lately also needs `revisit` true. revert: undo change `id`, its district read in this turn. Refused for seats that do not run the room.",
+      "description": "Run the room itself. `do` is the action. health: incidents of the last day by district, open traces, the readings there are. A reading by its name (budget, jev, knowledge, mail, safety, seats, host): that district's numbers now. log: the room's log, newest first, narrowed by `district`, `since`, `q`. incidents: troubles of the last `days`, each with its id, how often, how often in the last hour, and where it stands. ack, snooze (`hours`), resolve: set where incident `id` stands, with a `note` (for resolve, its cause). trace: open one on an `incident` with a `hypothesis`, or add to trace `id` a note of `kind` evidence, eliminated or hypothesis with its `text`; traces: the open ones; close: end trace `id` with its `conclusion`. policy: the keys you may tune, their values and ranges, the last changes. tune: set one key's `value`; it needs the key's district read and its log read in this turn, a `reason` and the `evidence` you measured, in English, and may name the `trace` it serves; a key reverted twice lately also needs `revisit` true. revert: undo change `id`, its district read in this turn. skill: `action` add (a `role`, a `name`, `files` as path to text with a SKILL.md, `source` with its `license`, own for yours, and its `repo` and `commit` when taken from elsewhere, and the `reason`), remove (`role`, `name`), or list; a role's seats get it at their next start. Refused for seats that do not run the room.",
       "inputSchema": {
         "type": "object",
         "properties": {
           "do": {
             "type": "string",
-            "description": "health, a reading's name, log, incidents, ack, snooze, resolve, trace, traces, close, policy, tune or revert."
+            "description": "health, a reading's name, log, incidents, ack, snooze, resolve, trace, traces, close, policy, tune, revert or skill."
           },
           "district": {
             "type": "string",
@@ -254,13 +254,31 @@
             "type": "integer",
             "description": "tune: the trace the change serves."
           },
+          "action": { "type": "string", "enum": ["add", "remove", "list"], "description": "skill: what to do." },
+          "role": { "type": "string", "description": "skill: the role whose seats get it." },
+          "name": { "type": "string", "description": "skill: its name, lowercase words joined by dashes." },
+          "files": {
+            "type": "object",
+            "additionalProperties": { "type": "string" },
+            "description": "skill add: each file's path in the skill's folder, .md or .txt, to its text."
+          },
+          "source": {
+            "type": "object",
+            "properties": {
+              "license": { "type": "string" },
+              "repo": { "type": "string" },
+              "commit": { "type": "string" }
+            },
+            "required": ["license"],
+            "description": "skill add: where it came from."
+          },
           "revisit": {
             "type": "boolean",
             "description": "tune: a key reverted twice lately, tuned again on new evidence."
           },
           "reason": {
             "type": "string",
-            "description": "tune, revert: why, in English."
+            "description": "tune, revert, skill add: why, in English."
           },
           "evidence": {
             "type": "string",
@@ -423,13 +441,13 @@
     },
     "seatwork_safety": {
       "callers": "any",
-      "description": "The room's guard. Every shell command and file write of yours is checked before it runs; a blocked one comes with a six-digit code. check: what the guard would make of `command`, without running it. grant: let a blocked command of a seat under you run once, by its `code` (codes marked for the person only the person grants). waiting: the codes of the seats under you that wait for a grant. ack: when the room sends your candidate back after its hand-in check, keep one finding on purpose: its `id` and the `reason`; your Owner reads both. council: how each member of the room's council has read turns over the last `days`. label: say whether a `[council]` finding about a seat under you was right: its `id` (the number after the member), `value` right or wrong, and the `reason`. rule: only the room's own seat; rules on an APPEAL mail, its `id`, `send_back` true to return the candidate to its seat or false to leave it, and the `reason`.",
+      "description": "The room's guard. Every shell command and file write of yours is checked before it runs; a blocked one comes with a six-digit code. check: what the guard would make of `command`, without running it. grant: let a blocked command of a seat under you run once, by its `code` (codes marked for the person only the person grants). waiting: the codes of the seats under you that wait for a grant. ack: when the room sends your candidate back after its hand-in check, keep one finding on purpose: its `id` and the `reason`; your Owner reads both. council: how each member of the room's council has read turns over the last `days`. label: say whether a `[council]` finding about a seat under you was right: its `id` (the number after the member), `value` right or wrong, and the `reason`. rule: only the room's own seat; rules on an APPEAL mail, its `id`, `send_back` true to return the candidate to its seat or false to leave it, and the `reason`. control: for the writer `seat` under you or beside you, a copy of its project at the commit it started on with only its candidate's tests laid in; a new test that passes there does not test the change.",
       "inputSchema": {
         "type": "object",
         "properties": {
           "action": {
             "type": "string",
-            "enum": ["check", "grant", "waiting", "ack", "council", "label", "rule"]
+            "enum": ["check", "grant", "waiting", "ack", "council", "label", "rule", "control"]
           },
           "command": {
             "type": "string",
@@ -459,7 +477,8 @@
           "days": {
             "type": "number",
             "description": "council: how many days back; 30 when not given."
-          }
+          },
+          "seat": { "type": "string", "description": "control: the writer's id." }
         },
         "required": ["action"]
       }

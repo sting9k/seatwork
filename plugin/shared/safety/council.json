@@ -8,7 +8,7 @@
     "\\bpython3?\\s+-m\\s+(pytest|unittest|mypy)\\b",
     "\\bgo\\s+(test|vet|build)\\b",
     "\\bcargo\\s+(test|check|clippy|build)\\b",
-    "\\b(mvn|gradle|\\./gradlew|\\./mvnw)\\b.*\\b(test|check|verify|build)\\b",
+    "\\b(mvnw?|gradlew?)\\b.*\\b(test|check|verify|build)\\b",
     "\\b(make|just)\\s+(test|check|verify)\\b",
     "\\b(deno|bun)\\s+test\\b",
     "\\bdotnet\\s+test\\b",
@@ -33,7 +33,14 @@
     { "runner": "\\bgo\\s+test\\b", "flags": ["-run", "-skip"] },
     { "runner": "\\bcargo\\s+test\\b", "flags": ["--skip"] },
     { "runner": "\\bdotnet\\s+test\\b", "flags": ["--filter"] },
-    { "runner": "\\bphpunit\\b", "flags": ["--filter", "--group", "--exclude-group"] }
+    { "runner": "\\bphpunit\\b", "flags": ["--filter", "--group", "--exclude-group"] },
+    {
+      "runner": "\\b(mvn|mvnw)\\b",
+      "flags": ["-Dtest", "-Dit.test", "-Dgroups", "-DexcludedGroups", "-Dsurefire.failIfNoSpecifiedTests"]
+    },
+    { "runner": "\\b(gradle|gradlew)\\b", "flags": ["--tests", "-x"] },
+    { "runner": "\\brspec\\b", "flags": ["-e", "--example", "-t", "--tag", "--only-failures", "--next-failure"] },
+    { "runner": "\\bctest\\b", "flags": ["-R", "--tests-regex", "-E", "--exclude-regex", "-L", "--label-regex"] }
   ],
   "bars": [
     {

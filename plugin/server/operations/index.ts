@@ -29,6 +29,11 @@ export interface OperationsDeps {
     open(): boolean;
     take(state: Record<string, unknown>, ids: readonly string[]): Promise<(string | null)[]>;
   };
+  skills?: {
+    add(by: string, args: Record<string, unknown>): unknown;
+    remove(role: string, name: string): unknown;
+    list(): unknown;
+  };
 }
 
 /** A refusal of an operator's call that it can fix. */
@@ -326,6 +331,8 @@ export class Operations {
     switch (action) {
       case "tune":
         return this.tune(agent, args);
+      case "skill":
+        return this.skill(agent, args);
       case "revert":
         return this.revert(agent, args);
       case "ack":
@@ -368,7 +375,7 @@ export class Operations {
     const read = this.readings[action];
     if (!read)
       throw new OperationsRefused(
-        `\`do\` is health, log, incidents, ack, snooze, resolve, trace, traces, close, policy, tune, revert, or a reading: ${Object.keys(this.readings).join(", ")}`,
+        `\`do\` is health, log, incidents, ack, snooze, resolve, trace, traces, close, policy, tune, revert, skill, or a reading: ${Object.keys(this.readings).join(", ")}`,
       );
     this.noteRead(agent, `reading:${action}`);
     return { [action]: read() };
@@ -485,6 +492,17 @@ export class Operations {
   private apply(path: string, value: unknown): void {
     setAt(this.deps.policy(), path, value);
     this.deps.persist(path, value);
+  }
+
+  /** The operator's own skills for a role: add, remove, or list them with whether their files are as recorded. */
+  private skill(agent: string, args: Record<string, unknown>): Record<string, unknown> {
+    const skills = this.deps.skills;
+    if (!skills) throw new OperationsRefused("this room keeps no skills of its own");
+    const action = String(args.action ?? "list");
+    if (action === "list") return { skills: skills.list() };
+    if (action === "remove") return { done: skills.remove(String(args.role ?? ""), String(args.name ?? "")) };
+    if (action === "add") return { done: skills.add(agent, args) };
+    throw new OperationsRefused("skill: `action` is add, remove or list");
   }
 
   /** Changes one tunable key, in memory and in the room's policy file, with what it rests on and the district's reading as its baseline. */

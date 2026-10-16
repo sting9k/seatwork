@@ -33,7 +33,7 @@ export interface SafetyPolicy {
   maxBytes?: number;
   codeHours?: number;
   repeat?: { count: number; minutes: number };
-  handin?: { mode: "block" | "warn" | "off" };
+  handin?: { mode: "block" | "warn" | "off"; registry?: boolean };
   council?: CouncilPolicy;
 }
 

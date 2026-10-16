@@ -302,7 +302,7 @@
     }
   },
   "safety": {
-    "$comment": "The room's guard. rules: \"pack:rule\" or \"pack:*\" to deny, ask, warn or log; a pack-wide one never lowers a critical rule. allow and exempt are the person's to write. handin.mode: block, warn or off.",
+    "$comment": "The room's guard. rules: \"pack:rule\" or \"pack:*\" to deny, ask, warn or log; a pack-wide one never lowers a critical rule. allow and exempt are the person's to write. handin.mode: block, warn or off. handin.registry: a new dependency's first release is read from its public registry (npm, PyPI, crates.io).",
     "mode": "on",
     "packs": { "add": [], "remove": [] },
     "rules": {},
@@ -311,7 +311,7 @@
     "budgetMs": 1000,
     "codeHours": 24,
     "repeat": { "count": 3, "minutes": 30 },
-    "handin": { "mode": "block" },
+    "handin": { "mode": "block", "registry": true },
     "council": {
       "$comment": "The council that reads each turn of a briefed, writing or reviewing seat (shared/safety/council.json). levels: a member's level on this machine, over the shipped one, at most 2 (labels alone earn the level that sends a hand-in back). Readings no label holds are kept keepDays; tickSeconds paces the look at running turns. chairMinutes: how long an appeal waits for the chair's ruling before it lapses, 30 when not set.",
       "mode": "on",

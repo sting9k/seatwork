@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -33,14 +34,24 @@ const LIST_PAGE_SIZE = 200;
 const LIST_PAGES = 20;
 
 /** How long each kind of call to the app may take, in seconds. */
-type HostLimits = Pick<typeof callLimits, "readSeconds" | "historySeconds" | "writeSeconds">;
+type HostLimits = Pick<typeof callLimits, "readSeconds" | "historySeconds" | "writeSeconds" | "startSeconds">;
+
+/** A call the app did not answer in its time. */
+class Late extends Error {}
+
+/** The id a start under `key` gives its seat: the same for the same key, in the app's UUID form. */
+function agentIdOf(key: string): string {
+  const hex = createHash("sha256").update(key).digest("hex");
+  const variant = ((parseInt(hex[16], 16) & 0x3) | 0x8).toString(16);
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-4${hex.slice(13, 16)}-${variant}${hex.slice(17, 20)}-${hex.slice(20, 32)}`;
+}
 
 /** Waits for `call` at most `seconds`; past that the call fails like an app that cannot be reached, and its late answer is dropped. */
 async function within<T>(seconds: number, what: string, call: () => Promise<T>): Promise<T> {
   let timer: NodeJS.Timeout | undefined;
   const late = new Promise<never>((_, reject) => {
     timer = setTimeout(
-      () => reject(new Error(`Paseo did not answer ${what} within ${seconds} seconds`)),
+      () => reject(new Late(`Paseo did not answer ${what} within ${seconds} seconds`)),
       seconds * 1000,
     );
   });
@@ -221,9 +232,11 @@ export class PaseoHost implements Host {
     return agent && !agent.archivedAt ? liveSeat(agent) : null;
   }
 
-  // no limit: a start cut off may still have happened, and the caller would start a second
+  // a start cut off is asked once more under its key: the app hands back the seat it was starting, never a second
   async create(seat: NewSeat): Promise<string> {
-    const created = await this.sdk().agents.create({
+    const options = {
+      idempotencyKey: seat.key,
+      agentId: agentIdOf(seat.key),
       config: {
         provider: seat.model ? `${seat.provider}/${seat.model}` : seat.provider,
         ...(seat.mode ? { modeId: seat.mode } : {}),
@@ -233,6 +246,12 @@ export class PaseoHost implements Host {
       ...(seat.parent ? { parent: seat.parent } : {}),
       title: seat.title,
       prompt: seat.prompt,
+    };
+    const start = () =>
+      within(this.limits.startSeconds, `the start of ${seat.title}`, () => this.sdk().agents.create(options));
+    const created = await start().catch((error: unknown) => {
+      if (error instanceof Late) return start();
+      throw error;
     });
     return created.id;
   }

@@ -1,12 +1,13 @@
 import { ROOM_HOME, shipSql } from "./support/room";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { existsSync, lstatSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { test } from "node:test";
 import { packsInForce } from "../server/safety/gate/packs";
-import { handInLine, handInReturn, inspectHandIn, workDigest } from "../server/safety/handin";
+import { handInLine, handInReturn, inspectHandIn, workDigest, type Lookups } from "../server/safety/handin";
 import { Safety } from "../server/safety/index";
+import { buildControl } from "../server/safety/control";
 import { SafetyStore } from "../server/safety/store";
 import { machineTools } from "../server/safety/system";
 
@@ -42,7 +43,7 @@ function project(files: Record<string, string>) {
     config: { packs: packsInForce(), exempt: {}, budgetMs: 1000, maxBytes: 65536 },
     tools: machineTools(() => null),
   };
-  return { dir, store, git, check: () => inspectHandIn("seat", store, gate) };
+  return { dir, store, git, check: (lookups: Lookups = {}) => inspectHandIn("seat", store, gate, lookups) };
 }
 
 function write(dir: string, files: Record<string, string>): void {
@@ -112,7 +113,122 @@ test("the tests no change touched that name a changed source file ride up with t
   assert.deepEqual(result.related, ["test/cli.test.ts", "test/duration_extra.test.ts", "test/entry.test.ts"]);
   assert.match(
     handInLine(result) ?? "",
-    /: 3 unchanged test\(s\) name what changed: test\/cli\.test\.ts, test\/duration_extra\.test\.ts, test\/entry\.test\.ts$/,
+    /; 3 unchanged test\(s\) name what changed: test\/cli\.test\.ts, test\/duration_extra\.test\.ts, test\/entry\.test\.ts$/,
+  );
+});
+
+test("the hand-in counts test lines, names what decides the checks, a test's answer in source, and new dependencies", async () => {
+  const { dir, check } = project({
+    ...START,
+    "package.json": JSON.stringify({ scripts: { test: "jest" }, dependencies: { lodash: "^4" } }, null, 2) + "\n",
+    "jest.config.js": "module.exports = {};\n",
+    "requirements.txt": "flask==2.0\n",
+    "go.mod": "module example.com/app\n\ngo 1.22\n",
+    "Cargo.toml": '[package]\nname = "app"\n\n[dependencies]\nserde = "1"\n',
+    "pyproject.toml": '[project]\nname = "app"\ndependencies = [\n  "attrs>=23",\n]\n',
+    "src/units.ts": "export const ms = (s: string) => Number(s);\n",
+    "pom.xml":
+      "<project><dependencies>\n<dependency>\n<groupId>org.slf4j</groupId>\n<artifactId>slf4j-api</artifactId>\n</dependency>\n</dependencies></project>\n",
+    "app/build.gradle.kts": 'dependencies {\n  implementation("com.squareup.okio:okio:3.9.0")\n}\n',
+    Gemfile: 'source "https://rubygems.org"\ngem "rack", "~> 3.0"\n',
+    "composer.json": JSON.stringify({ require: { php: ">=8.2", "monolog/monolog": "^3" } }, null, 2) + "\n",
+    "App/App.csproj":
+      '<Project>\n  <ItemGroup>\n    <PackageReference Include="Serilog" Version="4.0.0" />\n  </ItemGroup>\n</Project>\n',
+    "Package.swift": 'let package = Package(name: "App", dependencies: [\n])\n',
+  });
+  write(dir, {
+    "package.json":
+      JSON.stringify(
+        { scripts: { test: "jest --passWithNoTests" }, dependencies: { lodash: "^4", "left-pad-x": "1.0.0" } },
+        null,
+        2,
+      ) + "\n",
+    "jest.config.js": "module.exports = { testPathIgnorePatterns: ['slow'] };\n",
+    "requirements.txt": "flask==3.0\nrequests==2.32\n",
+    "go.mod": "module example.com/app\n\ngo 1.22\n\nrequire github.com/acme/kit v1.2.0\n",
+    "Cargo.toml": '[package]\nname = "app"\nversion = "0.2.0"\n\n[dependencies]\nserde = "1"\ntokio = "1"\n',
+    "pyproject.toml": '[project]\nname = "app"\ndependencies = [\n  "attrs>=23",\n  "httpx>=0.27",\n]\n',
+    "pom.xml":
+      "<project><dependencies>\n<dependency>\n<groupId>org.slf4j</groupId>\n<artifactId>slf4j-api</artifactId>\n</dependency>\n<dependency>\n<groupId>com.google.guava</groupId>\n<artifactId>guava</artifactId>\n</dependency>\n</dependencies></project>\n",
+    "app/build.gradle.kts":
+      'dependencies {\n  implementation("com.squareup.okio:okio:3.10.0")\n  testImplementation("org.junit.jupiter:junit-jupiter:5.11.0")\n}\n',
+    Gemfile: 'source "https://rubygems.org"\ngem "rack", "~> 3.1"\ngem "sinatra"\n',
+    "composer.json":
+      JSON.stringify({ require: { php: ">=8.2", "monolog/monolog": "^3", "guzzlehttp/guzzle": "^7" } }, null, 2) + "\n",
+    "App/App.csproj":
+      '<Project>\n  <ItemGroup>\n    <PackageReference Include="Serilog" Version="4.1.0" />\n    <PackageReference Include="Polly" Version="8.0.0" />\n  </ItemGroup>\n</Project>\n',
+    "Package.swift":
+      'let package = Package(name: "App", dependencies: [\n  .package(url: "https://github.com/apple/swift-log.git", from: "1.5.0"),\n])\n',
+    "src/units.ts":
+      'export const ms = (s: string) => {\n  if (s === "2h") return 7200000;\n  if (process.env.NODE_ENV === "test") return 0;\n  return Number(s);\n};\n',
+    "test/units.test.ts": 'import { ms } from "../src/units";\ntest("ms", () => expect(ms("2h")).toBe(7200000));\n',
+  });
+  const result = await check({
+    firstRelease: async (_, name) => (name === "left-pad-x" ? "2026-10-10T00:00:00Z" : null),
+  });
+  assert.deepEqual(result.tests, { added: 2, removed: 0, files: 1, sources: 1 });
+  assert.deepEqual(result.warnings.map((r) => `${r.rule} ${r.path}`).sort(), [
+    "check-config jest.config.js",
+    "check-config package.json",
+    "test-answer-in-source src/units.ts",
+    "test-aware-source src/units.ts",
+  ]);
+  assert.deepEqual(
+    result.dependencies
+      ?.map(({ manager, name, firstRelease }) => [manager, name, firstRelease])
+      .sort((a, b) => `${a[0]}:${a[1]}`.localeCompare(`${b[0]}:${b[1]}`)),
+    [
+      ["cargo", "tokio", null],
+      ["go", "github.com/acme/kit", null],
+      ["maven", "com.google.guava:guava", null],
+      ["maven", "org.junit.jupiter:junit-jupiter", null],
+      ["npm", "left-pad-x", "2026-10-10T00:00:00Z"],
+      ["nuget", "Polly", null],
+      ["packagist", "guzzlehttp/guzzle", null],
+      ["pypi", "httpx", null],
+      ["pypi", "requests", null],
+      ["rubygems", "sinatra", null],
+      ["swift", "https://github.com/apple/swift-log.git", null],
+    ],
+  );
+  const line = handInLine(result) ?? "";
+  assert.match(line, /tests: \+2\/-0 lines in 1 file\(s\)/);
+  assert.match(
+    line,
+    /new dependencies: tokio \(cargo\), .*left-pad-x \(npm, first published 2026-10-10, \d+ day\(s\) ago\)/,
+  );
+});
+
+test("a control is the project at the writer's start with only its tests laid in, and the project's own tree is left as it was", async () => {
+  const { dir, git } = project(START);
+  const head = git("rev-parse", "HEAD");
+  mkdirSync(join(dir, "node_modules", "jest"), { recursive: true });
+  write(dir, {
+    "src/sum.ts": "export const sum = (a: number, b: number) => a + b + 0;\n",
+    "test/sum.test.ts": 'import { sum } from "../src/sum";\ntest("sum", () => expect(sum(2, 2)).toBe(4));\n',
+    "test/new.test.ts": 'test("new", () => expect(1).toBe(1));\n',
+  });
+  rmSync(join(dir, "test/old.test.ts"));
+  const status = git("status", "--porcelain");
+  const to = join(ROOM_HOME, "controls-test", "one");
+  const made = await buildControl(dir, head, to);
+  assert.deepEqual(made, {
+    path: to,
+    base: head,
+    tests: ["test/new.test.ts", "test/old.test.ts", "test/sum.test.ts"],
+    sources: ["src/sum.ts"],
+  });
+  assert.equal(readFileSync(join(to, "src/sum.ts"), "utf8"), START["src/sum.ts"]);
+  assert.match(readFileSync(join(to, "test/sum.test.ts"), "utf8"), /sum\(2, 2\)/);
+  assert.ok(existsSync(join(to, "test/new.test.ts")) && !existsSync(join(to, "test/old.test.ts")));
+  assert.ok(lstatSync(join(to, "node_modules")).isSymbolicLink());
+  assert.equal(git("status", "--porcelain"), status, "the project's index and tree are its own");
+
+  const { dir: plain, git: plainGit } = project(START);
+  write(plain, { "src/sum.ts": "export const sum = (a: number, b: number) => b + a;\n" });
+  assert.match(
+    String(await buildControl(plain, plainGit("rev-parse", "HEAD"), join(ROOM_HOME, "controls-test", "two"))),
+    /changed no test/,
   );
 });
 

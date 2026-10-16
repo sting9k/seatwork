@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 import { lstatSync, readFileSync } from "node:fs";
 import { basename, dirname, extname, join } from "node:path";
 import table from "../../shared/safety/handin.json";
+import type { Manager } from "./registry";
 import { ASSERTION, gamingOf, type GamingEvidence } from "./council/gaming";
 import { evaluate, type GateConfig, type Tools } from "./gate/evaluate";
 import type { Place } from "./gate/types";
@@ -32,6 +33,30 @@ export interface HandIn {
   why: string | null;
   gaming?: GamingEvidence | null;
   related?: string[];
+  tests?: TestCount;
+  dependencies?: Dependency[];
+}
+
+/** The test lines a hand-in added and removed, in how many test files, beside how many changed source files. */
+export interface TestCount {
+  added: number;
+  removed: number;
+  files: number;
+  sources: number;
+}
+
+/** A dependency the hand-in adds to a manifest; `firstRelease` when its registry said. */
+export interface Dependency {
+  manager: Manager;
+  name: string;
+  path: string;
+  line: number;
+  firstRelease: string | null;
+}
+
+/** What the hand-in may ask outside the machine: a package's first release on its registry. */
+export interface Lookups {
+  firstRelease?: (manager: Manager, name: string) => Promise<string | null>;
 }
 
 /** A rule of the table: a pattern read on one part of an added line (`in`) of the files of a language and kind. */
@@ -48,7 +73,7 @@ interface Rule {
 }
 
 /** A file's changes since the start: its added lines with their numbers, its removed lines, whether it is gone. */
-interface Change {
+export interface Change {
   path: string;
   added: [number, string][];
   removed: string[];
@@ -66,6 +91,16 @@ const RULES = (table.rules as Rule[]).map((r) => ({
 }));
 const SKIP = table.skip.map((p) => new RegExp(p));
 const TESTS = table.tests.map((p) => new RegExp(p));
+export const isTestPath = (path: string): boolean => TESTS.some((p) => p.test(path));
+const CHECK_CONFIG = table.checkConfig.map((p) => new RegExp(p));
+const CHECK_KEYS = new RegExp(table.checkKeys);
+const MANIFEST =
+  /(^|\/)(package\.json|composer\.json|pom\.xml|(build|settings)\.gradle(\.kts)?|Gemfile|Package\.swift|go\.mod|Cargo\.toml|pyproject\.toml|requirements[^/]*\.(txt|in))$|\.(csproj|fsproj|vbproj)$/;
+const LITERAL = /"(?:[^"\\\n]|\\.){2,}"|'(?:[^'\\\n]|\\.){2,}'|\b\d{3,}(?:\.\d+)?\b|\b\d+\.\d+\b/g;
+const ASSERTIONS_MOST = 2000;
+const DEPENDENCIES_MOST = 30;
+const LOOKUPS_MOST = 10;
+const DEPENDENCY_SECTIONS = ["dependencies", "devDependencies", "peerDependencies", "optionalDependencies"];
 const EXTENSIONS = new Map(
   Object.entries(table.languages as Record<string, string[]>).flatMap(([lang, exts]) =>
     exts.map((e) => [e, lang] as const),
@@ -145,7 +180,7 @@ function parseDiff(diff: string): Map<string, Change> {
 }
 
 /** The changes since a commit: tracked edits, and new files git does not ignore. */
-async function changesSince(cwd: string, head: string): Promise<Change[] | string> {
+export async function changesSince(cwd: string, head: string): Promise<Change[] | string> {
   const diff = await git(
     [
       "-c",
@@ -173,7 +208,7 @@ async function changesSince(cwd: string, head: string): Promise<Change[] | strin
     bytes += file.size;
     if (bytes > MAX_BYTES) return `more than ${MAX_BYTES >> 20} MB changed`;
     // a binary file counts as a change but has no lines to read
-    const lines = file.text.includes("\0") ? [] : file.text.split("\n");
+    const lines = file.text.includes("\0") ? [] : file.text.replace(/\n$/, "").split("\n");
     changes.set(path, { path, added: lines.map((l, i) => [i + 1, l]), removed: [], deleted: false, text: file.text });
   }
   if (changes.size > MAX_FILES) return `more than ${MAX_FILES} files changed`;
@@ -262,7 +297,12 @@ const fingerprint = (rule: string, path: string, text: string, ordinal: number) 
     .slice(0, 12);
 
 /** Reads what a seat changed since its starting commit and stores what it finds. */
-export async function inspectHandIn(seat: string, store: SafetyStore, gate: Gate): Promise<HandIn> {
+export async function inspectHandIn(
+  seat: string,
+  store: SafetyStore,
+  gate: Gate,
+  lookups: Lookups = {},
+): Promise<HandIn> {
   const start = store.startOf(seat);
   const base = { files: 0, open: [], acknowledged: [], warnings: [] };
   if (!start) return { ...base, state: "partial", why: "the room has no record of where this seat started" };
@@ -274,6 +314,8 @@ export async function inspectHandIn(seat: string, store: SafetyStore, gate: Gate
   const found: Found[] = [];
   for (const change of changes) for (const one of await inspectFile(change, start.cwd, gate)) found.push(one);
   if (!changes.length) return { ...base, state: "empty", why: null };
+  for (const change of changes) found.push(...checkConfigFindings(change));
+  found.push(...answersInSource(changes));
   const ordinals = new Map<string, number>();
   const rows = store.noteFindings(
     seat,
@@ -292,7 +334,10 @@ export async function inspectHandIn(seat: string, store: SafetyStore, gate: Gate
     }),
   );
   const open = rows.filter((r) => r.severity === "block" && !r.ack);
-  const related = await testsNaming(changes, start.cwd);
+  const [related, dependencies] = await Promise.all([
+    testsNaming(changes, start.cwd),
+    newDependencies(changes, start.cwd, start.start_head, lookups),
+  ]);
   const skipped = found.filter((f) => f.rule === "test-skipped" || f.rule === "test-focused").length;
   return {
     state: open.length ? "blocked" : "clean",
@@ -304,7 +349,7 @@ export async function inspectHandIn(seat: string, store: SafetyStore, gate: Gate
     gaming: gamingOf(
       changes.map((change) => ({
         path: change.path,
-        test: TESTS.some((p) => p.test(change.path)),
+        test: isTestPath(change.path),
         deleted: change.deleted,
         added: change.added.map(([, line]) => line),
         removed: change.removed,
@@ -312,7 +357,216 @@ export async function inspectHandIn(seat: string, store: SafetyStore, gate: Gate
       skipped,
     ),
     related,
+    tests: testCount(changes),
+    dependencies,
   };
+}
+
+/** The test lines the changes add and remove, and the source files beside them. */
+function testCount(changes: readonly Change[]): TestCount {
+  const count = { added: 0, removed: 0, files: 0, sources: 0 };
+  for (const change of changes) {
+    if (!isTestPath(change.path)) {
+      if (
+        EXTENSIONS.has(extname(change.path)) &&
+        !MANIFEST.test(change.path) &&
+        !CHECK_CONFIG.some((p) => p.test(change.path))
+      )
+        count.sources += 1;
+      continue;
+    }
+    count.files += 1;
+    count.added += change.added.length;
+    count.removed += change.removed.length;
+  }
+  return count;
+}
+
+/** A change to what decides the checks: a runner, lint or CI file, or the check lines of a manifest. */
+function checkConfigFindings(change: Change): Found[] {
+  const hint = "This decides what the checks run or how strict they are; say in the report why it changed.";
+  const at = (line: number, text: string): Found[] => [
+    { rule: "check-config", level: "warn", path: change.path, line, text, hint },
+  ];
+  if (CHECK_CONFIG.some((p) => p.test(change.path))) return at(change.added[0]?.[0] ?? 0, change.path);
+  if (!/(^|\/)(package\.json|pyproject\.toml)$/.test(change.path)) return [];
+  const added = change.added.find(([, line]) => CHECK_KEYS.test(line));
+  if (added) return at(added[0], added[1].trim());
+  const removed = change.removed.find((line) => CHECK_KEYS.test(line));
+  return removed ? at(0, removed.trim()) : [];
+}
+
+/** The literals of a line, quotes taken off, so `"2h"` and `'2h'` are one. */
+const literalsOf = (line: string) => new Set((line.match(LITERAL) ?? []).map((one) => one.replace(/^["']|["']$/g, "")));
+
+/** Added source lines that hold two literals of one assertion added in the same hand-in: its input and its answer. */
+function answersInSource(changes: readonly Change[]): Found[] {
+  const owners = new Map<string, number[]>();
+  let assertions = 0;
+  for (const change of changes) {
+    if (!isTestPath(change.path)) continue;
+    for (const [, line] of change.added) {
+      if (!ASSERTION.test(line) || assertions >= ASSERTIONS_MOST) continue;
+      const literals = literalsOf(line);
+      if (literals.size < 2) continue;
+      assertions += 1;
+      for (const literal of literals) owners.set(literal, [...(owners.get(literal) ?? []), assertions]);
+    }
+  }
+  if (owners.size === 0) return [];
+  const out: Found[] = [];
+  for (const change of changes) {
+    if (isTestPath(change.path) || !EXTENSIONS.has(extname(change.path))) continue;
+    for (const [line, text] of change.added) {
+      const hits = new Map<number, number>();
+      for (const literal of literalsOf(text))
+        for (const owner of owners.get(literal) ?? []) hits.set(owner, (hits.get(owner) ?? 0) + 1);
+      if ([...hits.values()].some((n) => n >= 2))
+        out.push({
+          rule: "test-answer-in-source",
+          level: "warn",
+          path: change.path,
+          line,
+          text,
+          hint: "This line holds the input and the answer of a test added with it; compute the answer instead.",
+        });
+    }
+  }
+  return out;
+}
+
+/** The section a line of a TOML file sits in, by the last header above it. */
+function sectionAt(text: string, line: number): string {
+  const lines = text.split("\n").slice(0, line);
+  for (let i = lines.length - 1; i >= 0; i -= 1) {
+    const header = /^\s*\[+([^\]]+)\]+/.exec(lines[i]);
+    if (header) return header[1].trim();
+  }
+  return "";
+}
+
+/** The package a manifest line names, by the manifest's kind; null for any other line. */
+function nameOn(path: string, text: string, line: number, added: string): { manager: Manager; name: string } | null {
+  const base = basename(path);
+  if (/^requirements[^/]*\.(txt|in)$/.test(base)) {
+    const name = /^\s*([A-Za-z0-9][A-Za-z0-9._-]*)/.exec(added)?.[1];
+    return name ? { manager: "pypi", name: name.toLowerCase().replace(/_/g, "-") } : null;
+  }
+  if (/^build\.gradle(\.kts)?$/.test(base)) {
+    const coordinate =
+      /^\s*(?:implementation|api|compileOnly|runtimeOnly|testImplementation|testRuntimeOnly|annotationProcessor|kapt|ksp)\s*\(?\s*["']([^"':\s]+):([^"':\s]+)/.exec(
+        added,
+      );
+    return coordinate ? { manager: "maven", name: `${coordinate[1]}:${coordinate[2]}` } : null;
+  }
+  if (base === "Gemfile") {
+    const name = /^\s*gem\s+["']([^"']+)["']/.exec(added)?.[1];
+    return name ? { manager: "rubygems", name } : null;
+  }
+  if (/\.(csproj|fsproj|vbproj)$|^Directory\.Packages\.props$/.test(base)) {
+    const name = /<Package(?:Reference|Version)\s+Include="([^"]+)"/.exec(added)?.[1];
+    return name ? { manager: "nuget", name } : null;
+  }
+  if (base === "Package.swift") {
+    const name = /\.package\(\s*(?:name:\s*"[^"]*",\s*)?url:\s*"([^"]+)"/.exec(added)?.[1];
+    return name ? { manager: "swift", name } : null;
+  }
+  if (base === "go.mod") {
+    const name = /^\s*(?:require\s+)?([A-Za-z0-9.-]+\.[A-Za-z]{2,}\/\S+)\s+v\d/.exec(added)?.[1];
+    return name ? { manager: "go", name } : null;
+  }
+  if (base === "Cargo.toml") {
+    const name = /^\s*([A-Za-z0-9_-]+)\s*=/.exec(added)?.[1];
+    return name && /(^|\.)(dev-|build-)?dependencies$/.test(sectionAt(text, line)) ? { manager: "cargo", name } : null;
+  }
+  if (base === "pyproject.toml") {
+    const section = sectionAt(text, line);
+    const quoted = /^\s*["']([A-Za-z0-9][A-Za-z0-9._-]*)\s*(?:\[[^\]]*\])?\s*([<>=!~;@ ]|["'])/.exec(added)?.[1];
+    const keyed = /dependencies/.test(section) ? /^\s*([A-Za-z0-9][A-Za-z0-9._-]*)\s*=/.exec(added)?.[1] : undefined;
+    const name =
+      (/^(project|project\.optional-dependencies|dependency-groups)$/.test(section) ? quoted : undefined) ?? keyed;
+    return name && name !== "python" ? { manager: "pypi", name: name.toLowerCase().replace(/_/g, "-") } : null;
+  }
+  return null;
+}
+
+/** The dependency names of a JSON manifest's sections; empty for text that is not JSON. */
+function jsonNames(text: string | null, sections: readonly string[]): Set<string> {
+  try {
+    const json = text ? (JSON.parse(text) as Record<string, unknown>) : {};
+    return new Set(sections.flatMap((section) => Object.keys((json[section] as Record<string, unknown>) ?? {})));
+  } catch {
+    return new Set();
+  }
+}
+
+/** The `group:artifact` of each dependency a pom.xml declares. */
+function mavenNames(text: string | null): Set<string> {
+  const names = new Set<string>();
+  for (const [, block] of (text ?? "").matchAll(/<dependency>([\s\S]*?)<\/dependency>/g)) {
+    const group = /<groupId>\s*([^<\s]+)\s*<\/groupId>/.exec(block)?.[1];
+    const artifact = /<artifactId>\s*([^<\s]+)\s*<\/artifactId>/.exec(block)?.[1];
+    if (group && artifact) names.add(`${group}:${artifact}`);
+  }
+  return names;
+}
+
+/** The manifests read whole, old against new: their manager and the names they declare. */
+const WHOLE: Record<
+  string,
+  { manager: Manager; names: (text: string | null) => Set<string>; mark: (name: string) => string }
+> = {
+  "package.json": {
+    manager: "npm",
+    names: (text) => jsonNames(text, DEPENDENCY_SECTIONS),
+    mark: (name) => `"${name}"`,
+  },
+  "composer.json": {
+    manager: "packagist",
+    names: (text) => new Set([...jsonNames(text, ["require", "require-dev"])].filter((name) => name.includes("/"))),
+    mark: (name) => `"${name}"`,
+  },
+  "pom.xml": { manager: "maven", names: mavenNames, mark: (name) => name.split(":")[1] },
+};
+
+/** The dependencies the changes add to manifests, each with its first release where its registry says. */
+async function newDependencies(
+  changes: readonly Change[],
+  cwd: string,
+  head: string,
+  lookups: Lookups,
+): Promise<Dependency[]> {
+  const found: Omit<Dependency, "firstRelease">[] = [];
+  for (const change of changes) {
+    if (change.deleted || found.length >= DEPENDENCIES_MOST) continue;
+    const text = change.text ?? readFile(join(cwd, change.path))?.text ?? "";
+    const whole = WHOLE[basename(change.path)];
+    if (whole) {
+      const before = await git(["show", `${head}:${change.path}`], cwd);
+      const old = whole.names(before.ok ? before.out : null);
+      for (const name of whole.names(text)) {
+        if (old.has(name)) continue;
+        const line = change.added.find(([, added]) => added.includes(whole.mark(name)))?.[0] ?? 0;
+        found.push({ manager: whole.manager, name, path: change.path, line });
+      }
+      continue;
+    }
+    const gone = new Set(
+      change.removed.map((removed) => nameOn(change.path, text, 0, removed)?.name).filter((name) => name),
+    );
+    for (const [line, added] of change.added) {
+      const named = nameOn(change.path, text, line, added);
+      if (named && !gone.has(named.name) && !found.some((one) => one.name === named.name))
+        found.push({ ...named, path: change.path, line });
+    }
+  }
+  const kept = found.slice(0, DEPENDENCIES_MOST);
+  const dates = await Promise.all(
+    kept.map((one, i) =>
+      i < LOOKUPS_MOST && lookups.firstRelease ? lookups.firstRelease(one.manager, one.name).catch(() => null) : null,
+    ),
+  );
+  return kept.map((one, i) => ({ ...one, firstRelease: dates[i] }));
 }
 
 /** One digest of a seat's changes, the same whatever order git lists them in. */
@@ -333,10 +587,9 @@ export async function workDigest(seat: string, store: SafetyStore): Promise<stri
 
 /** The unchanged tests that name a changed source file in their text or file name; a common name goes with its folder. */
 async function testsNaming(changes: readonly Change[], cwd: string): Promise<string[]> {
-  const isTest = (path: string) => TESTS.some((p) => p.test(path));
   const names = new Set<string>();
   for (const change of changes) {
-    if (isTest(change.path) || !EXTENSIONS.has(extname(change.path))) continue;
+    if (isTestPath(change.path) || !EXTENSIONS.has(extname(change.path))) continue;
     const stem = basename(change.path, extname(change.path));
     names.add(GENERIC_STEMS.has(stem) || stem.length < 3 ? `${basename(dirname(change.path))}/${stem}` : stem);
     if (names.size >= RELATED_SOURCES) break;
@@ -353,13 +606,13 @@ async function testsNaming(changes: readonly Change[], cwd: string): Promise<str
   }));
   const byName = files.out
     .split("\n")
-    .filter(isTest)
+    .filter(isTestPath)
     .filter((path) =>
       matchers.some(({ word, folder }) => word.test(basename(path)) && (folder === null || path.includes(folder))),
     );
   const changed = new Set(changes.map((change) => change.path));
   return [...new Set([...inText.out.split("\n"), ...byName])]
-    .filter((path) => path && isTest(path) && EXTENSIONS.has(extname(path)) && !changed.has(path))
+    .filter((path) => path && isTestPath(path) && EXTENSIONS.has(extname(path)) && !changed.has(path))
     .sort()
     .slice(0, RELATED_MOST);
 }
@@ -367,7 +620,7 @@ async function testsNaming(changes: readonly Change[], cwd: string): Promise<str
 /** The mistakes on one file's added lines, its deletion if it is a test, and the scripts it adds. */
 async function inspectFile(change: Change, cwd: string, gate: Gate): Promise<Found[]> {
   const path = change.path;
-  const isTest = TESTS.some((p) => p.test(path));
+  const isTest = isTestPath(path);
   const ext = /\.[^./]+$/.exec(path)?.[0] ?? "";
   const language = EXTENSIONS.get(ext) ?? (/(^|\/)(Makefile|Dockerfile)$/.test(path) ? "shell" : null);
   if (change.deleted)
@@ -539,6 +792,16 @@ export function handInLine(result: HandIn): string | null {
         .map((r) => `${r.rule} ${r.path}:${r.line} (${r.ack})`)
         .join("; ")}`,
     );
+  const tests = result.tests;
+  if (tests?.files) parts.push(`tests: +${tests.added}/-${tests.removed} lines in ${tests.files} file(s)`);
+  else if (tests?.sources) parts.push(`tests: none changed beside ${tests.sources} source file(s)`);
+  if (result.dependencies?.length)
+    parts.push(
+      `new dependencies: ${result.dependencies
+        .slice(0, 8)
+        .map((one) => dependencyLine(one))
+        .join(", ")}`,
+    );
   if (result.related?.length)
     parts.push(
       `${result.related.length} unchanged test(s) name what changed: ${result.related.slice(0, 8).join(", ")}${result.related.length > 8 ? ", …" : ""}`,
@@ -551,6 +814,13 @@ export function handInLine(result: HandIn): string | null {
         .join("; ")}`,
     );
   return parts.length ? `hand-in check over ${result.files} file(s): ${parts.join("; ")}` : null;
+}
+
+/** A new dependency as the hand-in line names it: its manager and, where the registry said, how old it is. */
+function dependencyLine(one: Dependency, now = Date.now()): string {
+  if (!one.firstRelease) return `${one.name} (${one.manager})`;
+  const days = Math.floor((now - Date.parse(one.firstRelease)) / 86_400_000);
+  return `${one.name} (${one.manager}, first published ${one.firstRelease.slice(0, 10)}, ${days} day(s) ago)`;
 }
 
 /** What a seat reads when its candidate comes back: each finding with its id, place and fix. */

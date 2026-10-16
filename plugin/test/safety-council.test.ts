@@ -109,6 +109,10 @@ test("a check whose exit code proves nothing is named: a later command sets it, 
     ["npx jest --passWithNoTests", [], narrow("--passWithNoTests")],
     ["pytest -k cache", [], narrow("-k")],
     ["go test -run TestParse ./...", [], narrow("-run")],
+    ["mvn test -Dtest=ParserTest", [], narrow("-Dtest")],
+    ["./gradlew test --tests '*Parser*'", [], narrow("--tests")],
+    ["bundle exec rspec -e parses", [], narrow("-e")],
+    ["mvn -q verify", [], null],
   ];
   for (const [command, named, why] of cases) assert.equal(maskOf(command, named), why, command);
 });

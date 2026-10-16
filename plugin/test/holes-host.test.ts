@@ -9,7 +9,7 @@ import { PaseoHost } from "../server/paseo/host";
 
 shipSql();
 
-const QUICK = { readSeconds: 0.03, historySeconds: 0.03, writeSeconds: 0.03 };
+const QUICK = { readSeconds: 0.03, historySeconds: 0.03, writeSeconds: 0.03, startSeconds: 0.03 };
 const never = () => new Promise<never>(() => {});
 const wait = (ms: number) => new Promise((done) => setTimeout(done, ms));
 
@@ -51,6 +51,41 @@ test("each kind of call has its own time, and the shipped ones are shorter than 
     assert.ok(callLimits[key] > 0 && callLimits[key] < 60, key);
   }
   assert.ok(callLimits.readSeconds <= callLimits.historySeconds && callLimits.readSeconds <= callLimits.writeSeconds);
+});
+
+test("a seat's start that is not answered in time is asked once more under its key, so the app hands back one seat", async () => {
+  const asked: { idempotencyKey: string; agentId: string; title: string }[] = [];
+  const host = new PaseoHost(QUICK);
+  host.use({
+    agents: {
+      create: async (options: (typeof asked)[number]) => {
+        asked.push(options);
+        if (options.title === "refused") throw new Error("agent_request_key_conflict");
+        return asked.length === 1 ? never() : { id: options.agentId };
+      },
+    },
+  } as never);
+  const seat = {
+    key: "rotation:lead-1:2026-10-16-10-00",
+    provider: "claude-lead",
+    cwd: PROJECT,
+    title: "[Lead] stream (2)",
+    prompt: "go",
+  };
+  const id = await host.create(seat);
+  assert.deepEqual(
+    asked.map(({ idempotencyKey, agentId }) => [idempotencyKey, agentId]),
+    [
+      [seat.key, id],
+      [seat.key, id],
+    ],
+  );
+  assert.match(id, /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
+  assert.equal(await host.create({ ...seat, key: "other" }).then(() => asked.at(-1)!.agentId === id), false);
+
+  asked.length = 0;
+  await assert.rejects(host.create({ ...seat, title: "refused" }), /agent_request_key_conflict/);
+  assert.equal(asked.length, 1, "a refusal is not asked again");
 });
 
 test(

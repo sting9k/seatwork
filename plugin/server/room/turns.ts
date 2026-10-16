@@ -5,6 +5,7 @@ import { contextFell } from "../orchestration/compaction";
 import { clip } from "../orchestration/forks";
 import { classify, type FailureKind } from "../orchestration/recovery";
 import { atMilestone, nextTitle, parseHandoff, rotate } from "../orchestration/rotation";
+import { familyOf } from "../orchestration/models";
 import { FRESH_EYES, ownerNote } from "../orchestration/rounds";
 import { parseSeat } from "../orchestration/seats";
 import { handInLine, handInReturn, type HandIn } from "../safety/handin";
@@ -46,6 +47,7 @@ interface Gathered {
   nothingNew: boolean;
 }
 
+const ALIKE_SHARE = 0.6;
 const errorText = (error: unknown) => (error instanceof Error ? error.message : String(error));
 
 /** True when a turn was started by mail and none of it asked the seat for anything. */
@@ -290,8 +292,8 @@ function addRoomLines(
   }
 }
 
-/** A reviewer's report waits for the others of its round: the Owner reads the round in one turn. */
-function holdForRound(room: RoomContext, up: NewMail, id: string): void {
+/** A reviewer's report waits for its round; the last one says when one model family gave several answers to one question. */
+async function holdForRound(room: RoomContext, up: NewMail, id: string): Promise<void> {
   const round = room.gate.reported(id);
   if (round) up.round = round.round;
   if (round && round.awaited > 0) {
@@ -299,6 +301,44 @@ function holdForRound(room: RoomContext, up: NewMail, id: string): void {
     up.heldUntil = new Date(Date.now() + minutes * 60_000).toISOString();
     up.why = `${up.why}; held for the ${round.awaited} other${round.awaited === 1 ? "" : "s"} of its review round`;
   }
+  const alike = round?.members && round.members.length > 1 ? await oneFamily(room, round.members) : 0;
+  if (alike)
+    up.why = `${up.why}; ${alike} answers to one question in this round came from one model family: their agreement is weak evidence, so ask one on another family before you rest on it`;
+}
+
+/** The lines of a brief that say what it asks, not its angle. */
+const briefLines = (brief: string) =>
+  new Set(
+    brief
+      .split("\n")
+      .map((line) => line.trim())
+      .filter((line) => line.length >= 12),
+  );
+
+/** The most answers in a round that share their question and their model family; 0 for fewer than two. */
+async function oneFamily(room: RoomContext, members: readonly string[]): Promise<number> {
+  const seats = await Promise.all(
+    members.map(async (id) => {
+      const brief = room.briefs.get(id);
+      const provider = room.engine.seat(id)?.provider ?? "";
+      const model = await room.host
+        .seat(id)
+        .then((seat) => seat?.model ?? null)
+        .catch(() => null);
+      return { lines: brief ? briefLines(brief) : null, family: familyOf(model, provider.split("-")[0]) };
+    }),
+  );
+  let most = 0;
+  for (const [i, seat] of seats.entries()) {
+    if (!seat.lines || !seat.family) continue;
+    const alike = seats.filter((other, j) => {
+      if (j === i || !other.lines || other.family !== seat.family) return false;
+      const shared = [...seat.lines!].filter((line) => other.lines!.has(line)).length;
+      return shared / Math.min(seat.lines!.size, other.lines.size) >= ALIKE_SHARE;
+    }).length;
+    if (alike > 0) most = Math.max(most, alike + 1);
+  }
+  return most;
 }
 
 /** What a turn's end sets going: the report up, a hand-in sent back once, a review round, a rotation. */
@@ -386,7 +426,7 @@ export async function turnEnded(room: RoomContext, end: TurnEnd): Promise<void> 
       ? await atMilestone(room.forks, { role, tokens: contextTokens, message: end.text }, room.rotateAt)
       : false;
   if (role && up) addRoomLines(room, up, { role, id, task, contextTokens, early, check, findings });
-  if (up && subjectSignal(up.subject) === "REVIEW") holdForRound(room, up, id);
+  if (up && subjectSignal(up.subject) === "REVIEW") await holdForRound(room, up, id);
   const asked = room.rotations.get(id);
   const record = eng.seat(id);
   if (asked && record && wake.some((mail) => mail.id === asked.mailId)) {

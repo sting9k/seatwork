@@ -32,6 +32,7 @@ export async function keepOperator(
   if (!provider) return null;
   starting.at = Date.now();
   const id = await deps.host.create({
+    key: `operator:${starting.at}`,
     provider,
     cwd: deps.folder,
     title: `[${traits(ROOM_ROLE).label}] the room's operator`,

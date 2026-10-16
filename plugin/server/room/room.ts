@@ -34,7 +34,8 @@ import {
 import { readJson } from "../persisted";
 import { loadPolicy, POLICY_FILE, type RuntimePolicy } from "../policy";
 import { roomStats } from "../stats";
-import { Operations, writePolicyKey } from "../operations/index";
+import { Operations, OperationsRefused, writePolicyKey } from "../operations/index";
+import { addSkill, listSkills, removeSkill, SkillRefused, type SkillSource } from "../orchestration/local-skills";
 import { Vitals } from "../operations/vitals";
 import { OwedList, roomStatus } from "./status";
 import { Jev } from "../jev/index";
@@ -491,6 +492,16 @@ function topSeatOf(engine: MailEngine, project: string): string | null {
 }
 
 /** The room's operations: its log and incidents told to the room's own seats, the policy those seats tune, and the budget of each project. */
+/** A local skill's refusal as the operator's tool gives it. */
+function refusedAs<T>(act: () => T): T {
+  try {
+    return act();
+  } catch (error) {
+    if (error instanceof SkillRefused) throw new OperationsRefused(error.message);
+    throw error;
+  }
+}
+
 function startOperations(policy: RuntimePolicy, operators: ReadonlySet<string>, room: () => RoomContext): Operations {
   return new Operations({
     dir: OPERATIONS_DIR,
@@ -517,8 +528,28 @@ function startOperations(policy: RuntimePolicy, operators: ReadonlySet<string>, 
       open: () => room().forks.open("incident"),
       take: (state, ids) => room().forks.takeMany("incident", state, ids),
     },
+    skills: {
+      add: (by, args) =>
+        refusedAs(() =>
+          addSkill({
+            role: String(args.role ?? ""),
+            name: String(args.name ?? ""),
+            files: (args.files ?? {}) as Record<string, string>,
+            source: (args.source ?? {}) as SkillSource,
+            why: String(args.reason ?? ""),
+            by,
+          }),
+        ),
+      remove: (role, name) => refusedAs(() => removeSkill(role, name)),
+      list: listSkills,
+    },
     readings: {
-      jev: () => ({ spent: room().jev.spent(), today: room().jev.today(), heldOff: room().jev.why() }),
+      jev: () => ({
+        spent: room().jev.spent(),
+        today: room().jev.today(),
+        heldOff: room().jev.why(),
+        forksLastWeek: room().forks.reading(),
+      }),
       knowledge: () => room().knowledge.reading(),
       mail: () =>
         roomStats(

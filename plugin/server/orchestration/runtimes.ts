@@ -23,6 +23,7 @@ import {
 } from "../paths";
 import { loadPolicy, type RuntimePolicy } from "../policy";
 import { codexHooks, codexTrust, openCodePlugin, piExtension } from "../safety/hooks";
+import { localSkills, localSkillsOf } from "./local-skills";
 import type { Harness, Seat } from "./seats";
 import { formatToml, parseToml, type TomlTable } from "../toml";
 
@@ -196,6 +197,7 @@ function installRoleSkills(runtime: string, seat: Pick<Seat, "harness" | "role">
   }
   for (const name of ownSkills(role)) share(target, source, name);
   for (const name of sharedSkills(role)) share(target, join(ROOM_DIR, "skills", "shared"), name);
+  for (const name of localSkills(role)) share(target, localSkillsOf(role), name);
 }
 
 /** The skills in a folder of the room's skills: each a folder holding a SKILL.md. */
@@ -218,9 +220,9 @@ function sharedSkills(role: string): string[] {
   });
 }
 
-/** The names of the skills the room gives a role: its own and the shared ones it is given. */
+/** The names of the skills the room gives a role: its own, the shared ones it is given, and the ones its room seat added. */
 export function roleSkillNames(role: string): string[] {
-  return [...new Set([...ownSkills(role), ...sharedSkills(role)])].sort();
+  return [...new Set([...ownSkills(role), ...sharedSkills(role), ...localSkills(role)])].sort();
 }
 
 /** The home of a Codex, Pi or OpenCode seat; a Claude seat has none. */

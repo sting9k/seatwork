@@ -8,6 +8,7 @@ import { test } from "node:test";
 import { call } from "../server/jev/client";
 import { DecisionError, type Questions } from "../server/jev/contract";
 import { Jev, type JevPolicy, type ProviderName } from "../server/jev/index";
+import { Forks } from "../server/orchestration/forks";
 import { DATA_ONLY, INPUT } from "../server/jev/input";
 
 shipSql();
@@ -414,6 +415,7 @@ test("every statement the decision log runs uses an index", async () => {
   jev.spent();
   jev.today();
   jev.label(decision.asks.ran, "owner", "true");
+  jev.answered("forks.tier", 0.85, new Date(0));
   jev.expire(new Date());
   const scans = jev
     .store()
@@ -521,6 +523,26 @@ test("a fork is unsure, never thrown, when the model is off, fails, or is split;
     String((await route(district(undefined, replies.fetch).jev, "t", {}, noul, 0.9)).why),
     /no decision provider/,
   );
+  jev.close();
+});
+
+test("a fork's week is read from the log: answers acted on at its threshold, answers left split, calls that failed", async () => {
+  const noul = { type: "noul", instructions: "Is the work done?" } as const;
+  const replies = provider(
+    json({ model: "m", answers: { fork: { type: "noul", noul: 0.03 } }, usage: {} }),
+    json({ model: "m", answers: { fork: { type: "noul", noul: 0.7 } }, usage: {} }),
+    json({ error: "bad" }, 400),
+    json({ model: "m", answers: { fork: { type: "noul", noul: 0.99 } }, usage: {} }),
+  );
+  const { jev } = district(POLICY("jev"), replies.fetch);
+  for (const a of ["1", "2", "3"]) await route(jev, "forks.tier@1", { a }, noul, 0.5);
+  await route(jev, "forks.gaps@2", { a: "4" }, noul, 0.5);
+  const forks = new Forks({ router: jev, on: (name) => name === "tier" || name === "duplicate", log: () => {} });
+  assert.deepEqual(forks.reading(), {
+    tier: { on: true, sharpAt: 0.85, asked: 2, acted: 1, split: 1, failed: 1 },
+    gaps: { on: false, sharpAt: 0.85, asked: 1, acted: 1, split: 0, failed: 0 },
+    duplicate: { on: true, sharpAt: 0.85, asked: 0, acted: 0, split: 0, failed: 0 },
+  });
   jev.close();
 });
 

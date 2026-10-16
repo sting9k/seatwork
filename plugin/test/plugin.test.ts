@@ -921,6 +921,73 @@ test("the reviewers a Lead launched in one turn report together: the Lead is wok
   assert.equal(lead.inbox.length, 2);
 });
 
+test("the last answer of a round says when answers to one question came from one model family", async () => {
+  const brief = (angle: string) =>
+    [
+      "Outcome: decide the store's layout before any code.",
+      "Write scope: none, the seat reads only",
+      "Non-goals: no change to the CLI or its flags",
+      "Acceptance evidence: a REVIEW with a position and its reasons",
+      "Question: one log with offsets, or one file per record?",
+      angle,
+    ].join("\n");
+  const answers = (who: TestSeat, angle: string) =>
+    call(
+      "on agent.turn_ended",
+      {
+        agent: who.agent,
+        turnId: null,
+        outcome: { kind: "completed" },
+        timeline: [
+          { type: "user_message", text: brief(angle) },
+          { type: "assistant_message", text: "REVIEW\nposition: one log" },
+        ],
+      },
+      context,
+    );
+  const lead = await seat("lead-family", "claude-lead", null, "[Lead] stream");
+  const lenses = [
+    await seat("family-a", "claude-peer", lead.agent.id, "[Peer:review] layout"),
+    await seat("family-b", "claude-peer", lead.agent.id, "[Peer:review] layout"),
+    await seat("family-c", "codex-peer", lead.agent.id, "[Peer:review] layout"),
+  ];
+  for (const [i, lens] of lenses.entries())
+    await answers(lens, `Angle: ${["independent", "premise", "specialist"][i]}`);
+  assert.equal(lead.inbox.length, 1);
+  assert.match(
+    lead.inbox[0],
+    /; 2 answers to one question in this round came from one model family: their agreement is weak evidence/,
+  );
+
+  const other = await seat("lead-family-2", "claude-lead", null, "[Lead] stream");
+  const mixed = [
+    await seat("family-d", "claude-peer", other.agent.id, "[Peer:review] layout"),
+    await seat("family-e", "codex-peer", other.agent.id, "[Peer:review] layout"),
+  ];
+  await answers(mixed[0], "Angle: independent");
+  assert.equal(other.inbox.length, 0);
+  await answers(mixed[1], "Angle: premise");
+  assert.equal(other.inbox.length, 1);
+  assert.doesNotMatch(other.inbox[0], /model family/);
+});
+
+test("a control of a writer's tests is built for its Owner and the seats beside it, and for no other seat", async () => {
+  const lead = await seat("lead-control", "claude-lead", null, "[Lead] stream");
+  const writer = await seat("peer-control-w", "claude-peer", lead.agent.id, "[Peer] store");
+  const reviewer = await seat("peer-control-r", "claude-peer", lead.agent.id, "[Peer:review] store");
+  const other = await seat("lead-control-2", "claude-lead", null, "[Lead] other");
+  const stranger = await seat("peer-control-x", "claude-peer", other.agent.id, "[Peer] other");
+  for (const who of [lead, reviewer])
+    assert.match(await who.call("seatwork_safety", { action: "control", seat: writer.agent.id }), /control|no start/i);
+  for (const who of [stranger, other])
+    assert.match(
+      await who
+        .call("seatwork_safety", { action: "control", seat: writer.agent.id })
+        .catch((error: Error) => error.message),
+      /give the `seat` of a writer under you, or beside you under one Owner/,
+    );
+});
+
 test("a reviewer archived before its report holds its round back no longer", async () => {
   const lead = await seat("lead-gate2", "claude-lead", null, "[Lead] stream");
   const first = await seat("lens-gate2-a", "codex-peer", lead.agent.id, "[Peer:review] abc1: correctness");
@@ -1737,6 +1804,26 @@ test("the room's own seat runs the room through its tool; no seat writes the cod
     .call("seatwork_room", { do: "tune", path: "knowledge.keepDays", value: 30 })
     .catch((error: Error) => error.message);
   assert.match(refused, /read knowledge in this turn first/);
+  const skill = {
+    do: "skill",
+    action: "add",
+    role: "peer",
+    name: "flaky-retry",
+    files: {
+      "SKILL.md": "---\nname: flaky-retry\ndescription: A test that passes only on a retry.\n---\nFind the race.\n",
+    },
+    source: { license: "own" },
+    reason: "Peers retried a flaky test three times in one task",
+  };
+  assert.deepEqual(JSON.parse(await hq.call("seatwork_room", skill)).done, {
+    added: "peer/flaky-retry",
+    files: ["SKILL.md"],
+  });
+  assert.match(
+    await hq.call("seatwork_room", { ...skill, name: "test-audit" }).catch((error: Error) => error.message),
+    /"code":"BAD_REQUEST".*the room ships a skill named test-audit/,
+  );
+  assert.match(await lead.call("seatwork_room", { do: "skill" }).catch((error: Error) => error.message), /refused/);
   const gate = lead.url.replace(/\/mcp\/([^/]+)\/[^/]+$/, "/gate/$1");
   const write = await fetch(`${gate}?cli=claude`, {
     method: "POST",

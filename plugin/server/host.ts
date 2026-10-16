@@ -29,8 +29,9 @@ export interface LiveSeat {
   thinking: string | null;
 }
 
-/** A seat to start: on a provider and model, under a parent, with its first prompt. */
+/** A seat to start; `key` names the start, so one asked again under it makes no second seat. */
 export interface NewSeat {
+  key: string;
   provider: string;
   model?: string;
   mode?: string;

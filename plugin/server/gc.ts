@@ -286,10 +286,20 @@ export function collectFiles(
       done.push(`deleted ${file}, a backup older than ${KEEP_LOG_DAYS} days`);
   for (const folder of sweepRemoved(roomHome, KEEP_REMOVED_DAYS, now))
     done.push(`deleted ${folder}, set aside more than ${KEEP_REMOVED_DAYS} days ago`);
+  for (const folder of dropStamped(join(roomHome, "controls"), [""], KEEP_LOG_DAYS, now))
+    done.push(`deleted ${folder}, a control older than ${KEEP_LOG_DAYS} days`);
+  for (const folder of dropStamped(join(roomHome, "skills-local", "removed"), [""], KEEP_REMOVED_DAYS, now))
+    done.push(`deleted ${folder}, local skills taken out more than ${KEEP_REMOVED_DAYS} days ago`);
   return done;
 }
 
 const STAMP = /^(\d{4})(\d\d)(\d\d)-(\d\d)(\d\d)(\d\d)$/;
+
+/** A local date and time for a file name, the one GC reads back: 20261012-145625. */
+export function stamp(now = new Date()): string {
+  const two = (n: number) => String(n).padStart(2, "0");
+  return `${now.getFullYear()}${two(now.getMonth() + 1)}${two(now.getDate())}-${two(now.getHours())}${two(now.getMinutes())}${two(now.getSeconds())}`;
+}
 
 /** Deletes entries named `<prefix><stamp>` older than `days`, sparing the `spare` newest. */
 function dropStamped(dir: string, prefixes: readonly string[], days: number, now = new Date(), spare = 0): string[] {

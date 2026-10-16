@@ -114,6 +114,14 @@ test("GC's file sweep clears what the room left longer ago than it keeps logs, a
 
   for (const folder of ["queue", "reports"]) mkdirSync(join(ROOM_HOME, "mail", folder), { recursive: true });
   writeFileSync(join(ROOM_HOME, "mail", "adoptions.json"), "{}");
+  // local skills taken out: kept as long as a folder set aside by Remove
+  const removed = join(ROOM_HOME, "skills-local", "removed");
+  for (const at of ["20260901-120000", "20261015-120000"])
+    mkdirSync(join(removed, at, "peer", "flaky"), { recursive: true });
+  // controls of a writer's tests: kept as long as logs
+  const controls = join(ROOM_HOME, "controls");
+  for (const at of ["20261016-120000", "20261019-120000"])
+    mkdirSync(join(controls, at, "peer-abc"), { recursive: true });
 
   const done = collectFiles(ROOM_HOME, [{ dir: paseoHome, prefixes: ["config.json.bak-"], spare: 1 }], NOW);
 
@@ -127,7 +135,9 @@ test("GC's file sweep clears what the room left longer ago than it keeps logs, a
     "config.json.bak-20261019-120000",
     "config.json.bak-mine",
   ]);
-  assert.equal(done.length, 6);
+  assert.deepEqual(readdirSync(removed), ["20261015-120000"]);
+  assert.deepEqual(readdirSync(controls), ["20261019-120000"]);
+  assert.equal(done.length, 8);
   assert.deepEqual(
     collectFiles(ROOM_HOME, [{ dir: paseoHome, prefixes: ["config.json.bak-"], spare: 1 }], NOW),
     [],

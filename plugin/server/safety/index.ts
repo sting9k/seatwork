@@ -4,6 +4,10 @@ import { dirname, join } from "node:path";
 import { Guard, type SafetyPolicy, type SeatRef } from "./guard";
 import type { Place } from "./gate/types";
 import { inspectHandIn, workDigest, type HandIn } from "./handin";
+import { firstRelease } from "./registry";
+import { buildControl } from "./control";
+import { stamp } from "../gc";
+import { CONTROLS_DIR } from "../paths";
 import { Chair, type ChairDeps } from "./council/chair";
 import { Council, type Decider, type HandInDiff, type VerdictWork } from "./council/council";
 import { snapshot } from "./council/git";
@@ -128,11 +132,12 @@ export class Safety {
     this.diffs.delete(agentId);
     if (!this.on || this.deps.policy()?.handin?.mode === "off") return null;
     const place = this.placeOf(this.seatRef(agentId));
-    const result = await inspectHandIn(agentId, this.store(), {
-      place,
-      config: this.guard.gateConfig(place),
-      tools: machineTools(() => this.startedAt(agentId)),
-    });
+    const result = await inspectHandIn(
+      agentId,
+      this.store(),
+      { place, config: this.guard.gateConfig(place), tools: machineTools(() => this.startedAt(agentId)) },
+      this.deps.policy()?.handin?.registry === false ? {} : { firstRelease },
+    );
     if (this.council.on)
       this.keepDiff(agentId, {
         gaming: result.gaming ?? null,
@@ -150,6 +155,21 @@ export class Safety {
     if (!before) return null;
     const previous = before.verdict ? { accepted: before.verdict === "accepted", digest: before.verdictDigest } : null;
     return { handed: before.handed, now, previous };
+  }
+
+  /** A control of a writer's tests: its project at its start, with only the candidate's tests laid in. */
+  async control(writer: string): Promise<string> {
+    const start = this.store().startOf(writer);
+    if (!start?.start_head)
+      return `The room has no start of ${writer} in a git repository: there is no base to build a control on.`;
+    const made = await buildControl(start.cwd, start.start_head, join(CONTROLS_DIR, stamp(), writer.slice(0, 8)));
+    if (typeof made === "string") return `No control for ${writer}: ${made}.`;
+    return [
+      `A control of ${writer}'s work at ${made.path}: its project at ${made.base.slice(0, 8)}, the commit it started on, with its candidate's tests and the source as it was.`,
+      `Tests laid in: ${made.tests.join(", ")}.`,
+      `Left at the base: ${made.sources.join(", ") || "nothing"}.`,
+      "Run the candidate's tests there: a new test that passes there does not test the change. The copy is cleared in a few days.",
+    ].join("\n");
   }
 
   /** The chair's word on an appeal of the council's: the candidate goes back to its seat, or stays. */

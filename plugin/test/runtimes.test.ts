@@ -6,6 +6,8 @@ import { test } from "node:test";
 import { loadPolicy, type CodexRuntimePolicy, type RuntimePolicy } from "../server/policy";
 import { claudeRoleDir, ensureRuntime, roleSkillNames, runtimeDir } from "../server/orchestration/runtimes";
 import { parseToml, type TomlTable } from "../server/toml";
+import { addSkill, listSkills, removeSkill } from "../server/orchestration/local-skills";
+import { LOCAL_SKILLS_DIR } from "../server/paths";
 
 const seat = { harness: "codex", role: "peer" } as const;
 const userConfig = join(USER_CODEX, "config.toml");
@@ -241,4 +243,44 @@ test("a Codex, Pi or OpenCode seat is shown the room's skills only: the user's o
   } finally {
     rmSync(join(USER_HOME, ".agents"), { recursive: true, force: true });
   }
+});
+
+test("a skill the room's seat adds reaches its role's seats and no other's, keeps its source, and leaves by being set aside", () => {
+  installRoom(["claude-peer", "claude-lead"]);
+  const base = {
+    role: "peer",
+    name: "flaky-retry",
+    files: {
+      "SKILL.md": "---\nname: flaky-retry\ndescription: A test that passes only on a retry.\n---\nFind the race.\n",
+      "references/notes.md": "Notes.\n",
+    },
+    source: { license: "own" },
+    why: "Peers retried a flaky test three times in one task",
+    by: "hq-1",
+  };
+  assert.deepEqual(addSkill(base), { added: "peer/flaky-retry", files: ["SKILL.md", "references/notes.md"] });
+  for (const role of ["peer", "lead"]) ensureRuntime({ harness: "claude", role }, loadPolicy());
+  const link = join(claudeRoleDir("peer"), ".claude", "skills", "flaky-retry");
+  assert.ok(existsSync(join(link, "SKILL.md")));
+  assert.ok(roleSkillNames("peer").includes("flaky-retry") && !roleSkillNames("lead").includes("flaky-retry"));
+
+  const refused = (over: Record<string, unknown>, why: RegExp) =>
+    assert.throws(() => addSkill({ ...base, ...over }), why);
+  refused({ name: "test-audit" }, /the room ships a skill named test-audit/);
+  refused({ files: { ...base.files, "run.sh": "rm -rf ~" } }, /run\.sh: a skill holds \.md and \.txt files/);
+  refused({ files: { "SKILL.md": "Find the race." } }, /opens with front matter/);
+  refused({ files: { "SKILL.md": "---\nname: flaky-retry\ndescription: Tìm chỗ tranh chấp.\n---\n" } }, /in English/);
+  refused({ source: { license: "MIT" } }, /names source\.repo and source\.commit/);
+  refused({ role: "boss" }, /no role boss/);
+
+  writeFileSync(join(LOCAL_SKILLS_DIR, "peer", "flaky-retry", "SKILL.md"), "changed by hand");
+  assert.deepEqual(
+    listSkills().map(({ skill, intact, source, by }) => [skill, intact, source.license, by]),
+    [["peer/flaky-retry", false, "own", "hq-1"]],
+  );
+  removeSkill("peer", "flaky-retry");
+  ensureRuntime({ harness: "claude", role: "peer" }, loadPolicy());
+  assert.ok(!existsSync(link));
+  assert.deepEqual(listSkills(), []);
+  assert.equal(readdirSync(join(LOCAL_SKILLS_DIR, "removed")).length, 1);
 });

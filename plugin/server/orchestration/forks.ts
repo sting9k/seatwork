@@ -23,6 +23,17 @@ export interface Router {
     sharpAt: number,
     options?: { deadlineMs?: number },
   ): Promise<Record<string, Fork>>;
+  answered?(caller: string, sharpAt: number, since: Date): { asked: number; sure: number; failed: number };
+}
+
+/** One fork over the last week: on or off, its threshold, its answers acted on and left split, its failed calls. */
+export interface ForkReading {
+  on: boolean;
+  sharpAt: number;
+  asked: number;
+  acted: number;
+  split: number;
+  failed: number;
 }
 
 /** What forks take from the room: the model, which forks are on, a threshold set apart from the catalog's, and a log. */
@@ -34,6 +45,7 @@ interface ForkDeps {
 }
 
 const FORKS = catalog.forks;
+const READING_DAYS = 7;
 
 /** The head of a text a fork reads. */
 export function clip(text: string, most: number): string {
@@ -48,6 +60,33 @@ export function meanings(name: ForkName): Record<string, string> {
 /** The catalog of forks asked of the decision model; an answer that fails or is split leaves the room's own rule. */
 export class Forks {
   constructor(private readonly deps: ForkDeps) {}
+
+  /** A fork's threshold: the policy's when it is one, from a half up to certainty, else the catalog's. */
+  private sharpAtOf(name: ForkName): number {
+    const set = this.deps.sharpAt?.(name);
+    return typeof set === "number" && set >= 0.5 && set <= 1 ? set : FORKS[name].sharpAt;
+  }
+
+  /** Each fork that is on or was asked in the last week: its threshold, its answers acted on and left split, its failed calls. */
+  reading(now = new Date()): Record<string, ForkReading> {
+    const since = new Date(now.getTime() - READING_DAYS * 86_400_000);
+    const out: Record<string, ForkReading> = {};
+    for (const name of Object.keys(FORKS) as ForkName[]) {
+      const sharpAt = this.sharpAtOf(name);
+      const counts = this.deps.router?.answered?.(`forks.${name}`, sharpAt, since) ?? { asked: 0, sure: 0, failed: 0 };
+      const on = this.deps.on(name);
+      if (on || counts.asked > 0 || counts.failed > 0)
+        out[name] = {
+          on,
+          sharpAt,
+          asked: counts.asked,
+          acted: counts.sure,
+          split: counts.asked - counts.sure,
+          failed: counts.failed,
+        };
+    }
+    return out;
+  }
 
   /** Whether a fork is asked at all: on in the policy, with a model that can answer now. */
   open(name: ForkName): boolean {
@@ -78,10 +117,7 @@ export class Forks {
     );
     let found: Record<string, Fork>;
     try {
-      // a threshold the policy sets holds when it is one: from a half up to certainty
-      const set = this.deps.sharpAt?.(name);
-      const sharpAt = typeof set === "number" && set >= 0.5 && set <= 1 ? set : fork.sharpAt;
-      found = await this.deps.router!.routes(`forks.${name}@${fork.version}`, state, asked, sharpAt, {
+      found = await this.deps.router!.routes(`forks.${name}@${fork.version}`, state, asked, this.sharpAtOf(name), {
         deadlineMs: fork.deadlineMs,
       });
     } catch (error) {

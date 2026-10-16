@@ -34,6 +34,7 @@ export interface CallRow {
 }
 
 const PRUNE_BATCH = 2000;
+const ANSWERS_READ_MOST = 5000;
 
 /** The district a caller belongs to: the part of its name before the first dot, colon or at sign. */
 export const districtOf = (caller: string): string => caller.split(/[.:@]/, 1)[0] || caller;
@@ -135,6 +136,29 @@ export class JevStore extends Sqlite {
     return (
       this.row<{ usd: number }>("SELECT usd FROM spend_daily WHERE day = ? AND district = ?", day, district)?.usd ?? 0
     );
+  }
+
+  /** The answers to the callers in [from, to) since a time, and how many of their calls failed. */
+  answersOf(
+    from: string,
+    to: string,
+    since: string,
+  ): { answers: { answer: string; suspect: string | null }[]; failed: number } {
+    const answers = this.rows<{ answer: string; suspect: string | null }>(
+      `SELECT a.answer AS answer, c.suspect AS suspect FROM calls c JOIN asks a ON a.call_id = c.id
+         WHERE c.at >= ? AND c.caller >= ? AND c.caller < ? LIMIT ?`,
+      since,
+      from,
+      to,
+      ANSWERS_READ_MOST,
+    );
+    const failed = this.row<{ n: number }>(
+      "SELECT COUNT(*) AS n FROM calls WHERE at >= ? AND caller >= ? AND caller < ? AND error IS NOT NULL",
+      since,
+      from,
+      to,
+    );
+    return { answers: answers.map(({ answer, suspect }) => ({ answer, suspect })), failed: failed?.n ?? 0 };
   }
 
   /** Each district's calls and failed calls on one day. */

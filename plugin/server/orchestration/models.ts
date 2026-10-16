@@ -4,6 +4,7 @@ import { ROOM_DIR } from "../paths";
 import type { RoomParams } from "../policy";
 import { merge } from "../../shared/model-choices";
 import { rolesWhere, tableNote, traits, VARS } from "../../shared/workflow";
+import families from "../../shared/families.json";
 import { clip, type Asker } from "./forks";
 
 /** room/models.json: every model id the room uses; role prompts carry {{placeholders}} filled from it. */
@@ -274,4 +275,15 @@ export async function pickModel(
   };
   const label = await forks.take("tier", state, Object.fromEntries(tiers.map(({ tier, use }) => [tier, use])));
   return tiers.find(({ tier }) => tier === label)?.model;
+}
+
+/** A model's family by the parts of its id, else its agent CLI's; null when neither tells. */
+export function familyOf(model: string | null | undefined, harness: string): string | null {
+  const parts = (model ?? "")
+    .toLowerCase()
+    .split(/[/:._ -]+/)
+    .filter(Boolean);
+  for (const [family, words] of Object.entries(families.families))
+    if (parts.some((part) => words.some((word) => part.startsWith(word)))) return family;
+  return (families.byHarness as Record<string, string>)[harness] ?? null;
 }

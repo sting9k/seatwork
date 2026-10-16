@@ -136,6 +136,15 @@ function failedRow(
 }
 
 /** The district: puts questions to the provider in force and logs every call. */
+/** An answer's label and how sure it is of it, the way a fork weighs it. */
+export function labelOf(answer: Answer): { label: string; probability: number } {
+  if (answer.type === "noul")
+    return { label: answer.noul >= 0.5 ? "true" : "false", probability: Math.max(answer.noul, 1 - answer.noul) };
+  if (answer.type === "choice")
+    return { label: answer.choice, probability: answer.probabilities[answer.choice] ?? answer.confidence };
+  return { label: String(answer.score), probability: answer.confidence };
+}
+
 export class Jev {
   private storeHandle: JevStore | null = null;
   private readonly keys = new Map<ProviderName, { at: number; key: string | undefined }>();
@@ -395,13 +404,7 @@ export class Jev {
     const why = decided.suspect ? `the state speaks to the model: ${decided.suspect}` : null;
     return Object.fromEntries(
       ids.map((id) => {
-        const answer = decided.answers[id];
-        const [label, probability] =
-          answer.type === "noul"
-            ? [answer.noul >= 0.5 ? "true" : "false", Math.max(answer.noul, 1 - answer.noul)]
-            : answer.type === "choice"
-              ? [answer.choice, answer.probabilities[answer.choice] ?? answer.confidence]
-              : [String(answer.score), answer.confidence];
+        const { label, probability } = labelOf(decided.answers[id]);
         return [
           id,
           { label, probability, sharp: probability >= sharpAt && !why, askId: decided.asks[id] ?? null, why },
@@ -424,6 +427,17 @@ export class Jev {
     return today >= dailyCap
       ? new DecisionError("CAP", `${district} spent ${today.toFixed(4)} USD today; its daily share is ${dailyCap} USD`)
       : null;
+  }
+
+  /** What one caller's questions got since a time: answers, those as sure as `sharpAt`, failed calls. */
+  answered(caller: string, sharpAt: number, since: Date): { asked: number; sure: number; failed: number } {
+    const store = this.existing();
+    if (!store) return { asked: 0, sure: 0, failed: 0 };
+    const { answers, failed } = store.answersOf(`${caller}@`, `${caller}@\uffff`, since.toISOString());
+    const sure = answers.filter(
+      ({ answer, suspect }) => suspect === null && labelOf(JSON.parse(answer) as Answer).probability >= sharpAt,
+    ).length;
+    return { asked: answers.length, sure, failed };
   }
 
   /** Today's calls and failed calls per district, for the room's status. */

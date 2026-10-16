@@ -443,6 +443,7 @@ test("a script the seat changed is read when it runs; the project's untouched sc
   assert.deepEqual(await hits("bash scripts/clean.sh", [], changed), ["core.filesystem:rm-rf-root-home"]);
   assert.deepEqual(await hits("./scripts/clean.sh", [], changed), ["core.filesystem:rm-rf-root-home"]);
   assert.deepEqual(await hits("npm run wipe", [], changed), ["core.filesystem:rm-rf-root-home"]);
+  assert.deepEqual(await hits("bun run wipe", [], changed), ["core.filesystem:rm-rf-root-home"]);
   assert.deepEqual(await hits("bash scripts/clean.sh"), []);
 });
 
@@ -570,7 +571,138 @@ test("a line that writes or removes a file of the seat's tree is told apart from
     ["git show HEAD:src/cli.js > /tmp/old.js", false],
     ["echo done > .seatwork/status.md", false],
     ["echo x > /dev/null", false],
+    // git rewrites the files of the folder it runs in without naming them
+    ["git apply fix.patch", true],
+    ["git apply --index fix.patch", true],
+    ["git apply --stat --apply fix.patch", true],
+    ["git apply --check fix.patch", false],
+    ["git apply --stat fix.patch", false],
+    ["git apply --numstat --summary fix.patch", false],
+    ["git apply --cached fix.patch", false],
+    ["git checkout -- src/a.ts", true],
+    ["git checkout main -- src/a.ts", true],
+    ["git checkout .", true],
+    ["git checkout main", true],
+    ["git checkout -b feature", false],
+    ["git switch main", true],
+    ["git switch -c feature", false],
+    ["git restore src/a.ts", true],
+    ["git restore --staged --worktree src/a.ts", true],
+    ["git restore --staged src/a.ts", false],
+    ["git stash pop", true],
+    ["git stash apply stash@{1}", true],
+    ["git stash", true],
+    ["git stash list", false],
+    ["git stash show -p", false],
+    ["git reset --hard", true],
+    ["git reset --soft HEAD~1", false],
+    ["git reset HEAD~1", false],
+    ["git merge feature", true],
+    ["git rebase main", true],
+    ["git rebase --edit-todo", false],
+    ["git cherry-pick abc123", true],
+    ["git revert abc123", true],
+    ["git am 0001-fix.patch", true],
+    ["git pull", true],
+    ["git pull --help", false],
+    ["git rm src/a.ts", true],
+    ["git rm --cached src/a.ts", false],
+    ["git mv src/a.ts src/b.ts", true],
+    ["git clean -fd", true],
+    ["git clean -n", false],
+    ["git -C /Users/u/proj/sub pull", true],
+    ["git -C /tmp/other pull", false],
+    ["cd /tmp/other && git checkout .", false],
+    ["git status", false],
+    ["git diff", false],
+    ["git log --oneline", false],
+    ["git fetch origin", false],
+    ["patch -p1 < fix.patch", true],
+    ["patch --dry-run -p1 < fix.patch", false],
+    // formatters and fixers write in some modes only, also through a package runner
+    ["prettier --write .", true],
+    ["prettier -w src/a.ts", true],
+    ["npx prettier --write src", true],
+    ["pnpm exec prettier --write .", true],
+    ["pnpm dlx prettier -w .", true],
+    ["yarn prettier --write .", true],
+    ["bunx prettier --write .", true],
+    ["prettier --check .", false],
+    ["npx prettier --check src", false],
+    ["cd /tmp/other && prettier --write .", false],
+    ["eslint --fix src", true],
+    ["eslint src", false],
+    ["biome format --write .", true],
+    ["npx @biomejs/biome check --write .", true],
+    ["biome check .", false],
+    ["black .", true],
+    ["uvx black src", true],
+    ["poetry run black .", true],
+    ["black --check .", false],
+    ["black --diff .", false],
+    ["ruff format", true],
+    ["ruff check --fix .", true],
+    ["ruff format --check", false],
+    ["ruff check .", false],
+    ["isort .", true],
+    ["isort --check-only .", false],
+    ["gofmt -w .", true],
+    ["gofmt -l .", false],
+    ["go fmt ./...", true],
+    ["go vet ./...", false],
+    ["goimports -w .", true],
+    ["cargo fmt", true],
+    ["cargo fmt --check", false],
+    ["cargo fmt -- --check", false],
+    ["cargo build", false],
+    ["rustfmt src/main.rs", true],
+    ["rustfmt --check src/main.rs", false],
+    ["clang-format -i src/a.c", true],
+    ["clang-format src/a.c", false],
+    ["swiftformat .", true],
+    ["swiftformat --lint .", false],
+    ["ktlint -F", true],
+    ["ktlint", false],
+    ["rubocop -a", true],
+    ["rubocop -A", true],
+    ["rubocop", false],
+    ["mix format", true],
+    ["mix format --check-formatted", false],
+    ["dart format .", true],
+    ["dart format --set-exit-if-changed .", true],
+    ["dart format --output=none --set-exit-if-changed .", false],
+    ["terraform fmt", true],
+    ["terraform fmt -check", false],
   ];
+  const wrong: string[] = [];
   for (const [command, changes] of cases)
-    assert.equal((await evaluate(command, PROJECT, place, config(), tools())).changes, changes, command);
+    if ((await evaluate(command, PROJECT, place, config(), tools())).changes !== changes) wrong.push(command);
+  assert.deepEqual(wrong, []);
+});
+
+test("an owner's package script is read only for whether it rewrites the tree, and what it trips is not the seat's", async () => {
+  const manifest = JSON.stringify({
+    scripts: { format: "prettier --write .", lint: "eslint src", clean: "rm -rf dist build", test: "node --test" },
+  });
+  const owner = tools({ file: (path: string) => (path === `${PROJECT}/package.json` ? manifest : null) });
+  const cases: [string, boolean][] = [
+    ["npm run format", true],
+    ["pnpm format", true],
+    ["yarn format", true],
+    ["bun run format", true],
+    ["npm run clean", true],
+    ["npm run lint", false],
+    ["npm test", false],
+    ["python3 -m black .", true],
+    ["python -m ruff format", true],
+    ["python3 -m isort src", true],
+    ["python3 -m black --check .", false],
+    ["python3 -m pytest", false],
+  ];
+  const wrong: string[] = [];
+  for (const [command, changes] of cases) {
+    const found = await evaluate(command, PROJECT, place, config(), owner);
+    if (found.changes !== changes || found.findings.length > 0) wrong.push(command);
+  }
+  assert.deepEqual(wrong, []);
 });

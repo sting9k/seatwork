@@ -1,4 +1,5 @@
-import { mkdirSync, writeFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { PROJECT } from "./support/room";
 import type { fakeServer } from "./support/server";
@@ -77,7 +78,21 @@ export function roomSeats(call: ReturnType<typeof fakeServer>["call"]) {
       context,
     );
 
-  return { agents, context, seat, turnEnds };
+  /** Lets the app start `next` as the successor of `who`, and read and archive `who`, as a rotation needs. */
+  const rotatable = (who: TestSeat, next: string, cwd: string) => {
+    Object.assign(context.paseo.agents, {
+      create: async (options: { parent?: string; title?: string }) => ({
+        id: (await seat(next, who.agent.provider, options.parent ?? null, options.title ?? "", cwd)).agent.id,
+      }),
+    });
+    Object.assign(agents[who.agent.id], {
+      current: () => ({ status: "idle", provider: who.agent.provider, model: "claude-sonnet-5-5", cwd }),
+      archive: async () => {},
+      timeline: { refetch: async () => ({ entries: [], agent: { pendingPermissions: [] } }) },
+    });
+  };
+
+  return { agents, context, seat, turnEnds, rotatable };
 }
 
 /** A folder the room reads as a project of its own, so its seats share one work store. */
@@ -86,4 +101,32 @@ export function projectFolder(name: string): string {
   mkdirSync(join(folder, ".seatwork"), { recursive: true });
   writeFileSync(join(folder, ".seatwork", "room.json"), "{}");
   return folder;
+}
+
+/** A git repository beside the project with a nine-line source file and a test, committed: where the seats start. */
+export function parserRepo(name: string): string {
+  const dir = join(PROJECT, "..", name);
+  rmSync(dir, { recursive: true, force: true });
+  mkdirSync(join(dir, "src"), { recursive: true });
+  mkdirSync(join(dir, "test"), { recursive: true });
+  writeFileSync(
+    join(dir, "src", "parse.js"),
+    Array.from({ length: 9 }, (_, i) => `const n${i} = ${i};`).join("\n") + "\n",
+  );
+  writeFileSync(join(dir, "test", "a.test.ts"), 'test("a", () => expect(1).toBe(1));\n');
+  const env = {
+    ...process.env,
+    GIT_CONFIG_GLOBAL: "/dev/null",
+    GIT_AUTHOR_NAME: "t",
+    GIT_AUTHOR_EMAIL: "t@t",
+    GIT_COMMITTER_NAME: "t",
+    GIT_COMMITTER_EMAIL: "t@t",
+  };
+  for (const args of [
+    ["init", "-q"],
+    ["add", "-A"],
+    ["commit", "-qm", "start"],
+  ])
+    execFileSync("git", args, { cwd: dir, env });
+  return dir;
 }

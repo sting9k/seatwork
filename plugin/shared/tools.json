@@ -419,7 +419,7 @@
     },
     "seatwork_graph": {
       "callers": "any",
-      "description": "The project's open issues as a graph; `view` names the reading. triage: what to do first, scored with reasons (what much work rests on, what closing frees, priority), and the blockers worth clearing first. next: the one issue to take now; only a claim reserves it. plan: groups no dependency joins, which can run side by side, with each group's ready issues and the pairs whose write scopes collide. blockers: from `id` down to what must close first. alerts: an issue held and untouched for long, one holding many back, issues that wait for each other.",
+      "description": "The project's open issues as a graph; `view` names the reading. triage: what to do first, scored with reasons (what much work rests on, what closing frees, priority), and the blockers worth clearing first. next: the one issue to take now; only a claim reserves it. plan: groups no dependency joins, which can run side by side, with each group's ready issues and the pairs whose write scopes collide, those sharing most paths first; `moreOverlaps` counts the pairs left out, a floor where `overlapsCut` is set. blockers: from `id` down to what must close first. alerts: an issue held and untouched for long, one holding many back, issues that wait for each other.",
       "inputSchema": {
         "type": "object",
         "properties": {

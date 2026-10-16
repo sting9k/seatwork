@@ -1,4 +1,5 @@
 import type { PluginBeforeRequests, PluginServerContext } from "@getpaseo/plugin/server";
+import limits from "../../shared/host.json";
 import type { TurnOutcome } from "../host";
 import { parseSeat } from "../orchestration/seats";
 import type { Room, SeatEvent } from "../room/room";
@@ -85,15 +86,25 @@ export async function seatRequest(room: Room, request: CreateRequest): Promise<C
 /** Wires Paseo's events to a running room; returns what takes them back. */
 export function connect(server: Pick<PluginServerContext, "on" | "before">, room: Room, host: PaseoHost): () => void {
   let projectOpened = false;
+  let projectNextAt = 0;
+  let projectWaitMs = 0;
   const marks = new Map<string, ReadMark>();
-  /** Gives the room Paseo's client, which every hook carries; hooks also open the room's own project until an open has worked. */
+  /** Gives the room Paseo's client, which every hook carries; hooks also open the room's own project until an open has worked, one at a time and spaced after a failure. */
   const enter = (paseo: PaseoApi): Room => {
     host.use(paseo);
-    if (!projectOpened) {
+    if (!projectOpened && Date.now() >= projectNextAt) {
       projectOpened = true;
       void ensureRoomProject(paseo, (message) => console.log(`seatwork: ${message}`)).catch((error) => {
+        projectWaitMs = Math.min(
+          projectWaitMs * 2 || limits.projectRetryFirstSeconds * 1000,
+          limits.projectRetryMostSeconds * 1000,
+        );
+        projectNextAt = Date.now() + projectWaitMs;
         projectOpened = false;
-        console.error("seatwork: the room's project could not be opened", error);
+        console.error(
+          `seatwork: the room's project could not be opened; a hook tries again in ${projectWaitMs / 1000} s`,
+          error,
+        );
       });
     }
     return room;

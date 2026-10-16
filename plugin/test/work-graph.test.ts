@@ -212,6 +212,42 @@ test("a plan lists the most colliding pairs first, up to a bound, and counts the
   assert.equal("moreOverlaps" in few, false, "an answer that lost nothing says nothing of the rest");
 });
 
+test("a plan stops counting colliding pairs at its bound, in time, and says the count is a floor", () => {
+  const store = new WorkStore(join(ROOM_HOME, `graph-test-${(stores += 1)}`), TIMING, () => NOW);
+  const shape = store.create({ title: "shape" }, "lead");
+  store.close();
+  const { overlapsShown, overlapsCounted } = vocabulary.triage;
+  /** `count` ready issues, each writing package.json and a file of its own. */
+  const board = (count: number) => {
+    const issues = Array.from({ length: count }, (_, i) => ({
+      ...shape,
+      id: `sw-${i}`,
+      write_scope: `package.json src/f${i}.ts`,
+    }));
+    const work = { issues, dependencies: [], ready: new Set(issues.map(({ id }) => id)), blocked: new Map() };
+    return () => {
+      const started = performance.now();
+      const made = plan(work, NOW);
+      assert.equal(made.moreOverlaps, overlapsCounted - overlapsShown);
+      assert.equal(made.overlapsCut, true);
+      return performance.now() - started;
+    };
+  };
+  const [small, large] = [board(400), board(1600)];
+  // warmed first, then the fastest of three: four times the issues is sixteen times the pairs
+  small();
+  large();
+  let [fastSmall, fastLarge] = [Infinity, Infinity];
+  for (let i = 0; i < 3; i += 1) {
+    fastSmall = Math.min(fastSmall, small());
+    fastLarge = Math.min(fastLarge, large());
+  }
+  assert.ok(
+    fastLarge < Math.max(fastSmall, 2) * 3,
+    `400 issues: ${fastSmall.toFixed(1)} ms, 1600 issues: ${fastLarge.toFixed(1)} ms`,
+  );
+});
+
 test("the pairs whose scopes no path can tell are found in time with the issues, not with all their pairs", () => {
   const store = new WorkStore(join(ROOM_HOME, `graph-test-${(stores += 1)}`), TIMING, () => NOW);
   const shape = store.create({ title: "shape" }, "lead");

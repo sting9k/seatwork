@@ -11,6 +11,7 @@ import { databaseHits, scanDeletesKeys } from "./rules/databases";
 import { fileRules, forkBomb, guardedWrites, type FileTools, writesOf } from "./rules/files";
 import { gitRules, givesProgram, PROGRAM_VARIABLES, type GitTools } from "./rules/git";
 import { namesDriver, ATTRIBUTES_FILE } from "./rules/attributes";
+import { rewritesTree } from "./rules/rewriters";
 import { cliWords, namesPaseo, paseoCommand, reachesDaemon, startsPaseo } from "./rules/paseo";
 import { rmRules, wouldBlockAsRm, type RmTools } from "./rules/rm";
 import { namesSecret, readsFolders, secretAt } from "./rules/secrets";
@@ -47,9 +48,10 @@ import type { Doubt, Finding, Known, Place, Scene, Value, Variable } from "./typ
 
 /** Walks a command line as the shell would; the rules are those of DCG, a destructive command guard, and the packs. */
 
-/** What the rules ask of the machine: git, the file system, the files the room's seats changed, and the real file a command word runs. */
+/** What the rules ask of the machine: git, the file system, the files the room's seats changed, a small file as it stands, and the real file a command word runs. */
 export interface Tools extends RmTools, GitTools, FileTools {
   changed(path: string): Promise<string | null>;
+  file?(path: string): string | null;
   folder?(path: string): boolean;
   rc?(): Rc | null;
   program?(word: string, cwd: string | null, path: string | null): string | null;
@@ -205,6 +207,17 @@ class Walk implements Reader {
 
   real(path: string): string | null {
     return this.tools.real(path);
+  }
+
+  file(path: string): string | null {
+    return this.tools.file?.(path) ?? null;
+  }
+
+  /** Whether a line rewrites the seat's tree, read on a walk of its own: what it trips is not this line's. */
+  async changesOf(src: string, state: State, depth: number): Promise<boolean> {
+    const apart = new Walk(this.place, this.config, this.tools, this.deadline);
+    await apart.text(src, state, depth);
+    return apart.result().changes;
   }
 
   /** What the whole line showed once it is read: a fork bomb that is defined and then called. */
@@ -664,9 +677,11 @@ class Walk implements Reader {
       for (const hit of outcome.hits)
         if (hit.pack === "core.git" || this.config.packs.has(hit.pack))
           this.out.add(hit.pack, hit.rule, scene.text, hit.detail);
+      if (outcome.changes) this.noteChange(null, { ...this.known(state), cwd: outcome.changes });
       for (const shell of outcome.shells) await this.text(shell, fork(state), ctx.depth + 1);
       for (const shell of this.gitPrograms(scene, state)) await this.text(shell, fork(state), ctx.depth + 1);
     }
+    if (rewritesTree(scene)) this.noteChange(null, scene);
     const guarded = guardedWrites(scene, (path) => this.tools.real(path));
     for (const { found, how } of guarded) this.out.add(found.pack, found.rule, scene.text, `${how} ${found.path}`);
     // a write the credential table holds is not also a redirect finding (DCG's order)

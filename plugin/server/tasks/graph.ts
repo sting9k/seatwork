@@ -20,6 +20,7 @@ const {
   exactBetweennessUpTo,
   sampledSources,
   overlapsShown,
+  overlapsCounted,
 } = config.triage;
 const URGENT = new Set(urgentLabels);
 
@@ -315,32 +316,57 @@ const scopeOf = (issue: Issue) =>
     .map((token) => (/[*?[{]/.test(token) ? token.replace(/\/?[^/]*[*?[{].*$/, "") : token.replace(/\/+$/, "")))
     .filter((token) => /[A-Za-z0-9]/.test(token));
 
-/** Pairs of issues whose write scopes share a path or hold one inside the other: the `overlapsShown` sharing most paths, and how many more there are. */
-function collisions(issues: readonly Issue[]): { listed: Plan["overlaps"]; more: number } {
-  const owners = new Map<string, Set<string>>();
-  const scopes = issues.map((issue) => [issue.id, scopeOf(issue)] as const);
-  for (const [id, paths] of scopes) for (const path of paths) owners.set(path, (owners.get(path) ?? new Set()).add(id));
-  const pairs = new Map<string, Set<string>>();
-  for (const [id, paths] of scopes)
+/** Pairs of issues whose write scopes share a path or hold one inside the other: the `overlapsShown` sharing most paths, and how many more there are, counted up to `overlapsCounted` pairs (`cut` once a pair went uncounted). */
+function collisions(issues: readonly Issue[]): { listed: Plan["overlaps"]; more: number; cut: boolean } {
+  const n = issues.length;
+  const scopes = issues.map(scopeOf);
+  const owners = new Map<string, number[]>();
+  scopes.forEach((paths, i) => {
+    for (const path of paths) {
+      const list = owners.get(path);
+      if (!list) owners.set(path, [i]);
+      else if (list.at(-1) !== i) list.push(i);
+    }
+  });
+  const pairs = new Map<number, Set<string>>();
+  let cut = false;
+  counting: for (const [i, paths] of scopes.entries())
     for (const path of paths)
       for (let end = path.length; end > 0; end = path.lastIndexOf("/", end - 1)) {
         const outer = path.slice(0, end);
-        for (const other of owners.get(outer) ?? []) {
-          if (other === id) continue;
-          const key = id < other ? `${id}|${other}` : `${other}|${id}`;
-          pairs.set(key, (pairs.get(key) ?? new Set()).add(outer));
+        for (const j of owners.get(outer) ?? []) {
+          if (j === i) continue;
+          const key = i < j ? i * n + j : j * n + i;
+          const shared = pairs.get(key);
+          if (shared) shared.add(outer);
+          else if (pairs.size < overlapsCounted) pairs.set(key, new Set([outer]));
+          else {
+            cut = true;
+            break counting;
+          }
         }
       }
-  const worst = [...pairs]
-    .sort(([keyA, a], [keyB, b]) => b.size - a.size || keyA.localeCompare(keyB))
-    .slice(0, overlapsShown);
+  const best: { label: string; a: string; b: string; paths: Set<string> }[] = [];
+  const first = (x: (typeof best)[number], y: (typeof best)[number]) =>
+    y.paths.size - x.paths.size || x.label.localeCompare(y.label);
+  for (const [key, paths] of pairs) {
+    const [one, other] = [issues[Math.floor(key / n)].id, issues[key % n].id];
+    const [a, b] = one < other ? [one, other] : [other, one];
+    const pair = { label: `${a}|${b}`, a, b, paths };
+    if (best.length === overlapsShown && first(pair, best[best.length - 1]) >= 0) continue;
+    let at = best.length;
+    while (at > 0 && first(pair, best[at - 1]) < 0) at -= 1;
+    best.splice(at, 0, pair);
+    if (best.length > overlapsShown) best.pop();
+  }
   return {
-    listed: worst.map(([key, paths]) => ({ a: key.split("|")[0], b: key.split("|")[1], paths: [...paths].sort() })),
-    more: pairs.size - worst.length,
+    listed: best.map(({ a, b, paths }) => ({ a, b, paths: [...paths].sort() })),
+    more: pairs.size - best.length,
+    cut,
   };
 }
 
-/** What a plan answers: the tracks that can run side by side, the counts and the scopes that collide; `moreOverlaps` counts the pairs left unlisted, absent when none is. */
+/** What a plan answers: the tracks that can run side by side, the counts and the scopes that collide; `moreOverlaps` counts the pairs left unlisted, absent when none is, and is a floor where `overlapsCut` is set. */
 export interface Plan {
   tracks: {
     track: string;
@@ -350,6 +376,7 @@ export interface Plan {
   blocked: number;
   overlaps: { a: string; b: string; paths: string[]; read?: string }[];
   moreOverlaps?: number;
+  overlapsCut?: true;
 }
 
 /** Pairs of a plan's issues whose overlap no path can tell, one side's scope naming none; none when there are more than `most`. */
@@ -417,13 +444,14 @@ export function plan(work: Work, now: Date): Plan {
       track: `track-${index + 1}`,
       items: items.map(({ id, title, priority, status, unblocks }) => ({ id, title, priority, status, unblocks })),
     }));
-  const { listed, more } = collisions(can.map((one) => graph.issues[graph.at.get(one.id)!]));
+  const { listed, more, cut } = collisions(can.map((one) => graph.issues[graph.at.get(one.id)!]));
   return {
     tracks,
     ready: can.filter((one) => one.status === "open").length,
     blocked: scored.length - can.length,
     overlaps: listed,
     ...(more > 0 ? { moreOverlaps: more } : {}),
+    ...(cut ? { overlapsCut: true as const } : {}),
   };
 }
 

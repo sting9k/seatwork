@@ -42,6 +42,8 @@ export interface Reader {
   known(state: State): Known;
   changed(path: string): Promise<string | null>;
   real(path: string): string | null;
+  file(path: string): string | null;
+  changesOf(src: string, state: State, depth: number): Promise<boolean>;
   noteChange(value: Value | null, known: Known): void;
 }
 

@@ -42,6 +42,9 @@ export async function runners(rd: Reader, scene: Scene, state: State, ctx: Conte
   const nested = ctx.depth + 1;
   for (const inline of scene.call.inline) await shellWord(rd, inline, state, nested, scene);
   if (SHELLS.has(name)) return shell(rd, scene, state, nested);
+  // `bun run <name>` runs a package script unless it names a file
+  if (name === "bun" && texts[0] === "run" && texts[1] && !/\.[cm]?[jt]sx?$/.test(texts[1]))
+    return packageScript(rd, scene, state, nested);
   const language = languageOf(name);
   if (language) return interpreter(rd, language, scene, state, nested);
   switch (name) {
@@ -357,7 +360,7 @@ async function remote(rd: Reader, scene: Scene, state: State, depth: number): Pr
   else rd.out.doubt("ssh runs a remote line known only at run time", scene.text);
 }
 
-/** npm, pnpm, yarn and bun scripts: the lines the package.json of the folder gives them, when it changed. */
+/** npm, pnpm, yarn and bun scripts: the lines the package.json of the folder gives them, judged when the seat changed it, else read only for a rewrite of the tree. */
 async function packageScript(rd: Reader, scene: Scene, state: State, depth: number): Promise<void> {
   const texts = scene.call.args.map(literal);
   const lifecycle = new Set(["test", "start", "stop", "restart"]);
@@ -367,14 +370,21 @@ async function packageScript(rd: Reader, scene: Scene, state: State, depth: numb
   else if (texts[0] && (lifecycle.has(texts[0]) || (scene.call.name !== "npm" && !texts[0].startsWith("-"))))
     name = texts[0];
   if (!name || !state.cwd) return;
-  const manifest = await rd.changed(posix.join(state.cwd, "package.json"));
+  const path = posix.join(state.cwd, "package.json");
+  const changed = await rd.changed(path);
+  const manifest = changed ?? rd.file(path);
   if (manifest === null) return;
+  let scripts: Record<string, unknown>;
   try {
-    const scripts = (JSON.parse(manifest) as { scripts?: Record<string, string> }).scripts ?? {};
-    for (const key of [`pre${name}`, name, `post${name}`])
-      if (typeof scripts[key] === "string") await rd.text(scripts[key], fork(state), depth);
+    scripts = (JSON.parse(manifest) as { scripts?: Record<string, unknown> }).scripts ?? {};
   } catch {
     return;
+  }
+  for (const key of [`pre${name}`, name, `post${name}`]) {
+    const line = scripts[key];
+    if (typeof line !== "string") continue;
+    if (changed !== null) await rd.text(line, fork(state), depth);
+    else if (await rd.changesOf(line, fork(state), depth)) rd.noteChange(null, rd.known(state));
   }
 }
 

@@ -280,7 +280,7 @@ export const HOST_CONTRACT: { [M in keyof Host]: Clause[] } = {
         app.hang.add("create");
         await assert.rejects(
           host.create({ key: "start-3", provider: "claude-peer", cwd: "/work/p", title: "t", prompt: "p" }),
-          /did not answer the start of t/,
+          /did not answer the start of "t"/,
         );
       },
     },

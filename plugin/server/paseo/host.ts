@@ -266,7 +266,7 @@ export class PaseoHost implements Host {
       prompt: seat.prompt,
     };
     const start = () =>
-      within(this.limits.startSeconds, `the start of ${seat.title}`, () => this.sdk().agents.create(options));
+      within(this.limits.startSeconds, `the start of "${seat.title}"`, () => this.sdk().agents.create(options));
     const created = await start().catch((error: unknown) => {
       if (error instanceof Late) return start();
       throw error;

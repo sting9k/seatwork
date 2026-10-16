@@ -145,13 +145,14 @@ async function nothingNew(
   return read === "nothing_new";
 }
 
-/** The reply to a handoff request: the room starts the successor and says so; false when it did not. */
+/** The reply to a handoff request: the room starts the successor and says so, with `council`'s line to the seat above; false when it did not. */
 async function answerRotation(
   room: RoomContext,
   end: TurnEnd,
   record: SeatRecord,
   kept: NewMail | null,
   reportsTo: string | null,
+  council: string | null,
 ): Promise<boolean> {
   const id = end.seat.id;
   const asked = room.rotations.get(id)!;
@@ -213,7 +214,10 @@ async function answerRotation(
           subject: `ROTATED: ${record.role} ${record.title ?? id} continues in a fresh seat`,
           body: `The room started ${nextTitle(record.title)} (${next.id}) on ${next.model}${next.raised ? " (a tier up: its task was sent back twice)" : ""}, with the brief in force and the handoff at ${next.file}. The seats the old one launched report to it now. ${next.left.length === 0 ? `The old seat ${id} is archived` : `The old seat ${id} is not archived, because these did not move to the successor: ${next.left.join("; ")}. Move them, then archive it`}: write to ${next.id} from here on.`,
           needs: "nothing",
-          why: "a seat under you was replaced by a fresh one",
+          why: [
+            "a seat under you was replaced by a fresh one",
+            ...(told === reportsTo && council ? [council] : []),
+          ].join("; "),
           quiet: true,
         });
       return true;
@@ -294,6 +298,28 @@ function addRoomLines(
     room.log(`the room's own lines under the report of ${id} were not all added: ${errorText(error)}`);
   }
   return lined;
+}
+
+/** Mails the seat above each finding of a member whose level mails it, and notes each one told. */
+async function mailCouncil(
+  room: RoomContext,
+  findings: readonly Finding[],
+  reportsTo: string | null,
+  title: string,
+): Promise<void> {
+  if (!reportsTo) return;
+  for (const finding of findings.filter((one) => one.level >= 2)) {
+    await room.engine.post({
+      from: fromRoom,
+      to: reportsTo,
+      priority: "action",
+      subject: `COUNCIL: ${finding.member} on ${title}`,
+      body: finding.line,
+      needs: "nothing",
+      why: "the room's council read a turn of a seat under you",
+    });
+    noteShown(room, [finding]);
+  }
 }
 
 /** Notes that the council's findings reached the seat above; a note that is not kept only lets them be said once more. */
@@ -449,8 +475,13 @@ export async function turnEnded(room: RoomContext, end: TurnEnd): Promise<void> 
   const asked = room.rotations.get(id);
   const record = eng.seat(id);
   if (asked && record && wake.some((mail) => mail.id === asked.mailId)) {
-    // the handoff is the old seat's last word: nothing more goes up from it
-    if (await answerRotation(room, end, record, kept, reportsTo)) return;
+    // the handoff is the old seat's last word: only the report it kept goes up, with the room's lines under it; with none kept, the council's line goes with the word of the rotation
+    const carried = kept ? null : councilLine(findings);
+    if (await answerRotation(room, end, record, kept, reportsTo, carried)) {
+      await mailCouncil(room, findings, reportsTo, seat.title ?? id);
+      if (reportsTo && (kept ? lined : carried)) noteShown(room, findings);
+      return;
+    }
   }
   if (rereads)
     await eng.post({
@@ -472,18 +503,7 @@ export async function turnEnded(room: RoomContext, end: TurnEnd): Promise<void> 
       needs: "reply",
       why: "the room reads a candidate before its Owner does",
     });
-  for (const finding of findings.filter((one) => one.level >= 2 && reportsTo)) {
-    await eng.post({
-      from: fromRoom,
-      to: reportsTo!,
-      priority: "action",
-      subject: `COUNCIL: ${finding.member} on ${seat.title ?? id}`,
-      body: finding.line,
-      needs: "nothing",
-      why: "the room's council read a turn of a seat under you",
-    });
-    noteShown(room, [finding]);
-  }
+  await mailCouncil(room, findings, reportsTo, seat.title ?? id);
   // held mail may now start the next turn
   await eng.deliver(id);
   if (!reportsTo) return;

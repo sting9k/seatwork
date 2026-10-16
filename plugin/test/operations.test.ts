@@ -72,6 +72,61 @@ test("a log line is read for its district, and lines that report the same fault 
   );
 });
 
+const LATE = (title: string, seconds: number) =>
+  `room: its own seat could not be kept: Error: Paseo did not answer the start of "${title}" within ${seconds} seconds`;
+const ONE_FAULT: [string, string][] = [
+  [LATE("[Peer] parser fixed", 60), LATE("[Lead] build mdlinks as the mission says", 90)],
+  [LATE("[HQ] the room's operator", 60), LATE("[peer:review] mdlinks v1: CLI, checker, tests (sw-2qu)", 60)],
+  [
+    'mail: delivery to "3f2504e0-4f89-11d3-9a0c-0305e82c3301" failed: refused',
+    'mail: delivery to "9b2504e0-4f89-11d3-9a0c-0305e82c3302" failed: refused',
+  ],
+  [
+    "work: the leases of /p could not be read: ENOENT: no such file or directory, open '/p/.seatwork/leases.json'",
+    "work: the leases of /q/r could not be read: ENOENT: no such file or directory, open '/q/r/.seatwork/leases.json'",
+  ],
+  [
+    'knowledge: the turn at "2026-10-14T09:00:00.123Z" was not kept: database is locked',
+    'knowledge: the turn at "2026-10-15T23:59:59Z" was not kept: database is locked',
+  ],
+  [
+    "mail: no ask was chosen for #12 after '3' tries: refused",
+    "mail: no ask was chosen for #345 after '17' tries: refused",
+  ],
+  [
+    `the guard failed on a claude call: Unexpected token 'o', "not json at all" is not valid JSON`,
+    `the guard failed on a claude call: Unexpected token 'h', "half a body here" is not valid JSON`,
+  ],
+  [
+    'skills: the project "/a" has its own "test-audit", rename one: failed',
+    'skills: the project "/b" has its own "seat-law", rename one: failed',
+  ],
+];
+const TWO_FAULTS: [string, string][] = [
+  ['the guard failed on a codex call: "refused"', 'the guard failed on a codex call: "timeout"'],
+  ["gc: could not delete it: 'EACCES'", "gc: could not delete it: 'EBUSY'"],
+  ["mail: the store failed: `SQLITE_BUSY`", "mail: the store failed: `SQLITE_CORRUPT`"],
+  [
+    "the guard's notice was not sent: Cannot read properties of undefined (reading 'map')",
+    "the guard's hook was not read: Cannot read properties of undefined (reading 'map')",
+  ],
+  [
+    "work: the leases could not be read: Cannot read properties of undefined (reading 'map')",
+    "work: the leases could not be read: Cannot read properties of undefined (reading 'filter')",
+  ],
+];
+
+test("a quoted fault word stays in the incident key, while quoted seat titles, ids, paths, times, numbers and texts are made alike", () => {
+  for (const [a, b] of ONE_FAULT) {
+    assert.notEqual(incidentOf(a), null, a);
+    assert.equal(incidentOf(a), incidentOf(b), `${a} / ${b}`);
+  }
+  for (const [a, b] of TWO_FAULTS) {
+    assert.notEqual(incidentOf(a), null, a);
+    assert.notEqual(incidentOf(a), incidentOf(b), `${a} / ${b}`);
+  }
+});
+
 test("incidents reach the operator in one mail at most every few minutes, again only when seen since and after an hour", async () => {
   const { ops, mailed, echoed, at } = operations();
   ops.log(LOCKED(1));

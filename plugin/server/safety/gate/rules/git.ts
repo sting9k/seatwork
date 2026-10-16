@@ -16,10 +16,11 @@ export interface GitTools {
   rebasing(cwd: string | null): Promise<boolean>;
 }
 
-/** The rules a git command trips; `shells` are the lines it runs through the shell (an alias, a program a `-c` option names), which are judged too. */
+/** The rules a git command trips; `shells` are the lines it runs through the shell (an alias, a program a `-c` option names), which are judged too; `changes` is the folder whose files it rewrites, null for none or a folder not known. */
 interface GitOutcome {
   hits: GitHit[];
   shells: string[];
+  changes: string | null;
 }
 
 const BUILTIN = new Set(
@@ -100,7 +101,7 @@ export async function gitRules(scene: Scene, tools: GitTools, strict: boolean): 
     words = [textWord(sub), ...words];
   }
   const aliases = new Map<string, string>();
-  const given: GitOutcome = { hits: [], shells: [] };
+  const given: GitOutcome = { hits: [], shells: [], changes: null };
   let cwd = scene.cwd;
   const seen = new Set<string>();
   for (let depth = 0; depth <= MAX_ALIAS; depth += 1) {
@@ -114,6 +115,7 @@ export async function gitRules(scene: Scene, tools: GitTools, strict: boolean): 
     if (BUILTIN.has(sub)) {
       const line: Line = { sub, args: words.slice(1), texts: words.slice(1).map(literal), cwd };
       given.hits.push(...(await rules(line, scene, tools, strict)));
+      if (changesTree(line)) given.changes = cwd;
       return given;
     }
     const key = sub.toLowerCase();
@@ -138,7 +140,7 @@ export async function gitRules(scene: Scene, tools: GitTools, strict: boolean): 
   return unverified(given, "the alias goes deeper than the room reads");
 }
 
-const NOTHING: GitOutcome = { hits: [], shells: [] };
+const NOTHING: GitOutcome = { hits: [], shells: [], changes: null };
 
 /** The outcome for a subcommand the room cannot read. */
 function unverified(given: GitOutcome, detail: string): GitOutcome {
@@ -408,6 +410,67 @@ async function rules(line: Line, scene: Scene, tools: GitTools, strict: boolean)
   if (hits.some((h) => RECOVERY.has(h.rule)) && (await tools.rebasing(line.cwd)))
     return hits.filter((h) => !RECOVERY.has(h.rule));
   return hits;
+}
+
+const STASH_WRITES = new Set(["push", "save", "pop", "apply", "branch"]);
+const APPLY_READS = ["--check", "--stat", "--numstat", "--summary"];
+
+/** Whether a git subcommand rewrites files of the work tree it runs in; a checkout or switch to another branch does, as the files become that branch's. */
+function changesTree(line: Line): boolean {
+  const t = line.texts;
+  const opts = beforeEnd(t);
+  const has = (...flags: string[]) => opts.some((x) => x !== null && flags.includes(x));
+  if (has("-h", "--help")) return false;
+  switch (line.sub) {
+    case "apply":
+      if (has("--cached") && !has("--index")) return false;
+      return !has(...APPLY_READS) || has("--apply");
+    case "checkout":
+      return (
+        operands(t, ["-b", "-B", "--orphan"]).length > 0 ||
+        opts.some((x) => x === "--force" || x === "--patch" || (isCluster(x) && /[fp]/.test(x)))
+      );
+    case "switch":
+      return has("--orphan") || operands(t, ["-c", "-C", "--create", "--force-create"]).length > 0;
+    case "restore":
+      return has("--worktree", "-W") || !has("--staged", "-S");
+    case "stash":
+      return STASH_WRITES.has(t[0] && !t[0].startsWith("-") ? t[0] : "push");
+    case "reset":
+      return opts.some((x) => abbrev(x, "hard", 1) || abbrev(x, "merge", 2) || abbrev(x, "keep", 1));
+    case "merge":
+    case "rebase":
+    case "cherry-pick":
+    case "revert":
+    case "am":
+    case "pull":
+      return !opts.some((x) => x !== null && /^--(show-current-patch|edit-todo|quit)(=|$)/.test(x));
+    case "rm":
+      return !t.some((x) => x === "--cached" || x === "--dry-run" || (isCluster(x) && x.includes("n")));
+    case "mv":
+      return !opts.some((x) => x === "--dry-run" || (isCluster(x) && x.includes("n")));
+    case "clean":
+      return (
+        opts.some((x) => abbrev(x, "force", 1) || (isCluster(x) && x.includes("f"))) &&
+        !opts.some((x) => x === "--dry-run" || (isCluster(x) && x.includes("n")))
+      );
+  }
+  return false;
+}
+
+/** The operands of a checkout or switch: the words past its options, the branch an option creates left out. */
+function operands(texts: (string | null)[], creates: string[]): (string | null)[] {
+  const out: (string | null)[] = [];
+  for (let i = 0; i < texts.length; i += 1) {
+    const x = texts[i];
+    if (x === "--") return [...out, ...texts.slice(i + 1)];
+    if (x !== null && x.startsWith("-") && x !== "-") {
+      if (creates.includes(x)) i += 1;
+      continue;
+    }
+    out.push(x);
+  }
+  return out;
 }
 
 /** The key a `git config` line sets when it names a program git runs later (`filter.x.clean`, `core.hooksPath`); null for a read, an unset, or any other key. */

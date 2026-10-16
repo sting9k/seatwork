@@ -234,6 +234,14 @@ export function machineTools(since: () => number | null, baseOf?: (commonDir: st
       }
       return null;
     },
+    file(path) {
+      try {
+        const s = statSync(path);
+        return s.isFile() && s.size <= MAX_SCRIPT ? readFileSync(path, "utf8") : null;
+      } catch {
+        return null;
+      }
+    },
     async changed(path) {
       try {
         const s = statSync(path);

@@ -10,7 +10,6 @@ A Paseo plugin that runs a room of coding agents. This file is for an agent chan
 | `plugin/shared/` | Tables the code imports: `workflow.json` (roles, routes, spawn), `tools.json`, `signals.json`, `settings.json`… |
 | `plugin/paseo/` | A machine's policy, seats and profiles, written into `~/.config/seatwork` at setup |
 | `plugin/room/` | What seats read: `harness/`, `roles/`, `specs/`, `skills/`, `models.json`, and `sql/` migrations. Copied whole to `~/.config/seatwork/room/` |
-| `evals/` | Model evals. They call paid models |
 | `research/` | Notes, gitignored |
 
 ## Checks
@@ -24,6 +23,7 @@ In `plugin/`: `npm test`, `npm run typecheck`, `npm run format`, then `git diff 
 - Roles are data. Code asks `shared/workflow.json` for a trait, route or spawn rule and never compares a role name, so the hierarchy can be swapped.
 - Paseo stays behind contracts. A district defines the interface it needs; on the server, Paseo's SDK, hooks and CLI are called only from `server/paseo/` and wired in `index.server.ts`. The screens in `client/` and the RPC definitions in `shared/` use Paseo's plugin kit.
 - A setting is written once, as data: a machine's policy in `paseo/policy.json`, the plugin's own tables in `shared/*.json`.
+- Setup keeps the keys the owner or HQ changed in the room home's `policy.json` (`server/paseo/setup/policy-changes.ts`), so a new default in `paseo/policy.json` reaches only rooms that left that key alone.
 - A store's layout changes by a new `room/sql/<store>/V<n>__<what>.sql`. An applied script stays as it is: its checksum is kept.
 - Whatever grows (logs, records, seat homes) gets an end date in `server/gc.ts`, the one table-driven sweep.
 - The room runs for days: keep per-call cost flat as history grows, bound every table, file and outside input, and release listeners and timers.
@@ -39,7 +39,6 @@ One line, at the head of a file, class or function. Fields, constants and variab
 - Run them only through `npm test`. `test/isolate.cjs` sets throwaway homes before any module loads, because `server/paths.ts` reads the environment on import.
 - After touching test support, prove the real homes untouched: touch a marker, run the suite, and `find ~/.config/seatwork ~/.paseo/config.json -newer <marker>` prints nothing.
 - A new test protects a named regression and is seen red before its fix. A test a newer one supersedes is deleted.
-- `evals/run.cjs` runs only on the owner's word.
 
 ## Room prompts and skills
 

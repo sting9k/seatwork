@@ -1,5 +1,5 @@
 {
-  "$comment": "What each seat may touch, written once. Setup (plugin screen or install.sh) builds the seats' Paseo providers from the paseo part and copies the file to ~/.config/seatwork/policy.json, where the plugin reads the harness part to build runtimes.",
+  "$comment": "What each seat may touch, written once. Setup (plugin screen or install.sh) builds the seats' Paseo providers from the paseo part and writes the file to ~/.config/seatwork/policy.json, where the plugin reads the harness part to build runtimes. A key changed there stays through later setups; the rest takes this file's values.",
   "paseoTools": {
     "all": [
       "speak",

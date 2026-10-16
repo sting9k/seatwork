@@ -2,7 +2,7 @@ import table from "../../shared/tools.json";
 import type { McpTool } from "../mcp-http";
 import { inRoom, owns } from "../../shared/workflow";
 
-/** The room's own MCP tools, written once in shared/tools.json for plugin and evals. */
+/** The room's own MCP tools, written once in shared/tools.json. */
 
 interface ToolRow {
   callers: "any" | "spawners" | "room";

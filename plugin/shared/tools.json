@@ -1,5 +1,5 @@
 {
-  "$comment": "The room's MCP tools, written once: the plugin serves them and the evals' stand-in shows the same text. Placeholders: {{signals}} (signals.json), {{keep_log_days}} (settings.json), {{rotate_k}} and {{mail_chars}} (policy room.params). callers: \"any\" seat, \"spawners\" (roles the workflow lets create seats) or \"room\" (roles the workflow puts at home in the room); a call from another role is refused. Every seat is listed every tool, so a description names no role above a project.",
+  "$comment": "The room's MCP tools, written once. Placeholders: {{signals}} (signals.json), {{keep_log_days}} (settings.json), {{rotate_k}} and {{mail_chars}} (policy room.params). callers: \"any\" seat, \"spawners\" (roles the workflow lets create seats) or \"room\" (roles the workflow puts at home in the room); a call from another role is refused. Every seat is listed every tool, so a description names no role above a project.",
   "tools": {
     "seatwork_mail": {
       "callers": "any",

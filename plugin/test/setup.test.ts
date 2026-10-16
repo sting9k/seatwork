@@ -1,7 +1,7 @@
 import { installRoom, PLUGIN_DIR, ROOM_HOME } from "./support/room";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { beforeEach, test } from "node:test";
 import { loadPolicy } from "../server/policy";
@@ -50,6 +50,9 @@ const chosen = (flags: Partial<ChoiceFlags>, text: string, before: Setup = {}) =
   });
 
 beforeEach(() => rmSync(ROOM_HOME, { recursive: true, force: true }));
+
+/** The warnings setup gave about the room's policy. */
+const policyWarnings = (warnings: string[]) => warnings.filter((w) => w.startsWith("policy.json:"));
 
 /** What the table says a role's tier is for. */
 const tierUse = (table: Table, role: string, tier: string) =>
@@ -269,6 +272,58 @@ test("setting the room up again replaces the room's files and keeps what the roo
     [true, false, false],
   );
   assert.equal(readSetup(ROOM_HOME).version, "9.9.9");
+});
+
+test("setting the room up again keeps what was changed in the room's policy and takes a new version's defaults everywhere else", async () => {
+  await setUpRoom(source, { chime: true }, paseoAccepts);
+  const file = join(ROOM_HOME, "policy.json");
+  const changed = JSON.parse(readFileSync(file, "utf8"));
+  changed.budget.projects["/work/app"] = { dailyUsd: 5 };
+  changed.jev.monthlyCapUsd = 3;
+  delete changed.knowledge.mode;
+  changed.owner.chime = false;
+  writeFileSync(file, JSON.stringify(changed));
+
+  // the next version ships other defaults
+  const next = join(ROOM_HOME, "..", "plugin-next");
+  for (const dir of ["paseo", "room"]) cpSync(join(PLUGIN_DIR, dir), join(next, dir), { recursive: true });
+  const shipped = JSON.parse(readFileSync(join(next, "paseo", "policy.json"), "utf8"));
+  shipped.jev.monthlyCapUsd = 20;
+  shipped.mail.dedupeSeconds = 7;
+  writeFileSync(join(next, "paseo", "policy.json"), JSON.stringify(shipped));
+
+  const { warnings } = await setUpRoom({ ...source, pluginDir: next }, { chime: true }, paseoAccepts);
+
+  const policy = JSON.parse(readFileSync(file, "utf8"));
+  assert.deepEqual(policy.budget.projects, { "/work/app": { dailyUsd: 5 } });
+  assert.equal(policy.jev.monthlyCapUsd, 3);
+  assert.equal("mode" in policy.knowledge, false);
+  assert.equal(policy.mail.dedupeSeconds, 7);
+  // what the screen sets wins over the file
+  assert.equal(policy.owner.chime, true);
+  assert.equal(loadPolicy().jev?.monthlyCapUsd, 3);
+  assert.deepEqual(policyWarnings(warnings), []);
+});
+
+test("a change kept in the room's policy whose place a new version dropped is named and left out", async () => {
+  await setUpRoom(source, {}, paseoAccepts);
+  const file = join(ROOM_HOME, "policy.json");
+  const changed = JSON.parse(readFileSync(file, "utf8"));
+  changed.jev.providers.custom.url = "http://127.0.0.1:9";
+  writeFileSync(file, JSON.stringify(changed));
+
+  const next = join(ROOM_HOME, "..", "plugin-gone");
+  for (const dir of ["paseo", "room"]) cpSync(join(PLUGIN_DIR, dir), join(next, dir), { recursive: true });
+  const shipped = JSON.parse(readFileSync(join(next, "paseo", "policy.json"), "utf8"));
+  delete shipped.jev.providers.custom;
+  writeFileSync(join(next, "paseo", "policy.json"), JSON.stringify(shipped));
+
+  const { warnings } = await setUpRoom({ ...source, pluginDir: next }, {}, paseoAccepts);
+
+  assert.equal("custom" in JSON.parse(readFileSync(file, "utf8")).jev.providers, false);
+  assert.deepEqual(policyWarnings(warnings), [
+    "policy.json: jev.providers.custom.url was changed here, and this version has no jev.providers.custom; left out",
+  ]);
 });
 
 test("a seat added to a running room is kept by every later setup, and adding it moves nothing else", async () => {

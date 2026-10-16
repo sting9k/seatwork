@@ -5,6 +5,7 @@ import { allowed, layModels, tiersOf, type Models } from "../../orchestration/mo
 import { claudeDisallowed } from "../../policy";
 import { HARNESSES, parseSeat, type Harness } from "../../orchestration/seats";
 import { inRoom, ROLES, ROOM_ROLE, traits } from "../../../shared/workflow";
+import { keptChanges, layOver } from "./policy-changes";
 
 /** This machine's own choices, kept in ROOM_HOME/setup.json and never in the repo; the room's own seat is in `models` like any seat. */
 export interface Setup {
@@ -64,6 +65,7 @@ export interface RoomPlan {
   profiles: Profile[];
   models: Models;
   policy: Record<string, any>;
+  shipped: Record<string, any>;
   warnings: string[];
 }
 
@@ -334,6 +336,13 @@ export async function planRoom(input: {
   const shown = readJson(join(pluginDir, "paseo", "profiles.json")) as ProfileSpec[];
   const models = machineModels(roomModels(pluginDir), setup);
   const warnings: string[] = [];
+  if (setup.chime !== undefined) policy.owner.chime = setup.chime;
+  if (setup.mailPort !== undefined) policy.mail.port = setup.mailPort;
+  // changes made to the room's policy since the last setup stay, except the screen's keys
+  const shipped = structuredClone(policy);
+  const bySetup = [setup.chime !== undefined && "owner.chime", setup.mailPort !== undefined && "mail.port"];
+  const changes = keptChanges(roomHome).filter((change) => !bySetup.includes(change.path.join(".")));
+  warnings.push(...layOver(policy, changes));
   const { seats, enabled, used } = enabledSeats(seatsFile, models, setup);
 
   const tools = policy.paseoTools as Tools;
@@ -362,7 +371,5 @@ export async function planRoom(input: {
   for (const id of enabled) providers[id] = await providerFor(id, context);
   const profiles = await profilesFor(shown, models, providers, catalogOf);
 
-  if (setup.chime !== undefined) policy.owner.chime = setup.chime;
-  if (setup.mailPort !== undefined) policy.mail.port = setup.mailPort;
-  return { seats, providers, profiles, models, policy, warnings };
+  return { seats, providers, profiles, models, policy, shipped, warnings };
 }

@@ -39,7 +39,7 @@ Removing the plugin does not undo Init. Use "Remove the room" on the same screen
 | The agent CLI, model and thinking level of each role. A Peer has several models, each under a name with a line on what it is for; the Lead reads them and picks. | Models, on the Seatwork screen. A project can have its own table under Models for this project. |
 | A sound when a seat waits on you | Chime, on the same screen |
 | The decision model's key. Without one nothing leaves the host: the council's jurors and the read of a decision before it is kept are skipped, and the code checks still run. Calls stop at a monthly cap, 10 USD by default. | `~/.config/seatwork/jev/openrouter.key`, readable by your user only |
-| A project's daily spend cap, the guard's rules, the decision model's provider | `~/.config/seatwork/policy.json`. Apply and each plugin update write this file again from the plugin's copy. |
+| A project's daily spend cap, the guard's rules, the decision model's provider | `~/.config/seatwork/policy.json`. What you change there stays through Apply and plugin updates; a key you leave alone takes the new version's value. |
 
 ## What it touches
 

@@ -82,6 +82,7 @@ export function writeRoomHome(input: {
     renameSync(next, room);
     rmSync(previous, { recursive: true, force: true });
     writePrivate(join(roomHome, "policy.json"), json(plan.policy));
+    writePrivate(join(roomHome, "policy.shipped.json"), json(plan.shipped));
   }
   writePrivate(
     join(roomHome, "seats.json"),

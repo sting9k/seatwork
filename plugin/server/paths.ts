@@ -25,6 +25,7 @@ export const CLAUDE_HOME = process.env.CLAUDE_CONFIG_DIR?.trim() || join(USER_HO
 export const CODEX_HOME = process.env.CODEX_HOME?.trim() || join(USER_HOME, ".codex");
 export const PI_HOME = process.env.PI_CODING_AGENT_DIR?.trim() || join(USER_HOME, ".pi", "agent");
 export const OPENCODE_CONFIG_HOME = process.env.OPENCODE_CONFIG_DIR?.trim() || join(USER_HOME, ".config", "opencode");
+export const USER_AGENTS_SKILLS = join(USER_HOME, ".agents", "skills");
 
 export const SAFETY_DIR = join(ROOM_HOME, "safety");
 export const JEV_DIR = join(ROOM_HOME, "jev");

@@ -1,7 +1,7 @@
 import { runGit } from "../git";
 import { createHash } from "node:crypto";
 import { lstatSync, readFileSync } from "node:fs";
-import { join } from "node:path";
+import { basename, dirname, extname, join } from "node:path";
 import table from "../../shared/safety/handin.json";
 import { ASSERTION, gamingOf, type GamingEvidence } from "./council/gaming";
 import { evaluate, type GateConfig, type Tools } from "./gate/evaluate";
@@ -22,7 +22,7 @@ interface Found {
   hint: string;
 }
 
-/** The check's result for a seat; `partial` means it could not finish and is never read as clean; `gaming` is what its diff shows of tests bent to pass. */
+/** The check's result for a seat; `partial` is never read as clean; `gaming`: tests bent to pass; `related`: unchanged tests naming a change. */
 export interface HandIn {
   state: "clean" | "blocked" | "partial" | "empty";
   files: number;
@@ -31,6 +31,7 @@ export interface HandIn {
   warnings: FindingRow[];
   why: string | null;
   gaming?: GamingEvidence | null;
+  related?: string[];
 }
 
 /** A rule of the table: a pattern read on one part of an added line (`in`) of the files of a language and kind. */
@@ -75,6 +76,23 @@ const MAX_FILES = 2000;
 const MAX_BYTES = 32 * 1024 * 1024;
 const GIT_MS = 15_000;
 const SHOWN = 20;
+const RELATED_SOURCES = 30;
+const RELATED_MOST = 50;
+const GENERIC_STEMS = new Set([
+  "index",
+  "main",
+  "mod",
+  "lib",
+  "init",
+  "__init__",
+  "types",
+  "util",
+  "utils",
+  "helpers",
+  "common",
+  "config",
+  "constants",
+]);
 const SECRET_SHAPES =
   /(AKIA[0-9A-Z]{16}|\bsk-(?:or-|ant-|proj-)?[A-Za-z0-9_-]{20,}|\bgh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|\bxox[abprs]-[A-Za-z0-9-]{10,}|AIza[0-9A-Za-z_-]{35}|glpat-[A-Za-z0-9_-]{20}|-----BEGIN [A-Z ]*PRIVATE KEY-----)/;
 const SECRET_NAME =
@@ -252,6 +270,7 @@ export async function inspectHandIn(seat: string, store: SafetyStore, gate: Gate
     return { ...base, state: "partial", why: `${start.cwd} was not a git repository when the seat started` };
   const changes = await changesSince(start.cwd, start.start_head);
   if (typeof changes === "string") return { ...base, state: "partial", why: changes };
+  store.noteHandIn(seat, digestOf(changes));
   const found: Found[] = [];
   for (const change of changes) for (const one of await inspectFile(change, start.cwd, gate)) found.push(one);
   if (!changes.length) return { ...base, state: "empty", why: null };
@@ -273,6 +292,7 @@ export async function inspectHandIn(seat: string, store: SafetyStore, gate: Gate
     }),
   );
   const open = rows.filter((r) => r.severity === "block" && !r.ack);
+  const related = await testsNaming(changes, start.cwd);
   const skipped = found.filter((f) => f.rule === "test-skipped" || f.rule === "test-focused").length;
   return {
     state: open.length ? "blocked" : "clean",
@@ -291,7 +311,57 @@ export async function inspectHandIn(seat: string, store: SafetyStore, gate: Gate
       })),
       skipped,
     ),
+    related,
   };
+}
+
+/** One digest of a seat's changes, the same whatever order git lists them in. */
+function digestOf(changes: readonly Change[]): string {
+  const hash = createHash("sha256");
+  for (const change of [...changes].sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0)))
+    hash.update(JSON.stringify([change.path, change.deleted, change.added, change.removed]));
+  return hash.digest("hex");
+}
+
+/** The digest of a seat's work as it stands, against the commit it started on; null when the room cannot read it. */
+export async function workDigest(seat: string, store: SafetyStore): Promise<string | null> {
+  const start = store.startOf(seat);
+  if (!start?.start_head) return null;
+  const changes = await changesSince(start.cwd, start.start_head);
+  return typeof changes === "string" ? null : digestOf(changes);
+}
+
+/** The unchanged tests that name a changed source file in their text or file name; a common name goes with its folder. */
+async function testsNaming(changes: readonly Change[], cwd: string): Promise<string[]> {
+  const isTest = (path: string) => TESTS.some((p) => p.test(path));
+  const names = new Set<string>();
+  for (const change of changes) {
+    if (isTest(change.path) || !EXTENSIONS.has(extname(change.path))) continue;
+    const stem = basename(change.path, extname(change.path));
+    names.add(GENERIC_STEMS.has(stem) || stem.length < 3 ? `${basename(dirname(change.path))}/${stem}` : stem);
+    if (names.size >= RELATED_SOURCES) break;
+  }
+  if (!names.size) return [];
+  const quiet = ["-c", "core.quotePath=false"];
+  const [inText, files] = await Promise.all([
+    git([...quiet, "grep", "-l", "-w", "-F", ...[...names].flatMap((name) => ["-e", name]), "--"], cwd),
+    git([...quiet, "ls-files"], cwd),
+  ]);
+  const matchers = [...names].map((name) => ({
+    word: new RegExp(`(^|[^A-Za-z0-9])${basename(name).replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}([^A-Za-z0-9]|$)`),
+    folder: name.includes("/") ? `${dirname(name)}/` : null,
+  }));
+  const byName = files.out
+    .split("\n")
+    .filter(isTest)
+    .filter((path) =>
+      matchers.some(({ word, folder }) => word.test(basename(path)) && (folder === null || path.includes(folder))),
+    );
+  const changed = new Set(changes.map((change) => change.path));
+  return [...new Set([...inText.out.split("\n"), ...byName])]
+    .filter((path) => path && isTest(path) && EXTENSIONS.has(extname(path)) && !changed.has(path))
+    .sort()
+    .slice(0, RELATED_MOST);
 }
 
 /** The mistakes on one file's added lines, its deletion if it is a test, and the scripts it adds. */
@@ -468,6 +538,10 @@ export function handInLine(result: HandIn): string | null {
         .slice(0, SHOWN)
         .map((r) => `${r.rule} ${r.path}:${r.line} (${r.ack})`)
         .join("; ")}`,
+    );
+  if (result.related?.length)
+    parts.push(
+      `${result.related.length} unchanged test(s) name what changed: ${result.related.slice(0, 8).join(", ")}${result.related.length > 8 ? ", …" : ""}`,
     );
   if (result.warnings.length)
     parts.push(

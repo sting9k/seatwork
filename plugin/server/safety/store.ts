@@ -52,6 +52,13 @@ export interface CodeRow {
   used_at: string | null;
 }
 
+/** A seat's work as kept: the digest handed in, the last verdict and the digest it was given on. */
+export interface SeatWork {
+  handed: string | null;
+  verdict: "accepted" | "returned" | null;
+  verdictDigest: string | null;
+}
+
 /** A hand-in finding of a seat, told apart by its fingerprint; `ack` is the seat's reason to keep it. */
 export interface FindingRow {
   seat: string;
@@ -352,6 +359,24 @@ export class SafetyStore extends Sqlite {
   /** Where a seat began, if the room saw it. */
   startOf(agentId: string): { cwd: string; start_head: string | null; started_at: string } | null {
     return this.row("SELECT cwd, start_head, started_at FROM seats WHERE agent_id = ?", agentId) ?? null;
+  }
+
+  /** Keeps the digest of the work a seat handed in. */
+  noteHandIn(agentId: string, digest: string): void {
+    this.transaction("write", () => this.run("UPDATE seats SET handed_digest = ? WHERE agent_id = ?", digest, agentId));
+  }
+
+  /** Keeps a verdict and the work's digest; returns what was kept before, null for a seat never seen. */
+  noteVerdict(agentId: string, verdict: "accepted" | "returned", digest: string | null): SeatWork | null {
+    return this.transaction("write", () => {
+      const before = this.row<SeatWork>(
+        "SELECT handed_digest AS handed, verdict, verdict_digest AS verdictDigest FROM seats WHERE agent_id = ?",
+        agentId,
+      );
+      if (before)
+        this.run("UPDATE seats SET verdict = ?, verdict_digest = ? WHERE agent_id = ?", verdict, digest, agentId);
+      return before ? { handed: before.handed, verdict: before.verdict, verdictDigest: before.verdictDigest } : null;
+    });
   }
 
   /** Stores a check's findings for a seat: new ones get a first time, gone ones stay. */

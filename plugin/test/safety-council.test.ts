@@ -7,10 +7,25 @@ import { test } from "node:test";
 import { traits } from "../shared/workflow";
 import { quotedCommands } from "../server/orchestration/brief";
 import type { TurnEvent } from "../server/host";
-import { Council, type CouncilPolicy, type Decider, type TurnInput } from "../server/safety/council/council";
+import {
+  Council,
+  type CouncilPolicy,
+  type Decider,
+  type HandInDiff,
+  type TurnInput,
+} from "../server/safety/council/council";
 import { counted, hiFor, levelFor, trustedSources, type Label } from "../server/safety/council/calibration";
 import { lowerBound, upperBound } from "../server/bounds";
-import { claimsIn, isCheck, loopIn, outsideScope, turnFacts } from "../server/safety/council/facts";
+import {
+  claimsIn,
+  isCheck,
+  loopIn,
+  maskOf,
+  outsideScope,
+  testsNotRun,
+  turnFacts,
+  unborneIn,
+} from "../server/safety/council/facts";
 import { snapshot } from "../server/safety/council/git";
 import { SafetyStore } from "../server/safety/store";
 
@@ -51,7 +66,7 @@ test("what a turn shows without a model: claims, checks, changes outside the sco
   const facts = turnFacts([shell("npm test"), change("src/a.js"), shell("npm test", 1), shell("git diff")], []);
   assert.deepEqual(
     [facts.lastChange, facts.changed, facts.checksAfterChange],
-    [1, ["src/a.js"], [{ command: "npm test", exitCode: 1 }]],
+    [1, ["src/a.js"], [{ command: "npm test", exitCode: 1, masked: null }]],
   );
 
   assert.deepEqual(
@@ -74,9 +89,88 @@ test("what a turn shows without a model: claims, checks, changes outside the sco
   for (const [events, pattern] of cases) assert.equal(loopIn(events, limits)?.pattern ?? null, pattern);
 });
 
+test("a check whose exit code proves nothing is named: a later command sets it, or a filter the brief did not ask for", () => {
+  const later = "a later command decides its exit code";
+  const narrow = (flag: string) => `\`${flag}\` runs only the tests it selects, maybe none`;
+  const cases: [string, string[], string | null][] = [
+    ["npm test", [], null],
+    ["cd app && npm test && echo ok", [], null],
+    ["npm test > out.log 2>&1", [], null],
+    ["npm test &&\n  echo ok", [], null],
+    ["set -o pipefail; npm test | tail -20", [], null],
+    ['npm test -- --grep "a|b"', [], null],
+    ["npx tsc -t es2020 --noEmit", [], null],
+    ["pytest -k cache", ["pytest -k cache"], null],
+    ["npm test || true", [], "`||` decides its exit code"],
+    ["npm test 2>&1 | tail -20", [], "it is piped, so the pipe's last command decides its exit code"],
+    ["npm test; echo done", [], later],
+    ["npm test\necho $?", [], later],
+    ["npm test > out.log 2>&1 &", [], "it runs in the background"],
+    ["npx jest --passWithNoTests", [], narrow("--passWithNoTests")],
+    ["pytest -k cache", [], narrow("-k")],
+    ["go test -run TestParse ./...", [], narrow("-run")],
+  ];
+  for (const [command, named, why] of cases) assert.equal(maskOf(command, named), why, command);
+});
+
+test("the tests a turn ran after its last change: a check that names no path runs them all, one that names paths runs those", () => {
+  const related = ["test/a.test.ts", "test/unit/b.test.ts", "pkg/c_test.go"];
+  const cases: [TurnEvent[], string[]][] = [
+    [[change("src/a.ts"), shell("npm test")], []],
+    [[shell("npm test"), change("src/a.ts")], related],
+    [[change("src/a.ts"), shell("npm test", 1)], related],
+    [[change("src/a.ts"), shell("npm test | tail -3")], related],
+    [
+      [change("src/a.ts"), shell("npx vitest run test/a.test.ts")],
+      ["test/unit/b.test.ts", "pkg/c_test.go"],
+    ],
+    [[change("src/a.ts"), shell("npx vitest run test/")], ["pkg/c_test.go"]],
+    [[change("src/a.ts"), shell(`npx vitest run ${ROOT}/test/a.test.ts ./test/unit/b.test.ts`)], ["pkg/c_test.go"]],
+    [
+      [change("src/a.ts"), shell("pytest 'test/a.test.ts::case'")],
+      ["test/unit/b.test.ts", "pkg/c_test.go"],
+    ],
+    [[change("src/a.ts"), shell("go test ./...")], []],
+    [
+      [change("src/a.ts"), shell("go test ./pkg/...")],
+      ["test/a.test.ts", "test/unit/b.test.ts"],
+    ],
+  ];
+  for (const [events, missed] of cases) assert.deepEqual(testsNotRun(events, [], related, ROOT), missed);
+});
+
+test("what a report says that its turn does not bear out: a path cited or changed that is not there, a run, a test count", () => {
+  const root = join(ROOM_HOME, "report-root");
+  rmSync(root, { recursive: true, force: true });
+  mkdirSync(join(root, "src"), { recursive: true });
+  writeFileSync(join(root, "src/a.ts"), Array.from({ length: 10 }, (_, i) => `line ${i}`).join("\n") + "\n");
+  const worked = [change(`${root}/src/a.ts`), shell("npm test", 0, "Tests: 41 passed, 41 total")];
+  const cases: [string, TurnEvent[], unknown[]][] = [
+    ["Changed `src/a.ts` and src/b.ts.", worked, [{ kind: "path", said: "src/b.ts" }]],
+    ["The bug is at src/a.ts:42.", worked, [{ kind: "line", said: "src/a.ts:42", found: "10 lines" }]],
+    ["The bug was at src/a.ts:10 and src/gone.ts:3.", [...worked, change(`${root}/src/gone.ts`)], []],
+    ["I suggest adding src/cache.ts next.", worked, []],
+    ["Updated the guide, see https://example.com/docs/a.md", worked, []],
+    ["Ran `npm run e2e` and `npm test`.", worked, [{ kind: "run", said: "npm run e2e" }]],
+    ["Ran `npm run e2e` earlier.", [shell("git status")], []],
+    ["All 42 tests pass.", worked, [{ kind: "count", said: "42 tests", found: "41" }]],
+    ["All 41 tests pass.", worked, []],
+    [
+      "All 42 tests pass.",
+      [change(`${root}/src/a.ts`), shell("npm test", 0, "30 passed"), shell("npm run test:e2e", 0, "12 passing")],
+      [],
+    ],
+  ];
+  for (const [text, events, expected] of cases) assert.deepEqual(unborneIn(text, events, [], root), expected, text);
+});
+
 let homes = 0;
 /** A council over its own store; `answer` stands in for the decision district. */
-function councilWith(levels: CouncilPolicy["levels"] = {}, answer?: (state: Record<string, unknown>) => number) {
+function councilWith(
+  levels: CouncilPolicy["levels"] = {},
+  answer?: (state: Record<string, unknown>) => number,
+  diffOf?: (seat: string) => HandInDiff | null,
+) {
   const dir = join(ROOM_HOME, `council-${(homes += 1)}`);
   rmSync(dir, { recursive: true, force: true });
   const store = new SafetyStore(dir, 2000);
@@ -97,6 +191,7 @@ function councilWith(levels: CouncilPolicy["levels"] = {}, answer?: (state: Reco
     policy: () => ({ mode: "on", keepDays: 90, tickSeconds: 60, levels }),
     log: () => {},
     snapshot,
+    diffOf,
   });
   const readings = () =>
     store
@@ -122,6 +217,7 @@ test("every member that watches a seat logs its reading; one that only logs show
   assert.deepEqual(found, []);
   assert.deepEqual(readings(), [
     { member: "claims", readings: 1, found: 1, grey: 0, shown: 0 },
+    { member: "report", readings: 1, found: 0, grey: 0, shown: 0 },
     { member: "scope", readings: 1, found: 1, grey: 0, shown: 0 },
     { member: "stuck", readings: 1, found: 0, grey: 0, shown: 0 },
   ]);
@@ -150,6 +246,42 @@ test("a member that has earned its level speaks once per finding: the same thing
     peerTurn([change(`${ROOT}/src/duration.js`), shell("npm test")], "CANDIDATE: hours added\nAll tests pass."),
   );
   assert.deepEqual(checked, [], "a check that passed after the last change answers the claim");
+  const piped = await council.endOfTurn({
+    ...peerTurn(
+      [change(`${ROOT}/src/duration.js`), shell("npm test | tail -5")],
+      "CANDIDATE: hours added\nAll tests pass.",
+    ),
+    turn: "t3",
+  });
+  assert.match(
+    piped[0].line,
+    /and no check passed after the last change \("npm test \| tail -5": it is piped, so the pipe's last command decides its exit code\)$/,
+  );
+});
+
+test("a candidate's turn is held to the unchanged tests that name what it changed", async () => {
+  const related = ["test/cli.test.js", "test/unit/parse.test.js"];
+  const { council } = councilWith({ radius: 1 }, undefined, () => ({ gaming: null, returned: false, related }));
+  const candidate = (events: TurnEvent[], turn: string) => ({ ...peerTurn(events, "CANDIDATE: hours added"), turn });
+  const missed = await council.endOfTurn(
+    candidate([change(`${ROOT}/src/duration.js`), shell("npx vitest run test/cli.test.js")], "r1"),
+  );
+  assert.match(
+    missed[0].line,
+    /^radius #\d+: 1 test\(s\) that name what changed did not pass after the last change: test\/unit\/parse\.test\.js$/,
+  );
+  assert.deepEqual(
+    await council.endOfTurn(candidate([change(`${ROOT}/src/duration.js`), shell("npm test")], "r2")),
+    [],
+  );
+});
+
+test("a report that names a file its turn never had is said under it", async () => {
+  const { council } = councilWith({ report: 1 });
+  const found = await council.endOfTurn(
+    peerTurn([change(`${ROOT}/src/duration.js`)], "CANDIDATE: hours added; fixed src/duration.js and src/units.js"),
+  );
+  assert.match(found[0].line, /^report #\d+: names "src\/units\.js", which is not there$/);
 });
 
 test("a juror is asked only where the facts cannot tell, and its grey band keeps it quiet", async () => {
@@ -185,6 +317,32 @@ test("a Lead's verdicts are read against the work: an acceptance without its che
     /^verdict #\d+: accepted peer-1's work without running its acceptance check "npm test"$/,
   );
   assert.deepEqual(await council.endOfTurn(lead([shell("npm test -- --run")], [{ ...work, accepted: true }])), []);
+  const swallowed = await council.endOfTurn(
+    lead([shell("git status"), shell("npm test || true")], [{ ...work, accepted: true }]),
+  );
+  const handedIn = { handed: "d1", now: "d2", previous: null };
+  const changed = await council.endOfTurn(
+    lead([shell("git status"), shell("ls"), shell("npm test")], [{ ...work, accepted: true, work: handedIn }]),
+  );
+  assert.match(changed[0].line, /^verdict #\d+: accepted peer-1's work, which changed after it was handed in$/);
+  const unchanged = { handed: "d3", now: "d3", previous: { accepted: false, digest: "d3" } };
+  const turned = await council.endOfTurn(
+    lead(
+      [shell("pwd"), shell("ls"), shell("git log"), shell("npm test")],
+      [{ ...work, accepted: true, work: unchanged }],
+    ),
+  );
+  assert.match(turned[0].line, /^verdict #\d+: accepted peer-1's work, sent back before with nothing changed since$/);
+  const fixed = { handed: "d4", now: "d4", previous: { accepted: false, digest: "d3" } };
+  assert.deepEqual(
+    await council.endOfTurn(lead([shell("npm test")], [{ ...work, accepted: true, work: fixed }])),
+    [],
+    "work that changed since the verdict before is a new verdict",
+  );
+  assert.match(
+    swallowed[0].line,
+    /^verdict #\d+: accepted peer-1's work on a run of "npm test" whose exit code proves nothing: `\|\|` decides its exit code$/,
+  );
 
   assert.deepEqual(await council.endOfTurn(lead([], [{ ...work, accepted: false, rejected: 2 }])), []);
   const third = await council.endOfTurn(lead([shell("ls")], [{ ...work, accepted: false, rejected: 3 }]));
@@ -372,6 +530,23 @@ test("an Owner's run of the work's own check labels the claim it answers; the la
     [["implied:acceptance-run", "right"]],
   );
   assert.equal(council.level("claims"), 0, "an implied source no seat has checked moves nothing");
+
+  // a run whose exit code a pipe decides says nothing of the claim
+  await council.endOfTurn({
+    ...peerTurn([change(`${ROOT}/src/duration.js`)], "CANDIDATE: hours added\nAll tests pass."),
+    turn: "t2",
+  });
+  await council.endOfTurn({
+    seat: { id: "lead-1", role: "lead", traits: traits("lead"), root: ROOT, task: "lead-1" },
+    turn: "lt2",
+    events: [shell("npm test | tail -3", 0, "1 failing")],
+    text: "ACCEPT",
+    brief: null,
+    verdicts: [
+      { to: "peer-1", accepted: false, brief: BRIEF, task: "peer-1", rejected: 1, contextTokens: null, costUsd: null },
+    ],
+  });
+  assert.equal(store.labelsOf("claims", 1, 10).length, 1);
 });
 
 test("scope sees every file a turn changed, a shell's edits included, by git", async () => {

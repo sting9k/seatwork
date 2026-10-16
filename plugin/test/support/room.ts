@@ -10,6 +10,7 @@ export const ROOM_HOME = join(base, "room-home");
 export const USER_CODEX = join(base, "codex");
 export const USER_PI = join(base, "pi");
 export const PROJECT = join(base, "project");
+export const USER_HOME = join(base, "home");
 
 /** The plugin folder: the room files and the policy ship inside it. */
 export const PLUGIN_DIR = join(__dirname, "..", "..");

@@ -5,7 +5,7 @@ import { mkdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { test } from "node:test";
 import { packsInForce } from "../server/safety/gate/packs";
-import { handInLine, handInReturn, inspectHandIn } from "../server/safety/handin";
+import { handInLine, handInReturn, inspectHandIn, workDigest } from "../server/safety/handin";
 import { Safety } from "../server/safety/index";
 import { SafetyStore } from "../server/safety/store";
 import { machineTools } from "../server/safety/system";
@@ -87,6 +87,50 @@ test("the check reads what the seat changed since it started, committed or not, 
   assert.deepEqual(result.warnings.map((r) => r.rule).sort(), ["new-todo", "weak-assertion"]);
   assert.ok(!result.open.some((r) => r.text.includes("sk-proj-Abcdefghijklmnop")), "the secret itself is not kept");
   assert.match(handInReturn(result), /Fix each one, or acknowledge it/);
+});
+
+test("the tests no change touched that name a changed source file ride up with the candidate", async () => {
+  const { dir, check } = project({
+    "src/duration.ts": "export const parse = (s: string) => Number(s);\n",
+    "src/index.ts": 'export * from "./duration";\n',
+    "src/parser.ts": "export const p = 1;\n",
+    "lib/index.ts": "export const other = 1;\n",
+    "test/cli.test.ts": 'import { parse } from "../src/duration";\ntest("cli", () => expect(parse("1")).toBe(1));\n',
+    "test/duration_extra.test.ts": 'test("x", () => expect(1).toBe(1));\n',
+    "test/parse.test.ts": 'import { p } from "../src/parser";\ntest("p", () => expect(p).toBe(1));\n',
+    "test/lib.test.ts": 'import { other } from "../lib/index";\ntest("o", () => expect(other).toBe(1));\n',
+    "test/entry.test.ts":
+      'import * as all from "../src/index";\ntest("all", () => expect(all.parse).toBe(all.parse));\n',
+    "docs/duration.md": "duration\n",
+    "test/fixtures/duration.json": '{ "duration": 1 }\n',
+  });
+  write(dir, {
+    "src/duration.ts": "export const parse = (s: string) => Number(s) * 1000;\n",
+    "src/index.ts": 'export * from "./duration";\nexport const v = 1;\n',
+  });
+  const result = await check();
+  assert.deepEqual(result.related, ["test/cli.test.ts", "test/duration_extra.test.ts", "test/entry.test.ts"]);
+  assert.match(
+    handInLine(result) ?? "",
+    /: 3 unchanged test\(s\) name what changed: test\/cli\.test\.ts, test\/duration_extra\.test\.ts, test\/entry\.test\.ts$/,
+  );
+});
+
+test("the work a seat hands in keeps its digest: the same work reads the same, a change reads another, a verdict keeps its own", async () => {
+  const { dir, store, check } = project(START);
+  write(dir, { "src/sum.ts": "export const sum = (a: number, b: number) => b + a;\n" });
+  await check();
+  const handed = await workDigest("seat", store);
+  assert.deepEqual(store.noteVerdict("seat", "returned", handed), { handed, verdict: null, verdictDigest: null });
+  write(dir, { "src/sum.ts": "export const sum = (a: number, b: number) => a + b + 0;\n" });
+  const changed = await workDigest("seat", store);
+  assert.ok(handed && changed && changed !== handed);
+  assert.deepEqual(store.noteVerdict("seat", "accepted", changed), {
+    handed,
+    verdict: "returned",
+    verdictDigest: handed,
+  });
+  assert.equal(store.noteVerdict("nobody", "accepted", changed), null);
 });
 
 test("a finding the seat acknowledges rides up with its reason; the same finding keeps its id across hand-ins", async () => {

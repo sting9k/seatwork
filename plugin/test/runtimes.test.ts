@@ -1,10 +1,11 @@
-import { installRoom, USER_CODEX, USER_PI } from "./support/room";
+import { installRoom, USER_CODEX, USER_HOME, USER_PI } from "./support/room";
 import assert from "node:assert/strict";
-import { existsSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { test } from "node:test";
 import { loadPolicy, type CodexRuntimePolicy, type RuntimePolicy } from "../server/policy";
 import { claudeRoleDir, ensureRuntime, roleSkillNames, runtimeDir } from "../server/orchestration/runtimes";
+import { parseToml, type TomlTable } from "../server/toml";
 
 const seat = { harness: "codex", role: "peer" } as const;
 const userConfig = join(USER_CODEX, "config.toml");
@@ -36,6 +37,7 @@ function seatConfigFor(user: string, policy = policyWith()): string {
 }
 
 const OFF = "[features]\nmulti_agent = false\n";
+const BUNDLED_OFF = "\n[skills]\n\n[skills.bundled]\nenabled = false\n";
 
 const cases: { name: string; user: string; seat: string; policy?: Partial<CodexRuntimePolicy> }[] = [
   {
@@ -85,6 +87,11 @@ const cases: { name: string; user: string; seat: string; policy?: Partial<CodexR
     policy: { multiAgentV2Off: true },
   },
   {
+    name: "the user's own skills table gives way to the room's",
+    user: '[skills]\ninclude_instructions = false\n[[skills.config]]\nname = "x"\nenabled = true\n',
+    seat: OFF,
+  },
+  {
     name: "with no config of the user's, the seat gets only the switches",
     user: "",
     seat: "[agents]\nenabled = false\n\n[features]\nmulti_agent = false\nmulti_agent_v2 = false\n",
@@ -94,7 +101,7 @@ const cases: { name: string; user: string; seat: string; policy?: Partial<CodexR
 
 for (const { name, user, seat: expected, policy } of cases) {
   test(`Codex seat config: ${name}`, () => {
-    assert.equal(seatConfigFor(user, policyWith(policy)), expected);
+    assert.equal(seatConfigFor(user, policyWith(policy)), expected + BUNDLED_OFF);
   });
 }
 
@@ -125,7 +132,7 @@ test("a Codex runtime is left alone when neither the policy nor the user's confi
   assert.equal(readFileSync(seatConfig, "utf8"), "# untouched\n");
 });
 
-test("a Pi seat's home takes the user's settings without their packages and extensions", () => {
+test("a Pi seat's home takes the user's settings without their packages, extensions and skills", () => {
   installRoom(["pi-peer"]);
   const pi = { harness: "pi", role: "peer" } as const;
   writeFileSync(
@@ -140,6 +147,7 @@ test("a Pi seat's home takes the user's settings without their packages and exte
     theme: "dark",
     packages: [],
     extensions: [],
+    skills: [`!${join(USER_HOME, ".agents", "skills")}/**`],
   });
 });
 
@@ -194,4 +202,43 @@ test("a seat's home holds the guard's hook when the guard is on: Codex's hooks.j
   const off = homes("off");
   assert.ok(!existsSync(off.codexHooks) && !existsSync(off.pi) && !existsSync(off.opencode));
   assert.doesNotMatch(off.codexConfig, /hooks\.state/);
+});
+
+test("a Codex, Pi or OpenCode seat is shown the room's skills only: the user's own, nested ones too, and Codex's bundled ones are off", () => {
+  installRoom(["codex-peer", "pi-peer", "opencode-peer"]);
+  const mine = join(USER_HOME, ".agents", "skills");
+  const home = (harness: "codex" | "pi" | "opencode") => runtimeDir({ harness, role: "peer" });
+  const build = () => {
+    for (const harness of ["codex", "pi", "opencode"] as const) ensureRuntime({ harness, role: "peer" }, loadPolicy());
+  };
+  const codexSkills = () =>
+    parseToml(readFileSync(join(home("codex"), "config.toml"), "utf8")).get("skills") as TomlTable;
+  writeFileSync(userConfig, "");
+  try {
+    build();
+    assert.equal(codexSkills().get("config"), undefined);
+
+    // a skill the user adds after the home was built reaches the next seat's config
+    for (const dir of ["mine", "group/deep"]) {
+      mkdirSync(join(mine, dir), { recursive: true });
+      writeFileSync(join(mine, dir, "SKILL.md"), "---\nname: x\ndescription: y\n---\n");
+    }
+    build();
+
+    assert.deepEqual((codexSkills().get("bundled") as TomlTable).get("enabled"), "false");
+    assert.deepEqual(
+      (codexSkills().get("config") as TomlTable[]).map((entry) => [entry.get("path"), entry.get("enabled")]),
+      [
+        [JSON.stringify(join(mine, "group", "deep", "SKILL.md")), "false"],
+        [JSON.stringify(join(mine, "mine", "SKILL.md")), "false"],
+      ],
+    );
+    assert.deepEqual(JSON.parse(readFileSync(join(home("pi"), "settings.json"), "utf8")).skills, [`!${mine}/**`]);
+    assert.deepEqual(JSON.parse(readFileSync(join(home("opencode"), "opencode.json"), "utf8")).permission, {
+      task: "deny",
+      skill: { "*": "deny", "blast-radius": "allow", "test-audit": "allow" },
+    });
+  } finally {
+    rmSync(join(USER_HOME, ".agents"), { recursive: true, force: true });
+  }
 });

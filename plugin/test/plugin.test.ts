@@ -1195,7 +1195,7 @@ test("the council reads a seat's ended turn from the app's timeline and logs eac
   db.close();
   assert.deepEqual(
     rows.map((row) => `${row.member}:${row.zone}`),
-    ["claims:found", "scope:skipped", "stuck:clear"],
+    ["claims:found", "report:clear", "scope:skipped", "stuck:clear"],
   );
 
   // the seat above says whether a finding was right; the seat itself cannot

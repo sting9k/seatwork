@@ -8,7 +8,18 @@ import { CLOSES_WORK, signalOf } from "../../signals";
 import type { MemberCount, MemberState, ReadingRow, SafetyStore } from "../store";
 import { counted, hiFor, levelFor } from "./calibration";
 import type { Chair, Packet } from "./chair";
-import { claimsIn, loopIn, outsideScope, quietMinutes, runsOneOf, turnFacts } from "./facts";
+import {
+  claimsIn,
+  loopIn,
+  maskOf,
+  outsideScope,
+  quietMinutes,
+  runsOneOf,
+  testsNotRun,
+  turnFacts,
+  unborneIn,
+  type Unborne,
+} from "./facts";
 import { gamingLine, hardSigns, softSigns, type GamingEvidence } from "./gaming";
 import { changedSince, type Snapshot } from "./git";
 
@@ -28,10 +39,11 @@ export interface CouncilPolicy {
   chairMinutes?: number;
 }
 
-/** What the hand-in check saw of a candidate's diff; `returned` when the room sent the hand-in back already. */
+/** What the hand-in saw of a candidate's diff; `returned` once sent back; `related` the unchanged tests naming it. */
 export interface HandInDiff {
   gaming: GamingEvidence | null;
   returned: boolean;
+  related?: readonly string[];
 }
 
 /** The decision district as the council uses it; any provider of typed decisions fits, one that answers a repeated question from memory unless asked `fresh`. */
@@ -63,6 +75,14 @@ export interface Verdict {
   rejected: number;
   contextTokens: number | null;
   costUsd: number | null;
+  work?: VerdictWork | null;
+}
+
+/** The work a verdict is given on: the digest handed in, the digest now, and the verdict given on it before. */
+export interface VerdictWork {
+  handed: string | null;
+  now: string | null;
+  previous: { accepted: boolean; digest: string | null } | null;
 }
 
 /** A turn that ended, as the room gathers it; `changed` is the files git saw change, when it was asked. */
@@ -216,10 +236,11 @@ export class Council {
     this.started.delete(input.seat.id);
     if (!this.on) return [];
     this.implied(input);
+    const diff = signalOf(input.text) === "CANDIDATE" ? (this.deps.diffOf?.(input.seat.id) ?? null) : null;
     const findings: Finding[] = [];
     for (const member of MEMBERS) {
       if (!this.watches(member, input.seat.traits)) continue;
-      for (const reading of this.read(member, input)) {
+      for (const reading of this.read(member, input, diff)) {
         if (typeof reading !== "function") {
           const shown = this.log(member, input, reading);
           if (shown) findings.push(shown);
@@ -283,7 +304,10 @@ export class Council {
       const wanted = verdict.brief ? quotedCommands(briefFields(verdict.brief).acceptance ?? "") : [];
       const runs = input.events.filter(
         (event): event is Extract<TurnEvent, { kind: "shell" }> =>
-          event.kind === "shell" && event.status !== "running" && runsOneOf(event.command, wanted),
+          event.kind === "shell" &&
+          event.status !== "running" &&
+          runsOneOf(event.command, wanted) &&
+          maskOf(event.command, wanted) === null,
       );
       const claim = runs.length ? store.openFinding("claims", verdict.to, IMPLIED.acceptanceRun) : null;
       if (claim !== null) {
@@ -479,8 +503,8 @@ export class Council {
     return !!this.deps.decider && this.deps.decider.why() === null;
   }
 
-  /** A member's readings of a turn. */
-  private read(member: MemberName, input: TurnInput): Pending[] {
+  /** A member's readings of a turn; `diff` is what the hand-in check saw of a candidate's. */
+  private read(member: MemberName, input: TurnInput, diff: HandInDiff | null): Pending[] {
     const fields = input.brief ? briefFields(input.brief) : {};
     switch (member) {
       case "claims":
@@ -488,7 +512,11 @@ export class Council {
       case "scope":
         return this.readScope(input, fields);
       case "gaming":
-        return this.readGaming(input, fields);
+        return this.readGaming(input, fields, diff);
+      case "radius":
+        return readRadius(input, fields, diff);
+      case "report":
+        return readReport(input, fields);
       case "stuck":
         return [loopReading(input.events) ?? { tier: "fact", zone: "clear" }];
       case "repair":
@@ -506,9 +534,11 @@ export class Council {
     // a writer's checks count after its last change; a reviewer changes nothing, so any check counts
     const after = writes ? facts.checksAfterChange : facts.checks;
     if (writes && facts.lastChange < 0) return [{ tier: "fact", zone: "skipped" }];
-    if (after.some((run) => run.exitCode === 0)) return [{ tier: "fact", zone: "clear", evidence: { checks: after } }];
+    if (after.some((run) => run.exitCode === 0 && run.masked === null))
+      return [{ tier: "fact", zone: "clear", evidence: { checks: after } }];
     const claims = claimsIn(input.text);
-    const where = writes ? "after the last change" : "in the turn";
+    const masked = after.find((run) => run.exitCode === 0 && run.masked !== null);
+    const where = `${writes ? "after the last change" : "in the turn"}${masked ? ` (${quoted(masked.command)}: ${masked.masked})` : ""}`;
     if (claims.length)
       return [
         {
@@ -566,8 +596,7 @@ export class Council {
   }
 
   /** Firm signs of bent tests speak for themselves, softer ones go to a juror, and a member that may send the hand-in back checks firm signs against a juror too. */
-  private readGaming(input: TurnInput, fields: BriefFields): Pending[] {
-    const diff = signalOf(input.text) === "CANDIDATE" ? (this.deps.diffOf?.(input.seat.id) ?? null) : null;
+  private readGaming(input: TurnInput, fields: BriefFields, diff: HandInDiff | null): Pending[] {
     const evidence = diff?.gaming ?? null;
     if (!evidence) return [];
     const [hard, soft] = [hardSigns(evidence), softSigns(evidence)];
@@ -622,24 +651,104 @@ function readRepair(input: TurnInput): Reading[] {
     );
 }
 
-/** Work accepted without a run of its own acceptance check is a finding. */
+/** The tests that use what a candidate changed are held to the checks that passed after its last change. */
+function readRadius(input: TurnInput, fields: BriefFields, diff: HandInDiff | null): Reading[] {
+  const related = diff?.related ?? [];
+  if (related.length === 0) return [];
+  const named = quotedCommands([fields.acceptance, fields.contract].filter(Boolean).join("\n"));
+  const missed = testsNotRun(input.events, named, related, input.seat.root);
+  if (missed.length === 0) return [{ tier: "fact", zone: "clear", evidence: { related } }];
+  return [
+    {
+      tier: "fact",
+      zone: "found",
+      fingerprint: createHash("sha1").update(missed.join("\n")).digest("hex").slice(0, 12),
+      line: `radius: ${missed.length} test(s) that name what changed did not pass after the last change: ${missed.slice(0, 5).join(", ")}${missed.length > 5 ? ", …" : ""}`,
+      evidence: { missed, related },
+    },
+  ];
+}
+
+/** A final message held to its turn: the paths it cites or says it changed, the runs it names, the test count it gives. */
+function readReport(input: TurnInput, fields: BriefFields): Reading[] {
+  const named = quotedCommands([fields.acceptance, fields.contract].filter(Boolean).join("\n"));
+  const unborne = unborneIn(input.text, input.events, named, input.seat.root);
+  if (unborne.length === 0) return [{ tier: "fact", zone: "clear" }];
+  return [
+    {
+      tier: "fact",
+      zone: "found",
+      fingerprint: createHash("sha1").update(JSON.stringify(unborne)).digest("hex").slice(0, 12),
+      line: `report: ${unborne.slice(0, 4).map(unborneLine).join("; ")}`,
+      evidence: { unborne },
+    },
+  ];
+}
+
+/** One thing a report says that its turn does not bear out, as the finding names it. */
+function unborneLine(one: Unborne): string {
+  switch (one.kind) {
+    case "path":
+      return `names ${quoted(one.said)}, which is not there`;
+    case "line":
+      return `cites ${quoted(one.said)}, the file has ${one.found}`;
+    case "run":
+      return `says it ran ${quoted(one.said)}, which this turn did not`;
+    case "count":
+      return `says ${one.said} pass, the output shows ${one.found}`;
+  }
+}
+
+/** A verdict held to the work: its acceptance run, the work as handed in, a verdict turned on unchanged work. */
 function readVerdicts(input: TurnInput): Reading[] {
-  return input.verdicts
-    .filter((verdict) => verdict.accepted)
-    .map((verdict): Reading => {
-      const wanted = verdict.brief ? quotedCommands(briefFields(verdict.brief).acceptance ?? "") : [];
-      if (wanted.length === 0) return { tier: "fact", zone: "skipped" };
-      const ran = input.events.some(
-        (event) => event.kind === "shell" && event.exitCode === 0 && runsOneOf(event.command, wanted),
-      );
-      return ran
-        ? { tier: "fact", zone: "clear" }
-        : {
-            tier: "fact",
-            zone: "found",
-            fingerprint: `${verdict.to}:${input.turn}`,
-            line: `verdict: accepted ${verdict.to}'s work without running its acceptance check ${quoted(wanted[0])}`,
-            evidence: { wanted },
-          };
+  return input.verdicts.flatMap((verdict) => [
+    ...(verdict.accepted ? [acceptanceRun(input, verdict)] : []),
+    ...workReadings(verdict),
+  ]);
+}
+
+/** Work accepted without a run of its own acceptance check is a finding. */
+function acceptanceRun(input: TurnInput, verdict: Verdict): Reading {
+  const wanted = verdict.brief ? quotedCommands(briefFields(verdict.brief).acceptance ?? "") : [];
+  if (wanted.length === 0) return { tier: "fact", zone: "skipped" };
+  const passed = input.events.filter(
+    (event): event is Extract<TurnEvent, { kind: "shell" }> =>
+      event.kind === "shell" && event.exitCode === 0 && runsOneOf(event.command, wanted),
+  );
+  if (passed.some((event) => maskOf(event.command, wanted) === null)) return { tier: "fact", zone: "clear" };
+  const masked = passed.at(-1);
+  return {
+    tier: "fact",
+    zone: "found",
+    fingerprint: `${verdict.to}:${input.turn}`,
+    line: masked
+      ? `verdict: accepted ${verdict.to}'s work on a run of ${quoted(wanted[0])} whose exit code proves nothing: ${maskOf(masked.command, wanted)}`
+      : `verdict: accepted ${verdict.to}'s work without running its acceptance check ${quoted(wanted[0])}`,
+    evidence: { wanted, ...(masked ? { ran: masked.command } : {}) },
+  };
+}
+
+/** The work under a verdict: accepted after it changed from the hand-in, or the verdict before turned with no change. */
+function workReadings(verdict: Verdict): Reading[] {
+  const work = verdict.work;
+  if (!work?.now) return [];
+  const out: Reading[] = [];
+  if (verdict.accepted && work.handed && work.handed !== work.now)
+    out.push({
+      tier: "fact",
+      zone: "found",
+      fingerprint: `${verdict.to}:${work.now}:changed`,
+      line: `verdict: accepted ${verdict.to}'s work, which changed after it was handed in`,
+      evidence: { handed: work.handed, now: work.now },
     });
+  const before = work.previous;
+  if (before && before.accepted !== verdict.accepted && before.digest === work.now)
+    out.push({
+      tier: "fact",
+      zone: "found",
+      fingerprint: `${verdict.to}:${work.now}:turned`,
+      line: `verdict: ${verdict.accepted ? "accepted" : "sent back"} ${verdict.to}'s work, ${before.accepted ? "accepted" : "sent back"} before with nothing changed since`,
+      evidence: { digest: work.now },
+    });
+  return out;
 }

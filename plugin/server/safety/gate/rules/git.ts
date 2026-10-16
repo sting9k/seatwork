@@ -254,6 +254,29 @@ const beforeEnd = (texts: (string | null)[]): (string | null)[] => {
   return end < 0 ? texts : texts.slice(0, end);
 };
 
+const HOOKED = new Set(["am", "commit", "merge", "push", "rebase"]);
+const COMMIT_VALUE_LETTERS = "mFcCt";
+
+/** Whether a git line skips the repository's hooks: `--no-verify`, or `-n` for a commit; a later `--verify` undoes it. */
+function skipsHooks(sub: string, texts: (string | null)[]): boolean {
+  const opts = beforeEnd(texts);
+  let skips = false;
+  for (let i = 0; i < opts.length; i += 1) {
+    const x = opts[i];
+    if (abbrev(x, "no-verify", 7)) skips = true;
+    else if (x === "--verify") skips = false;
+    else if (sub === "commit" && isCluster(x))
+      for (const [at, letter] of [...x.slice(1)].entries()) {
+        if (letter === "n") skips = true;
+        if (!COMMIT_VALUE_LETTERS.includes(letter) && letter !== "S" && letter !== "u") continue;
+        // an option that takes a value ends the cluster; with nothing after it, the next word is the value
+        if (COMMIT_VALUE_LETTERS.includes(letter) && at === x.length - 2) i += 1;
+        break;
+      }
+  }
+  return skips;
+}
+
 /** The rules for one subcommand and its arguments; during a rebase the discard rules stand down. */
 async function rules(line: Line, scene: Scene, tools: GitTools, strict: boolean): Promise<GitHit[]> {
   const hits: GitHit[] = [];
@@ -381,6 +404,7 @@ async function rules(line: Line, scene: Scene, tools: GitTools, strict: boolean)
       if (opts.some((x) => x === "--all" || (isCluster(x) && x.includes("A")))) tight("add-all-flag");
       break;
   }
+  if (HOOKED.has(line.sub) && skipsHooks(line.sub, t)) room("git-no-verify", `git ${line.sub} --no-verify`);
   if (hits.some((h) => RECOVERY.has(h.rule)) && (await tools.rebasing(line.cwd)))
     return hits.filter((h) => !RECOVERY.has(h.rule));
   return hits;

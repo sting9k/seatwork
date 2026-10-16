@@ -5,7 +5,7 @@ const { join } = require("node:path");
 
 const base = mkdtempSync(join(tmpdir(), "seatwork-test-"));
 process.on("exit", () => rmSync(base, { recursive: true, force: true }));
-for (const dir of ["room-home", "codex", "pi", "project"]) mkdirSync(join(base, dir));
+for (const dir of ["room-home", "codex", "pi", "project", "home"]) mkdirSync(join(base, dir));
 // a paseo CLI that moves a label and fails at anything else
 const cli = join(base, "paseo");
 writeFileSync(cli, '#!/bin/sh\n[ "$1 $2" = "agent update" ] && exit 0\nexit 1\n');
@@ -13,6 +13,7 @@ chmodSync(cli, 0o755);
 
 Object.assign(process.env, {
   SEATWORK_TEST_BASE: base,
+  HOME: join(base, "home"),
   SEATWORK_ROOM_HOME: join(base, "room-home"),
   SEATWORK_PASEO_BIN: cli,
   PASEO_HOME: join(base, "paseo-home"),

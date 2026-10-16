@@ -1,5 +1,5 @@
 {
-  "$comment": "The council that reads each turn of a briefed, writing or reviewing seat. Each member owns one concern and is scoped by role traits, never by role names. level: 0 logs only, 1 adds a [council] line under the report, 2 also mails the seat above, 3 sends the hand-in back once the chair agrees; only labels earn level 3, and only a member that sendsBack may. bars: what a member needs to reach each level above 0. version: raise it when a member's rule or question changes; its labels then start again. lo and hi: a juror's grey zone. checks: patterns of the commands that count as a check. stuck reads the last `window` steps for a loop (`sameResult`, `sameError` or `alternation` steps in a row) and a running turn for `silenceMinutes` without a step; repair speaks after `rejections` returns of one task. gaming reads a hand-in's diff: `weak` matches an assertion loosened to pass anything, `excerptChars` bounds the lines a juror and the chair read. chair: an appeal to the chair lapses after `answerMinutes` with nothing sent back, and at most `open` wait at once.",
+  "$comment": "The council that reads each turn of a briefed, writing or reviewing seat. Each member owns one concern and is scoped by role traits, never by role names. level: 0 logs only, 1 adds a [council] line under the report, 2 also mails the seat above, 3 sends the hand-in back once the chair agrees; only labels earn level 3, and only a member that sendsBack may. bars: what a member needs to reach each level above 0. version: raise it when a member's rule or question changes; its labels then start again. lo and hi: a juror's grey zone. checks: patterns of the commands that count as a check. narrow: per runner, the filters that run some tests or none; such a run passes nothing unless the brief's own command holds the filter. stuck reads the last `window` steps for a loop (`sameResult`, `sameError` or `alternation` steps in a row) and a running turn for `silenceMinutes` without a step; repair speaks after `rejections` returns of one task. gaming reads a hand-in's diff: `weak` matches an assertion loosened to pass anything, `excerptChars` bounds the lines a juror and the chair read. chair: an appeal to the chair lapses after `answerMinutes` with nothing sent back, and at most `open` wait at once.",
   "checks": [
     "\\b(npm|pnpm|yarn|bun)\\s+(run\\s+)?(test|check|verify|typecheck|lint)\\b",
     "\\b(npx|pnpm\\s+exec|bunx)\\s+(vitest|jest|mocha|tsc|playwright|eslint)\\b",
@@ -13,6 +13,27 @@
     "\\b(deno|bun)\\s+test\\b",
     "\\bdotnet\\s+test\\b",
     "\\b(rspec|phpunit|ctest)\\b"
+  ],
+  "narrow": [
+    {
+      "runner": "\\b(jest|vitest|npm|pnpm|yarn|bun)\\b",
+      "flags": [
+        "-t",
+        "--testNamePattern",
+        "--passWithNoTests",
+        "--onlyChanged",
+        "--changed",
+        "--findRelatedTests",
+        "--testPathIgnorePatterns"
+      ]
+    },
+    { "runner": "\\b(pytest|unittest)\\b", "flags": ["-k", "--lf", "--last-failed", "--deselect", "--ignore"] },
+    { "runner": "\\bmocha\\b", "flags": ["-g", "--grep", "-f", "--fgrep"] },
+    { "runner": "\\bnode\\b.*--test\\b", "flags": ["--test-name-pattern", "--test-skip-pattern", "--test-only"] },
+    { "runner": "\\bgo\\s+test\\b", "flags": ["-run", "-skip"] },
+    { "runner": "\\bcargo\\s+test\\b", "flags": ["--skip"] },
+    { "runner": "\\bdotnet\\s+test\\b", "flags": ["--filter"] },
+    { "runner": "\\bphpunit\\b", "flags": ["--filter", "--group", "--exclude-group"] }
   ],
   "bars": [
     {
@@ -97,6 +118,8 @@
       "version": 1,
       "rejections": 3
     },
+    "radius": { "traits": ["writes"], "level": 0, "version": 1 },
+    "report": { "traits": ["writes", "reviews"], "level": 0, "version": 1 },
     "verdict": {
       "traits": ["briefs"],
       "level": 0,

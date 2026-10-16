@@ -3,9 +3,9 @@ import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "n
 import { dirname, join } from "node:path";
 import { Guard, type SafetyPolicy, type SeatRef } from "./guard";
 import type { Place } from "./gate/types";
-import { inspectHandIn, type HandIn } from "./handin";
+import { inspectHandIn, workDigest, type HandIn } from "./handin";
 import { Chair, type ChairDeps } from "./council/chair";
-import { Council, type Decider, type HandInDiff } from "./council/council";
+import { Council, type Decider, type HandInDiff, type VerdictWork } from "./council/council";
 import { snapshot } from "./council/git";
 import { answerHook, claudePlugin, GATE_ENV, type Cli } from "./hooks";
 import { databaseIn, SafetyStore, type CodeRow } from "./store";
@@ -136,9 +136,20 @@ export class Safety {
     if (this.council.on)
       this.keepDiff(agentId, {
         gaming: result.gaming ?? null,
+        related: result.related ?? [],
         returned: result.state === "blocked" && this.handInBlocks,
       });
     return result;
+  }
+
+  /** The work a verdict is given on, as the room kept it; the verdict is kept with the digest the work has now. */
+  async verdictOn(agentId: string, accepted: boolean): Promise<VerdictWork | null> {
+    if (!this.on) return null;
+    const now = await workDigest(agentId, this.store()).catch(() => null);
+    const before = this.store().noteVerdict(agentId, accepted ? "accepted" : "returned", now);
+    if (!before) return null;
+    const previous = before.verdict ? { accepted: before.verdict === "accepted", digest: before.verdictDigest } : null;
+    return { handed: before.handed, now, previous };
   }
 
   /** The chair's word on an appeal of the council's: the candidate goes back to its seat, or stays. */

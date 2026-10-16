@@ -70,6 +70,15 @@
           "explanation": "What the repository's config names runs on every git call there, the room's own included, outside the guard.",
           "safer": ["Ask your Owner; the person changes a repository's git configuration"]
         },
+        "git-no-verify": {
+          "severity": "high",
+          "reason": "git told to skip the repository's hooks",
+          "explanation": "The hooks are the project's own checks on a commit or push; work that skips them goes in unchecked.",
+          "safer": [
+            "Run the hooks and fix what they report",
+            "If a hook itself is broken, tell your Owner with its output"
+          ]
+        },
         "git-attributes-driver": {
           "severity": "critical",
           "grant": "human",

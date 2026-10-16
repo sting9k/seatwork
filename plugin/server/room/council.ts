@@ -40,6 +40,7 @@ async function verdictsOf(room: RoomContext, seat: string, since: number): Promi
       rejected: room.rounds.rejected(task),
       contextTokens: usage?.contextWindowUsedTokens ?? null,
       costUsd: usage?.totalCostUsd ?? null,
+      work: await room.safety.verdictOn(line.to, verdict === "accepted").catch(() => null),
     });
   }
   return out;

@@ -5,6 +5,7 @@ import {
   mkdirSync,
   readdirSync,
   readFileSync,
+  statSync,
   symlinkSync,
   unlinkSync,
   writeFileSync,
@@ -18,6 +19,7 @@ import {
   ROLE_SKILLS_DIR,
   ROOM_DIR,
   RUNTIMES_DIR,
+  USER_AGENTS_SKILLS,
 } from "../paths";
 import { loadPolicy, type RuntimePolicy } from "../policy";
 import { codexHooks, codexTrust, openCodePlugin, piExtension } from "../safety/hooks";
@@ -26,8 +28,10 @@ import { formatToml, parseToml, type TomlTable } from "../toml";
 
 /** Keeps a seat apart from the user's setup: a home under runtimes/, or launch flags for Claude. */
 
-const RUNTIME_VERSION = 14;
+const RUNTIME_VERSION = 15;
 const MARKER = ".seatwork-runtime.json";
+const SKILL_DEPTH = 4;
+const SKILL_FILES_MOST = 500;
 
 function ensureDir(path: string): void {
   mkdirSync(path, { recursive: true });
@@ -77,6 +81,26 @@ function lay(runtime: string, path: string, text: string): void {
   writeFileSync(join(runtime, path), text);
 }
 
+/** The SKILL.md files under a folder, nested ones included; a skill's own folder is not searched. */
+function skillFiles(dir: string, depth = 0, found: string[] = []): string[] {
+  if (depth > SKILL_DEPTH || found.length >= SKILL_FILES_MOST) return found;
+  let names: string[];
+  try {
+    names = readdirSync(dir);
+  } catch {
+    return found;
+  }
+  if (names.includes("SKILL.md")) {
+    found.push(join(dir, "SKILL.md"));
+    return found;
+  }
+  for (const name of names.sort()) {
+    const path = join(dir, name);
+    if (statSync(path, { throwIfNoEntry: false })?.isDirectory()) skillFiles(path, depth + 1, found);
+  }
+  return found;
+}
+
 /** A Codex seat's home: the user's config without MCP servers, plugins and hooks, with the policy's switches and shares. */
 function buildCodex(runtime: string, policy: RuntimePolicy["codex"], guarded: boolean): void {
   // the user's config without MCP servers, plugins and hooks, and with Codex's own agent features off
@@ -105,6 +129,18 @@ function buildCodex(runtime: string, policy: RuntimePolicy["codex"], guarded: bo
     if (v2 instanceof Map) v2.set("enabled", "false");
     else table("features").set("multi_agent_v2", "false");
   }
+  // the room's skills table: the user's skills, each by its SKILL.md, and Codex's bundled ones off
+  const skills: TomlTable = new Map([["bundled", new Map([["enabled", "false"]])]]);
+  config.delete("skills");
+  config.set("skills", skills);
+  const off = skillFiles(USER_AGENTS_SKILLS).map(
+    (file): TomlTable =>
+      new Map([
+        ["path", JSON.stringify(file)],
+        ["enabled", "false"],
+      ]),
+  );
+  if (off.length) skills.set("config", off);
   // the guard's hook, trusted here or Codex holds it for review
   if (guarded) {
     lay(runtime, "hooks.json", codexHooks());
@@ -124,17 +160,24 @@ function buildCodex(runtime: string, policy: RuntimePolicy["codex"], guarded: bo
 /** A Pi seat's home: the user's settings with the policy's laid over them, and what the policy shares. */
 function buildPi(runtime: string, policy: RuntimePolicy["pi"], guarded: boolean): void {
   // credentials and the model catalog are shared; settings are copied with the policy's laid over them
-  writeJson(join(runtime, "settings.json"), { ...readJsonObject(join(PI_HOME, "settings.json")), ...policy.settings });
+  // the user's ~/.agents/skills is left out; the room's skills sit in this home's skills/
+  writeJson(join(runtime, "settings.json"), {
+    ...readJsonObject(join(PI_HOME, "settings.json")),
+    ...policy.settings,
+    skills: [`!${USER_AGENTS_SKILLS}/**`],
+  });
   if (guarded) lay(runtime, "extensions/room-guard.ts", piExtension());
   for (const name of policy.shareFiles) share(runtime, PI_HOME, name);
   for (const name of policy.shareDirs) share(runtime, PI_HOME, name);
   ensureDir(join(runtime, "sessions"));
 }
 
-/** An OpenCode seat's home: the policy's config, and what the policy shares of the user's. */
-function buildOpenCode(runtime: string, policy: RuntimePolicy["opencode"], guarded: boolean): void {
+/** An OpenCode seat's home: the policy's config, only the role's skills allowed, and the user's shares. */
+function buildOpenCode(runtime: string, role: string, policy: RuntimePolicy["opencode"], guarded: boolean): void {
   // the seat gets an empty config dir plus what policy shares; auth and storage stay shared, not isolated
-  writeJson(join(runtime, "opencode.json"), policy.config);
+  const permission = { ...(policy.config.permission as Record<string, unknown> | undefined) };
+  permission.skill = { "*": "deny", ...Object.fromEntries(roleSkillNames(role).map((name) => [name, "allow"])) };
+  writeJson(join(runtime, "opencode.json"), { ...policy.config, permission });
   if (guarded) lay(runtime, "plugins/room-guard.ts", openCodePlugin());
   if (!existsSync(OPENCODE_CONFIG_HOME)) return;
   for (const name of policy.shareEntries) share(runtime, OPENCODE_CONFIG_HOME, name);
@@ -202,17 +245,23 @@ function build(seat: Pick<Seat, "harness" | "role">, dir: string, policy: Runtim
     case "pi":
       return buildPi(dir, policy.pi, guarded);
     case "opencode":
-      return buildOpenCode(dir, policy.opencode, guarded);
+      return buildOpenCode(dir, seat.role, policy.opencode, guarded);
   }
 }
 
-/** What a build is made from: the build logic (RUNTIME_VERSION, bumped when the way a runtime is built changes), the harness's policy and the user file it copies. */
-function fingerprint(harness: Exclude<Harness, "claude">, policy: RuntimePolicy): string {
+/** What a build is made from: RUNTIME_VERSION, the harness's policy, the user file it copies, the skills it names. */
+function fingerprint(
+  seat: Pick<Seat, "role"> & { harness: Exclude<Harness, "claude"> },
+  policy: RuntimePolicy,
+): string {
+  const { harness, role } = seat;
   const copied =
     harness === "codex" ? join(CODEX_HOME, "config.toml") : harness === "pi" ? join(PI_HOME, "settings.json") : null;
   const text = copied && existsSync(copied) ? readFileSync(copied, "utf8") : "";
+  const skills =
+    harness === "codex" ? skillFiles(USER_AGENTS_SKILLS) : harness === "opencode" ? roleSkillNames(role) : [];
   return createHash("sha256")
-    .update(JSON.stringify([RUNTIME_VERSION, policy[harness], policy.safety?.mode ?? "on", text]))
+    .update(JSON.stringify([RUNTIME_VERSION, policy[harness], policy.safety?.mode ?? "on", text, skills]))
     .digest("hex");
 }
 
@@ -224,7 +273,7 @@ export function ensureRuntime(seat: Pick<Seat, "harness" | "role">, policy: Runt
   }
   const dir = runtimeDir(seat);
   const marker = join(dir, MARKER);
-  const print = fingerprint(seat.harness, policy);
+  const print = fingerprint({ harness: seat.harness, role: seat.role }, policy);
   if (readJsonObject(marker).fingerprint !== print) {
     ensureDir(dir);
     pruneLinks(dir);
@@ -264,8 +313,8 @@ export function envFor(
 export function describeIsolation(policy: RuntimePolicy = loadPolicy()): string {
   return [
     `claude: user home, personal settings off; shares ${policy.claude.shareFiles.join(",") || "nothing"}; denied skills ${policy.claude.deniedSkills.length}`,
-    `codex: strips [${policy.codex.stripTables.join(",")}], features off ${policy.codex.featuresOff.length}`,
-    `pi: shares ${policy.pi.shareFiles.join(",")}; no user package or extension`,
-    `opencode: task denied, built-in subagents disabled`,
+    `codex: strips [${policy.codex.stripTables.join(",")}], features off ${policy.codex.featuresOff.length}, user and bundled skills off`,
+    `pi: shares ${policy.pi.shareFiles.join(",")}; no user package, extension or skill`,
+    `opencode: task denied, built-in subagents disabled, only the role's skills`,
   ].join(" | ");
 }

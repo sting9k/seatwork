@@ -1,4 +1,5 @@
 import { ROOM_HOME, shipSql } from "./support/room";
+import { fastestInTurns } from "./support/timing";
 import assert from "node:assert/strict";
 import { join } from "node:path";
 import { test } from "node:test";
@@ -101,19 +102,12 @@ test("a loop body that moves the folder is read again from an unknown folder, fo
 test("loops that each move the folder cost a few reads of their body, not a read per path through them", async () => {
   const nest = (depth: number): string =>
     depth === 0 ? "cd /; rm -rf node_modules" : `for i in 1 2; do ${nest(depth - 1)}; cd /tmp; done`;
-  const once = async (depth: number) => {
-    const started = process.hrtime.bigint();
-    await rules(nest(depth));
-    return Number(process.hrtime.bigint() - started);
-  };
-  // fastest of seven after a warm-up: the cost may grow with the text, never by a factor per level of nesting
-  const fastest = async (depth: number) => {
-    await once(depth);
-    const runs: number[] = [];
-    for (let i = 0; i < 7; i += 1) runs.push(await once(depth));
-    return Math.min(...runs);
-  };
-  const [shallow, deep] = [await fastest(2), await fastest(12)];
+  const [two, twelve] = [nest(2), nest(12)];
+  // the cost may grow with the text, never by a factor per level of nesting
+  const [shallow, deep] = await fastestInTurns(
+    () => rules(two),
+    () => rules(twelve),
+  );
   assert.ok(deep / shallow < 40, `twelve levels cost ${(deep / shallow).toFixed(1)} times two levels`);
 });
 

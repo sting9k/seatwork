@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { hasSecret, redact } from "../server/redact";
+import { fastestInTurns } from "./support/timing";
 
 // built from parts so the fake keys never sit whole in the source, where a push's secret scan would stop them
 const FAKE_STRIPE = ["51HxQwErTyUiOp", "0987654321"].join("");
@@ -72,27 +73,19 @@ test("a long record entry is redacted in a few milliseconds per kilobyte at most
   assert.ok(msPerKb < 2, `${msPerKb.toFixed(3)} ms per KB`);
 });
 
-/** The fastest of three runs, in milliseconds: what the work costs, less what a busy machine adds. */
-function fastest(run: () => void): number {
-  let best = Infinity;
-  for (let i = 0; i < 3; i += 1) {
-    const start = process.hrtime.bigint();
-    run();
-    best = Math.min(best, Number(process.hrtime.bigint() - start) / 1e6);
-  }
-  return best;
-}
-
-test("text built to make a pattern backtrack is redacted in linear time: four times the text, not sixteen times the work", () => {
+test("text built to make a pattern backtrack is redacted in linear time: four times the text, not sixteen times the work", async () => {
   for (const [unit, size, prefix] of [
     ["a.", 5000, ""],
     ["word-", 2000, ""],
     ["A", 10_000, ""],
     ["a.", 5000, "http://"],
   ] as const) {
-    const of = (count: number) => `${prefix}${unit.repeat(count)}`;
-    const small = fastest(() => redact(of(size)));
-    const large = fastest(() => redact(of(size * 4)));
+    const [few, many] = [size, size * 4].map((count) => `${prefix}${unit.repeat(count)}`);
+    const [small, large] = await fastestInTurns(
+      () => redact(few),
+      () => redact(many),
+      3,
+    );
     assert.ok(large < Math.max(small, 1) * 10, `${unit}: ${small.toFixed(1)} ms, then ${large.toFixed(1)} ms`);
   }
 });

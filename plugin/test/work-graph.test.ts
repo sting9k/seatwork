@@ -1,4 +1,5 @@
 import { ROOM_HOME, shipSql } from "./support/room";
+import { fastestInTurns } from "./support/timing";
 import assert from "node:assert/strict";
 import { join } from "node:path";
 import { test } from "node:test";
@@ -116,7 +117,7 @@ test("pairs whose overlap no path can tell are the ones put to the model, and no
   store.close();
 });
 
-test("triage and plan grow with the issues, not with their square: six times the issues, far less than thirty-six times the work", () => {
+test("triage and plan grow with the issues, not with their square: six times the issues, far less than thirty-six times the work", async () => {
   const store = new WorkStore(join(ROOM_HOME, `graph-test-${(stores += 1)}`), TIMING, () => NOW);
   const shape = store.create({ title: "shape" }, "lead");
   store.close();
@@ -132,19 +133,14 @@ test("triage and plan grow with the issues, not with their square: six times the
   };
   const [small, large] = [chain(1000), chain(6000)];
   const once = (work: ReturnType<typeof chain>) => {
-    const started = performance.now();
     triage(work, NOW);
     plan(work, NOW);
-    return performance.now() - started;
   };
-  // warmed first, then taken in turns, the fastest of each: a busy machine slows one reading, not the ratio
-  once(small);
-  once(large);
-  let [fastSmall, fastLarge] = [Infinity, Infinity];
-  for (let i = 0; i < 5; i += 1) {
-    fastSmall = Math.min(fastSmall, once(small));
-    fastLarge = Math.min(fastLarge, once(large));
-  }
+  const [fastSmall, fastLarge] = await fastestInTurns(
+    () => once(small),
+    () => once(large),
+    5,
+  );
   assert.ok(
     fastLarge < Math.max(fastSmall, 5) * 24,
     `1000 issues: ${fastSmall.toFixed(0)} ms, 6000 issues: ${fastLarge.toFixed(0)} ms`,
@@ -212,7 +208,7 @@ test("a plan lists the most colliding pairs first, up to a bound, and counts the
   assert.equal("moreOverlaps" in few, false, "an answer that lost nothing says nothing of the rest");
 });
 
-test("a plan stops counting colliding pairs at its bound, in time, and says the count is a floor", () => {
+test("a plan stops counting colliding pairs at its bound, in time, and says the count is a floor", async () => {
   const store = new WorkStore(join(ROOM_HOME, `graph-test-${(stores += 1)}`), TIMING, () => NOW);
   const shape = store.create({ title: "shape" }, "lead");
   store.close();
@@ -226,29 +222,20 @@ test("a plan stops counting colliding pairs at its bound, in time, and says the 
     }));
     const work = { issues, dependencies: [], ready: new Set(issues.map(({ id }) => id)), blocked: new Map() };
     return () => {
-      const started = performance.now();
       const made = plan(work, NOW);
       assert.equal(made.moreOverlaps, overlapsCounted - overlapsShown);
       assert.equal(made.overlapsCut, true);
-      return performance.now() - started;
     };
   };
-  const [small, large] = [board(400), board(1600)];
-  // warmed first, then the fastest of three: four times the issues is sixteen times the pairs
-  small();
-  large();
-  let [fastSmall, fastLarge] = [Infinity, Infinity];
-  for (let i = 0; i < 3; i += 1) {
-    fastSmall = Math.min(fastSmall, small());
-    fastLarge = Math.min(fastLarge, large());
-  }
+  // four times the issues is sixteen times the pairs
+  const [fastSmall, fastLarge] = await fastestInTurns(board(400), board(1600), 3);
   assert.ok(
     fastLarge < Math.max(fastSmall, 2) * 3,
     `400 issues: ${fastSmall.toFixed(1)} ms, 1600 issues: ${fastLarge.toFixed(1)} ms`,
   );
 });
 
-test("the pairs whose scopes no path can tell are found in time with the issues, not with all their pairs", () => {
+test("the pairs whose scopes no path can tell are found in time with the issues, not with all their pairs", async () => {
   const store = new WorkStore(join(ROOM_HOME, `graph-test-${(stores += 1)}`), TIMING, () => NOW);
   const shape = store.create({ title: "shape" }, "lead");
   store.close();
@@ -267,20 +254,11 @@ test("the pairs whose scopes no path can tell are found in time with the issues,
       },
     ];
     return () => {
-      const started = performance.now();
       const found = unreadScopes(work, { tracks, ready: count, blocked: 0, overlaps: [] }, count);
       assert.equal(found.length, count - 1, "the prose one pairs with every other");
-      return performance.now() - started;
     };
   };
-  const [small, large] = [planned(1500), planned(6000)];
-  small();
-  large();
-  let [fastSmall, fastLarge] = [Infinity, Infinity];
-  for (let i = 0; i < 5; i += 1) {
-    fastSmall = Math.min(fastSmall, small());
-    fastLarge = Math.min(fastLarge, large());
-  }
+  const [fastSmall, fastLarge] = await fastestInTurns(planned(1500), planned(6000), 5);
   assert.ok(
     fastLarge < Math.max(fastSmall, 2) * 9,
     `1500 issues: ${fastSmall.toFixed(1)} ms, 6000 issues: ${fastLarge.toFixed(1)} ms`,

@@ -1,10 +1,10 @@
 import { MAIL_POLICY, ROOM_HOME, shipSql } from "./support/room";
+import { fastestInTurns } from "./support/timing";
 import assert from "node:assert/strict";
 import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { test } from "node:test";
-import { performance } from "node:perf_hooks";
 import vocabulary from "../shared/work.json";
 import { MailEngine } from "../server/coordination/engine";
 import type { LiveSeat } from "../server/host";
@@ -276,7 +276,7 @@ test("the stale-claim alert still fires for a seat that is alive and idle: a ren
   );
 });
 
-test("a pass reads the leases that are due by their index, so a store of 10,000 issues costs a store of 500", () => {
+test("a pass reads the leases that are due by their index, so a store of 10,000 issues costs a store of 500", async () => {
   const build = (rows: number) => {
     const { store, dir, clock, open } = leased();
     store.close();
@@ -303,18 +303,12 @@ test("a pass reads the leases that are due by their index, so a store of 10,000 
     db.close();
     return open();
   };
-  const best = (store: WorkStore, listed: string[]) => {
-    let fastest = Infinity;
-    for (let run = 0; run < 7; run += 1) {
-      const started = performance.now();
-      for (let again = 0; again < 100; again += 1) {
-        store.leaseDue();
-        store.renewLeases(listed);
-        store.expireLeases(listed, MOST);
-      }
-      fastest = Math.min(fastest, performance.now() - started);
+  const pass = (store: WorkStore, listed: string[]) => () => {
+    for (let again = 0; again < 100; again += 1) {
+      store.leaseDue();
+      store.renewLeases(listed);
+      store.expireLeases(listed, MOST);
     }
-    return fastest;
   };
   const [small, large] = [500, 10_000].map(build);
   const listed = (rows: number) => Array.from({ length: rows / 25 }, (_, i) => `peer-${i * 25}`).slice(3);
@@ -329,7 +323,7 @@ test("a pass reads the leases that are due by their index, so a store of 10,000 
       ["peer-0", "peer-25", "peer-50"],
     );
   }
-  const [fast, slow] = [best(small, listed(500)), best(large, listed(10_000))];
+  const [fast, slow] = await fastestInTurns(pass(small, listed(500)), pass(large, listed(10_000)));
   assert.ok(slow < fast * 4, `500 issues took ${fast.toFixed(2)} ms, 10,000 took ${slow.toFixed(2)} ms`);
   const passes = large.plans().filter(({ sql }) => sql.includes("lease_until <"));
   assert.equal(passes.length, 3, "the read of what is due, the renewal and the expiry");

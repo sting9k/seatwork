@@ -1,4 +1,5 @@
 import { ROOM_HOME, shipSql } from "./support/room";
+import { fastestInTurns } from "./support/timing";
 import assert from "node:assert/strict";
 import { execFileSync, spawn } from "node:child_process";
 import {
@@ -575,7 +576,7 @@ test("what stands in one issue's way is what the whole graph says of it, in any 
   assert.deepEqual([...kinds].sort(), ["", ":child-open", ":parent-blocked"], "every kind of blocker was tried");
 });
 
-test("what stands in an issue's way is read from its own corner of the graph: ten times the issues cost about the same", () => {
+test("what stands in an issue's way is read from its own corner of the graph: ten times the issues cost about the same", async () => {
   const stand = (count: number) => {
     const { store } = fresh();
     const made = store.createMany(
@@ -587,19 +588,10 @@ test("what stands in an issue's way is read from its own corner of the graph: te
       "lead",
     );
     return () => {
-      const started = performance.now();
       for (let i = 0; i < 30; i += 1) store.blockers(made[2].id);
-      return performance.now() - started;
     };
   };
-  const [small, large] = [stand(300), stand(3000)];
-  small();
-  large();
-  let [fastSmall, fastLarge] = [Infinity, Infinity];
-  for (let i = 0; i < 5; i += 1) {
-    fastSmall = Math.min(fastSmall, small());
-    fastLarge = Math.min(fastLarge, large());
-  }
+  const [fastSmall, fastLarge] = await fastestInTurns(stand(300), stand(3000), 5);
   assert.ok(
     fastLarge < Math.max(fastSmall, 1) * 4,
     `300 issues: ${fastSmall.toFixed(1)} ms, 3000 issues: ${fastLarge.toFixed(1)} ms`,

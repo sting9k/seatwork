@@ -1,4 +1,5 @@
 import { ROOM_HOME, shipSql } from "./support/room";
+import { fastestInTurns } from "./support/timing";
 import assert from "node:assert/strict";
 import { request } from "node:http";
 import { copyFileSync, mkdirSync, rmSync } from "node:fs";
@@ -36,18 +37,6 @@ const patchOf = (files: number): string =>
   ].join("\n");
 const applyPatch = (command: string) => ({ tool_name: "apply_patch", tool_input: { command }, cwd: PROJECT });
 
-/** Fastest of several runs of a call, in nanoseconds. */
-async function fastest(call: () => Promise<unknown>, runs = 7): Promise<number> {
-  await call();
-  const times: number[] = [];
-  for (let i = 0; i < runs; i += 1) {
-    const started = process.hrtime.bigint();
-    await call();
-    times.push(Number(process.hrtime.bigint() - started));
-  }
-  return Math.min(...times);
-}
-
 test("a patch of any number of files runs, the guard reading a fixed number of them", async () => {
   assert.equal((await answerHook(guard, "codex", applyPatch(patchOf(150)), seat)).text, "");
   assert.equal((await answerHook(guard, "codex", applyPatch(patchOf(100_000)), seat)).text, "");
@@ -59,10 +48,10 @@ test("what the guard costs for a patch does not grow with the number of files it
   const few = applyPatch(patchOf(1000));
   const many = applyPatch(patchOf(50_000));
   assert.ok(many.tool_input.command.length > 40 * few.tool_input.command.length);
-  const [small, large] = [
-    await fastest(() => answerHook(guard, "codex", few, seat)),
-    await fastest(() => answerHook(guard, "codex", many, seat)),
-  ];
+  const [small, large] = await fastestInTurns(
+    () => answerHook(guard, "codex", few, seat),
+    () => answerHook(guard, "codex", many, seat),
+  );
   // fifty times the files cost the patch read up to the cap, not a check per file
   assert.ok(large / small < 8, `50000 files cost ${(large / small).toFixed(1)} times 1000 files`);
 });

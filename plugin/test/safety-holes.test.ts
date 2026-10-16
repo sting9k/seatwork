@@ -1,4 +1,5 @@
 import { ROOM_HOME, shipSql } from "./support/room";
+import { fastestInTurns } from "./support/timing";
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { join } from "node:path";
@@ -445,23 +446,18 @@ test("long lists of commands and of branches cost in proportion to their length"
   const chain = (n: number) => Array.from({ length: n }, () => "true").join(" && ");
   const either = (n: number) => Array.from({ length: n }, (_, i) => `x=${i}`).join(" || ");
   const mixed = (n: number) => Array.from({ length: n }, () => "true && false || true").join("; ");
-  const once = async (line: string) => {
-    const started = process.hrtime.bigint();
-    await rules(line);
-    return Number(process.hrtime.bigint() - started);
-  };
-  // fastest of seven after a warm-up: a line four times longer may cost about four times as much, not sixteen
-  const fastest = async (line: string) => {
-    await once(line);
-    const runs: number[] = [];
-    for (let i = 0; i < 7; i += 1) runs.push(await once(line));
-    return Math.min(...runs);
-  };
-  // the best of three pairs: a loaded machine slows one pair, never every pair by the square of the length
+  // a line four times longer may cost about four times as much, not sixteen
   for (const make of [chain, either, mixed]) {
+    const [short, long] = [make(100), make(400)];
+    // the best of three rounds: a loaded machine slows one round, never every round by the square of the length
     let best = Infinity;
-    for (let pair = 0; pair < 3 && best >= 9; pair += 1)
-      best = Math.min(best, (await fastest(make(400))) / (await fastest(make(100))));
+    for (let round = 0; round < 3 && best >= 9; round += 1) {
+      const [small, large] = await fastestInTurns(
+        () => rules(short),
+        () => rules(long),
+      );
+      best = Math.min(best, large / small);
+    }
     assert.ok(best < 9, `${make.name}: four times the length cost ${best.toFixed(1)} times`);
   }
 });

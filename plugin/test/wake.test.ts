@@ -1,5 +1,6 @@
 import { hostOf, installRoom, MAIL_POLICY, PROJECT, shipSql } from "./support/room";
 import { fakeServer } from "./support/server";
+import { fastestInTurns } from "./support/timing";
 import assert from "node:assert/strict";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -819,58 +820,51 @@ test("a pass starts at most the set number of turns from one store, gone seats c
   for (const peer of peers) assert.equal(got(r, peer).length, 1, "each woken once");
 });
 
-test("the statements of wake-ups use their indexes, and a pass over a large store reads what is due, not what is pending", () => {
-  const dir = mkdtempSync(join(PROJECT, "wake-store-"));
-  let tick = START;
-  const store = new MailStore(dir, 2000, () => new Date((tick += 1000)));
-  const raw = new DatabaseSync(join(store.folder, "mail.db"));
-  const insert = raw.prepare("INSERT INTO wakeups (seat, by, at, due, note) VALUES (?, ?, ?, ?, 'n')");
-  let rows = 0;
-  const fill = (more: number) => {
+test("the statements of wake-ups use their indexes, and a pass over a large store reads what is due, not what is pending", async () => {
+  /** A store of `rows` pending wake-ups, one due each minute from five minutes after START. */
+  const filled = (rows: number) => {
+    let tick = START;
+    const store = new MailStore(mkdtempSync(join(PROJECT, "wake-store-")), 2000, () => new Date((tick += 1000)));
+    const raw = new DatabaseSync(join(store.folder, "mail.db"));
+    const insert = raw.prepare("INSERT INTO wakeups (seat, by, at, due, note) VALUES (?, ?, ?, ?, 'n')");
     raw.exec("BEGIN");
-    for (let i = 0; i < more; i += 1, rows += 1)
+    for (let row = 0; row < rows; row += 1)
       insert.run(
-        `seat-${rows % 2000}`,
-        `seat-${(rows + 1) % 2000}`,
+        `seat-${row % 2000}`,
+        `seat-${(row + 1) % 2000}`,
         new Date(START).toISOString(),
-        new Date(START + (rows + 5) * MINUTE).toISOString(),
+        new Date(START + (row + 5) * MINUTE).toISOString(),
       );
     raw.exec("COMMIT");
+    raw.close();
+    return store;
   };
-  fill(1000);
+  const [few, many] = [filled(1000), filled(10_000)];
   const now = new Date(START + 60 * MINUTE).toISOString();
-  store.dueWakeUps(now, config.wake.perPass);
-  store.wakeUpsOf("seat-7", 20);
-  store.wakeUp(5);
-  store.closeWakeUp(5, "canceled");
-  store.readdress("seat-8", "seat-9");
-  store.addWakeUp(
+  few.dueWakeUps(now, config.wake.perPass);
+  few.wakeUpsOf("seat-7", 20);
+  few.wakeUp(5);
+  few.closeWakeUp(5, "canceled");
+  few.readdress("seat-8", "seat-9");
+  few.addWakeUp(
     { seat: "seat-7", by: "seat-8", at: now, due: new Date(START + 99 * MINUTE).toISOString(), note: "n" },
     { own: 8, others: 8, setter: 4, sameWithinMs: 2 * MINUTE },
   );
   // the copy beside the database reads every pending wake-up, which the shares keep to a few hundred
-  const scans = store
+  const scans = few
     .plans()
     .filter(({ sql }) => sql.includes("wakeups") && !sql.endsWith("FROM wakeups ORDER BY id"))
     .filter(({ plan }) => /\bSCAN (wakeups|w)\b(?! USING)/.test(plan));
   assert.deepEqual(scans, []);
-  const fastest = (run: () => unknown, times = 9) => {
-    run();
-    let best = Infinity;
-    for (let i = 0; i < times; i += 1) {
-      const start = process.hrtime.bigint();
-      run();
-      best = Math.min(best, Number(process.hrtime.bigint() - start));
-    }
-    return best;
-  };
-  const small = fastest(() => store.dueWakeUps(now, config.wake.perPass));
-  fill(9000);
-  assert.equal(store.dueWakeUps(now, config.wake.perPass).length, config.wake.perPass);
-  const large = fastest(() => store.dueWakeUps(now, config.wake.perPass));
+  assert.equal(many.dueWakeUps(now, config.wake.perPass).length, config.wake.perPass);
+  const [small, large] = await fastestInTurns(
+    () => few.dueWakeUps(now, config.wake.perPass),
+    () => many.dueWakeUps(now, config.wake.perPass),
+    9,
+  );
   assert.ok(large < small * 4, `ten times the pending wake-ups took ${(large / small).toFixed(1)} times as long`);
-  raw.close();
-  store.close();
+  few.close();
+  many.close();
 });
 
 test("through the room: a seat sets a wake-up with the tool, and the room's own minute pass wakes it when the time comes", async (t) => {

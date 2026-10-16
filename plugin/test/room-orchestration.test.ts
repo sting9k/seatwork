@@ -15,6 +15,7 @@ import type { RoomContext } from "../server/room/context";
 import { Safety } from "../server/safety/index";
 import { WorkStore } from "../server/tasks/store";
 import { fakeServer } from "./support/server";
+import { fastestInTurns } from "./support/timing";
 import { projectFolder, roomSeats, type TestSeat } from "./room-seats";
 
 const paseoSide = fakeServer();
@@ -227,22 +228,12 @@ test("seatwork_seats lists the seats under a seat in tree order, each nested und
 
 const BIG = [10_000, 40_000];
 
-/** The fastest of a few runs: a loaded machine slows a run, never speeds one up. */
-function fastest(run: () => unknown, times = 7): number {
-  run();
-  let best = Infinity;
-  for (let i = 0; i < times; i += 1) {
-    const start = process.hrtime.bigint();
-    run();
-    best = Math.min(best, Number(process.hrtime.bigint() - start));
-  }
-  return best;
-}
-
-test("a final message of many empty or ruled lines is read in time that grows with its length", () => {
+test("a final message of many empty or ruled lines is read in time that grows with its length", async () => {
   for (const line of ["\n", "-\n", "1.\n"]) {
-    const [small, large] = BIG.map((lines) =>
-      fastest(() => parseHandoff(`${line.repeat(lines)}CURRENT TASK: x\nPROGRESS: y`)),
+    const [few, many] = BIG.map((lines) => `${line.repeat(lines)}CURRENT TASK: x\nPROGRESS: y`);
+    const [small, large] = await fastestInTurns(
+      () => parseHandoff(few),
+      () => parseHandoff(many),
     );
     assert.ok(
       large < small * 8,
@@ -251,8 +242,12 @@ test("a final message of many empty or ruled lines is read in time that grows wi
   }
 });
 
-test("a brief line of a label and many spaces is read in time that grows with its length", () => {
-  const [small, large] = BIG.map((n) => fastest(() => briefFields(`a${" ".repeat(n)}x`)));
+test("a brief line of a label and many spaces is read in time that grows with its length", async () => {
+  const [few, many] = BIG.map((n) => `a${" ".repeat(n)}x`);
+  const [small, large] = await fastestInTurns(
+    () => briefFields(few),
+    () => briefFields(many),
+  );
   assert.ok(large < small * 8, `4 times the spaces took ${(large / small).toFixed(1)} times as long`);
 });
 

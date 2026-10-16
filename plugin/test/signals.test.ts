@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { asksOwner, priorityOf, signalOf, subjectOpening, subjectSignal } from "../server/signals";
+import { fastestInTurns } from "./support/timing";
 
 test("a final message is read for the signal it opens with, and for what it leaves to its Owner", () => {
   assert.equal(signalOf("\n\n  CANDIDATE: the index is in"), "CANDIDATE");
@@ -23,20 +24,13 @@ test("a subject opens with a signal of the room, or with none", () => {
   assert.equal(priorityOf("FYI: moved", "reply", false), "action");
 });
 
-test("reading a final message takes time in proportion to its length, however many blank lines it holds", () => {
-  const once = (lines: number) => {
-    const text = `STATUS\n${" \n".repeat(lines)}x`;
-    const started = performance.now();
-    asksOwner(text);
-    return performance.now() - started;
-  };
-  // taken in turns, the fastest of each: a busy machine slows one reading, not the ratio
-  once(2000);
-  let [fastSmall, fastLarge] = [Infinity, Infinity];
-  for (let i = 0; i < 5; i += 1) {
-    fastSmall = Math.min(fastSmall, once(8000));
-    fastLarge = Math.min(fastLarge, once(32_000));
-  }
+test("reading a final message takes time in proportion to its length, however many blank lines it holds", async () => {
+  const [few, many] = [8000, 32_000].map((lines) => `STATUS\n${" \n".repeat(lines)}x`);
+  const [fastSmall, fastLarge] = await fastestInTurns(
+    () => asksOwner(few),
+    () => asksOwner(many),
+    5,
+  );
   assert.ok(
     fastLarge < Math.max(fastSmall, 1) * 10,
     `8000 lines: ${fastSmall.toFixed(1)} ms, 32000 lines: ${fastLarge.toFixed(1)} ms`,

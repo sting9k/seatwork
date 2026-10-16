@@ -167,10 +167,10 @@ function claimOf(entries: readonly RegistryEntry[], name: string, path: string):
   return { known };
 }
 
-/** Registers a project the app knows (marker, mission, own table, registry line), repeatably; the registry is read and written in one step, so projects registered at once all stay. */
+/** Registers a project the app knows (marker, mission, law, own table, registry line), repeatably; the registry is read and written in one step, so projects registered at once all stay. */
 export async function registerProject(
   list: ProjectList,
-  args: { path: string; name?: string; mission?: string; models?: unknown },
+  args: { path: string; name?: string; mission?: string; law?: string; models?: unknown },
   setUpSeats: (providers: string[]) => Promise<void>,
 ): Promise<string> {
   const wanted = realOrSelf(args.path.trim());
@@ -187,14 +187,14 @@ export async function registerProject(
   if (!existsSync(join(seatwork, "room.json"))) writeMarker(project.path, {});
   const mission = args.mission?.trim();
   if (mission) writeFileSync(join(seatwork, "mission.md"), `${mission}\n`);
+  const law = args.law?.trim();
+  if (law) writeFileSync(join(seatwork, `${name}-law.md`), `${law}\n`);
   const raw = readRegistryFile();
   const { known } = claimOf(registryEntries(raw), name, project.path);
   if (!known) writeRegistryFile({ ...raw, projects: [...registryEntries(raw), { name, cwd: project.path }] });
   const missing = [
     existsSync(join(seatwork, "mission.md")) ? null : "mission (.seatwork/mission.md)",
-    readLaw(project.path, name)
-      ? null
-      : `law (.seatwork/${name}-law.md, written by the project's top seat on its first task)`,
+    readLaw(project.path, name) ? null : `law (.seatwork/${name}-law.md: give \`law\`)`,
   ].filter(Boolean);
   const seats = added.length ? ` Seats set up for this table: ${added.join(", ")}.` : "";
   return `${known ? "already registered" : "registered"}: ${name} at ${project.path}. ${modelsLine(project.path)}.${seats} ${missing.length ? `Still missing: ${missing.join("; ")}.` : "Mission and law are in place."}`;

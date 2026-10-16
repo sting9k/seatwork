@@ -13,7 +13,7 @@ import {
 } from "../orchestration/models";
 import { checkPlacement, findProject, findRoomMarker, loadRegistry, projectBlock } from "../orchestration/registry";
 import { claudeRoleDir, ensureRuntime, roleSkillNames, sharedClaudeFiles } from "../orchestration/runtimes";
-import { enabledSeats, parseSeat, rolePrompt } from "../orchestration/seats";
+import { enabledSeats, knownSpecs, parseSeat, rolePrompt } from "../orchestration/seats";
 import { SAFETY_DIR } from "../paths";
 import type { RuntimePolicy } from "../policy";
 import type { SeatRecord } from "../coordination/engine";
@@ -116,6 +116,10 @@ export async function launch(
   const project = projectAt(request.cwd, seat.role, seat.provider);
   const { models, own } = tableOf(project);
   const spec = specFromTitle(request.title) ?? request.spec;
+  if (spec && !knownSpecs().includes(spec))
+    throw new Error(
+      `seatwork: no specialization "${spec}". The room has: ${knownSpecs().join(", ") || "none"}. Create the seat again with one of these, or none.`,
+    );
   const fit = fitSeat(models, seat.role, seat.provider, request.model);
   if (!fit.ok) {
     const table = own ? `project ${project!.name} lists` : "the room's table lists";

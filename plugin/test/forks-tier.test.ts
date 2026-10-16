@@ -9,9 +9,7 @@ import { parseHandoff, rotate } from "../server/orchestration/rotation";
 import { loadPolicy } from "../server/policy";
 import { fitAt, launch, stepUpAt } from "../server/room/launch";
 
-before(() =>
-  installRoom(["claude-hq", "claude-supervisor", "claude-lead", "claude-peer", "codex-peer", "claude-lens"]),
-);
+before(() => installRoom(["claude-hq", "claude-supervisor", "claude-lead", "claude-peer", "codex-peer"]));
 
 const seat = { provider: "claude-lead/opus", thinking: "high" };
 const tier = (providers: string[], use: string | null) => ({ providers, thinking: "high", use, never: "—" });
@@ -85,7 +83,7 @@ test("a seat created with no model starts on the picked tier; one that names a m
   const { forks } = forksWith(cheap.router, ["tier"]);
   const picked = await launch(request, policy, log, forks);
   assert.equal(picked.model?.id, "claude-sonnet-5-5");
-  assert.deepEqual(cheap.asked[0].labels, ["cheap", "default"]);
+  assert.deepEqual(cheap.asked[0].labels, ["cheap", "default", "extra"]);
 
   const named = await launch({ ...request, model: "claude-haiku-5-5" }, policy, log, forks);
   assert.equal(named.model, undefined, "a model the table lists and the creator named is left as asked");
@@ -97,7 +95,8 @@ test("a seat created with no model starts on the picked tier; one that names a m
 
 test("a task sent back twice starts its successor a tier up where the table lists one; once is not enough", async () => {
   assert.equal(stepUpAt(PROJECT, "peer", "claude-peer", "claude-haiku-5-5"), "claude-sonnet-5-5");
-  assert.equal(stepUpAt(PROJECT, "peer", "claude-peer", "claude-sonnet-5-5"), undefined);
+  assert.equal(stepUpAt(PROJECT, "peer", "claude-peer", "claude-sonnet-5-5"), "claude-opus-5-5");
+  assert.equal(stepUpAt(PROJECT, "peer", "claude-peer", "claude-opus-5-5"), undefined);
 
   const made: { model?: string }[] = [];
   const old: SeatRecord = {
@@ -133,17 +132,17 @@ test("a task sent back twice starts its successor a tier up where the table list
 
   const sameTier = await rotate(on("claude-haiku-5-5"), old, handoff, [], 1);
   const higher = await rotate(on("claude-haiku-5-5"), old, handoff, [], 2);
-  const top = await rotate(on("claude-sonnet-5-5"), old, handoff, [], 3);
+  const top = await rotate(on("claude-opus-5-5"), old, handoff, [], 3);
   assert.deepEqual(
     [sameTier, higher, top].map((one) => [one.model, one.raised]),
     [
       ["claude-haiku-5-5", false],
       ["claude-sonnet-5-5", true],
-      ["claude-sonnet-5-5", false],
+      ["claude-opus-5-5", false],
     ],
   );
   assert.deepEqual(
     made.map((input) => input.model),
-    ["claude-haiku-5-5", "claude-sonnet-5-5", "claude-sonnet-5-5"],
+    ["claude-haiku-5-5", "claude-sonnet-5-5", "claude-opus-5-5"],
   );
 });

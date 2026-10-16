@@ -149,7 +149,15 @@ test("a Claude seat's skill folder holds the role's skills as they are named now
   symlinkSync(join(skills, "..", "no-such-skill"), join(skills, "seatwork-hard-cut"));
   ensureRuntime({ harness: "claude", role: "peer" }, loadPolicy());
   assert.deepEqual(readdirSync(skills).sort(), roleSkillNames("peer"));
-  assert.ok(existsSync(join(skills, "hard-cut", "SKILL.md")));
+  assert.ok(existsSync(join(skills, "test-audit", "SKILL.md")));
+});
+
+test("a skill several roles share is given to each role the room's map names, and to no other", () => {
+  for (const role of ["lead", "peer"]) ensureRuntime({ harness: "claude", role }, loadPolicy());
+  const skills = (role: string) => readdirSync(join(claudeRoleDir(role), ".claude", "skills")).sort();
+  assert.deepEqual(skills("lead"), ["lenses", "seat-law"]);
+  assert.ok(existsSync(join(claudeRoleDir("lead"), ".claude", "skills", "seat-law", "SKILL.md")));
+  assert.ok(!skills("peer").includes("seat-law"));
 });
 
 test("a seat's home holds the guard's hook when the guard is on: Codex's hooks.json with its trust, Pi's extension, OpenCode's plugin", () => {

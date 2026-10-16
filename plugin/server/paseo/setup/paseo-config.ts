@@ -1,13 +1,13 @@
 import { copyFileSync, chmodSync, existsSync, readFileSync, realpathSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { PaseoApi } from "../api";
-import { parseSeat } from "../../orchestration/seats";
+import { isRoomProvider } from "../../orchestration/seats";
 import type { RoomPlan } from "./plan";
 import { stamp } from "./room-home";
 
 /** Whether a profile is the room's own, by the id prefixes the room has written. */
 const isOwnProfile = (id: string) => id.startsWith("agent_profile_seatwork_") || id.startsWith("agent_profile_slp_");
-const isRoomSeat = (id: string) => parseSeat(id) !== null;
+const isRoomSeat = isRoomProvider;
 const NO_BUNDLED_SKILLS = { mode: "custom", skills: [] as string[] };
 
 type Json = Record<string, any>;

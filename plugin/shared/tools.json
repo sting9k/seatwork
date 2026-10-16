@@ -139,7 +139,7 @@
     },
     "seatwork_register_project": {
       "callers": "room",
-      "description": "Register a project Paseo already has: writes its room marker and registry line, and its mission and model table when given; a seat the table names that the room lacks is set up first. Call again with `mission` or `models` to replace them. Refused for seats that do not keep the registry.",
+      "description": "Register a project Paseo already has: writes its room marker and registry line, and its mission, law and model table when given; a seat the table names that the room lacks is set up first. Call again with `mission`, `law` or `models` to replace them. Refused for seats that do not keep the registry.",
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -154,6 +154,10 @@
           "mission": {
             "type": "string",
             "description": "What the project is for and what done looks like, a few lines of markdown."
+          },
+          "law": {
+            "type": "string",
+            "description": "The project's law, markdown: commits and pushes, compatibility, review depth, what needs a person, the test command, areas not to touch."
           },
           "models": {
             "type": "object",

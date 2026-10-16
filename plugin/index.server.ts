@@ -22,7 +22,7 @@ import { roomStatus, roomWaiting } from "./shared/room";
 import { roomSettings, setupInit, setupProject, setupRemove, setupState } from "./shared/setup";
 import { ROOM_PROJECT } from "./shared/workflow";
 
-const VERSION = "0.29.0";
+const VERSION = "0.30.0";
 const PLUGIN_ID = "seatwork";
 
 /** Seatwork on Paseo: the setup screen first; the room once it is set up. */

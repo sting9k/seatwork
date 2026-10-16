@@ -324,6 +324,7 @@ export function registerTools(room: RoomContext, mcp: McpHttpServer): void {
         path: String(args.path ?? ""),
         name: args.name ? String(args.name) : undefined,
         mission: args.mission ? String(args.mission) : undefined,
+        law: args.law ? String(args.law) : undefined,
         models: args.models ?? undefined,
       },
       room.addSeats,

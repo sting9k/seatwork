@@ -22,16 +22,7 @@ const output = { log: console.log, error: console.error };
 let dispose: () => Promise<void>;
 
 before(() => {
-  installRoom([
-    "claude-hq",
-    "claude-supervisor",
-    "claude-lead",
-    "claude-peer",
-    "pi-peer",
-    "codex-peer",
-    "codex-lens",
-    "claude-lens",
-  ]);
+  installRoom(["claude-hq", "claude-supervisor", "claude-lead", "claude-peer", "pi-peer", "codex-peer"]);
   chmodSync(ROOM_HOME, 0o755); // as a room home made under the usual umask
   // this room's owner gave the Peer one more model, on Pi
   const table = join(ROOM_HOME, "room", "models.json");
@@ -126,8 +117,8 @@ test("a new seat is held to the model table in force, whatever its creator's pro
   assert.deepEqual(await onto("claude-lead", "claude-opus-5-5"), ["claude-opus-5-5", "low"]);
   assert.deepEqual(await onto("claude-peer", "claude-sonnet-5-5"), ["claude-sonnet-5-5", "low"]);
   await assert.rejects(
-    create("claude-peer", "claude-opus-5-5"),
-    /claude-peer\/claude-opus-5-5 refused: the room's table lists for peer only claude-peer\/claude-haiku-5-5, .*Create the seat again/,
+    create("claude-peer", "claude-opus-4-8"),
+    /claude-peer\/claude-opus-4-8 refused: the room's table lists for peer only claude-peer\/claude-haiku-5-5, .*Create the seat again/,
   );
 
   // a project with a table of its own: its differences decide there, and only there
@@ -730,13 +721,16 @@ test("a Supervisor's prompt names no path of the room's own files", async () => 
 });
 
 test("a project seat is told which of its own skills the project law names", () => {
-  const law = "## Policy\n- Compatibility: hard cut, one live contract (`hard-cut` applies)";
+  const law = "## Policy\n- Tests: proof a regression would break (`test-audit` applies)";
   const block = (role: string) => projectBlock("demo", PROJECT, null, law, roleSkillNames(role));
-  assert.match(block("peer"), /Skills of your seat this law names: `hard-cut`\. Load each before your first edit\.$/);
+  assert.match(block("peer"), /Skills of your seat this law names: `test-audit`\. Load each before your first edit\.$/);
   // the law names a Peer's skill: a Lead has none of that name
   assert.doesNotMatch(block("lead"), /Skills of your seat/);
   // a plain word names nothing
-  assert.doesNotMatch(projectBlock("demo", PROJECT, null, "- Review lane: one lens", ["lens"]), /Skills of your seat/);
+  assert.doesNotMatch(
+    projectBlock("demo", PROJECT, null, "- Review lane: two lenses", ["lenses"]),
+    /Skills of your seat/,
+  );
 });
 
 test("a mail whose subject opens with no signal of the room is not sent; one too long to show whole is cut where its file takes over", async () => {
@@ -770,8 +764,8 @@ test("a seat's prompt opens with its agent CLI's system prompt, filled in, and a
   assert.match(shared(peer.prompt), /^# The room\n[\s\S]*\n## This runtime: Claude Code\n/);
   assert.equal(shared(lead.prompt), shared(peer.prompt));
   assert.match(peer.prompt, /\n\n---\n\n# Seat: peer \(specialization: review\)\n\n# Peer\n/);
-  // the body limit is the policy's number, filled in
-  assert.match(shared(peer.prompt), /stays under 6,000 characters/);
+  // the room's law is every seat's
+  assert.match(shared(peer.prompt), /\n## The law\n[\s\S]*\n13\. \*\*Accept on a run, not a report\.\*\*/);
   assert.doesNotMatch(peer.prompt, /\bHQ\b|\bHuman\b|\{\{/);
   // the other CLIs' system prompts render the same way, each naming its own runtime
   for (const harness of ["codex", "pi", "opencode"] as const) {
@@ -802,7 +796,7 @@ test("a task's rounds are counted by what happened: a revised brief that answers
   assert.match(lead.inbox.at(-1)!, /\[room\] Candidate 3 of this task: 2 rejections .* your Owner's call/);
   assert.match(
     await sendsBack("REVISED BRIEF (abc3 not accepted) round 4"),
-    /^\{"sent":\d+,"to":\["peer peer-rounds"\].*"note":"This is rejection 3 of this Peer's task since its last ACCEPT: .*accept-candidate, step 5.*DECISION_NEEDED/,
+    /^\{"sent":\d+,"to":\["peer peer-rounds"\].*"note":"This is rejection 3 of this Peer's task since its last ACCEPT: .*your Owner's call.*DECISION_NEEDED/,
   );
   // an ACCEPT closes the task: the next one starts at no rejection
   await handsIn(peer, "CANDIDATE abc4\nfourth try");
@@ -830,7 +824,7 @@ test("a seat whose context has grown past the rotation line is named to the seat
   );
   holds(lead, 346_000);
   await turnEnds(lead, "DECISION_NEEDED\nthe limit or the proof");
-  assert.match(supervisor.inbox.at(-1)!, /\[room\] This Lead holds 346K tokens of context .*lead-handoff/);
+  assert.match(supervisor.inbox.at(-1)!, /\[room\] This Lead holds 346K tokens of context .*seatwork_rotate/);
 });
 
 test("a STOP from above ends the running turn of its seat and of every seat at work under it; it goes down only", async () => {
@@ -903,7 +897,7 @@ test("seatwork_seats shows an orchestrating seat every open seat under it: its s
 
 test("the reviewers a Lead launched in one turn report together: the Lead is woken once, by the last of them", async () => {
   const lead = await seat("lead-gate", "claude-lead", null, "[Lead] stream");
-  const lens = await seat("lens-gate", "codex-lens", lead.agent.id, "[Lens] abc1: correctness");
+  const lens = await seat("lens-gate", "codex-peer", lead.agent.id, "[Peer:search] abc1: correctness");
   const review = await seat("peer-gate-r", "claude-peer", lead.agent.id, "[Peer:review] abc1");
   const scout = await seat("peer-gate-s", "claude-peer", lead.agent.id, "[Peer] scout-01 closure");
   const writer = await seat("peer-gate-w", "claude-peer", lead.agent.id, "[Peer] store");
@@ -915,7 +909,7 @@ test("the reviewers a Lead launched in one turn report together: the Lead is wok
   assert.equal(mails(lead.inbox[0]), 3);
   assert.match(
     lead.inbox[0],
-    /subject="REVIEW from lens [^"]*"[^>]*note="[^"]*; held for the 2 others of its review round">\n/,
+    /subject="REVIEW from peer \[Peer:search\] abc1: correctness"[^>]*note="[^"]*; held for the 2 others of its review round">\n/,
   );
   assert.match(
     lead.inbox[0],
@@ -929,13 +923,13 @@ test("the reviewers a Lead launched in one turn report together: the Lead is wok
 
 test("a reviewer archived before its report holds its round back no longer", async () => {
   const lead = await seat("lead-gate2", "claude-lead", null, "[Lead] stream");
-  const first = await seat("lens-gate2-a", "codex-lens", lead.agent.id, "[Lens] abc1: correctness");
-  const second = await seat("lens-gate2-b", "claude-lens", lead.agent.id, "[Lens] abc1: compatibility");
+  const first = await seat("lens-gate2-a", "codex-peer", lead.agent.id, "[Peer:review] abc1: correctness");
+  const second = await seat("lens-gate2-b", "claude-peer", lead.agent.id, "[Peer:review] abc1: compatibility");
   await turnEnds(first, "REVIEW\nACCEPTABLE");
   assert.equal(lead.inbox.length, 0);
   await call("on agent.archived", { agent: second.agent, archivedAt: new Date().toISOString() }, context);
   assert.equal(lead.inbox.length, 1);
-  assert.match(lead.inbox[0], /subject="REVIEW from lens \[Lens\] abc1: correctness/);
+  assert.match(lead.inbox[0], /subject="REVIEW from peer \[Peer:review\] abc1: correctness/);
 });
 
 test("a turn that fails on the model service is not reported: the room resumes the seat, and tells the Owner when its tries are used or the account is refused", async () => {

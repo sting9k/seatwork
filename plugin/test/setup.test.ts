@@ -162,19 +162,18 @@ test("a role's seat and profile follow the model this machine chose for it", asy
   ]);
 });
 
-test("the screen's choices become the table the room runs on: one model for a seat, several named ones for a Peer or a Lens", async () => {
+test("the screen's choices become the table the room runs on: one model for a seat, several named ones for a Peer", async () => {
   const room = roomModels(PLUGIN_DIR) as unknown as Table;
   let choices = chooseSeat({}, "lead", { harness: "pi", model: "vendor/m-1", thinking: "low" });
   choices = chooseTier(choices, "peer", "cheap", { harness: "pi", model: "m-one", thinking: "" }); // a model of the room's table, changed
   choices = chooseTier(
     choices,
     "peer",
-    "extra",
+    "long",
     { harness: "opencode", model: "vendor/m-two", thinking: "" },
     "the long jobs",
   ); // one more
   choices = dropTier(choices, room, "peer", "cross-family"); // one of the room's own, taken out
-  choices = chooseTier(choices, "lens", "high", { harness: "pi", model: "m-one", thinking: "high" });
 
   const { models, providers } = await plan({ models: choices });
   const table = models as unknown as Table;
@@ -185,17 +184,15 @@ test("the screen's choices become the table the room runs on: one model for a se
     [
       ["cheap", "pi", "m-one", tierUse(room, "peer", "cheap")],
       ["default", "claude", "claude-sonnet-5-5", tierUse(room, "peer", "default")],
-      ["extra", "opencode", "vendor/m-two", "the long jobs"],
+      ["high", "codex", "gpt-6-astra", tierUse(room, "peer", "high")],
+      ["extra", "claude", "claude-opus-5-5", tierUse(room, "peer", "extra")],
+      ["long", "opencode", "vendor/m-two", "the long jobs"],
     ],
   );
-  assert.deepEqual(
-    tierChoices(table, "lens").find((tier) => tier.label === "high"),
-    { label: "high", use: tierUse(room, "lens", "high"), more: 0, harness: "pi", model: "m-one", thinking: "high" },
-  );
   // choosing a model for a role is what sets its seat up
-  for (const seat of ["pi-lead", "pi-peer", "opencode-peer", "pi-lens"]) assert.ok(seat in providers, seat);
+  for (const seat of ["pi-lead", "pi-peer", "opencode-peer"]) assert.ok(seat in providers, seat);
   // a model the choices added leaves them whole; one of the room's own stays out
-  assert.deepEqual(dropTier(choices, room, "peer", "extra").peer, {
+  assert.deepEqual(dropTier(choices, room, "peer", "long").peer, {
     tiers: { cheap: (choices.peer as { tiers: Record<string, unknown> }).tiers.cheap, "cross-family": null },
   });
 });
@@ -217,7 +214,7 @@ test("what applying would change is named model by model: changed, added, taken 
   choices = chooseTier(
     choices,
     "peer",
-    "extra",
+    "long",
     { harness: "claude", model: "claude-opus-5-5", thinking: "high" },
     "the long jobs",
   );
@@ -230,11 +227,12 @@ test("what applying would change is named model by model: changed, added, taken 
     [
       ["cheap", "changed"],
       ["default", "same"],
-      ["extra", "added"],
+      ["high", "same"],
+      ["extra", "same"],
+      ["long", "added"],
       ["cross-family", "removed"],
     ],
   );
-  assert.ok(tierDiff(room, next, "lens").every((tier) => tier.change === "same"));
   // a daemon with no room yet has nothing to compare with: nothing waits
   assert.deepEqual(
     [seatChanged(null, next, "lead"), tierDiff(null, next, "peer").some((tier) => tier.change !== "same")],

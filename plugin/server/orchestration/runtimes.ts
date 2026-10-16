@@ -151,16 +151,33 @@ function installRoleSkills(runtime: string, seat: Pick<Seat, "harness" | "role">
     const link = join(target, name);
     if (lstatSync(link).isSymbolicLink() && !existsSync(link)) unlinkSync(link);
   }
-  for (const name of roleSkillNames(role)) share(target, source, name);
+  for (const name of ownSkills(role)) share(target, source, name);
+  for (const name of sharedSkills(role)) share(target, join(ROOM_DIR, "skills", "shared"), name);
 }
 
-/** The names of the skills the room gives a role. */
+/** The skills in a folder of the room's skills: each a folder holding a SKILL.md. */
+function skillsIn(dir: string): string[] {
+  if (!existsSync(dir)) return [];
+  return readdirSync(dir).filter((name) => existsSync(join(dir, name, "SKILL.md")));
+}
+
+/** A role's own skills, in its folder. */
+const ownSkills = (role: string): string[] => skillsIn(join(ROOM_DIR, "skills", role));
+
+/** The skills of `skills/shared` that `skills/shared.json` gives a role. */
+function sharedSkills(role: string): string[] {
+  const map = join(ROOM_DIR, "skills", "shared.json");
+  if (!existsSync(map)) return [];
+  const roles = readJsonObject(map);
+  return skillsIn(join(ROOM_DIR, "skills", "shared")).filter((name) => {
+    const given = roles[name];
+    return Array.isArray(given) && given.includes(role);
+  });
+}
+
+/** The names of the skills the room gives a role: its own and the shared ones it is given. */
 export function roleSkillNames(role: string): string[] {
-  const source = join(ROOM_DIR, "skills", role);
-  if (!existsSync(source)) return [];
-  return readdirSync(source)
-    .filter((name) => existsSync(join(source, name, "SKILL.md")))
-    .sort();
+  return [...new Set([...ownSkills(role), ...sharedSkills(role)])].sort();
 }
 
 /** The home of a Codex, Pi or OpenCode seat; a Claude seat has none. */

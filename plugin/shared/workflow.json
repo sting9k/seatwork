@@ -19,7 +19,7 @@
       "profile": "Supervisor",
       "icon": "Compass",
       "count": "one per project",
-      "job": "Your counterpart in a project: it splits the work and reports to you. It runs on one model.",
+      "job": "Your counterpart in a project: it hands your requests to Leads, watches how the room works and proposes the smallest correction. It runs on one model.",
       "models": "one",
       "decides": ["project"]
     },
@@ -28,56 +28,38 @@
       "profile": "Lead",
       "icon": "Flag",
       "count": "one per workstream",
-      "job": "Runs one workstream: plans, briefs Peers, accepts or rejects their results. It runs on one model.",
+      "job": "Owns one request's outcome: plans it, briefs Peers, accepts or rejects their results. It runs on one model.",
       "models": "one",
       "progress": true,
       "briefs": true,
-      "rotate": "This Lead {{held}}. Hand its workstream to a successor at its next quiet point (lead-handoff)."
+      "rotate": "This Lead {{held}}. Rotate it with seatwork_rotate at its next quiet point."
     },
     "peer": {
       "label": "Peer",
       "profile": "Peer",
       "icon": "Hammer",
       "count": "one per task",
-      "job": "One role, several models. The Lead reads each name and what it is for, and picks one per task.",
+      "job": "One role, several models, and a spec for the kind of work (search, scout, review, arch). The Lead picks the model and spec per task.",
       "models": "tiers",
       "briefed": true,
       "writes": true,
       "rotate": "This Peer {{held}}. Its next task, or its next repair, goes to a new Peer."
-    },
-    "lens": {
-      "label": "Lens",
-      "profile": "Lens",
-      "icon": "Eye",
-      "count": "one per hard question",
-      "job": "One role, several models. The Lead picks by the question; two lenses are always two different models.",
-      "models": "tiers",
-      "reviews": true,
-      "tableNote": {
-        "one": "The table has one lens model: open one lens.",
-        "several": "Two lenses are two different models, always. More lenses: another model for each while the table has one; after that a model sits twice only on two different angles."
-      }
     }
   },
   "$comment_vars": "Prompt placeholders beyond {{<role>_provider}}, {{<role>_thinking}}, {{<role>_alternatives}}, {{<role>_table}}: the providers of a role's tiers except the tiers named.",
-  "vars": {
-    "research_providers": {
-      "role": "peer",
-      "except": ["cheap"]
-    }
-  },
+  "vars": {},
   "$comment_reviewers": "A seat of another role reviews too when its spec is one of `specs` or its title matches `titles`. stall: the params entry for how long a review round waits for its last reviewer.",
   "reviewers": {
-    "specs": ["review", "research"],
+    "specs": ["search", "scout", "review"],
     "titles": "\\bscout-\\d+",
     "stall": "reviewStallMinutes"
   },
   "$comment_notes": "The room's own lines. {{rejected}}: rejections since the task's last ACCEPT; {{candidate}}: this candidate's number; {{role}}: the sender's role.",
   "notes": {
-    "secondCandidate": "Second candidate of this task: one rejection since its last ACCEPT. Should this one fail too, the repair goes to a new Peer with a fresh context (its brief: the defects as failing tests, this candidate's sha, what was tried), and a defect of a kind the first review did not report puts the design in question: `lens` on the design, or DECISION_NEEDED, before a writer continues.",
-    "lastCandidate": "Candidate {{candidate}} of this task: {{rejected}} rejections since its last ACCEPT. One more rejection is your Owner's call (accept-candidate, step 5): DECISION_NEEDED with what each round found and what one more costs.",
+    "secondCandidate": "Second candidate of this task: one rejection since its last ACCEPT. Should this one fail too, the repair goes to a new Peer with a fresh context (its brief: the defects as failing tests, this candidate's sha, what was tried), and a defect of a kind the first review did not report puts the design in question: `lenses` on the design, or DECISION_NEEDED, before a writer continues.",
+    "lastCandidate": "Candidate {{candidate}} of this task: {{rejected}} rejections since its last ACCEPT. One more rejection is your Owner's call: DECISION_NEEDED with what each round found and what one more costs.",
     "upClosed": "nothing travels up from a {{role}}: the Owner reads your final message and .seatwork/status.md (WAITING ON YOU rows); write there",
-    "pastLastRound": "This is rejection {{rejected}} of this Peer's task since its last ACCEPT: a round past the second is your Owner's call (accept-candidate, step 5). Unless the Owner gave you this round, report DECISION_NEEDED with what each round found and what one more costs; the task holds meanwhile."
+    "pastLastRound": "This is rejection {{rejected}} of this Peer's task since its last ACCEPT: a round past the second is your Owner's call. Unless the Owner gave you this round, report DECISION_NEEDED with what each round found and what one more costs; the task holds meanwhile."
   },
   "$comment_routes": "Who may mail whom, \"<sender>><recipient>\": a check against mistakes, no security boundary. Off from a seat to its parent: nothing travels up that way, the parent looks.",
   "routes": {
@@ -94,22 +76,15 @@
     "lead>lead": false,
     "peer>peer": false,
     "supervisor>supervisor": false,
-    "hq>hq": false,
-    "lead>lens": true,
-    "lens>lead": true,
-    "supervisor>lens": false,
-    "lens>supervisor": false,
-    "hq>lens": false,
-    "peer>lens": false,
-    "lens>peer": false,
-    "lens>lens": false
+    "hq>hq": false
   },
+  "$comment_retired": "Roles the room had and no longer has: their seats' providers are taken out of Paseo when the room is set up again.",
+  "retired": ["lens"],
   "$comment_spawn": "Who may create whom: role, or role:spec for that spec only. A seat created outside it is archived and its parent told. A role that creates seats owns them.",
   "spawn": {
     "hq": ["supervisor"],
-    "supervisor": ["lead", "peer:research"],
-    "lead": ["peer", "lens"],
-    "peer": [],
-    "lens": []
+    "supervisor": ["lead", "peer:search"],
+    "lead": ["peer"],
+    "peer": []
   }
 }

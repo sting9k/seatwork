@@ -89,12 +89,11 @@
         "list_pending_permissions",
         "respond_to_permission"
       ],
-      "peer": ["get_agent_status", "get_agent_activity", "list_agents"],
-      "lens": []
+      "peer": ["get_agent_status", "get_agent_activity", "list_agents"]
     }
   },
   "claude": {
-    "$comment": "Claude Code's permission syntax. A tool sits in one named set; a role is denied the sets it lists, in that order. paseoShell: Paseo from the shell; HQ and the Supervisor may read and lose only the commands that act (paseoShellActs). ownOrchestration: Claude's own scheduling, messaging, teams and task list. ownDialogs: what Claude Code opens toward its own user or keeps for itself; behind its question dialog a seat stays in its turn and the room hears nothing, so a seat asks in its final message or by mail. edits: a Lens reads and runs, never writes.",
+    "$comment": "Claude Code's permission syntax. A tool sits in one named set; a role is denied the sets it lists, in that order. paseoShell: Paseo from the shell; HQ and the Supervisor may read and lose only the commands that act (paseoShellActs). ownOrchestration: Claude's own scheduling, messaging, teams and task list. ownDialogs: what Claude Code opens toward its own user or keeps for itself; behind its question dialog a seat stays in its turn and the room hears nothing, so a seat asks in its final message or by mail.",
     "disallowedTools": {
       "sets": {
         "subAgents": ["Agent", "Task"],
@@ -134,15 +133,13 @@
           "ExitWorktree",
           "PushNotification",
           "DesignSync"
-        ],
-        "edits": ["Edit", "Write", "MultiEdit", "NotebookEdit"]
+        ]
       },
       "roles": {
         "hq": ["subAgents", "nestedHarness", "paseoShellActs", "ownOrchestration", "ownDialogs"],
         "supervisor": ["subAgents", "nestedHarness", "paseoShellActs", "ownOrchestration", "ownDialogs"],
         "lead": ["subAgents", "nestedHarness", "paseoShell", "ownOrchestration", "ownDialogs"],
-        "peer": ["subAgents", "nestedHarness", "paseoShell", "ownOrchestration", "ownDialogs"],
-        "lens": ["subAgents", "nestedHarness", "paseoShell", "ownOrchestration", "ownDialogs", "edits"]
+        "peer": ["subAgents", "nestedHarness", "paseoShell", "ownOrchestration", "ownDialogs"]
       }
     },
     "launch": {
@@ -264,7 +261,7 @@
     "bundledSkills": "none"
   },
   "mail": {
-    "$comment": "The room's MCP server (seatwork_mail, seatwork_inbox) and delivery rules. A project's mail is kept in <project>/.seatwork/.mail/: mail.db, a file per mail, a file per thread; mail of a seat in no project is kept in the room home. Seats never use send_agent_prompt; the plugin delivers each mail and interrupts only for a STOP order. A CANDIDATE, REVIEW or DONE to a parent waits for the sender's turn end and is its one report. Starting no turn, read with the next mail: an ACK; a copy (cc); a mail to the team; a DONE repeated after mail that asked nothing; a Lead's STATUS after its first (only the newest waits); a HOLD or NOTED asking nothing of a Peer under review; the bounce of a mail that asked nothing. gatherReviews: the read-only seats one Owner turn launches (Lens, review and research Peers, scouts) are one round: their REVIEWs wait for the last one, or room.params.reviewStallMinutes, and reach the Owner in one turn. quietChars: how much of a mail that starts no turn is shown; the rest is in its file. dedupeSeconds: the same text from the same sender within this long is one mail. keepDays (optional): finished mail older than this is cleared by GC; without it, as long as logs are kept. expireUnreadDays (optional): mail that asked nothing and started no turn, still unread after this long, is withdrawn as expired; an ask never is.",
+    "$comment": "The room's MCP server (seatwork_mail, seatwork_inbox) and delivery rules. A project's mail is kept in <project>/.seatwork/.mail/: mail.db, a file per mail, a file per thread; mail of a seat in no project is kept in the room home. Seats never use send_agent_prompt; the plugin delivers each mail and interrupts only for a STOP order. A CANDIDATE, REVIEW or DONE to a parent waits for the sender's turn end and is its one report. Starting no turn, read with the next mail: an ACK; a copy (cc); a mail to the team; a DONE repeated after mail that asked nothing; a Lead's STATUS after its first (only the newest waits); a HOLD or NOTED asking nothing of a Peer under review; the bounce of a mail that asked nothing. gatherReviews: the read-only seats one Owner turn launches (search, scout and review Peers) are one round: their REVIEWs wait for the last one, or room.params.reviewStallMinutes, and reach the Owner in one turn. quietChars: how much of a mail that starts no turn is shown; the rest is in its file. dedupeSeconds: the same text from the same sender within this long is one mail. keepDays (optional): finished mail older than this is cleared by GC; without it, as long as logs are kept. expireUnreadDays (optional): mail that asked nothing and started no turn, still unread after this long, is withdrawn as expired; an ask never is.",
     "port": 47611,
     "holdFyiWhileRunning": true,
     "gatherReviews": true,
@@ -290,8 +287,7 @@
       "hq": 0,
       "supervisor": 168,
       "lead": 48,
-      "peer": 48,
-      "lens": 12
+      "peer": 48
     },
     "deleteOrphanHeartbeats": true,
     "tellParent": true,
@@ -352,7 +348,7 @@
     "forks": ["report", "wake", "failure", "answers", "overlap"]
   },
   "room": {
-    "$comment_params": "Quoted by role prompts as {{placeholders}}; change them here, never in a prompt. heartbeatCron: the Supervisor's beat; Lead reports that ask or close already wake it, so it only catches what slipped between. mailChars: how much of a mail's body a seat is shown; the rest is in the mail's file, whose path the mail gives. reviewStallMinutes: how long a review round waits for its last review, research or lens seat, which read long before writing. readBudgetTokens: reading per Peer task before the Lead must split it; ~80k tokens (~320 KB of source) is what a default-tier model reasons over well. cheapReadBudgetTokens: the same for the cheap tier, which loses the thread sooner. rotateAtTokens: a Lead or Peer past this is named with its size to the seat above under its next report; each step rereads the whole context, so its next task goes to a fresh seat.",
+    "$comment_params": "Quoted by role prompts as {{placeholders}}; change them here, never in a prompt. heartbeatCron: the Supervisor's beat; Lead reports that ask or close already wake it, so it only catches what slipped between. mailChars: how much of a mail's body a seat is shown; the rest is in the mail's file, whose path the mail gives. reviewStallMinutes: how long a review round waits for its last review, search or scout seat, which read long before writing. readBudgetTokens: reading per Peer task before the Lead must split it; ~80k tokens (~320 KB of source) is what a default-tier model reasons over well. cheapReadBudgetTokens: the same for the cheap tier, which loses the thread sooner. rotateAtTokens: a Lead or Peer past this is named with its size to the seat above under its next report; each step rereads the whole context, so its next task goes to a fresh seat.",
     "params": {
       "heartbeatCron": "*/30 * * * *",
       "reviewStallMinutes": 30,

@@ -193,7 +193,7 @@ test("a project's own models are written into the project from the screen and ta
   assert.deepEqual(await project(), { ...shop, own: true, models: own });
 
   await assert.rejects(
-    write("shop", { peer: { tiers: { cheap: null, default: null, "cross-family": null } } }),
+    write("shop", { peer: { tiers: { cheap: null, default: null, "cross-family": null, high: null, extra: null } } }),
     /leaves the peer role without a model/,
   );
   assert.deepEqual(marker().models, own, "a table the room refused was written");

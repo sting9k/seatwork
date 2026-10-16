@@ -6,15 +6,7 @@ import { beforeEach, test } from "node:test";
 import { registerProject, unregisterProject } from "../server/orchestration/onboard";
 import { loadRegistry } from "../server/orchestration/registry";
 
-const ROOM_SEATS = [
-  "claude-hq",
-  "claude-supervisor",
-  "claude-lead",
-  "claude-peer",
-  "claude-lens",
-  "codex-peer",
-  "codex-lens",
-];
+const ROOM_SEATS = ["claude-hq", "claude-supervisor", "claude-lead", "claude-peer", "codex-peer"];
 const seatsFile = join(ROOM_HOME, "seats.json");
 const marker = join(PROJECT, ".seatwork", "room.json");
 /** The seats the room was asked to set up; setting one up leaves it in seats.json. */
@@ -58,6 +50,15 @@ test("a table the room refuses sets up no seat and is not written", async () => 
 
   assert.deepEqual(asked, []);
   assert.ok(!existsSync(marker));
+});
+
+test("registering writes the project's law beside its mission, and a project with both is ready", async () => {
+  for (const file of ["mission.md", "demo-law.md"]) rmSync(join(PROJECT, ".seatwork", file), { force: true });
+  const first = await registerProject(paseo, { path: PROJECT, mission: "Parse durations." }, setUpSeats);
+  assert.match(first, /Still missing: law \(\.seatwork\/demo-law\.md: give `law`\)\./);
+  const second = await registerProject(paseo, { path: PROJECT, law: "## Policy\n- Commits: one per task" }, setUpSeats);
+  assert.equal(readFileSync(join(PROJECT, ".seatwork", "demo-law.md"), "utf8"), "## Policy\n- Commits: one per task\n");
+  assert.match(second, /Mission and law are in place\./);
 });
 
 test("a project leaves the registry only when none of its seats is open, and keeps its files", async () => {

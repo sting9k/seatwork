@@ -31,6 +31,7 @@ export const ROOM_PROJECT: string = table.roomProject;
 export const ROOM_ROLE: string | undefined = ROLES.find((role) => TRAITS[role].home === "room");
 const ROUTES: Readonly<Record<string, boolean>> = table.routes;
 export const SPAWN: Readonly<Record<string, readonly string[]>> = table.spawn;
+export const RETIRED: readonly string[] = table.retired;
 export const REVIEW_STALL: string = table.reviewers.stall;
 export const VARS: Readonly<Record<string, { role: string; except: readonly string[] }>> = table.vars;
 

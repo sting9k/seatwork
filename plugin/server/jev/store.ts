@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { SQL_DIR } from "../paths";
 import { Sqlite, type SqliteFailure } from "../sqlite";
 import type { Answer } from "./contract";
+import { REVERSED } from "./order";
 
 /** The Jev district's log in the room home: what was asked, what was answered, what was read, and the labels that came later. */
 
@@ -130,7 +131,7 @@ export class JevStore extends Sqlite {
     return this.row<{ usd: number }>("SELECT usd FROM spend WHERE month = ?", month)?.usd ?? 0;
   }
 
-  /** The answers to the callers in [from, to) since a time, and how many of their calls failed. */
+  /** The answers to the callers in [from, to) since a time, a choice once and not its reversed order, and how many of their calls failed. */
   answersOf(
     from: string,
     to: string,
@@ -138,10 +139,11 @@ export class JevStore extends Sqlite {
   ): { answers: { answer: string; suspect: string | null }[]; failed: number } {
     const answers = this.rows<{ answer: string; suspect: string | null }>(
       `SELECT a.answer AS answer, c.suspect AS suspect FROM calls c JOIN asks a ON a.call_id = c.id
-         WHERE c.at >= ? AND c.caller >= ? AND c.caller < ? LIMIT ?`,
+         WHERE c.at >= ? AND c.caller >= ? AND c.caller < ? AND a.question NOT LIKE ? LIMIT ?`,
       since,
       from,
       to,
+      `%${REVERSED}`,
       ANSWERS_READ_MOST,
     );
     const failed = this.row<{ n: number }>(

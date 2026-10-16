@@ -3,6 +3,7 @@ import council from "../../../shared/safety/council.json";
 import type { RoleTraits } from "../../../shared/workflow";
 import type { TurnEvent } from "../../host";
 import { briefFields, quotedCommands, scopeGlobs } from "../../orchestration/brief";
+import { excerpt } from "../../excerpt";
 import { redact } from "../../redact";
 import { CLOSES_WORK, signalOf } from "../../signals";
 import type { MemberCount, MemberState, ReadingRow, SafetyStore } from "../store";
@@ -49,14 +50,14 @@ export interface HandInDiff {
   related?: readonly string[];
 }
 
-/** The decision district as the council uses it; any provider of typed decisions fits, one that answers a repeated question from memory unless asked `fresh`. */
+/** The decision district as the council uses it; any provider of typed decisions fits, one that answers a repeated question from memory too. */
 export interface Decider {
   why(): string | null;
   decide(
     caller: string,
     state: Record<string, unknown>,
     questions: Record<string, unknown>,
-    options?: { deadlineMs?: number; fresh?: boolean },
+    options?: { deadlineMs?: number },
   ): Promise<{ answers: Record<string, { type: string; noul?: number }>; asks: Record<string, number> }>;
 }
 
@@ -483,18 +484,18 @@ export class Council {
     };
   }
 
-  /** One answer of a juror's question, placed in the member's grey band; null when none comes. `fresh` is a second reading, never the first one remembered. */
+  /** One answer of a juror's question, placed in the member's grey band; null when none comes. `again` is a second reading, its question said another way. */
   private async asked(
     member: Juror,
     state: Record<string, unknown>,
-    fresh = false,
+    again = false,
   ): Promise<{ score: number; zone: ReadingRow["zone"]; askId: number } | null> {
-    const { question, lo } = council.members[member];
+    const { question, reworded, lo } = council.members[member];
     const decided = await this.deps.decider!.decide(
       `council.${member}@${council.members[member].version}`,
       state,
-      { [member]: question },
-      { deadlineMs: JUROR_DEADLINE_MS, fresh },
+      { [member]: again ? reworded : question },
+      { deadlineMs: JUROR_DEADLINE_MS },
     );
     const score = decided.answers[member]?.noul;
     if (typeof score !== "number") return null;
@@ -505,7 +506,7 @@ export class Council {
     };
   }
 
-  /** A juror's question as a reading; a member that may send work back asks twice what it did not find clear, and answers that part company make the reading contested. */
+  /** A juror's question as a reading; a member that may send work back asks again, in other words, what it did not find clear, and answers that part company make the reading contested. */
   private async ask(
     member: Juror,
     state: Record<string, unknown>,
@@ -589,7 +590,7 @@ export class Council {
       () =>
         this.ask(
           "claims",
-          { report: clip(input.text, REPORT_CHARS) },
+          { report: excerpt(input.text, REPORT_CHARS) },
           (score) => `claims: the report reads as tested (${score.toFixed(2)}), and no check passed ${where}`,
           { signal, checks: after },
         ),
@@ -621,7 +622,7 @@ export class Council {
       out.push(() =>
         this.ask(
           "scope",
-          { nonGoals: fields.nonGoals, changed: changed.slice(0, 50), report: clip(input.text, REPORT_CHARS) },
+          { nonGoals: fields.nonGoals, changed: changed.slice(0, 50), report: excerpt(input.text, REPORT_CHARS) },
           (score) =>
             `scope: the work reads as touching a non-goal (${score.toFixed(2)}): ${clip(fields.nonGoals!, 80)}`,
           { nonGoals: fields.nonGoals },

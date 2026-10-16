@@ -389,6 +389,16 @@ test("a juror is asked only where the facts cannot tell, and its grey band keeps
   assert.deepEqual(readings()[0], { member: "claims", readings: 3, found: 1, grey: 1, shown: 1 });
 });
 
+test("a juror reads the head and the tail of a long report, where a seat says it tried the work", async () => {
+  const { council, asked } = councilWith({ claims: 1 }, () => 0.95);
+  const notes = "Read the parser and its callers. ".repeat(300);
+  const report = `CANDIDATE: hours added.\n${notes}\nThe upload behaves correctly now; I tried it in the browser.`;
+  await council.endOfTurn(peerTurn([change(`${ROOT}/src/duration.js`)], report, null));
+  const read = (asked[0] as { report: string }).report;
+  assert.ok(read.startsWith("CANDIDATE: hours added."));
+  assert.ok(read.endsWith("I tried it in the browser."), "the seat's last words reach the juror");
+});
+
 test("a juror the person turned off is never asked: its member reads by the facts alone", async () => {
   const { council, asked } = councilWith({ claims: 1 }, () => 0.95, undefined, ["scope", "gaming"]);
   const report = "CANDIDATE: hours added; the parser handles 2h and 90m as asked.";

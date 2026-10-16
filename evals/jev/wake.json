@@ -1,0 +1,97 @@
+{
+  "$comment": "The wake fork: an FYI or HANDOFF mail to an idle seat. expect: act or nothing. A body may be {head, pad, tail}.",
+  "cases": [
+    {
+      "id": "deploy-time",
+      "subject": "FYI: staging deploy at 18:00",
+      "body": "Staging gets the new build at 18:00 today. No action needed; your branch is not in it.",
+      "expect": "nothing"
+    },
+    {
+      "id": "migration-breaks",
+      "subject": "FYI: your migration breaks the reports job",
+      "body": "The reports job fails since your migration renamed orders.total. Please add a view with the old name or update the job.",
+      "expect": "act"
+    },
+    {
+      "id": "notes-only",
+      "subject": "HANDOFF: notes on the exporter",
+      "body": "Notes on the exporter for whoever picks it up next: the streaming path is in csv.ts, the buffered one in legacy.ts.",
+      "expect": "nothing"
+    },
+    {
+      "id": "finish-tests",
+      "subject": "HANDOFF: finish the exporter tests",
+      "body": "I am handing the exporter over to you. Please finish the two missing tests in csv.test.ts and hand it in.",
+      "expect": "act"
+    },
+    {
+      "id": "lint-rule",
+      "subject": "FYI: lint rule added",
+      "body": "We added a lint rule against default exports. Existing files are exempt.",
+      "expect": "nothing"
+    },
+    {
+      "id": "api-rename",
+      "subject": "FYI: API rename",
+      "body": "The /v1/users endpoint becomes /v2/accounts on Friday. Your client code still calls /v1/users; change it before Friday.",
+      "expect": "act",
+      "why": "an ask inside an FYI"
+    },
+    {
+      "id": "moved-task",
+      "subject": "FYI: I am on the auth task now",
+      "body": "Just so you know, I moved from the cache task to the auth task.",
+      "expect": "nothing"
+    },
+    {
+      "id": "check-numbers",
+      "subject": "FYI: the totals differ",
+      "body": "The totals in your last report don't match the dashboard. Could you find out which one is right?",
+      "expect": "act"
+    },
+    {
+      "id": "webhook-background",
+      "subject": "HANDOFF: context for the payment work",
+      "body": "Background for later: the payment provider sends webhooks twice; we drop the second by event id.",
+      "expect": "nothing"
+    },
+    {
+      "id": "main-red",
+      "subject": "FYI: main is red",
+      "body": "Main has been red since your last merge. The failing test is checkout.test.ts.",
+      "expect": "act",
+      "why": "an implied ask to fix it"
+    },
+    {
+      "id": "away-monday",
+      "subject": "FYI: holiday",
+      "body": "The person is away on Monday; decisions wait until Tuesday.",
+      "expect": "nothing"
+    },
+    {
+      "id": "long-notes",
+      "subject": "HANDOFF: reading notes",
+      "body": { "head": "Notes for later, nothing to do now.", "pad": 1700, "tail": "That is all; no reply needed." },
+      "expect": "nothing"
+    },
+    {
+      "id": "long-ask-at-end",
+      "subject": "FYI: review notes on your branch",
+      "body": {
+        "head": "Notes from the review of your branch.",
+        "pad": 1700,
+        "tail": "One thing before you hand in: please rename getData to fetchOrders, the reviewer will ask for it."
+      },
+      "expect": "act",
+      "why": "the ask is in the tail"
+    },
+    {
+      "id": "nothing-then-ask",
+      "subject": "FYI: status",
+      "body": "Nothing to do here for now. One small thing though: please delete the old fixtures folder today.",
+      "expect": "act",
+      "why": "says nothing to do, then asks"
+    }
+  ]
+}

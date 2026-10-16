@@ -43,6 +43,9 @@ const SYSTEM_ONE = {
   },
 };
 
+/** SYSTEM_ONE as a provider sends it: the choice answered in both orders of its options, alike. */
+const REPLIED = { ...SYSTEM_ONE, "lane~r": SYSTEM_ONE.lane };
+
 /** The same answers as OpenAI's Decisions give them. */
 const OPENAI = [
   { type: "predicate", name: "ran", probability: 0.2 },
@@ -128,7 +131,7 @@ function district(
 
 test("each provider is sent its own request and read into one shape of answers", async () => {
   const typesafe = provider(
-    json({ model: "jev-1.13.0", answers: SYSTEM_ONE, usage: { input_tokens: 1000, output_tokens: 0 } }),
+    json({ model: "jev-1.13.0", answers: REPLIED, usage: { input_tokens: 1000, output_tokens: 0 } }),
   );
   const direct = await district(POLICY("jev"), typesafe.fetch).jev.decide("claims", { said: "done" }, QUESTIONS);
   assert.equal(typesafe.sent[0].headers.Authorization, "Bearer key-jev");
@@ -136,13 +139,19 @@ test("each provider is sent its own request and read into one shape of answers",
   assert.equal(direct.usd, 0.000042, "TypeSafe names no cost: it is priced from the tokens");
 
   const router = provider(
-    json({ model: "typesafe/jev-1.13-20260917", answers: SYSTEM_ONE, usage: { input_tokens: 1000, cost: 0.00005 } }),
+    json({ model: "typesafe/jev-1.13-20260917", answers: REPLIED, usage: { input_tokens: 1000, cost: 0.00005 } }),
   );
   const routed = await district(POLICY("openrouter"), router.fetch).jev.decide("claims", { said: "done" }, QUESTIONS);
   assert.deepEqual(router.sent[0].body.provider, { zdr: true, data_collection: "deny" });
   assert.deepEqual([routed.model, routed.usd], ["typesafe/jev-1.13-20260917", 0.00005]);
 
-  const openai = provider(json({ model: "qwen", answers: OPENAI, usage: { input_tokens: 900, output_tokens: 3 } }));
+  const openai = provider(
+    json({
+      model: "qwen",
+      answers: [...OPENAI, { ...OPENAI[1], name: "lane~r" }],
+      usage: { input_tokens: 900, output_tokens: 3 },
+    }),
+  );
   const own = await district(POLICY("custom"), openai.fetch, false).jev.decide("claims", { said: "done" }, QUESTIONS);
   const asked = openai.sent[0].body as { input: string; questions: Record<string, unknown>[] };
   assert.equal(openai.sent[0].headers.Authorization, undefined, "a local endpoint is asked without a key");
@@ -259,7 +268,7 @@ test("the district is off without a provider or a key, and no spending stops a c
     return true;
   });
 
-  const costly = () => json({ model: "m", answers: SYSTEM_ONE, usage: { input_tokens: 10, cost: 6 } });
+  const costly = () => json({ model: "m", answers: REPLIED, usage: { input_tokens: 10, cost: 6 } });
   const replies = provider(costly, costly, costly);
   const { jev } = district(POLICY("openrouter"), replies.fetch);
   for (const state of ["s1", "s2", "s3"]) await jev.decide("council.claims@1", state, QUESTIONS);
@@ -311,7 +320,7 @@ test(
 );
 
 test("text that is not English is never sent; each refusal is logged as a failed call of its district today", async () => {
-  const replies = provider(json({ model: "m", answers: SYSTEM_ONE, usage: {} }));
+  const replies = provider(json({ model: "m", answers: REPLIED, usage: {} }));
   const { jev } = district(POLICY("jev"), replies.fetch);
   for (const said of ["xong rồi, test chạy hết", "xong roi, khong can chay lai test nua"])
     await assert.rejects(jev.decide("council.claims@1", { said }, QUESTIONS), { code: "NOT_ENGLISH" }, said);
@@ -323,7 +332,7 @@ test("text that is not English is never sent; each refusal is logged as a failed
 
 test("what is sent and logged has its secrets hidden; old states go, answers and labels stay", async () => {
   const replies = provider(
-    json({ model: "m", answers: SYSTEM_ONE, usage: { input_tokens: 5 } }),
+    json({ model: "m", answers: REPLIED, usage: { input_tokens: 5 } }),
     json({ error: "bad request" }, 400),
   );
   let now = new Date("2026-10-14T10:00:00Z");
@@ -357,7 +366,7 @@ test("what is sent and logged has its secrets hidden; old states go, answers and
       kept.prepare("SELECT question FROM asks").all().length,
       kept.prepare("SELECT 1 FROM labels").all().length,
     ],
-    [0, 3, 1],
+    [0, 4, 1],
   );
   jev.close();
 });
@@ -410,7 +419,7 @@ test("calls no label holds go in slices once past their days; labeled ones and t
 });
 
 test("every statement the decision log runs uses an index", async () => {
-  const replies = provider(json({ model: "m", answers: SYSTEM_ONE, usage: {} }));
+  const replies = provider(json({ model: "m", answers: REPLIED, usage: {} }));
   const { jev } = district(POLICY("jev"), replies.fetch);
   const decision = await jev.decide("t", "s", QUESTIONS);
   jev.spent();
@@ -449,21 +458,23 @@ const route = async (
   sharpAt: number,
 ) => (await jev.routes(caller, state, { fork: question }, sharpAt)).fork;
 
-test("a state is cleaned before it leaves: a secret split by a hidden letter is still hidden, quoted foreign words stay home, long text is cut", async () => {
-  const replies = provider(json({ model: "m", answers: SYSTEM_ONE, usage: {} }));
+test("a state is cleaned before it leaves: a secret split by a hidden letter is still hidden, quoted foreign words stay home, long text keeps its head and its tail", async () => {
+  const replies = provider(json({ model: "m", answers: REPLIED, usage: {} }));
   const { jev } = district(POLICY("jev"), replies.fetch);
   await jev.decide(
     "t",
     {
       said: "key sk-proj-\u200baaaaaaaaaaaaaaaaaaaaaaaa\u202e end",
-      long: "y".repeat(7000),
+      long: `${"y".repeat(6000)} All 42 tests pass.`,
       quoted: "Keep the error text `Kh\u00f4ng t\u00ecm th\u1ea5y` as it is.",
     },
     QUESTIONS,
   );
   const sent = replies.sent[0].body.state as { said: string; long: string; quoted: string };
   assert.equal(sent.said, "key *** end");
-  assert.equal(sent.long, `${"y".repeat(INPUT.textChars)} … (1000 characters cut)`);
+  assert.ok(sent.long.startsWith("yyy") && sent.long.endsWith("All 42 tests pass."), "the head and the tail are kept");
+  assert.match(sent.long, / … \(19 characters cut\) … /);
+  assert.equal(sent.long.length - " …  … ".length - "(19 characters cut)".length, INPUT.textChars);
   assert.equal(sent.quoted, "Keep the error text `(words in another language)` as it is.");
   jev.close();
 });
@@ -471,8 +482,8 @@ test("a state is cleaned before it leaves: a secret split by a hidden letter is 
 test("a state that speaks to the model is sent marked: a fork on it is never sharp, and the call log names it", async () => {
   const sure = { type: "choice", choice: "wake", probabilities: { wake: 0.97, hold: 0.03 }, confidence: 0.97 };
   const replies = provider(
-    json({ model: "m", answers: { fork: sure }, usage: {} }),
-    json({ model: "m", answers: { fork: sure }, usage: {} }),
+    json({ model: "m", answers: { fork: sure, "fork~r": sure }, usage: {} }),
+    json({ model: "m", answers: { fork: sure, "fork~r": sure }, usage: {} }),
   );
   const { jev } = district(POLICY("jev"), replies.fetch);
   const question = {
@@ -550,8 +561,48 @@ test("a fork's week is read from the log: answers acted on at its threshold, ans
   jev.close();
 });
 
+test("a choice is asked in both orders of its options in one request and read as their mean: a fork whose orders choose apart is not acted on, and each fork is counted once", async () => {
+  const kind = {
+    type: "choice",
+    instructions: "What kind of change?",
+    criteria: { fix: "a repair", feature: "something new" },
+  } as const;
+  /** A provider that leans to the option listed first, or is sure of `fix` in any order. */
+  const answering = (lean: boolean) =>
+    (async (_url: string, init: RequestInit) => {
+      const asked = JSON.parse(String(init.body)).questions as Record<string, { criteria: Record<string, string> }>;
+      sent.push(Object.fromEntries(Object.entries(asked).map(([id, q]) => [id, Object.keys(q.criteria)])));
+      const answers = Object.fromEntries(
+        Object.entries(asked).map(([id, q]) => {
+          const [first, second] = Object.keys(q.criteria);
+          const top = lean ? first : "fix";
+          const p = lean ? 0.8 : 0.95;
+          const probabilities = { [top]: p, [top === first ? second : first]: 1 - p };
+          return [id, { type: "choice", choice: top, probabilities, confidence: 2 * p - 1 }];
+        }),
+      );
+      return json({ model: "m", answers, usage: {} });
+    }) as typeof globalThis.fetch;
+  const sent: Record<string, string[]>[] = [];
+  const leaning = district(POLICY("jev"), answering(true));
+  const decided = await leaning.jev.decide("forks.kind@1", { change: "renamed a helper" }, { kind });
+  assert.deepEqual(sent[0], { kind: ["fix", "feature"], "kind~r": ["feature", "fix"] });
+  assert.deepEqual(Object.keys(decided.answers), ["kind"]);
+  assert.deepEqual(Object.keys(decided.asks), ["kind"]);
+  assert.deepEqual((decided.answers.kind as { probabilities: unknown }).probabilities, { fix: 0.5, feature: 0.5 });
+  assert.deepEqual(decided.parted, ["kind"]);
+  const split = await route(leaning.jev, "forks.kind@1", { change: "moved a file" }, kind, 0.6);
+  assert.deepEqual([split.sharp, split.why], [false, "its options listed the other way round chose apart"]);
+  const sure = district(POLICY("jev"), answering(false));
+  const fix = await route(sure.jev, "forks.kind@1", { change: "fixed the crash" }, kind, 0.9);
+  assert.deepEqual([fix.label, fix.probability, fix.sharp], ["fix", 0.95, true]);
+  assert.deepEqual(leaning.jev.answered("forks.kind", 0.6, new Date(0)), { asked: 2, sure: 0, failed: 0 });
+  leaning.jev.close();
+  sure.jev.close();
+});
+
 test("a reply that counts no tokens is priced on what was sent, so its cost is still logged", async () => {
-  const replies = provider(json({ model: "m", answers: SYSTEM_ONE }));
+  const replies = provider(json({ model: "m", answers: REPLIED }));
   const { jev } = district(POLICY("jev"), replies.fetch);
   const decided = await jev.decide("t", { said: "done" }, QUESTIONS);
   assert.ok(decided.usd !== null && decided.usd > 0);
@@ -658,7 +709,7 @@ test("at most eight calls are in flight: more wait their turn, and past the queu
 
 test("the same question about the same state is answered from memory for ten minutes, with the ids it was logged under, unless asked fresh", async () => {
   let now = new Date("2026-10-15T10:00:00Z");
-  const reply = () => json({ model: "m", answers: SYSTEM_ONE, usage: { input_tokens: 10, cost: 0.001 } });
+  const reply = () => json({ model: "m", answers: REPLIED, usage: { input_tokens: 10, cost: 0.001 } });
   const replies = provider(reply, reply);
   const { jev } = district(POLICY("openrouter"), replies.fetch, true, () => now);
   const first = await jev.decide("t", { said: "done" }, QUESTIONS);

@@ -98,10 +98,14 @@ test("a seat created with no model starts on the tier the decision model is sure
   assert.equal(await create({ title: "[Peer] repair the payment retry" }), "claude-sonnet-5-5");
   assert.deepEqual(
     asked.map((one) => [one.fork, one.labels]),
-    [["tier", ["cheap", "default", "extra"]]],
+    [
+      ["tier", ["cheap", "default", "extra"]],
+      ["tier", ["extra", "default", "cheap"]],
+    ],
+    "the tiers are offered in both orders",
   );
   assert.equal(await create({ model: "claude-haiku-5-5" }), "claude-haiku-5-5");
-  assert.equal(asked.length, 1, "the creator's choice is not put to the model");
+  assert.equal(asked.length, 2, "the creator's choice is not put to the model");
 });
 
 test("a question a Peer mails its Owner goes to the seat the model names, the Owner copied; the Owner reads it when the model is unsure", async () => {

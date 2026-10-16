@@ -15,6 +15,7 @@ import type { Finding } from "../safety/council/council";
 import { errorText, fromRoom, releaseWork, taskOf, type RoomContext } from "./context";
 import { councilLine, councilRead } from "./council";
 import { fitAt, stepUpAt } from "./launch";
+import { excerpt } from "../excerpt";
 
 /** The end of a seat's turn: its report goes up, a hand-in may be sent back, a review round is held, a rotation is answered. */
 
@@ -139,7 +140,7 @@ async function nothingNew(
     return false;
   if (!wake.every((mail) => mail.needs === "nothing")) return false;
   const read = await room.forks.take("report", {
-    report: clip(end.text, 2000),
+    report: excerpt(end.text, 2000),
     woke_by: wake.slice(0, 5).map((mail) => mail.subject),
   });
   return read === "nothing_new";

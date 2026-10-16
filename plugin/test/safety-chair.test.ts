@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { rmSync } from "node:fs";
 import { join } from "node:path";
 import { test } from "node:test";
+import councilCatalog from "../shared/safety/council.json";
 import { traits } from "../shared/workflow";
 import type { TurnEvent } from "../server/host";
 import { Chair, type ChairDeps } from "../server/safety/council/chair";
@@ -131,17 +132,19 @@ function harness(
   const chair = new Chair({ room, store: () => store, minutes: () => undefined, log: (line) => logs.push(line) });
   const answers = [...(options.answers ?? [])];
   const asked: Record<string, unknown>[] = [];
-  // as the decision district does, a question asked again is answered from memory unless asked fresh
+  const phrased: string[] = [];
+  // as the decision district does, the same question about the same state is answered from memory
   const memory = new Map<string, Awaited<ReturnType<Decider["decide"]>>>();
   const decider: Decider | null = options.answers
     ? {
         why: () => null,
-        decide: async (_caller, state, questions, opts) => {
+        decide: async (_caller, state, questions) => {
           const key = JSON.stringify([state, questions]);
           const kept = memory.get(key);
-          if (kept && !opts?.fresh) return kept;
+          if (kept) return kept;
           asked.push(state);
           const id = Object.keys(questions)[0];
+          phrased.push(String((questions[id] as { instructions: unknown }).instructions));
           const decided = {
             answers: { [id]: { type: "noul", noul: answers.shift() ?? 0 } },
             asks: { [id]: asked.length },
@@ -173,6 +176,7 @@ function harness(
     mails,
     logs,
     asked,
+    phrased,
     answers,
     setDiff: (next: HandInDiff | null) => (diff = next),
   };
@@ -507,6 +511,11 @@ test("an unsure juror, a juror that answers differently the second time, or one 
   await split.council.endOfTurn(candidate());
   await wait();
   assert.equal(split.asked.length, 2);
+  assert.deepEqual(
+    split.phrased,
+    [councilCatalog.members.gaming.question.instructions, councilCatalog.members.gaming.reworded.instructions],
+    "the second reading asks the question said another way",
+  );
   assert.match(split.mails[0].body, /Why you are asked: two readings of the same question disagreed/);
   assert.match(split.mails[0].body, /Readings: juror grey 0\.95; juror grey 0\.04/);
 

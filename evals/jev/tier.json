@@ -1,0 +1,79 @@
+{
+  "$comment": "The tier fork: what a Peer seat on claude-peer is about to start on. The labels are the tiers room/models.json lists on that provider, with what each is for. expect: the tier that fits.",
+  "cases": [
+    {
+      "id": "rename",
+      "title": "Rename getUser to fetchUser across the code base",
+      "brief": "Mechanical rename in 14 files; no change of behavior; update the imports.",
+      "expect": "cheap"
+    },
+    {
+      "id": "typos",
+      "title": "Fix typos in the docs",
+      "brief": "Fix the spelling errors listed in the issue in docs/*.md.",
+      "expect": "cheap"
+    },
+    {
+      "id": "pagination",
+      "title": "Add pagination to the orders API",
+      "brief": "Add cursor pagination to GET /orders, keep the old offset parameter working, and update the tests.",
+      "expect": "default"
+    },
+    {
+      "id": "flaky",
+      "title": "Debug the flaky checkout test",
+      "brief": "checkout.test.ts fails one run in ten; find out why and fix it.",
+      "expect": "default"
+    },
+    {
+      "id": "sync-design",
+      "title": "Design how offline edits merge",
+      "spec": "arch",
+      "brief": "Propose how offline edits on mobile merge with web edits; compare a CRDT with last-write-wins and write down the trade-offs and the choice.",
+      "expect": "extra"
+    },
+    {
+      "id": "format-sql",
+      "title": "Format the SQL files",
+      "brief": "Run the formatter on db/*.sql and commit the result.",
+      "expect": "cheap"
+    },
+    {
+      "id": "webhook-retries",
+      "title": "Retry failed webhooks",
+      "brief": "Retry failed webhooks with backoff up to five times, store the attempts, and add tests.",
+      "expect": "default"
+    },
+    {
+      "id": "scaffolds",
+      "title": "Test scaffolds for the billing module",
+      "brief": "Create empty test files with a describe block for each exported function in src/billing/.",
+      "expect": "cheap"
+    },
+    {
+      "id": "cache-research",
+      "title": "Find where the user cache goes stale",
+      "brief": "Find every place the user cache is invalidated and write down when a stale read is possible.",
+      "expect": "default"
+    },
+    {
+      "id": "ring-queue",
+      "title": "Is the lock-free queue correct?",
+      "brief": "Decide whether the queue in src/queue/ring.ts can lose an item under two producers, and argue it step by step.",
+      "expect": "extra"
+    },
+    {
+      "id": "third-lens",
+      "title": "Third lens on the payment refactor",
+      "spec": "review",
+      "brief": "Two lenses disagree on whether the new payment state machine can charge twice. Read the candidate and settle it.",
+      "expect": "extra"
+    },
+    {
+      "id": "changelog",
+      "title": "Write the changelog entry",
+      "brief": "Add an entry to CHANGELOG.md for the 2.3.0 release from the merged pull request titles.",
+      "expect": "cheap"
+    }
+  ]
+}

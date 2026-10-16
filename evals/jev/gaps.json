@@ -1,0 +1,156 @@
+{
+  "$comment": "The gaps fork: an issue a seat has just taken. expect: ready, unclear, no-acceptance, needs-decision or too-big. An empty field is sent as (none), as the room sends it.",
+  "cases": [
+    {
+      "id": "410-ready",
+      "issue": {
+        "title": "Return 410 for deleted orders",
+        "description": "GET /orders/:id returns 404 for deleted orders. Return 410 Gone when the order existed and was deleted.",
+        "acceptance": "GET of a deleted order returns 410; GET of an unknown id still returns 404; tests cover both.",
+        "write_scope": "src/api/orders.ts, test/api/orders.test.ts"
+      },
+      "expect": "ready"
+    },
+    {
+      "id": "dashboard-no-acceptance",
+      "issue": {
+        "title": "Speed up the dashboard",
+        "description": "The orders widget on the dashboard loads slowly. Cache the totals query.",
+        "acceptance": "",
+        "write_scope": "src/dashboard/"
+      },
+      "expect": "no-acceptance"
+    },
+    {
+      "id": "sync-unclear",
+      "issue": {
+        "title": "Fix the sync bug",
+        "description": "Users say sync is broken sometimes.",
+        "acceptance": "Sync works.",
+        "write_scope": ""
+      },
+      "expect": "unclear"
+    },
+    {
+      "id": "billing-too-big",
+      "issue": {
+        "title": "Rebuild the billing system",
+        "description": "Move billing to the new provider: a new API client, webhook handling, invoice PDFs, the migration of 40,000 customers, and the admin screens.",
+        "acceptance": "All billing runs on the new provider.",
+        "write_scope": "src/billing/, src/admin/, db/"
+      },
+      "expect": "too-big"
+    },
+    {
+      "id": "session-store-decision",
+      "issue": {
+        "title": "Pick the session store",
+        "description": "Sessions must leave memory. Redis and Postgres both work: Redis is faster, Postgres needs no new service. Someone must choose before the work starts.",
+        "acceptance": "Sessions survive a restart.",
+        "write_scope": "src/session/"
+      },
+      "expect": "needs-decision"
+    },
+    {
+      "id": "dry-run-ready",
+      "issue": {
+        "title": "Add a --dry-run flag to the import command",
+        "description": "The import command writes to the database. Add --dry-run, which parses and validates the file and prints the counts without writing.",
+        "acceptance": "--dry-run writes nothing; it prints the rows read, valid and invalid; a new test covers the flag.",
+        "write_scope": "src/cli/import.ts, test/cli/"
+      },
+      "expect": "ready"
+    },
+    {
+      "id": "logger-no-acceptance",
+      "issue": {
+        "title": "Clean up the worker's logging",
+        "description": "Replace the console.log calls in src/worker with the logger and add the job id to each line.",
+        "acceptance": "",
+        "write_scope": "src/worker/"
+      },
+      "expect": "no-acceptance"
+    },
+    {
+      "id": "exports-unclear",
+      "issue": {
+        "title": "Make exports better",
+        "description": "Exports should be better for big customers.",
+        "acceptance": "",
+        "write_scope": "src/export/"
+      },
+      "expect": "unclear"
+    },
+    {
+      "id": "mobile-too-big",
+      "issue": {
+        "title": "Mobile app v2",
+        "description": "Build offline mode, push notifications, a new onboarding flow and dark mode for the mobile app.",
+        "acceptance": "All four ship in the next release.",
+        "write_scope": "mobile/"
+      },
+      "expect": "too-big"
+    },
+    {
+      "id": "retention-decision",
+      "issue": {
+        "title": "Delete old logs",
+        "description": "Old logs must be deleted, but legal has not said whether 90 days or one year applies. The code can do either.",
+        "acceptance": "Logs older than the limit are deleted every night.",
+        "write_scope": "src/jobs/retention.ts"
+      },
+      "expect": "needs-decision"
+    },
+    {
+      "id": "off-by-one-ready",
+      "issue": {
+        "title": "Fix the off-by-one in pagination",
+        "description": "The last page repeats the first item of the previous page because the cursor is inclusive. Make the cursor exclusive.",
+        "acceptance": "Paging through 101 items with a page size of 10 returns every item exactly once; a test covers it.",
+        "write_scope": "src/api/paginate.ts"
+      },
+      "expect": "ready"
+    },
+    {
+      "id": "memory-unclear",
+      "issue": {
+        "title": "Memory growth in the worker",
+        "description": "The worker's memory grows over days. It might be the cache or a listener leak; nobody knows yet.",
+        "acceptance": "Memory stays flat over a week.",
+        "write_scope": "src/worker/"
+      },
+      "expect": "unclear",
+      "why": "rests on facts to find out first"
+    },
+    {
+      "id": "lodash-ready",
+      "issue": {
+        "title": "Bump lodash to 4.17.21",
+        "description": "Update lodash in package.json and the lock file to 4.17.21.",
+        "acceptance": "npm ls lodash shows 4.17.21 and the suite passes.",
+        "write_scope": "package.json, package-lock.json"
+      },
+      "expect": "ready"
+    },
+    {
+      "id": "dark-mode-no-acceptance",
+      "issue": {
+        "title": "Dark mode on the settings page",
+        "description": "Add a dark mode toggle to the settings page that switches the theme.",
+        "acceptance": "",
+        "write_scope": "src/ui/settings/"
+      },
+      "expect": "no-acceptance"
+    },
+    {
+      "id": "services-too-big",
+      "issue": {
+        "title": "Split the monolith into services",
+        "description": "Split the app into auth, billing, catalog and orders services, each with its own database.",
+        "acceptance": "Each service deploys on its own.",
+        "write_scope": "src/"
+      },
+      "expect": "too-big"
+    }
+  ]
+}

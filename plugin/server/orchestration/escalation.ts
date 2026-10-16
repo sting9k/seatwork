@@ -2,6 +2,7 @@ import catalog from "../../shared/forks.json";
 import { inRoom, routeOpen } from "../../shared/workflow";
 import type { MailEngine, NewMail, SeatRecord } from "../coordination/engine";
 import { clip, meanings, type Forks } from "./forks";
+import { excerpt } from "../excerpt";
 
 /** A mail that asks its Owner for an answer may go on to the seat that must give it, the Owner copied. */
 
@@ -55,7 +56,7 @@ export async function routeUp(
   const words = meanings("escalate");
   const picked = await room.forks.take(
     "escalate",
-    { message: { signal, subject: clip(draft.subject, 200), body: clip(draft.body, 1500) } },
+    { message: { signal, subject: clip(draft.subject, 200), body: excerpt(draft.body, 1500) } },
     Object.fromEntries([...targets.keys()].map((label) => [label, words[label]])),
   );
   const target = picked && picked !== "owner" ? targets.get(picked) : undefined;

@@ -1,5 +1,5 @@
 {
-  "$comment": "Small choices about mail, work, seats and incidents put to the decision model: a label at sharpAt or more is acted on, anything less keeps the room's own rule. deadlineMs: how long a call may take. Empty criteria: the labels come with the call. escalate.signals: the subjects it reads. policy.jev.forks lists the forks that are on; a required fork is on whatever it lists, since the room needs it. label and about: how the Seatwork screen names a fork.",
+  "$comment": "Small choices about mail, work, seats and incidents put to the decision model: a label at sharpAt or more, the same with the labels listed either way round, is acted on, anything less keeps the room's own rule. deadlineMs: how long a call may take. Empty criteria: the labels come with the call. escalate.signals: the subjects it reads. policy.jev.forks lists the forks that are on; a required fork is on whatever it lists, since the room needs it. label and about: how the Seatwork screen names a fork.",
   "forks": {
     "report": {
       "label": "Reports with nothing new",

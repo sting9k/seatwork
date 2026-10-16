@@ -1,5 +1,5 @@
 {
-  "$comment": "The gate: what the Knowledge district asks the decision model before it keeps a decision. A decision whose `keep` label has a probability under `at` is noise; one that duplicates or replaces a decision in force at `at` or more is a repeat. `most` older decisions are read beside it, `deadlineMs` is the wait for the model, `version` names the caller in the log. label and about: how the Seatwork screen names the gate, which is always on.",
+  "$comment": "The gate: what the Knowledge district asks the decision model before it keeps a decision. A decision whose `keep` label has a probability under `at` is noise; one that duplicates or replaces a decision in force at `at` or more is a repeat; a reading that changes with the order its labels are listed in turns nothing away. `most` older decisions are read beside it, `deadlineMs` is the wait for the model, `version` names the caller in the log. label and about: how the Seatwork screen names the gate, which is always on.",
   "gate": {
     "label": "Decisions before they are kept",
     "about": "Turns away requests and chatter, and finds the decision a new one replaces. Without it every note binds every seat.",

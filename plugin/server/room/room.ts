@@ -6,7 +6,7 @@ import { Collector } from "../gc";
 import { HostNotReady, type Host } from "../host";
 import { McpHttpServer, type Route } from "../mcp-http";
 import { projectRootOf, roomProjectDir } from "../orchestration/registry";
-import { clip, Forks } from "../orchestration/forks";
+import { Forks } from "../orchestration/forks";
 import { Recovery, resumeDue } from "../orchestration/recovery";
 import { ReviewGate } from "../orchestration/review-gate";
 import { Rotations } from "../orchestration/rotation";
@@ -51,6 +51,7 @@ import { lookAtRunningTurns } from "./council";
 import { launch, type Launched, type SeatLaunch } from "./launch";
 import { mailHealth, registerTools } from "./tools";
 import { rotationFailed, turnEnded, type SeatEvent, type TurnEnd } from "./turns";
+import { excerpt } from "../excerpt";
 
 /** The running room: it wires the districts, serves the seats' MCP tools, and reacts to the app's events. */
 
@@ -262,9 +263,9 @@ function chooseAsk(forks: Forks): NonNullable<MailEngine["chooseAsk"]> {
     const label = await forks.take(
       "answers",
       {
-        reply: { subject: answer.subject, body: clip(answer.body, 1500) },
+        reply: { subject: answer.subject, body: excerpt(answer.body, 1500) },
         asks: Object.fromEntries(
-          asks.map((ask) => [idOf(ask.id), { subject: ask.subject, body: clip(ask.body, 600) }]),
+          asks.map((ask) => [idOf(ask.id), { subject: ask.subject, body: excerpt(ask.body, 600) }]),
         ),
       },
       Object.fromEntries([

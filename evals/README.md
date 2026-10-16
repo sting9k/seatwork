@@ -68,3 +68,17 @@ A Claude seat runs with a Claude folder of the run's own and the login Paseo giv
 Run a spending run from a clean environment (`env -i HOME=… USER=… PATH=… TMPDIR=…`): an agent CLI started from inside another agent's session inherits that session's variables.
 
 Codex runs on the room's runtime home for its role, with full access for a case that writes, as a real seat runs (its `workspace-write` sandbox keeps `.git` read-only, so no commit), and `read-only` otherwise; the room's guard hook checks its commands as in a real seat.
+
+## Jev
+
+`evals/jev/<site>.json` holds labelled cases for each place the room asks the decision model: the raw fields that place builds its state from, and the answer it should get. `plugin/tools/jev-eval.ts` asks the provider in force with the key in the room home, and writes nothing there.
+
+| Command (in `plugin/`) | What it does | Costs |
+|---|---|---|
+| `node --require ./test/register.cjs tools/jev-eval.ts --dry` | builds every request and counts its tokens | nothing |
+| `node --require ./test/register.cjs tools/jev-eval.ts --label <name>` | every case, every variant | about 150,000 tokens, under 0.01 USD |
+| `… --only '^(keep|duplicate)$'` | the sites whose name matches | less |
+
+Each choice is asked with its options in the listed order and reversed, in one request, and read three ways: `asked`, `reversed`, and `both` (their mean, sure only when the two orders agree, as the room reads it). A juror is read as written, reworded, and both. Variants vary the input: `head` and `ends` (a long text cut to its head, or to its head and tail), `with-olds` and `alone` (the keep gate with the older decisions in its state or without), `all` and `own` (the duplicate labels), `batch` and `solo` (several items in one state, or one).
+
+`evals/results/jev-<label>/report.md` counts, per site, variant and reading: right, sure, sure and right, sure and wrong, and split. Sure and wrong is the number that matters: the room acts on it. A case belongs in a file when the room met it or a change is meant to fix it; write its `why`.

@@ -9,10 +9,10 @@ import { inbox } from "../coordination/reader";
 import { MailStoreError } from "../coordination/store";
 import type { LiveSeat } from "../host";
 import { routeUp } from "../orchestration/escalation";
-import { clip } from "../orchestration/forks";
 import { CLOSES_WORK, isReceiptWord, priorityOf, SUBJECT_SIGNALS, subjectOpening, subjectSignal } from "../signals";
 import { fromRoom, taskOf, type RoomContext } from "./context";
 import { tierUpNote } from "./launch";
+import { excerpt } from "../excerpt";
 
 /** The room's two mail tools: what a seat sends is checked, routed and posted; its inbox is read. */
 
@@ -390,7 +390,7 @@ async function informsOnly(
   if (stops || copies > 0 || draft.needs !== "nothing" || status !== "idle" || !signal || !INFORMS.has(signal))
     return false;
   if ([draft.to].flat().length !== 1) return false;
-  return (await room.forks.take("wake", { subject: draft.subject, body: clip(draft.body, 1500) })) === "nothing";
+  return (await room.forks.take("wake", { subject: draft.subject, body: excerpt(draft.body, 1500) })) === "nothing";
 }
 
 /** Every seat at work under a stopped one is stopped with it. */

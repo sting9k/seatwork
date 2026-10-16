@@ -926,8 +926,10 @@ test("the district is silent when the policy turns it off", () => {
   assert.throws(() => knowledge.recall("peer-e", { do: "search", q: "hello" }), /off in this room's policy/);
 });
 
-/** A decision model that reads a decision as `kind` and a pair as `same`, keeping what it was asked and the labels given. */
-function judgeOf(given: { kind?: string; same?: Record<string, string>; ready?: boolean; fails?: boolean } = {}) {
+/** A decision model that reads a decision as `kind` and a pair as `same`, its two orders apart on the ids in `parted`, keeping what it was asked and the labels given. */
+function judgeOf(
+  given: { kind?: string; same?: Record<string, string>; parted?: string[]; ready?: boolean; fails?: boolean } = {},
+) {
   const options = { ...given };
   const asked: { caller: string; state: Record<string, unknown>; ids: string[] }[] = [];
   const labels: { askId: number; source: string; value: string }[] = [];
@@ -954,6 +956,7 @@ function judgeOf(given: { kind?: string; same?: Record<string, string>; ready?: 
           }),
         ),
         asks: Object.fromEntries(ids.map((id) => [id, (next += 1)])),
+        parted: options.parted ?? [],
       };
     },
     label: (askId, source, value) => labels.push({ askId, source, value }) > 0,
@@ -1109,7 +1112,23 @@ test("the gate reads a decision before it is kept: noise and repeats are refused
   }
 });
 
-test("the gate's call goes to the Jev district as it takes it: English, one call a decision, the seat's word kept as a label", async () => {
+test("a reading whose two orders of options chose apart turns nothing away: neither as noise nor as a repeat", async () => {
+  const unsure = judgeOf({ kind: "request", parted: ["keep"] });
+  const quiet = district({ judge: unsure.judge, policy: POLICY });
+  const kept = await decide(quiet.knowledge, "lead-1", { topic: "db", statement: "Use SQLite for the store." });
+  assert.equal(kept.state, "active");
+  quiet.knowledge.close();
+
+  const twin = judgeOf({ same: { d1: "duplicate" }, parted: ["d1"] });
+  const { knowledge } = district({ judge: twin.judge, policy: POLICY });
+  await decide(knowledge, "lead-1", { topic: "database", statement: "Use SQLite for the store." });
+  const storage = await decide(knowledge, "lead-1", { topic: "storage", statement: "Keep the store in SQLite files." });
+  assert.equal(storage.state, "active");
+  assert.deepEqual(gateTallies(knowledge, null), { "gate-kept": 2 });
+  knowledge.close();
+});
+
+test("the gate's call goes to the Jev district as it takes it: English, one call a decision with each choice in both orders, the seat's word kept as a label", async () => {
   const dir = join(ROOM_HOME, "knowledge-jev");
   rmSync(dir, { recursive: true, force: true });
   mkdirSync(dir, { recursive: true });
@@ -1159,7 +1178,10 @@ test("the gate's call goes to the Jev district as it takes it: English, one call
   });
   assert.deepEqual(
     sent.map((body) => Object.keys(body.questions)),
-    [["keep"], ["keep", "d1"]],
+    [
+      ["keep", "keep~r"],
+      ["keep", "d1", "keep~r", "d1~r"],
+    ],
   );
   const log = (jev.store() as unknown as { db: DatabaseSync }).db;
   assert.deepEqual(

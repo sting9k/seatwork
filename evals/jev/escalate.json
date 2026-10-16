@@ -1,0 +1,106 @@
+{
+  "$comment": "The escalate fork: a BLOCKED, QUESTION or DECISION_NEEDED mail a seat sent its Owner. expect: owner, above, room or person. targets: the labels the room offers when not all four.",
+  "cases": [
+    {
+      "id": "runner-config",
+      "signal": "QUESTION",
+      "subject": "QUESTION: which test runner config?",
+      "body": "The repo has jest.config.js and vitest.config.ts. Which one is current?",
+      "expect": "owner"
+    },
+    {
+      "id": "paid-geocoder",
+      "signal": "DECISION_NEEDED",
+      "subject": "DECISION_NEEDED: paid geocoding API",
+      "body": "The free geocoder caps at 1,000 calls a day; we need about 5,000. The paid plan is 49 USD a month. Approve?",
+      "expect": "person",
+      "why": "money"
+    },
+    {
+      "id": "mail-tool",
+      "signal": "BLOCKED",
+      "subject": "BLOCKED: the room's mail tool rejects my report",
+      "body": "seatwork_mail send fails with 'thread too long' on every try, so I cannot hand in.",
+      "expect": "room"
+    },
+    {
+      "id": "shared-auth-lib",
+      "signal": "BLOCKED",
+      "subject": "BLOCKED: need a change in the shared auth library",
+      "body": "My task needs the auth library, which another team's Lead owns, to expose the token expiry. My Owner's scope is the checkout app only.",
+      "expect": "above"
+    },
+    {
+      "id": "fixture",
+      "signal": "BLOCKED",
+      "subject": "BLOCKED: failing test after rebase",
+      "body": "After rebasing on main, checkout.test.ts fails on a fixture I did not touch. Should I fix the fixture or skip the test?",
+      "expect": "owner"
+    },
+    {
+      "id": "delete-customers",
+      "signal": "DECISION_NEEDED",
+      "subject": "DECISION_NEEDED: delete inactive customers?",
+      "body": "The cleanup job would delete three years of inactive customer records. This may need legal approval.",
+      "expect": "person"
+    },
+    {
+      "id": "turn-limit",
+      "signal": "QUESTION",
+      "subject": "QUESTION: the room's limit stops my turns",
+      "body": "My turns end after 2 minutes with 'turn budget reached'; the task needs longer runs. Is the room's limit set too low?",
+      "expect": "room"
+    },
+    {
+      "id": "same-file",
+      "signal": "DECISION_NEEDED",
+      "subject": "DECISION_NEEDED: two Leads want the same file",
+      "body": "The search Lead and my Owner both plan to rewrite src/query/builder.ts this week. Someone above both must choose who goes first.",
+      "expect": "above"
+    },
+    {
+      "id": "prod-logs",
+      "signal": "QUESTION",
+      "subject": "QUESTION: access to production logs",
+      "body": "I need read access to the production logs to debug the outage; only the person can grant it.",
+      "expect": "person"
+    },
+    {
+      "id": "module-name",
+      "signal": "QUESTION",
+      "subject": "QUESTION: module name",
+      "body": "Should the new module be called billing-client or billing-api?",
+      "expect": "owner"
+    },
+    {
+      "id": "lease-held",
+      "signal": "BLOCKED",
+      "subject": "BLOCKED: seatwork_work refuses my claim",
+      "body": "Claiming sw-41 fails with 'lease held', although nobody has worked on it for two days.",
+      "expect": "room"
+    },
+    {
+      "id": "fix-import-too",
+      "signal": "QUESTION",
+      "subject": "QUESTION: scope of my task",
+      "body": "The brief says to fix the export; the same bug is in the import. May I fix both?",
+      "expect": "owner"
+    },
+    {
+      "id": "public-api",
+      "signal": "DECISION_NEEDED",
+      "subject": "DECISION_NEEDED: change the public API",
+      "body": "The fix needs a breaking change to the public REST API that customers use. Should we version the API or break it?",
+      "expect": "person",
+      "why": "direction and customers"
+    },
+    {
+      "id": "agpl",
+      "signal": "DECISION_NEEDED",
+      "subject": "DECISION_NEEDED: library license",
+      "body": "The library we want to use is AGPL. Can we use it?",
+      "targets": ["owner", "person"],
+      "expect": "person"
+    }
+  ]
+}

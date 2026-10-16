@@ -7,6 +7,7 @@ import { call } from "./client";
 import {
   checkRequest,
   DecisionError,
+  LIMITS,
   tokensOf,
   type Answer,
   type ChoiceQuestion,
@@ -18,6 +19,7 @@ import {
 } from "./contract";
 import { DIALECTS, type Dialect } from "./dialects";
 import { cleanState, guarded } from "./input";
+import { merged, REVERSED, withReversed } from "./order";
 import { JevStore, type CallRow } from "./store";
 
 /** The Jev district: decisions from the provider in force, input made safe, calls logged, costed, capped, and held off while it is down. */
@@ -54,11 +56,12 @@ export interface JevDeps {
   log?: (line: string) => void;
 }
 
-/** A decision as its caller reads it: the answers, the ids they were logged under, its cost, and whether memory gave it. */
+/** A decision as its caller reads it: the answers, the ids they were logged under, the choices whose two orders chose apart, its cost, and whether memory gave it. */
 export interface Decision {
   model: string;
   answers: Record<string, Answer>;
   asks: Record<string, number>;
+  parted: string[];
   usd: number | null;
   latencyMs: number;
   attempts: number;
@@ -365,7 +368,7 @@ export class Jev {
     const { name, settings, policy, key } = found;
     // every string's secrets are hidden before the state leaves the machine or is logged
     const { state: sent, suspect } = cleanState(state);
-    const asked = guarded(questions);
+    const asked = withReversed(guarded(questions), LIMITS.questions);
     const text = JSON.stringify(sent);
     const stateHash = createHash("sha256").update(text).digest("hex");
     const logged = { caller, provider: name, modelAsked: settings.model, stateHash, suspect };
@@ -396,6 +399,8 @@ export class Jev {
       });
       Object.assign(this.down, { failures: 0, opens: 0, until: 0 });
       const { usd, usdSource } = costOf(reply, settings.usdPerMillionInput, () => tokensOf(sent, asked));
+      const read = merged(reply.answers);
+      // the log keeps each choice as the room reads it, and the reversed order beside it
       const asks = this.store().record(
         {
           ...logged,
@@ -408,13 +413,14 @@ export class Jev {
           attempts: reply.attempts,
           error: null,
         },
-        reply.answers,
+        { ...read.answers, ...read.reversed },
         { hash: stateHash, text },
       );
       const decision: Decision = {
         model: reply.model,
-        answers: reply.answers,
-        asks,
+        answers: read.answers,
+        asks: Object.fromEntries(Object.entries(asks).filter(([id]) => !id.endsWith(REVERSED))),
+        parted: read.parted,
         usd,
         latencyMs: reply.latencyMs,
         attempts: reply.attempts,
@@ -440,7 +446,7 @@ export class Jev {
     }
   }
 
-  /** Puts forks to the model in one call: for each id its label and probability, sharp at `sharpAt` or more; a failed call leaves every fork unsure, never thrown. */
+  /** Puts forks to the model in one call: for each id its label and probability, sharp at `sharpAt` or more when its two orders agree; a failed call leaves every fork unsure, never thrown. */
   async routes(
     caller: string,
     state: State,
@@ -460,10 +466,12 @@ export class Jev {
       if (error instanceof DecisionError) return unsure(`${error.code}: ${error.message}`);
       throw error;
     }
-    const why = decided.suspect ? `the state speaks to the model: ${decided.suspect}` : null;
+    const spoken = decided.suspect ? `the state speaks to the model: ${decided.suspect}` : null;
     return Object.fromEntries(
       ids.map((id) => {
         const { label, probability } = labelOf(decided.answers[id]);
+        const why =
+          spoken ?? (decided.parted.includes(id) ? "its options listed the other way round chose apart" : null);
         return [
           id,
           { label, probability, sharp: probability >= sharpAt && !why, askId: decided.asks[id] ?? null, why },

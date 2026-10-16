@@ -1,4 +1,5 @@
 import { notEnglish } from "../english";
+import { excerpt } from "../excerpt";
 import { redact } from "../redact";
 import { DecisionError, type Questions, type State } from "./contract";
 
@@ -29,7 +30,7 @@ const ADDRESSED = [
   /\b(system prompt|you are an? (ai|assistant|language model|classifier|judge))\b/i,
 ] as const;
 
-/** One text cleaned of hidden letters, secrets, quoted foreign words and blank runs, cut with the cut said. */
+/** One text cleaned of hidden letters, secrets, quoted foreign words and blank runs, cut to its head and tail with the cut said. */
 function cleanText(text: string): string {
   // hidden letters go first, so a secret split by one is still found
   const clean = redact(text.normalize("NFC").replace(HIDDEN, ""))
@@ -37,8 +38,7 @@ function cleanText(text: string): string {
     .replace(QUOTED, (quoted) => (notEnglish(quoted) ? "`(words in another language)`" : quoted))
     .replace(BLANK_RUN, "\n\n")
     .replace(SPACE_RUN, "    ");
-  const most = INPUT.textChars;
-  return clean.length <= most ? clean : `${clean.slice(0, most)} … (${clean.length - most} characters cut)`;
+  return excerpt(clean, INPUT.textChars);
 }
 
 /** The first phrase of a text that speaks to the model, or null. */

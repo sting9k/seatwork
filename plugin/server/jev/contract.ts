@@ -86,7 +86,7 @@ export class DecisionError extends Error {
   }
 }
 
-const LIMITS = { questions: 64, idChars: 100, labels: 255, levels: [2, 10], tokens: 32_000 } as const;
+export const LIMITS = { questions: 64, idChars: 100, labels: 255, levels: [2, 10], tokens: 32_000 } as const;
 const SUM_TOLERANCE = 0.025;
 
 /** A rough count, four characters a token, of what a request puts before the model. */

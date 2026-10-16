@@ -37,6 +37,12 @@ async function jev(url: unknown, init?: RequestInit): Promise<Response> {
   const answers = Object.fromEntries(
     Object.entries(body.questions).map(([id, question]) => {
       const labels = Object.keys(question.criteria);
+      // the knowledge gate reads every decision: it is told each one is a rule, and new
+      const gate = labels.includes("request") ? "rule" : labels.includes("independent") ? "independent" : null;
+      if (gate) {
+        const probabilities = Object.fromEntries(labels.map((label) => [label, label === gate ? 0.97 : 0.01]));
+        return [id, { type: "choice", choice: gate, probabilities, confidence: 0.97 }];
+      }
       const fork = forkOf(labels);
       asked.push({ fork, labels, state: body.state });
       const pick = says[fork] && labels.includes(says[fork]) ? says[fork]! : null;
@@ -56,7 +62,6 @@ before(() => {
   const file = join(ROOM_HOME, "policy.json");
   const policy = JSON.parse(readFileSync(file, "utf8"));
   policy.jev.forks = ["tier", "gaps", "escalate", "duplicate"];
-  policy.knowledge.gate = false;
   policy.safety.council.mode = "off";
   writeFileSync(file, JSON.stringify(policy));
   mkdirSync(join(ROOM_HOME, "jev"), { recursive: true });

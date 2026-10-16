@@ -52,6 +52,9 @@ export function clip(text: string, most: number): string {
   return text.length > most ? `${text.slice(0, most)}…` : text;
 }
 
+/** Whether the room needs a fork, so it is on whatever the policy lists. */
+export const required = (name: ForkName): boolean => "required" in FORKS[name] && FORKS[name].required === true;
+
 /** The words the catalog gives a fork's labels; empty for a fork whose labels come with the call. */
 export function meanings(name: ForkName): Record<string, string> {
   return FORKS[name].question.criteria as Record<string, string>;
@@ -74,7 +77,7 @@ export class Forks {
     for (const name of Object.keys(FORKS) as ForkName[]) {
       const sharpAt = this.sharpAtOf(name);
       const counts = this.deps.router?.answered?.(`forks.${name}`, sharpAt, since) ?? { asked: 0, sure: 0, failed: 0 };
-      const on = this.deps.on(name);
+      const on = this.isOn(name);
       if (on || counts.asked > 0 || counts.failed > 0)
         out[name] = {
           on,
@@ -88,9 +91,14 @@ export class Forks {
     return out;
   }
 
-  /** Whether a fork is asked at all: on in the policy, with a model that can answer now. */
+  /** Whether a fork is asked at all: needed by the room or on in the policy, with a model that can answer now. */
   open(name: ForkName): boolean {
-    return !!this.deps.router && this.deps.on(name) && this.deps.router.why() === null;
+    return !!this.deps.router && this.isOn(name) && this.deps.router.why() === null;
+  }
+
+  /** Whether a fork is on: the room needs it, or the policy lists it. */
+  private isOn(name: ForkName): boolean {
+    return required(name) || this.deps.on(name);
   }
 
   /** One fork: its sharp label, or null to keep the room's own rule; `labels` stand in for a choice's own when given. */

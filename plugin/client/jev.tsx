@@ -5,9 +5,10 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { Text, View } from "react-native";
 import { jevKey, jevState, jevTry } from "../shared/setup";
+import { WhereItWorks } from "./jev-places";
 import { Btn, Card, KeyValue, Link, tint, type Colors } from "./kit";
 
-/** The decision provider on the Seatwork screen: its key, model, today's calls, the last check and what it cost this month; a modal takes a new key. */
+/** The decision provider on the Seatwork screen: its key, model, today's calls, the last check, where it works and what it cost this month; a modal takes a new key. */
 
 type State = RpcOutput<typeof jevState>;
 
@@ -90,6 +91,7 @@ export function JevCard(props: { colors: Colors }) {
           ) : data.why ? (
             <Text style={{ ...small, color: c.statusWarning }}>{data.why}</Text>
           ) : null}
+          <WhereItWorks colors={c} />
           <KeyValue name="This month" value={`$${data.monthUsd.toFixed(4)}`} colors={c} />
         </>
       ) : (

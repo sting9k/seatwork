@@ -14,12 +14,11 @@ import { KnowledgeStore, type Decision, type Filters, type Found, type Source, t
 
 /** The Knowledge district: the room's record of turns and mail, and its decisions, for seats to search and be told. */
 
-/** The policy's knowledge section: `mode`, the record's `keepDays` and `maxEntries`, and `gate` for the keep gate. */
+/** The policy's knowledge section: `mode`, the record's `keepDays` and `maxEntries`, and the keep gate's threshold. */
 export interface KnowledgePolicy {
   mode: "on" | "off";
   keepDays: number;
   maxEntries?: number;
-  gate?: boolean;
   gateAt?: number;
 }
 
@@ -196,7 +195,7 @@ export class Knowledge {
       rootOf: deps.rootOf,
       gate: new Gate({
         judge,
-        on: () => this.on && this.deps.policy()?.gate === true,
+        on: () => this.on,
         at: () => this.deps.policy()?.gateAt,
         log: deps.log,
       }),

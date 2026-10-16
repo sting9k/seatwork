@@ -228,6 +228,7 @@ function councilWith(
   levels: CouncilPolicy["levels"] = {},
   answer?: (state: Record<string, unknown>) => number,
   diffOf?: (seat: string) => HandInDiff | null,
+  jurors?: CouncilPolicy["jurors"],
 ) {
   const dir = join(ROOM_HOME, `council-${(homes += 1)}`);
   rmSync(dir, { recursive: true, force: true });
@@ -246,7 +247,7 @@ function councilWith(
   const council = new Council({
     store: () => store,
     decider,
-    policy: () => ({ mode: "on", keepDays: 90, tickSeconds: 60, levels }),
+    policy: () => ({ mode: "on", keepDays: 90, tickSeconds: 60, levels, ...(jurors ? { jurors } : {}) }),
     log: () => {},
     snapshot,
     diffOf,
@@ -386,6 +387,13 @@ test("a juror is asked only where the facts cannot tell, and its grey band keeps
   await council.endOfTurn(peerTurn([change(`${ROOT}/src/duration.js`)], "STATUS: still parsing", null));
   assert.equal(asked.length, 2, "a report that closes no work is not asked about");
   assert.deepEqual(readings()[0], { member: "claims", readings: 3, found: 1, grey: 1, shown: 1 });
+});
+
+test("a juror the person turned off is never asked: its member reads by the facts alone", async () => {
+  const { council, asked } = councilWith({ claims: 1 }, () => 0.95, undefined, ["scope", "gaming"]);
+  const report = "CANDIDATE: hours added; the parser handles 2h and 90m as asked.";
+  assert.deepEqual(await council.endOfTurn(peerTurn([change(`${ROOT}/src/duration.js`)], report, null)), []);
+  assert.equal(asked.length, 0);
 });
 
 const lead = (

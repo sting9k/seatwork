@@ -101,3 +101,14 @@ export const jevTry = defineRpc({
   input: z.object({}),
   output: jevCheck,
 });
+
+const jevPlace = z.object({ id: z.string(), label: z.string(), about: z.string(), on: z.boolean() });
+const jevPlaceList = z.object({ required: z.array(jevPlace), optional: z.array(jevPlace) });
+
+export const jevPlaces = defineRpc({ name: "jev.places", input: z.object({}), output: jevPlaceList });
+
+export const jevPlaceSet = defineRpc({
+  name: "jev.place",
+  input: z.object({ id: z.string().max(64), on: z.boolean() }),
+  output: jevPlaceList,
+});

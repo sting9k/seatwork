@@ -16,28 +16,59 @@ interface OperatorDeps {
   log(line: string): void;
 }
 
+/** What keeping the seat knows: when it last started one, and why that start failed. */
+export interface Keeping {
+  at: number;
+  failed: string | null;
+}
+
 /** Notes which of the room's own seats are open, and starts one when none is and none was started in the last minutes. */
-export async function keepOperator(
-  deps: OperatorDeps,
-  open: Set<string>,
-  starting: { at: number },
-): Promise<string | null> {
+export async function keepOperator(deps: OperatorDeps, open: Set<string>, starting: Keeping): Promise<string | null> {
   if (!ROOM_ROLE) return null;
   const seats = [...(await deps.host.live()).values()].filter((seat) => parseSeat(seat.provider)?.role === ROOM_ROLE);
   open.clear();
   for (const seat of seats) open.add(seat.id);
+  if (seats.length > 0) starting.failed = null;
   // a start may take minutes to show in the app's list: one start, then a wait
   if (seats.length > 0 || Date.now() - starting.at < WAIT_MS) return null;
   const provider = deps.provider();
   if (!provider) return null;
   starting.at = Date.now();
-  const id = await deps.host.create({
-    key: `operator:${starting.at}`,
-    provider,
-    cwd: deps.folder,
-    title: `[${traits(ROOM_ROLE).label}] the room's operator`,
-    prompt: START,
-  });
-  deps.log(`room: its own seat was gone, ${id} started on ${provider}`);
-  return id;
+  try {
+    const id = await deps.host.create({
+      key: `operator:${starting.at}`,
+      provider,
+      cwd: deps.folder,
+      title: `[${traits(ROOM_ROLE).label}] the room's operator`,
+      prompt: START,
+    });
+    starting.failed = null;
+    deps.log(`room: its own seat was gone, ${id} started on ${provider}`);
+    return id;
+  } catch (error) {
+    starting.failed = error instanceof Error ? error.message : String(error);
+    throw error;
+  }
+}
+
+/** Whether the room's own seat runs, as the person's screen says it: yes, just started (null), or why not. */
+export async function operatorState(
+  deps: Pick<OperatorDeps, "host" | "provider">,
+  starting: Keeping,
+): Promise<{ label: string; ok: boolean | null; detail: string } | null> {
+  if (!ROOM_ROLE) return null;
+  const label = traits(ROOM_ROLE).label || ROOM_ROLE;
+  const open = [...(await deps.host.live()).values()].find((seat) => parseSeat(seat.provider)?.role === ROOM_ROLE);
+  if (open) return { label, ok: true, detail: `${open.title ?? open.id} runs the room.` };
+  if (!deps.provider())
+    return { label, ok: false, detail: `No ${label} seat is set up, so nobody runs the room: Apply sets one up.` };
+  if (starting.failed)
+    return { label, ok: false, detail: `${label} is not running, and the room could not start it: ${starting.failed}` };
+  if (Date.now() - starting.at < WAIT_MS)
+    return { label, ok: null, detail: `${label} was started again and can take a few minutes to show.` };
+  return {
+    label,
+    ok: false,
+    detail: `${label} is not running; the room starts it again within minutes while the app is open.`,
+  };
 }

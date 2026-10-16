@@ -539,7 +539,10 @@ test("a fork's week is read from the log: answers acted on at its threshold, ans
   for (const a of ["1", "2", "3"]) await route(jev, "forks.tier@1", { a }, noul, 0.5);
   await route(jev, "forks.gaps@2", { a: "4" }, noul, 0.5);
   const forks = new Forks({ router: jev, on: (name) => name === "tier" || name === "duplicate", log: () => {} });
+  const needed = { on: true, asked: 0, acted: 0, split: 0, failed: 0 };
   assert.deepEqual(forks.reading(), {
+    answers: { ...needed, sharpAt: 0.9 },
+    overlap: { ...needed, sharpAt: 0.75 },
     tier: { on: true, sharpAt: 0.85, asked: 2, acted: 1, split: 1, failed: 1 },
     gaps: { on: false, sharpAt: 0.85, asked: 1, acted: 1, split: 0, failed: 0 },
     duplicate: { on: true, sharpAt: 0.85, asked: 0, acted: 0, split: 0, failed: 0 },
@@ -547,7 +550,7 @@ test("a fork's week is read from the log: answers acted on at its threshold, ans
   jev.close();
 });
 
-test("a reply that counts no tokens is priced on what was sent, so the caps still hold", async () => {
+test("a reply that counts no tokens is priced on what was sent, so its cost is still logged", async () => {
   const replies = provider(json({ model: "m", answers: SYSTEM_ONE }));
   const { jev } = district(POLICY("jev"), replies.fetch);
   const decided = await jev.decide("t", { said: "done" }, QUESTIONS);

@@ -961,8 +961,6 @@ function judgeOf(given: { kind?: string; same?: Record<string, string>; ready?: 
   return { judge, options, asked, labels };
 }
 
-const GATED: KnowledgePolicy = { ...POLICY, gate: true };
-
 /** The gate's counts in a store. */
 const gateTallies = (knowledge: Knowledge, root: string | null) =>
   Object.fromEntries(
@@ -1025,7 +1023,7 @@ test("a search is kept with every hit it ranked, and what the seat reads in its 
 
 test("the gate reads a decision before it is kept: noise and repeats are refused, the seat's word on a repeat stands", async () => {
   const noise = judgeOf({ kind: "request" });
-  const quiet = district({ judge: noise.judge, policy: GATED });
+  const quiet = district({ judge: noise.judge, policy: POLICY });
   await assert.rejects(
     () =>
       decide(quiet.knowledge, "lead-1", { topic: "login bug", statement: "Fix the login bug on the settings page." }),
@@ -1036,7 +1034,7 @@ test("the gate reads a decision before it is kept: noise and repeats are refused
   quiet.knowledge.close();
 
   const { judge, asked, labels } = judgeOf({ same: { d1: "duplicate" } });
-  const { knowledge } = district({ judge, policy: GATED });
+  const { knowledge } = district({ judge, policy: POLICY });
   await decide(knowledge, "lead-1", { topic: "database", statement: "Use SQLite for the store." });
   const storage = { scope: "task", topic: "storage", statement: "Keep the store in SQLite files." };
   await assert.rejects(
@@ -1097,19 +1095,14 @@ test("the gate reads a decision before it is kept: noise and repeats are refused
   knowledge.close();
 
   for (const [options, policy, tallies] of [
-    [{}, { ...POLICY, gate: false }, {}],
-    [{ ready: false }, GATED, {}],
-    [{ fails: true }, GATED, { "gate-unread": 1 }],
+    [{ ready: false }, POLICY, {}],
+    [{ fails: true }, POLICY, { "gate-unread": 1 }],
   ] as const) {
     const off = judgeOf({ kind: "request", ...options });
     const room = district({ judge: off.judge, policy });
     const kept = await decide(room.knowledge, "lead-1", { topic: "db", statement: "Use SQLite for the store." });
     assert.equal(kept.state, "active", "with no reading, the decision is kept");
-    assert.equal(
-      off.asked.length,
-      "fails" in options ? 1 : 0,
-      "a policy that says no, or a model with no key, is never asked",
-    );
+    assert.equal(off.asked.length, "fails" in options ? 1 : 0, "a model with no key is never asked");
     assert.deepEqual(gateTallies(room.knowledge, null), tallies);
     if ("fails" in options) assert.match(room.lines.join("\n"), /the gate did not read a decision: the model is down/);
     room.knowledge.close();
@@ -1157,7 +1150,7 @@ test("the gate's call goes to the Jev district as it takes it: English, one call
       keepDays: 90,
     }),
   });
-  const { knowledge } = district({ judge: jev, policy: GATED });
+  const { knowledge } = district({ judge: jev, policy: POLICY });
   await decide(knowledge, "lead-1", { topic: "database", statement: "Use SQLite for the store." });
   await decide(knowledge, "lead-1", {
     topic: "database",
@@ -1245,7 +1238,7 @@ test("searches and pairs go when their days are past, and what was opened goes w
 test("every statement the knowledge store runs uses an index", async () => {
   const { knowledge, project } = district({
     judge: judgeOf().judge,
-    policy: GATED,
+    policy: POLICY,
     mail: [letter(1, "REJECT: x", "lead-1", "y", { to: ["peer-f"] }), letter(2, "ACCEPT: T-1", "lead-1", "Done.")],
   });
   knowledge.turnEnded(turn("peer-f", [{ kind: "say", text: "the login works" }], { parentId: "lead" }));
@@ -1447,7 +1440,7 @@ test("a search that matches more than it ranks says it read the newest; a pack k
 
 test("new_topic answers the refusal on its own topic only; the gate still reads a repeat on another", async () => {
   const { judge } = judgeOf({ same: { d1: "duplicate" } });
-  const { knowledge } = district({ judge, policy: GATED });
+  const { knowledge } = district({ judge, policy: POLICY });
   await decide(knowledge, "lead-g", { topic: "database", statement: "Use SQLite for the store." });
   await assert.rejects(
     () => decide(knowledge, "lead-g", { topic: "database engine", statement: "Use Postgres for the store." }),

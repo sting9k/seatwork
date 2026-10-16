@@ -52,7 +52,7 @@ export class OperationsRefused extends Error {
 /** A policy key the operator may tune, with its range and whether it may only be lowered; `[*]` in a path stands for every project's folder. */
 interface Tunable {
   district: string;
-  type: "integer" | "number" | "boolean" | "forks";
+  type: "integer" | "number" | "forks";
   min?: number;
   max?: number;
   lowerOnly?: boolean;
@@ -123,10 +123,6 @@ export function writePolicyKey(file: string, path: string, value: unknown): void
 
 /** A value an operator gave for a key, checked against the key's type and range. */
 function checked(path: string, tunable: Tunable, raw: unknown): unknown {
-  if (tunable.type === "boolean") {
-    if (typeof raw !== "boolean") throw new OperationsRefused(`${path} is true or false`);
-    return raw;
-  }
   if (tunable.type === "forks") {
     const names = Array.isArray(raw) ? raw.map(String) : null;
     const unknown = names?.find((name) => !FORK_NAMES.includes(name));

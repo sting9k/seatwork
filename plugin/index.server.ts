@@ -21,6 +21,8 @@ import { startRoom, type Room } from "./server/room/room";
 import { roomDecisions, roomStatus, roomWaiting } from "./shared/room";
 import {
   jevKey,
+  jevPlaceSet,
+  jevPlaces,
   jevState,
   jevTry,
   roomSettings,
@@ -31,7 +33,7 @@ import {
 } from "./shared/setup";
 import { ROOM_PROJECT } from "./shared/workflow";
 
-const VERSION = "0.37.0";
+const VERSION = "0.38.0";
 const PLUGIN_ID = "seatwork";
 
 /** Seatwork on Paseo: the setup screen first; the room once it is set up. */
@@ -178,6 +180,16 @@ export default function contribute(server: PluginServerContext) {
     if (!room) throw new Error("No room is set up on this daemon.");
     return room.jevKey(key);
   });
+  server.handle(jevPlaces, async (_input, { paseo }) => {
+    await bringUp(paseo, false);
+    if (!room) throw new Error("No room is set up on this daemon.");
+    return room.jevPlaces();
+  });
+  server.handle(jevPlaceSet, async ({ id, on }, { paseo }) => {
+    await bringUp(paseo, false);
+    if (!room) throw new Error("No room is set up on this daemon.");
+    return room.jevPlace(id, on);
+  });
   server.handle(jevTry, async (_input, { paseo }) => {
     await bringUp(paseo, false);
     if (!room) throw new Error("No room is set up on this daemon.");
@@ -202,6 +214,7 @@ export default function contribute(server: PluginServerContext) {
         version: VERSION,
         olderSeats: room ? await room.olderSeats() : [],
         behind: behind?.why,
+        ownSeat: room ? await room.ownSeat() : null,
       }),
     ]);
     const harnesses = states.map((h) => ({

@@ -300,6 +300,17 @@ test("a seat opened by an earlier version of the plugin is named on the screen u
   daemon.open = [];
 });
 
+test("the screen says when the room's own seat is not running, so the sidebar needs the Owner; an open one clears it", async () => {
+  daemon.open = [];
+  const missing = (await state()).checks.find((check) => check.id === "own-seat");
+  assert.equal(missing?.ok, false);
+  assert.match(missing?.detail ?? "", /not running/);
+  daemon.open = [{ id: "hq-1", provider: "claude-hq", title: "[HQ] the room's operator" }];
+  const open = (await state()).checks.find((check) => check.id === "own-seat");
+  assert.deepEqual([open?.ok, open?.detail], [true, "[HQ] the room's operator runs the room."]);
+  daemon.open = [];
+});
+
 test("removing the room waits for its seats, then takes it out of Paseo and out of the projects it worked in, keeps all of it beside its home, and leaves the plugin asleep", async () => {
   // a registered project, a folder a seat ran in, one with a linked .seatwork, one the room never knew
   const [seatDir, linked, stranger] = ["seat-ran-here", "linked", "stranger"].map((name) =>

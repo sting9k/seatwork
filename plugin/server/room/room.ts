@@ -10,7 +10,7 @@ import { clip, Forks } from "../orchestration/forks";
 import { Recovery, resumeDue } from "../orchestration/recovery";
 import { ReviewGate } from "../orchestration/review-gate";
 import { Rotations } from "../orchestration/rotation";
-import { keepOperator } from "../orchestration/operator";
+import { keepOperator, operatorState, type Keeping } from "../orchestration/operator";
 import { Rounds } from "../orchestration/rounds";
 import { TaskKeys } from "../orchestration/task-keys";
 import { claudeRoleDir, describeIsolation, ensureRuntime, envFor, roleSkillNames } from "../orchestration/runtimes";
@@ -38,7 +38,7 @@ import { Operations, OperationsRefused, writePolicyKey } from "../operations/ind
 import { addSkill, listSkills, removeSkill, SkillRefused, type SkillSource } from "../orchestration/local-skills";
 import { Vitals } from "../operations/vitals";
 import { OwedList, roomStatus } from "./status";
-import { folderDecisions, jevView } from "./owner";
+import { folderDecisions, jevPlaces, jevView, setJevPlace } from "./owner";
 import { Jev, type JevCheck } from "../jev/index";
 import { Knowledge } from "../knowledge/index";
 import { Safety } from "../safety/index";
@@ -64,7 +64,7 @@ interface SeatStart extends Launched {
   mcpUrl: string;
 }
 
-/** A room set up and running on this machine: the app hands it each seat's start, session, turns and archive, and asks what waits for the Owner, a folder's decisions and the decision provider. */
+/** A room set up and running on this machine: the app hands it each seat's start, session, turns and archive, and asks what waits for the Owner, a folder's decisions, the decision provider and where it works. */
 export interface Room {
   policy: RuntimePolicy;
   filesFrom: string | undefined;
@@ -78,6 +78,7 @@ export interface Room {
   permissionAsked(seat: SeatEvent, request: unknown): Promise<void>;
   permissionAnswered(agentId: string): void;
   olderSeats(): Promise<string[]>;
+  ownSeat(): ReturnType<typeof operatorState>;
   waiting(): Promise<{
     chime: boolean;
     waiting: Awaited<ReturnType<OwedList["current"]>>;
@@ -87,6 +88,8 @@ export interface Room {
   jev(): ReturnType<typeof jevView>;
   jevKey(key: string): Promise<JevCheck>;
   jevCheck(): Promise<JevCheck>;
+  jevPlaces(): ReturnType<typeof jevPlaces>;
+  jevPlace(id: string, on: boolean): ReturnType<typeof jevPlaces>;
   status(): ReturnType<typeof roomStatus>;
   stop(): Promise<void>;
 }
@@ -295,7 +298,7 @@ function serve(room: RoomContext, safety: Safety, knowledge: Knowledge) {
 }
 
 /** The room's timers: the minute's sweep, the collector and the council's look; `touch` is the app's first word. */
-function startTimers(room: RoomContext, gc: Collector): { touch(): void; stop(): void } {
+function startTimers(room: RoomContext, gc: Collector): { touch(): void; stop(): void; keeping: Keeping } {
   const { engine, safety, policy, log } = room;
   // a rotation left half-done by a stop of the plugin is said once, not repeated
   for (const [seat, asked] of room.rotations.interrupted) {
@@ -309,7 +312,7 @@ function startTimers(room: RoomContext, gc: Collector): { touch(): void; stop():
       ).catch((error) => log(`the notice of an interrupted rotation was not sent: ${String(error)}`));
   }
   // the room's own seat is looked for a minute after the app is in, then every few minutes, never on the app's poll
-  const operator = { at: 0 };
+  const operator: Keeping = { at: 0, failed: null };
   let minutes = 0;
   const keep = () =>
     void keepOperator(
@@ -369,6 +372,7 @@ function startTimers(room: RoomContext, gc: Collector): { touch(): void; stop():
     Math.max(15, policy.safety?.council?.tickSeconds ?? 60) * 1000,
   );
   return {
+    keeping: operator,
     touch() {
       if (touched) return;
       touched = true;
@@ -723,6 +727,11 @@ export function startRoom(input: {
     permissionAnswered(agentId) {
       engine.settlePermission(agentId);
     },
+    ownSeat: () =>
+      operatorState(
+        { host, provider: () => enabledSeats().find((seat) => inRoom(seat.role))?.provider },
+        timers.keeping,
+      ),
     async olderSeats() {
       return [...(await host.live()).values()]
         .filter((seat) => parseSeat(seat.provider) && engine.seat(seat.id)?.version !== version)
@@ -743,6 +752,8 @@ export function startRoom(input: {
       return jev.check();
     },
     jevCheck: () => jev.check(),
+    jevPlaces: () => jevPlaces(room),
+    jevPlace: (id, on) => setJevPlace(room, id, on),
     status: async () => roomStatus(await host.live(), engine, room.owed),
     async stop() {
       timers.stop();

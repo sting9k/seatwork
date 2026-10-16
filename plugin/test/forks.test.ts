@@ -18,6 +18,14 @@ test("a fork is acted on only when the model is sure; a split answer, a fork the
   assert.equal(sure.asked.length, 1, "a fork the policy keeps off is never asked");
 });
 
+test("a fork the room needs is asked whatever the policy lists; an optional one the policy leaves out is not", async () => {
+  const { router, asked } = modelSaying("m7", 0.97);
+  const { forks } = forksWith(router, []);
+  assert.equal(await forks.take("answers", { reply: {} }, { m7: "it answers asks.m7", none: "none" }), "m7");
+  assert.equal(await forks.take("report", { report: "Noted." }), null);
+  assert.equal(asked.length, 1);
+});
+
 test("a fork's labels may be the call's own, and many questions of one fork go in one call", async () => {
   const { router, asked } = modelSaying("m7", 0.97);
   const { forks } = forksWith(router, ON);

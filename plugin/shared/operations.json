@@ -25,7 +25,6 @@
   "tunables": {
     "knowledge.keepDays": { "district": "knowledge", "type": "integer", "min": 7, "max": 365 },
     "knowledge.maxEntries": { "district": "knowledge", "type": "integer", "min": 10000, "max": 2000000 },
-    "knowledge.gate": { "district": "knowledge", "type": "boolean" },
     "jev.forks": { "district": "jev", "type": "forks" },
     "jev.sharpAt.report": { "district": "jev", "type": "number", "min": 0.5, "max": 0.99 },
     "jev.sharpAt.wake": { "district": "jev", "type": "number", "min": 0.5, "max": 0.99 },

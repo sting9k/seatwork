@@ -39,6 +39,7 @@ export interface CouncilPolicy {
   tickSeconds: number;
   levels?: Partial<Record<MemberName, number>>;
   chairMinutes?: number;
+  jurors?: string[];
 }
 
 /** What the hand-in saw of a candidate's diff; `returned` once sent back; `related` the unchanged tests naming it. */
@@ -531,9 +532,10 @@ export class Council {
     return { ...reading, zone, scores, evidence: { evidence, scores } };
   }
 
-  /** Whether a decision provider is there and ready to be asked. */
-  private jurorReady(): boolean {
-    return !!this.deps.decider && this.deps.decider.why() === null;
+  /** Whether a member's juror may be asked: the person left it on, and a decision provider is ready. */
+  private jurorReady(member: MemberName): boolean {
+    const on = this.deps.policy()?.jurors?.includes(member) ?? true;
+    return on && !!this.deps.decider && this.deps.decider.why() === null;
   }
 
   /** A member's readings of a turn; `diff` is what the hand-in check saw of a candidate's. */
@@ -582,7 +584,7 @@ export class Council {
         },
       ];
     const signal = signalOf(input.text);
-    if (!signal || !CLOSES_WORK.has(signal) || !this.jurorReady()) return [{ tier: "fact", zone: "clear" }];
+    if (!signal || !CLOSES_WORK.has(signal) || !this.jurorReady("claims")) return [{ tier: "fact", zone: "clear" }];
     return [
       () =>
         this.ask(
@@ -615,7 +617,7 @@ export class Council {
           : { tier: "fact", zone: "clear" },
       );
     }
-    if (fields.nonGoals && this.jurorReady())
+    if (fields.nonGoals && this.jurorReady("scope"))
       out.push(() =>
         this.ask(
           "scope",
@@ -640,8 +642,8 @@ export class Council {
     const common = { fingerprint, diff: evidence.excerpt, returned: diff!.returned };
     const facts: Reading = { tier: "fact", zone: "found", line, evidence: signs, ...common };
     const sends = this.level("gaming") >= SEND_BACK_LEVEL;
-    if (hard > 0 && !(sends && this.jurorReady())) return [facts];
-    if (!this.jurorReady()) return [{ tier: "fact", zone: "clear", evidence: signs }];
+    if (hard > 0 && !(sends && this.jurorReady("gaming"))) return [facts];
+    if (!this.jurorReady("gaming")) return [{ tier: "fact", zone: "clear", evidence: signs }];
     const state = {
       excerpt: evidence.excerpt,
       sourceFiles: evidence.sourceFiles,

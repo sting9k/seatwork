@@ -41,9 +41,10 @@ export async function setupChecks(
     version: string;
     olderSeats: string[];
     behind: string | undefined;
+    ownSeat: { label: string; ok: boolean | null; detail: string } | null;
   },
 ): Promise<{ id: string; label: string; ok: boolean | null; detail: string }[]> {
-  const { pluginDir, setup, seats, version, olderSeats, behind } = room;
+  const { pluginDir, setup, seats, version, olderSeats, behind, ownSeat } = room;
   const { config } = await paseo.config.get();
   const switches = readSwitches(PASEO_HOME, pluginDir);
   const tools = (config.mcp as { enabled?: boolean } | undefined)?.enabled ?? switches.paseoTools;
@@ -58,6 +59,7 @@ export async function setupChecks(
           : "Seats create and reach each other through them.",
     },
   ];
+  if (ownSeat) checks.push({ id: "own-seat", ...ownSeat });
   if (setup && setup.version !== version) {
     checks.push({
       id: "version",

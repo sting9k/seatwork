@@ -300,15 +300,16 @@
       "registry": true
     },
     "council": {
-      "$comment": "The council that reads each turn of a briefed, writing or reviewing seat (shared/safety/council.json). levels: a member's level on this machine, over the shipped one, at most 2 (labels alone earn the level that sends a hand-in back). Readings no label holds are kept keepDays; tickSeconds paces the look at running turns. chairMinutes: how long an appeal waits for the chair's ruling before it lapses, 30 when not set.",
+      "$comment": "The council that reads each turn of a briefed, writing or reviewing seat (shared/safety/council.json). levels: a member's level on this machine, over the shipped one, at most 2 (labels alone earn the level that sends a hand-in back). Readings no label holds are kept keepDays; tickSeconds paces the look at running turns. chairMinutes: how long an appeal waits for the chair's ruling before it lapses, 30 when not set. jurors: the members that ask the decision model; one left out reads by facts alone.",
       "mode": "on",
       "keepDays": 90,
       "tickSeconds": 60,
-      "levels": {}
+      "levels": {},
+      "jurors": ["claims", "scope", "gaming"]
     }
   },
   "jev": {
-    "$comment": "The decision district. provider: jev (TypeSafe direct), openrouter (sent with zdr and no data collection) or custom (an url, a model and a dialect: systemone, openai-decisions, or openai-chat for a Chat Completions endpoint that gives log probabilities, one call a question). A key is read from keyEnv when set, else from <room home>/jev/<provider>.key. Every call's cost is logged; no cap stops a call. Only English text is sent. Calls no label holds are kept keepDays; the states they read go with the logs. forks: the room's small choices on mail and work (shared/forks.json) the model may take; a sure answer is acted on, the rest keep the room's own rule.",
+    "$comment": "The decision district. provider: jev (TypeSafe direct), openrouter (sent with zdr and no data collection) or custom (an url, a model and a dialect: systemone, openai-decisions, or openai-chat for a Chat Completions endpoint that gives log probabilities, one call a question). A key is read from keyEnv when set, else from <room home>/jev/<provider>.key. Every call's cost is logged; no cap stops a call. Only English text is sent. Calls no label holds are kept keepDays; the states they read go with the logs. forks: the optional small choices on mail and work (shared/forks.json) the model may take; the required ones are always on; a sure answer is acted on, the rest keep the room's own rule.",
     "provider": "openrouter",
     "providers": {
       "jev": {
@@ -336,7 +337,7 @@
     "attemptSeconds": 10,
     "retries": 2,
     "keepDays": 90,
-    "forks": ["report", "wake", "failure", "answers", "overlap"]
+    "forks": ["report", "wake", "failure"]
   },
   "room": {
     "$comment_instructions": "Files whose text every seat reads after the room's prompt, on every agent CLI: a path in the room home, or one under ~/ for a file of the user's. The room's AGENTS.md is the person's to write; none of the user's own instruction files reach a seat unless listed here.",
@@ -375,11 +376,10 @@
     }
   },
   "knowledge": {
-    "$comment": "The knowledge district: a record of every turn of the room's seats and every mail, kept keepDays, at most maxEntries entries a store, searched by seats with seatwork_knowledge; and the decisions people made. gate has the decision model read each decision before it is kept, and turn away noise and repeats; with no model, all is kept. Everything it keeps and sends is English, except a person's own words in the record.",
+    "$comment": "The knowledge district: a record of every turn of the room's seats and every mail, kept keepDays, at most maxEntries entries a store, searched by seats with seatwork_knowledge; and the decisions people made. The decision model reads each decision before it is kept, and turns away noise and repeats; with no model, all is kept. Everything it keeps and sends is English, except a person's own words in the record.",
     "mode": "on",
     "keepDays": 60,
-    "maxEntries": 300000,
-    "gate": true
+    "maxEntries": 300000
   },
   "budget": {
     "$comment": "What a project's seats may spend in a UTC day. projects: a cap for a project folder, however written (`~`, a trailing slash, a link): dailyUsd (dollars as the agent CLIs report them) and, besides, dailyTurns. default: the cap of a project with none of its own. A cap is above 0; with none set the room only measures. A project that reaches its cap starts no turn from mail and no new seat until the next UTC day or until its cap is raised; running turns finish. The room's operator seat may lower a cap and never raise one: the owner does, here, and a change here holds within a minute with no restart.",

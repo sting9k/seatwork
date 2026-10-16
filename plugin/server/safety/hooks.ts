@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import type { Guard, Ruling, SeatRef } from "./guard";
+import type { Guard, SeatRef } from "./guard";
 
 /** The thin hooks each agent CLI runs before a tool call, and the answer each reads; a hook finds the guard by GATE_ENV. */
 
@@ -37,7 +37,6 @@ interface Call {
 const MOST_FILES = 200;
 const MOST_PATCH_CHARS = 2 * 1024 * 1024;
 const MOST_PATH_CHARS = 4096;
-const TOO_MUCH = `The room's guard checks at most ${MOST_FILES} files and ${MOST_PATCH_CHARS >> 20} MB in one patch, and a path of at most ${MOST_PATH_CHARS} characters; this call is larger, so it does not run. Split it into smaller calls.`;
 
 /** The tool call inside a hook's payload: the shell line it runs, or the files it writes. */
 function callOf(body: Record<string, unknown>): Call {
@@ -59,13 +58,8 @@ function callOf(body: Record<string, unknown>): Call {
       call.texts.set(path, addedBy(input));
     }
   }
-  // a patch longer than the guard reads, or one with more files than it checks, is refused rather than read in part
-  if (
-    (typeof patch === "string" && patch.length > MOST_PATCH_CHARS) ||
-    call.writes.length > MOST_FILES ||
-    call.writes.some((path) => path.length > MOST_PATH_CHARS)
-  )
-    call.refused = TOO_MUCH;
+  // the guard reads the first files of a large call; the call runs whole
+  call.writes = call.writes.filter((path) => path.length <= MOST_PATH_CHARS).slice(0, MOST_FILES);
   return call;
 }
 
@@ -78,7 +72,7 @@ function addedBy(input: Record<string, unknown>): string {
     .join("\n");
 }
 
-/** The files a patch writes, and the lines it adds to each; a patch the guard refuses is not read for lines. */
+/** The files a patch writes, and the lines it adds to each; a patch past the guard's limits is not read for lines. */
 function patchOf(patch: string, call: Call): void {
   call.writes = patchTargets(patch);
   if (call.writes.length > MOST_FILES || patch.length > MOST_PATCH_CHARS) return;
@@ -106,7 +100,7 @@ function patchTargets(patch: string): string[] {
   return [...out];
 }
 
-/** Checks one hook payload and answers in the shape that CLI reads; `wrote` is the shell line that runs and writes the seat's tree. */
+/** Reads one hook payload and answers in the shape that CLI reads: a refusal of a question meant for the room's mail, or the note that rides on the call; `wrote` is the shell line that runs and writes the seat's tree. */
 export async function answerHook(
   guard: Guard,
   cli: Cli,
@@ -115,75 +109,46 @@ export async function answerHook(
   note?: string,
 ): Promise<{ type: string; text: string; noted: boolean; wrote: string | null }> {
   const call = callOf(body);
-  if (call.refused)
-    return {
-      ...render(cli, { allow: false, message: call.refused, finding: null, code: null, grantor: null }),
-      noted: false,
-      wrote: null,
-    };
-  let ruling: Ruling | null = null;
-  if (call.shell !== null) ruling = await guard.check(seat, cli, call.shell, call.cwd);
-  const wrote = ruling?.allow && ruling.changes ? call.shell : null;
+  if (call.refused) return { ...render(cli, { refused: call.refused }), noted: false, wrote: null };
+  let wrote: string | null = null;
+  if (call.shell !== null && (await guard.check(seat, cli, call.shell, call.cwd))) wrote = call.shell;
   if (call.read) {
     const { path, whole } = call.read;
-    const abs = path.startsWith("/") || !call.cwd ? path : `${call.cwd}/${path}`;
-    ruling = await guard.checkRead(seat, cli, abs, call.cwd, whole);
+    await guard.checkRead(seat, cli, absolute(path, call.cwd), call.cwd, whole);
   }
-  for (const path of call.writes) {
-    if (ruling && !ruling.allow) break;
-    const abs = path.startsWith("/") || !call.cwd ? path : `${call.cwd}/${path}`;
-    const found = await guard.checkWrite(seat, cli, abs, call.cwd, call.texts.get(path));
-    // the first denial answers; failing that, the first file the guard let through with a note
-    if (!found.allow || !ruling || (!ruling.message && found.message)) ruling = found;
-  }
-  if (!note || (ruling && !ruling.allow)) return { ...render(cli, ruling), noted: false, wrote };
-  const message = [ruling?.message, note].filter(Boolean).join("\n\n");
-  ruling = ruling ? { ...ruling, message } : { allow: true, message, finding: null, code: null, grantor: null };
-  return { ...render(cli, ruling), noted: true, wrote };
+  for (const path of call.writes)
+    await guard.checkWrite(seat, cli, absolute(path, call.cwd), call.cwd, call.texts.get(path));
+  return { ...render(cli, { note }), noted: Boolean(note), wrote };
 }
 
-/** A ruling in the shape its CLI reads: hook JSON for Claude and Codex, a block flag for Pi and OpenCode. */
-export function render(cli: Cli, ruling: Ruling | null): { type: string; text: string } {
+const absolute = (path: string, cwd: string | null) => (path.startsWith("/") || !cwd ? path : `${cwd}/${path}`);
+
+/** An answer in the shape its CLI reads: hook JSON for Claude and Codex, a block flag for Pi and OpenCode. */
+export function render(cli: Cli, answer: { refused?: string; note?: string }): { type: string; text: string } {
   if (cli === "pi" || cli === "opencode")
     return {
       type: "application/json",
       text: JSON.stringify(
-        ruling && !ruling.allow
-          ? { block: true, reason: ruling.message }
-          : { block: false, note: ruling?.message ?? null },
+        answer.refused ? { block: true, reason: answer.refused } : { block: false, note: answer.note ?? null },
       ),
     };
-  if (!ruling || (ruling.allow && !ruling.message)) return { type: "text/plain", text: "" };
-  const output = ruling.allow
-    ? { hookEventName: "PreToolUse", additionalContext: ruling.message }
-    : { hookEventName: "PreToolUse", permissionDecision: "deny", permissionDecisionReason: ruling.message };
+  if (!answer.refused && !answer.note) return { type: "text/plain", text: "" };
+  const output = answer.refused
+    ? { hookEventName: "PreToolUse", permissionDecision: "deny", permissionDecisionReason: answer.refused }
+    : { hookEventName: "PreToolUse", additionalContext: answer.note };
   return { type: "application/json", text: JSON.stringify({ hookSpecificOutput: output }) };
 }
-
-const UNCHECKED = {
-  unwired: "This session has no way to reach the room's guard, so this call does not run. Tell your Owner.",
-  down: "The room's guard is not answering, so this call does not run. Try again in a minute; if it keeps failing, tell your Owner.",
-  slow: "The room's guard took too long to check this call, so it does not run. Try again; if it keeps happening, tell your Owner.",
-  failed: "The room's guard failed to check this call, so it does not run. Tell your Owner.",
-} as const;
 
 const ASK_SECONDS = 4;
 const RETRY_SECONDS = 3;
 
-/** The script Claude and Codex run inline: it carries the payload to the room and prints the answer; no answer is a deny. */
+/** The script Claude and Codex run inline: it hands the payload to the room and prints the answer; with no answer the call runs. */
 function gateScript(): string {
-  const deny = (why: string) => `deny "${why}"`;
-  return `# The room's guard: hands this tool call to the room and prints its answer. The room decides.
-deny() { printf '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"%s"}}' "$1"; exit 0; }
+  return `# The room's hook: tells the room of this tool call and prints its answer.
 url="\${${GATE_ENV.url}:-}"
-[ -n "$url" ] || ${deny(UNCHECKED.unwired)}
-answer=$(curl --silent --fail --max-time "\${${GATE_ENV.seconds}:-${ASK_SECONDS}}" --retry 3 --retry-connrefused --retry-delay 1 --retry-max-time ${RETRY_SECONDS} --header "Content-Type: application/json" --header "X-Seat: \${${GATE_ENV.seat}:-}" --data-binary @- "$url?cli=$1" 2>/dev/null)
-case $? in
-  0) printf '%s' "$answer" ;;
-  6|7) ${deny(UNCHECKED.down)} ;;
-  28) ${deny(UNCHECKED.slow)} ;;
-  *) ${deny(UNCHECKED.failed)} ;;
-esac
+[ -n "$url" ] || exit 0
+answer=$(curl --silent --fail --max-time "\${${GATE_ENV.seconds}:-${ASK_SECONDS}}" --retry 3 --retry-connrefused --retry-delay 1 --retry-max-time ${RETRY_SECONDS} --header "Content-Type: application/json" --header "X-Seat: \${${GATE_ENV.seat}:-}" --data-binary @- "$url?cli=$1" 2>/dev/null) && printf '%s' "$answer"
+exit 0
 `;
 }
 
@@ -206,7 +171,7 @@ done
 /** A Claude plugin folder, loaded with --plugin-dir: its manifest, its PreToolUse hook, and its skills told again after a compaction. */
 export function claudePlugin(): Record<string, string> {
   return {
-    ".claude-plugin/plugin.json": `${JSON.stringify({ name: "room-guard", description: "The room's command guard: every shell command and file write is checked first." }, null, 2)}\n`,
+    ".claude-plugin/plugin.json": `${JSON.stringify({ name: "room-guard", description: "The room's hook: every shell command and file write is told to the room first." }, null, 2)}\n`,
     "hooks/hooks.json": `${JSON.stringify(
       {
         hooks: {
@@ -282,40 +247,31 @@ function canonical(value: unknown): string {
   return JSON.stringify(value);
 }
 
-/** The call Pi's extension and OpenCode's plugin make: the room's answer, or a block when none comes. */
+/** The call Pi's extension and OpenCode's plugin make: the room's answer, or null when none comes. */
 function askRoom(cli: Cli): string {
-  const block = (why: string) => `{ block: true, reason: ${JSON.stringify(why)} }`;
   return `async function ask(body: unknown): Promise<any> {
   const url = process.env.${GATE_ENV.url};
-  if (!url) return ${block(UNCHECKED.unwired)};
-  let res: Response;
+  if (!url) return null;
   for (const until = Date.now() + ${RETRY_SECONDS * 1000}; ; ) {
     try {
-      res = await fetch(url + "?cli=${cli}", {
+      const res = await fetch(url + "?cli=${cli}", {
         method: "POST",
         headers: { "content-type": "application/json", "x-seat": process.env.${GATE_ENV.seat} ?? "" },
         body: JSON.stringify(body),
         signal: AbortSignal.timeout(${ASK_SECONDS * 1000}),
       });
-      break;
+      return res.ok ? await res.json().catch(() => null) : null;
     } catch (error: any) {
-      if (error?.name === "TimeoutError") return ${block(UNCHECKED.slow)};
-      if (Date.now() >= until) return ${block(UNCHECKED.down)};
+      if (error?.name === "TimeoutError" || Date.now() >= until) return null;
       await new Promise((resolve) => setTimeout(resolve, 1000));
     }
-  }
-  if (!res.ok) return ${block(UNCHECKED.failed)};
-  try {
-    return await res.json();
-  } catch {
-    return ${block(UNCHECKED.failed)};
   }
 }`;
 }
 
-/** Pi's extension: every bash, write, edit and read call goes to the room first. */
+/** Pi's extension: every bash, write, edit and read call is told to the room first. */
 export function piExtension(): string {
-  return `// The room's guard: every bash, write, edit and read call goes to the room first. The room decides.
+  return `// The room's hook: every bash, write, edit and read call is told to the room first.
 ${askRoom("pi")}
 
 export default function (pi: any) {
@@ -328,9 +284,9 @@ export default function (pi: any) {
 `;
 }
 
-/** OpenCode's V2 plugin: a blocked shell call is replaced by one that prints why and fails. */
+/** OpenCode's V2 plugin: every shell, write, edit, patch and read call is told to the room first; a refused one is replaced by a shell call that prints why and fails. */
 export function openCodePlugin(): string {
-  return `// The room's guard: every shell, write, edit, patch and read call goes to the room first. The room decides.
+  return `// The room's hook: every shell, write, edit, patch and read call is told to the room first.
 ${askRoom("opencode")}
 
 const quote = (s: string) => "'" + s.replace(/'/g, "'\\\\''") + "'";

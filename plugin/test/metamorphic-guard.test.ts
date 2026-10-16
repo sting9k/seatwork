@@ -22,7 +22,6 @@ const place: Place = {
 };
 const tools: Tools = {
   ignored: async (paths) => new Set(paths.filter((path) => /\/node_modules(\/|$)/.test(path))),
-  exempt: () => false,
   alias: async () => null,
   external: async () => false,
   rebasing: async () => false,
@@ -35,19 +34,20 @@ const tools: Tools = {
   changed: async () => null,
 };
 const store = new SafetyStore(join(ROOM_HOME, "metamorphic-guard"), 1000);
-const guard = new Guard({
-  store: () => store,
-  policy: () => ({}),
-  tools: () => tools,
-  place: () => place,
-  repeated: () => {},
-});
+const guard = new Guard({ store: () => store, policy: () => ({}), tools: () => tools, place: () => place });
 const seat = { id: "peer", role: "peer", project: PROJECT, tmp: null, start: PROJECT };
 
-/** What the guard says of a command, keeping nothing: whether it stops, and the rule it names. */
-async function verdict(command: string): Promise<{ stopped: boolean; rule: string | null }> {
-  const ruling = await guard.check(seat, "claude", command, PROJECT, true);
-  return { stopped: !ruling.allow, rule: ruling.finding ? `${ruling.finding.pack}:${ruling.finding.rule}` : null };
+const lastKept = () =>
+  ((store as unknown as { db: import("node:sqlite").DatabaseSync }).db
+    .prepare("SELECT id, pack, rule FROM decisions ORDER BY id DESC LIMIT 1")
+    .get() ?? null) as { id: number; pack: string; rule: string } | null;
+
+/** What the guard keeps of a command: whether a rule caught it, and which; a line it could not read is kept as gate:unverified. */
+async function verdict(command: string): Promise<{ caught: boolean; rule: string | null }> {
+  const before = lastKept()?.id ?? 0;
+  await guard.check(seat, "claude", command, PROJECT);
+  const kept = lastKept();
+  return kept && kept.id > before ? { caught: true, rule: `${kept.pack}:${kept.rule}` } : { caught: false, rule: null };
 }
 
 /** A text as one word in single quotes. */
@@ -68,10 +68,10 @@ function unquoted(command: string): boolean {
 /** A way of writing a command that a shell runs the same: its name and how it rewrites one. */
 type Same = [name: string, write: (command: string) => string];
 
-/** A command the guard stops, by a deny or a question to a person, and the rule that decides it. */
-type Stopped = [command: string, rule: string];
+/** A command a grave rule of the guard catches, and that rule. */
+type Caught = [command: string, rule: string];
 
-const STOPPED: Stopped[] = [
+const CAUGHT: Caught[] = [
   ["rm -rf /", "core.filesystem:rm-rf-root-home"],
   ["rm -r -f /etc", "core.filesystem:rm-r-f-separate-root-home"],
   ["rm -rf ./build", "core.filesystem:rm-rf-general"],
@@ -95,7 +95,7 @@ const STOPPED: Stopped[] = [
   ["brew install jq", "room.software:brew-install"],
 ];
 
-const PASSED = [
+const SAFE = [
   "git status",
   "ls -la src",
   "git reset --soft HEAD~1",
@@ -133,32 +133,31 @@ const RESPELT: Same[] = [
   ["every plain word quoted", (c) => (unquoted(c) ? c.replace(/(?<=^|\s)[\w./:@,+-]+(?=\s|$)/g, "'$&'") : c)],
 ];
 
-/** A stopped command stays stopped under a form, by the rule it was stopped by: a line the room cannot read is a stop too, with no rule. */
-async function staysStopped(forms: Same[]): Promise<void> {
-  for (const [command, rule] of STOPPED) {
-    assert.deepEqual(await verdict(command), { stopped: true, rule }, command);
+/** A caught command stays caught under a form, by the rule that caught it, or is kept as a line the guard could not read. */
+async function staysCaught(forms: Same[]): Promise<void> {
+  for (const [command, rule] of CAUGHT) {
+    assert.deepEqual(await verdict(command), { caught: true, rule }, command);
     for (const [name, write] of forms) {
       const got = await verdict(write(command));
       assert.ok(
-        got.stopped && (got.rule === rule || got.rule === null),
+        got.caught && (got.rule === rule || got.rule === "gate:unverified"),
         `${name}: ${JSON.stringify(write(command))} -> ${JSON.stringify(got)}`,
       );
     }
   }
 }
 
-test("a command the guard stops is stopped by the same rule in another command: bash -c, sh -c, eval, an && prefix, command, env", async () => {
-  await staysStopped(WRAPPED);
+test("a command the guard catches is caught by the same rule in another command: bash -c, sh -c, eval, an && prefix, command, env", async () => {
+  await staysCaught(WRAPPED);
 });
 
-test("a command the guard stops is stopped by the same rule however it is spelled: spacing, tabs, quotes, a backslash", async () => {
-  await staysStopped(RESPELT);
+test("a command the guard catches is caught by the same rule however it is spelled: spacing, tabs, quotes, a backslash", async () => {
+  await staysCaught(RESPELT);
 });
 
-test("a command the guard lets run, or only notes, gets the same answer wrapped or respelled", async () => {
-  for (const command of PASSED) {
+test("a command that is safe, or caught at a low level, gets the same answer wrapped or respelled", async () => {
+  for (const command of SAFE) {
     const base = await verdict(command);
-    assert.equal(base.stopped, false, command);
     for (const [name, write] of [...WRAPPED, ...RESPELT])
       assert.deepEqual(await verdict(write(command)), base, `${name}: ${JSON.stringify(write(command))}`);
   }

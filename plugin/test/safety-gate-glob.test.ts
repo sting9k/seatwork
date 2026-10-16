@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { componentGlob, treeGlob } from "../server/safety/gate/glob";
+import { componentGlob } from "../server/safety/gate/glob";
 
 test("a component glob reads * ? [set] {a,b} without regard to case", () => {
   const holds = (pattern: string, name: string) => componentGlob(pattern)(name);
@@ -39,44 +39,5 @@ test("a component glob with many stars is decided in steps proportional to its l
   assert.equal(componentGlob(`${"*?".repeat(10)}n`)(name), true);
   assert.equal(componentGlob(`${"*a".repeat(400)}b`)(name), false);
   // the bound only catches a matcher that backtracks without end
-  assert.ok(performance.now() - started < 2_000);
-});
-
-const treeHolds = (glob: string, path: string) => treeGlob(glob, "/h")(path);
-
-test("a tree glob holds for the path itself and for everything under it", () => {
-  assert.ok(treeHolds("/p/build/**", "/p/build/out"));
-  assert.ok(treeHolds("/p/build/**", "/p/build/a/b"));
-  assert.ok(!treeHolds("/p/build/**", "/p/build"));
-  assert.ok(!treeHolds("/p/build/**", "/p/builds/x"));
-  assert.ok(treeHolds("/p/build", "/p/build"));
-  assert.ok(treeHolds("/p/build", "/p/build/out"));
-  assert.ok(!treeHolds("/p/build", "/p/builds"));
-});
-
-test("in a tree glob * stays inside one folder and ** crosses folders", () => {
-  assert.ok(treeHolds("/p/*/c", "/p/a/c"));
-  assert.ok(treeHolds("/p/*/c", "/p/a/c/d"));
-  assert.ok(!treeHolds("/p/*/c", "/p/a/b/c"));
-  assert.ok(treeHolds("/p/**/c", "/p/a/b/c"));
-  assert.ok(treeHolds("/p/a*", "/p/abc"));
-  assert.ok(treeHolds("/p/a*", "/p/abc/d"));
-  assert.ok(!treeHolds("/p/a*", "/p/b"));
-});
-
-test("a tree glob takes ~/ for the home and every other character as itself", () => {
-  assert.ok(treeHolds("~/work/**", "/h/work/a"));
-  assert.ok(!treeHolds("~/work/**", "/x/work/a"));
-  assert.ok(treeHolds("/p/a.b", "/p/a.b"));
-  assert.ok(!treeHolds("/p/a.b", "/p/aXb"));
-  assert.ok(treeHolds("/p/a+b(c)?", "/p/a+b(c)?"));
-  assert.ok(!treeHolds("/p/a?", "/p/ab"));
-});
-
-test("a tree glob with several ** is decided in steps proportional to the path", () => {
-  const test4 = treeGlob("/p/**/a/**/a/**/a/**/b", "/h");
-  const started = performance.now();
-  assert.equal(test4(`/p${"/a".repeat(20_000)}`), false);
-  assert.equal(test4(`/p${"/a".repeat(20_000)}/b`), true);
   assert.ok(performance.now() - started < 2_000);
 });

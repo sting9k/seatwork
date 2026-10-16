@@ -12,12 +12,12 @@ import { Chair, type ChairDeps } from "./council/chair";
 import { Council, type Decider, type HandInDiff, type VerdictWork } from "./council/council";
 import { snapshot } from "./council/git";
 import { answerHook, claudePlugin, GATE_ENV, type Cli } from "./hooks";
-import { databaseIn, SafetyStore, type CodeRow } from "./store";
+import { databaseIn, SafetyStore } from "./store";
 import { machineTools } from "./system";
 
-/** The Safety district: the command guard, the hand-in check, the council and the codes. */
+/** The Safety district: the command guard that reads each call, the hand-in check, the control, the council and its chair. */
 
-/** What the district needs of the room: a folder for its store and hooks, the app's listen address, the room's own files no seat writes, a way to tell an Owner of a rule its seat keeps hitting, and the seat that rules on appeals. */
+/** What the district needs of the room: a folder for its store and hooks, the app's listen address, the room's own files the guard watches, and the seat that rules on appeals. */
 export interface SafetyDeps {
   dir: string;
   userHome: string;
@@ -29,7 +29,6 @@ export interface SafetyDeps {
   tmpOf(agentId: string): string;
   guard: { paths: string[]; except: string[]; secrets?: readonly string[] };
   roomFolder: string;
-  repeated(seat: string, rule: string, count: number, command: string): void;
   decider: Decider | null;
   log(message: string): void;
   chair?: ChairDeps;
@@ -44,7 +43,6 @@ export class Safety {
   readonly council: Council;
   private readonly chair: Chair | null;
   private readonly starts = new Map<string, number>();
-  private readonly noted = new Map<string, string>();
   private readonly diffs = new Map<string, HandInDiff>();
 
   constructor(private readonly deps: SafetyDeps) {
@@ -53,7 +51,6 @@ export class Safety {
       policy: deps.policy,
       tools: (seat) => machineTools(() => this.startedAt(seat?.id ?? null), this.baseOf),
       place: (seat) => this.placeOf(seat),
-      repeated: (seat, rule, count, command) => deps.repeated(seat.id, rule, count, command),
     });
     this.chair = deps.chair
       ? new Chair({
@@ -91,12 +88,12 @@ export class Safety {
       writeIfChanged(join(this.deps.dir, "claude", path), text, 0o600);
   }
 
-  /** The env a seat's session opens with, guard on or off: a hook that cannot reach the room blocks. */
+  /** The env a seat's session opens with, guard on or off: its hooks find the room by it. */
   env(agentId: string, url: string): Record<string, string> {
     return { [GATE_ENV.url]: url, [GATE_ENV.seat]: agentId };
   }
 
-  /** One hook's question, answered in its CLI's shape; `note` rides on an allow, and `noted` says it did. */
+  /** One hook's question, answered in its CLI's shape; `note` rides on the answer, and `noted` says it did. */
   async answer(
     cli: Cli,
     body: Record<string, unknown>,
@@ -108,14 +105,6 @@ export class Safety {
     const answered = await answerHook(this.guard, cli, body, agentId ? this.seatRef(agentId) : null, note);
     if (answered.wrote && agentId) this.council.wrote(agentId, answered.wrote);
     return answered;
-  }
-
-  /** What the guard would make of a command, without running it or keeping anything. */
-  async explain(agentId: string, command: string, cwd: string | null): Promise<string> {
-    const ruling = await this.guard.check(this.seatRef(agentId), "tool", command, cwd, true);
-    return (
-      ruling.message ?? (ruling.allow ? "Allowed: no rule of the room's guard holds for this command." : "Blocked.")
-    );
   }
 
   /** A new seat: where it starts, and the commit its hand-ins are read from. */
@@ -187,66 +176,20 @@ export class Safety {
     return (this.deps.policy()?.handin?.mode ?? "block") === "block";
   }
 
-  /** A grant of a code: only a seat above the blocked one; the person's, only the person. */
-  grant(code: string, by: string | "human"): string {
-    const rows = this.store().byCode(code);
-    if (!rows.length) return `No open code ${code}: it was used, it expired, or it never existed.`;
-    const out: string[] = [];
-    for (const row of rows) {
-      if (by !== "human") {
-        if (row.grantor === "human") {
-          out.push(`Code ${code} (${row.rule}) is one only the person can grant: tell them what the seat asked for.`);
-          continue;
-        }
-        if (!row.seat || !this.deps.isAncestor(by, row.seat) || row.seat === by) {
-          out.push(`Code ${code} belongs to a seat that is not under you; you cannot grant it.`);
-          continue;
-        }
-      }
-      this.store().grant(row.hash, by);
-      out.push(`Granted: the seat may run this once, in ${row.cwd ?? "its folder"}: ${row.shown}`);
-    }
-    return out.join("\n");
-  }
-
-  /** The codes only the person may grant that still wait, at most `most`. */
-  forPerson(most: number): CodeRow[] {
-    return this.on ? this.store().forPerson(most) : [];
-  }
-
-  /** The codes waiting on a seat's word: those of the seats under it. */
-  waitingUnder(agentId: string, all: readonly string[]): CodeRow[] {
-    return this.store().waiting(all.filter((id) => id !== agentId && this.deps.isAncestor(agentId, id)));
-  }
-
   /** A seat's word on one of its hand-in findings. */
   acknowledge(agentId: string, fingerprint: string, reason: string): boolean {
     return this.store().acknowledge(agentId, fingerprint, reason);
   }
 
-  /** The room's line about a seat's blocked commands since the last time it was said. */
-  blocksLine(agentId: string): string | null {
-    if (!this.storeHandle) return null;
-    const since = this.noted.get(agentId) ?? new Date(this.starts.get(agentId) ?? 0).toISOString();
-    this.noted.set(agentId, new Date().toISOString());
-    const rows = this.storeHandle.blocksSince(agentId, since);
-    if (!rows.length) return null;
-    return `the guard blocked ${rows.length} command(s) of this seat: ${rows
-      .slice(0, 5)
-      .map((r) => `${r.rule} (code ${r.code}) ${r.command.slice(0, 80)}`)
-      .join("; ")}`;
-  }
-
   /** An archived seat: what the district held for it goes. */
   forget(agentId: string): void {
     this.starts.delete(agentId);
-    this.noted.delete(agentId);
     this.diffs.delete(agentId);
     this.council.forget(agentId);
     this.existing()?.forgetSeat(agentId);
   }
 
-  /** Drops guard records past their keep. */
+  /** Drops what the guard saw past its keep. */
   expire(before: Date): number {
     return this.existing()?.expire(before) ?? 0;
   }

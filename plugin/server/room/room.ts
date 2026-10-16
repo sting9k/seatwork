@@ -38,7 +38,7 @@ import { Operations, OperationsRefused, writePolicyKey } from "../operations/ind
 import { addSkill, listSkills, removeSkill, SkillRefused, type SkillSource } from "../orchestration/local-skills";
 import { Vitals } from "../operations/vitals";
 import { OwedList, roomStatus } from "./status";
-import { folderDecisions, jevView, personCodes, type PersonCode } from "./owner";
+import { folderDecisions, jevView } from "./owner";
 import { Jev, type JevCheck } from "../jev/index";
 import { Knowledge } from "../knowledge/index";
 import { Safety } from "../safety/index";
@@ -64,7 +64,7 @@ interface SeatStart extends Launched {
   mcpUrl: string;
 }
 
-/** A room set up and running on this machine: the app hands it each seat's start, session, turns and archive, and asks what waits for the Owner, what only the person may grant, a folder's decisions and the decision provider. */
+/** A room set up and running on this machine: the app hands it each seat's start, session, turns and archive, and asks what waits for the Owner, a folder's decisions and the decision provider. */
 export interface Room {
   policy: RuntimePolicy;
   filesFrom: string | undefined;
@@ -81,10 +81,8 @@ export interface Room {
   waiting(): Promise<{
     chime: boolean;
     waiting: Awaited<ReturnType<OwedList["current"]>>;
-    codes: PersonCode[];
     seats: string[];
   }>;
-  grant(code: string): { message: string };
   decisions(folder: string, ended: boolean): ReturnType<typeof folderDecisions>;
   jev(): ReturnType<typeof jevView>;
   jevKey(key: string): Promise<JevCheck>;
@@ -178,21 +176,6 @@ function startSafety(
       secrets: secretsOf(PASEO_HOME, ROOM_HOME),
     },
     roomFolder: ".seatwork",
-    repeated: (seat, rule, count, command) => {
-      const owner = engine.parentOf(seat);
-      if (!owner) return;
-      void engine
-        .post({
-          from: fromRoom,
-          to: owner,
-          priority: "action",
-          subject: `GUARD: ${engine.seat(seat)?.title ?? seat} hit ${rule} ${count} times`,
-          body: `The room's guard blocked the same rule ${count} times in a row for this seat. Last command: ${command}\nIt may be trying other ways round the block. Read its work, and grant a code with seatwork_safety only if the command is right.`,
-          needs: "nothing",
-          why: "a seat under you keeps running into the room's guard",
-        })
-        .catch((error) => log(`the guard's notice was not sent: ${String(error)}`));
-    },
     decider: jev,
     log,
     chair: {
@@ -223,13 +206,7 @@ function gateRoute(safety: Safety, knowledge: Knowledge, log: (message: string) 
     } catch (error) {
       const reason = errorText(error);
       log(`the guard failed on a ${cli} call: ${reason}`);
-      return render(cli, {
-        allow: false,
-        message: `The room's guard failed while checking this call (${reason}), so it does not run.`,
-        finding: null,
-        code: null,
-        grantor: null,
-      });
+      return render(cli, {});
     }
   };
 }
@@ -756,11 +733,9 @@ export function startRoom(input: {
       return {
         chime: policy.owner.chime,
         waiting: await room.owed.current(() => host.live()),
-        codes: personCodes(room),
         seats: engine.allSeats().map((seat) => seat.agentId),
       };
     },
-    grant: (code) => ({ message: safety.grant(code, "human") }),
     decisions: (folder, ended) => folderDecisions(room, folder, ended),
     jev: () => jevView(room),
     async jevKey(key) {

@@ -5,13 +5,11 @@ import type {
   PluginButtonRegistration,
   PluginClientContext,
 } from "@getpaseo/plugin/client";
-import { useRpc } from "@getpaseo/plugin/client";
 import { useEffect, useState } from "react";
 import { Pressable, Text, View } from "react-native";
-import { roomGrant, roomWaiting } from "../shared/room";
-import { MONO, tint } from "./kit";
+import { roomWaiting } from "../shared/room";
 
-/** The room on each room seat's composer: a pill that says how much waits on the person, opening on it and on the codes only they may grant. */
+/** The room on each room seat's composer: a pill that says how much waits on the person and opens on it. */
 
 type Waiting = RpcOutput<typeof roomWaiting>;
 
@@ -27,30 +25,26 @@ const clock = (at: string) =>
 
 /** The pill's words: the room, and how much waits on the person. */
 const labelOf = (answer: Waiting | null) => {
-  const count = answer ? answer.waiting.length + answer.codes.length : 0;
+  const count = answer?.waiting.length ?? 0;
   return count > 0 ? `Room · ${count} waiting` : "Room";
 };
 
-/** The list the pill opens on: what waits, each code with its command and a grant, and a way to every seat. */
+/** The list the pill opens on: what waits, and a way to every seat. */
 function RoomPopover(props: PluginButtonContentProps & { openRoom(): void }) {
   const { theme, close, openRoom } = props;
   const c = theme.colors;
   const [answer, setAnswer] = useState(latest);
-  const [granted, setGranted] = useState({} as Record<string, string>);
-  const grant = useRpc(roomGrant);
   useEffect(() => {
     listeners.add(setAnswer);
     return () => void listeners.delete(setAnswer);
   }, []);
   const muted = { color: c.foregroundMuted, fontSize: 12, lineHeight: 17 };
-  const row = { gap: 6, paddingVertical: 7, paddingHorizontal: 8, borderRadius: 6 };
   const all = () => {
     close();
     openRoom();
   };
   const shown = answer as Waiting | null;
   const waiting: Waiting["waiting"] = shown?.waiting ?? [];
-  const codes: Waiting["codes"] = shown?.codes ?? [];
   return (
     <View style={{ width: 540, maxWidth: "100%", padding: 6, gap: 2 }}>
       <View style={{ flexDirection: "row", alignItems: "center", paddingHorizontal: 8, paddingVertical: 4 }}>
@@ -60,7 +54,7 @@ function RoomPopover(props: PluginButtonContentProps & { openRoom(): void }) {
         </Pressable>
       </View>
       <View>
-        {waiting.length + codes.length === 0 ? (
+        {waiting.length === 0 ? (
           <Text style={{ ...muted, paddingHorizontal: 8, paddingVertical: 7 }}>Nothing waits on you.</Text>
         ) : null}
         {waiting.map((item) => (
@@ -69,7 +63,14 @@ function RoomPopover(props: PluginButtonContentProps & { openRoom(): void }) {
             accessibilityRole="button"
             accessibilityLabel={`${item.title ?? item.agentId}: open the room`}
             onPress={all}
-            style={{ ...row, flexDirection: "row", alignItems: "center" }}
+            style={{
+              flexDirection: "row",
+              alignItems: "center",
+              gap: 6,
+              paddingVertical: 7,
+              paddingHorizontal: 8,
+              borderRadius: 6,
+            }}
           >
             <Text
               numberOfLines={1}
@@ -80,73 +81,7 @@ function RoomPopover(props: PluginButtonContentProps & { openRoom(): void }) {
             <Text style={muted}>{clock(item.at)}</Text>
           </Pressable>
         ))}
-        {codes.map((one) => (
-          <View key={one.code} style={{ ...row, gap: 3, backgroundColor: tint(c.foreground, 0.04), marginTop: 2 }}>
-            <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
-              <Text style={{ color: c.statusWarning, fontSize: 12, lineHeight: 17 }}>CODE {one.code}</Text>
-              <Text
-                numberOfLines={1}
-                style={{ flex: 1, minWidth: 0, color: c.foreground, fontSize: 13.5, lineHeight: 19 }}
-              >
-                {one.title ?? "a seat"}
-              </Text>
-              <Text style={muted}>
-                {one.project ? `${one.project} · ` : ""}
-                {clock(one.at)}
-              </Text>
-            </View>
-            <Text numberOfLines={2} style={{ color: c.foreground, fontSize: 12.5, lineHeight: 17 }}>
-              {one.reason}
-            </Text>
-            <View style={{ flexDirection: "row", alignItems: "center", gap: 10, marginTop: 2 }}>
-              <Text
-                numberOfLines={2}
-                {...MONO}
-                style={{
-                  ...MONO.style,
-                  flex: 1,
-                  minWidth: 0,
-                  color: c.foregroundMuted,
-                  fontSize: 11.5,
-                  lineHeight: 16,
-                  wordBreak: "break-all",
-                }}
-              >
-                {one.command}
-              </Text>
-              {granted[one.code] ? (
-                <Text style={{ color: c.statusSuccess, fontSize: 12.5, lineHeight: 18 }}>Granted</Text>
-              ) : (
-                <Pressable
-                  accessibilityRole="button"
-                  accessibilityLabel={`Grant code ${one.code} once`}
-                  onPress={() =>
-                    void grant({ code: one.code }).then(({ message }) =>
-                      setGranted((was: Record<string, string>) => ({ ...was, [one.code]: message })),
-                    )
-                  }
-                  style={{
-                    flexShrink: 0,
-                    paddingHorizontal: 10,
-                    paddingVertical: 5,
-                    borderRadius: 8,
-                    backgroundColor: c.accent,
-                  }}
-                >
-                  <Text style={{ color: c.accentForeground, fontSize: 12.5, lineHeight: 17, fontWeight: "600" }}>
-                    Grant once
-                  </Text>
-                </Pressable>
-              )}
-            </View>
-          </View>
-        ))}
       </View>
-      {codes.length > 0 ? (
-        <Text style={{ ...muted, fontSize: 11.5, paddingHorizontal: 8, paddingTop: 4 }}>
-          A code lets that one command run once, in its folder, for 24 hours.
-        </Text>
-      ) : null}
     </View>
   );
 }

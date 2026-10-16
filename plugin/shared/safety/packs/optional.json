@@ -7,117 +7,79 @@
       "rules": {
         "push-force-any": {
           "severity": "high",
-          "reason": "any forced push, --force-with-lease included",
-          "explanation": "In strict mode no remote branch is rewritten.",
-          "safer": ["Push a new branch instead"]
+          "reason": "any forced push, --force-with-lease included"
         },
         "push-mirror": {
           "severity": "high",
-          "reason": "git push --mirror forces and deletes remote refs",
-          "explanation": "The remote is made to match the local repository, deletions included.",
-          "safer": ["Push the branches you mean"]
+          "reason": "git push --mirror forces and deletes remote refs"
         },
         "push-delete": {
           "severity": "high",
-          "reason": "git push --delete removes a remote ref",
-          "explanation": "The remote branch or tag goes for everyone.",
-          "safer": ["Ask your Owner"]
+          "reason": "git push --delete removes a remote ref"
         },
         "push-delete-refspec": {
           "severity": "high",
-          "reason": "git push <remote> :<ref> removes a remote ref",
-          "explanation": "An empty source deletes the remote branch or tag.",
-          "safer": ["Ask your Owner"]
+          "reason": "git push <remote> :<ref> removes a remote ref"
         },
         "push-prune": {
           "severity": "high",
-          "reason": "git push --prune removes remote refs",
-          "explanation": "Remote branches with no local twin are deleted.",
-          "safer": ["Push without --prune"]
+          "reason": "git push --prune removes remote refs"
         },
         "push-dynamic-argument": {
           "severity": "high",
-          "reason": "git push with an argument known only at run time",
-          "explanation": "The room cannot prove the argument is not a forced refspec.",
-          "safer": ["Write the refspec out"]
+          "reason": "git push with an argument known only at run time"
         },
         "rebase": {
           "severity": "high",
-          "reason": "git rebase rewrites commits",
-          "explanation": "In strict mode history is only added to.",
-          "safer": ["git merge"]
+          "reason": "git rebase rewrites commits"
         },
         "commit-amend": {
           "severity": "high",
-          "reason": "git commit --amend rewrites the last commit",
-          "explanation": "In strict mode history is only added to.",
-          "safer": ["Make a new commit"]
+          "reason": "git commit --amend rewrites the last commit"
         },
         "cherry-pick": {
           "severity": "high",
-          "reason": "git cherry-pick needs a look first",
-          "explanation": "Picked commits carry changes from elsewhere into this branch.",
-          "safer": ["Ask your Owner"]
+          "reason": "git cherry-pick needs a look first"
         },
         "filter-branch": {
           "severity": "high",
-          "reason": "git filter-branch rewrites history",
-          "explanation": "In strict mode history is only added to.",
-          "safer": []
+          "reason": "git filter-branch rewrites history"
         },
         "filter-repo": {
           "severity": "high",
-          "reason": "git filter-repo rewrites history",
-          "explanation": "In strict mode history is only added to.",
-          "safer": []
+          "reason": "git filter-repo rewrites history"
         },
         "reflog-expire": {
           "severity": "high",
-          "reason": "git reflog expire",
-          "explanation": "The reflog is the way back from mistakes.",
-          "safer": []
+          "reason": "git reflog expire"
         },
         "gc-aggressive": {
           "severity": "high",
-          "reason": "git gc --aggressive or --prune",
-          "explanation": "Pruning drops unreachable commits that could still be recovered.",
-          "safer": ["git gc without --prune"]
+          "reason": "git gc --aggressive or --prune"
         },
         "worktree-remove": {
           "severity": "high",
-          "reason": "git worktree remove",
-          "explanation": "The worktree's folder goes, with any uncommitted work in it.",
-          "safer": ["git worktree list", "Ask your Owner"]
+          "reason": "git worktree remove"
         },
         "submodule-deinit": {
           "severity": "high",
-          "reason": "git submodule deinit",
-          "explanation": "The submodule's working tree is removed.",
-          "safer": []
+          "reason": "git submodule deinit"
         },
         "add-all-dot": {
           "severity": "high",
-          "reason": "git add . stages everything",
-          "explanation": "Staging the whole folder picks up files that were never meant to be committed.",
-          "safer": ["git add <file> for each file you changed"]
+          "reason": "git add . stages everything"
         },
         "add-all-flag": {
           "severity": "high",
-          "reason": "git add -A stages everything",
-          "explanation": "Staging everything picks up files that were never meant to be committed.",
-          "safer": ["git add <file> for each file you changed", "git add -p"]
+          "reason": "git add -A stages everything"
         },
         "push-master": {
           "severity": "high",
-          "reason": "a push to master",
-          "explanation": "Work reaches master through a branch and a review.",
-          "safer": ["Push a feature branch and open a pull request"]
+          "reason": "a push to master"
         },
         "push-main": {
           "severity": "high",
-          "reason": "a push to main",
-          "explanation": "Work reaches main through a branch and a review.",
-          "safer": ["Push a feature branch and open a pull request"]
+          "reason": "a push to main"
         }
       }
     },
@@ -129,50 +91,36 @@
         "npm-publish": {
           "severity": "high",
           "reason": "npm publish releases a package",
-          "explanation": "A published version cannot be taken back cleanly.",
-          "safer": ["npm publish --dry-run"],
           "match": [{ "commands": ["npm"], "first": ["publish"] }]
         },
         "yarn-publish": {
           "severity": "high",
           "reason": "yarn publish releases a package",
-          "explanation": "A published version cannot be taken back cleanly.",
-          "safer": ["yarn publish --dry-run"],
           "match": [{ "commands": ["yarn"], "seq": [["publish"]] }]
         },
         "pnpm-publish": {
           "severity": "high",
           "reason": "pnpm publish releases a package",
-          "explanation": "A published version cannot be taken back cleanly.",
-          "safer": ["pnpm publish --dry-run"],
           "match": [{ "commands": ["pnpm"], "seq": [["publish"]] }]
         },
         "npm-unpublish": {
           "severity": "high",
           "reason": "npm unpublish removes a released version",
-          "explanation": "Everyone who depends on it breaks.",
-          "safer": ["npm deprecate"],
           "match": [{ "commands": ["npm"], "first": ["unpublish"] }]
         },
         "pip-uninstall": {
           "severity": "high",
           "reason": "pip uninstall",
-          "explanation": "Removing a package can break what depends on it.",
-          "safer": [],
           "match": [{ "commands": ["pip", "pip3"], "first": ["uninstall"] }]
         },
         "pip-url": {
           "severity": "high",
           "reason": "pip install from a URL",
-          "explanation": "Code from a URL runs its setup on install.",
-          "safer": ["Install a pinned version from the index"],
           "match": [{ "commands": ["pip", "pip3"], "first": ["install"], "arg": "^(https?://|git\\+)" }]
         },
         "pip-system": {
           "severity": "high",
           "reason": "pip install into the system",
-          "explanation": "System packages belong to the operating system.",
-          "safer": ["Use a virtual environment"],
           "match": [
             { "commands": ["pip", "pip3"], "first": ["install"], "flags": ["--system"] },
             { "commands": ["pip", "pip3"], "first": ["install"], "arg": "^/usr" }
@@ -181,50 +129,36 @@
         "apt-remove": {
           "severity": "high",
           "reason": "apt remove or purge",
-          "explanation": "Removing system packages can break the machine.",
-          "safer": [],
           "match": [{ "commands": ["apt", "apt-get"], "first": ["remove", "purge", "autoremove"] }]
         },
         "yum-remove": {
           "severity": "high",
           "reason": "yum or dnf remove",
-          "explanation": "Removing system packages can break the machine.",
-          "safer": [],
           "match": [{ "commands": ["yum", "dnf"], "first": ["remove", "erase", "autoremove"] }]
         },
         "cargo-publish": {
           "severity": "high",
           "reason": "cargo publish releases a crate",
-          "explanation": "A published crate version is permanent.",
-          "safer": ["cargo publish --dry-run"],
           "match": [{ "commands": ["cargo"], "first": ["publish"] }]
         },
         "cargo-yank": {
           "severity": "high",
           "reason": "cargo yank",
-          "explanation": "Yanking breaks new builds that ask for the version.",
-          "safer": [],
           "match": [{ "commands": ["cargo"], "first": ["yank"] }]
         },
         "gem-push": {
           "severity": "high",
           "reason": "gem push releases a gem",
-          "explanation": "A published version is permanent.",
-          "safer": [],
           "match": [{ "commands": ["gem"], "first": ["push"] }]
         },
         "gem-yank": {
           "severity": "high",
           "reason": "gem yank",
-          "explanation": "Yanking breaks installs of the version.",
-          "safer": [],
           "match": [{ "commands": ["gem"], "first": ["yank"] }]
         },
         "nuget-delete": {
           "severity": "high",
           "reason": "nuget delete",
-          "explanation": "The version is removed or unlisted.",
-          "safer": [],
           "match": [
             { "commands": ["nuget", "nuget.exe"], "first": ["delete"] },
             { "commands": ["dotnet"], "seq": [["nuget"], ["delete"]] }
@@ -233,43 +167,31 @@
         "brew-uninstall": {
           "severity": "high",
           "reason": "brew uninstall",
-          "explanation": "Removing a formula can break what depends on it.",
-          "safer": [],
           "match": [{ "commands": ["brew"], "first": ["uninstall", "remove", "rm"] }]
         },
         "poetry-publish": {
           "severity": "high",
           "reason": "poetry publish",
-          "explanation": "A published version is permanent.",
-          "safer": ["poetry publish --dry-run"],
           "match": [{ "commands": ["poetry"], "first": ["publish"] }]
         },
         "poetry-remove": {
           "severity": "high",
           "reason": "poetry remove",
-          "explanation": "The dependency leaves the project.",
-          "safer": [],
           "match": [{ "commands": ["poetry"], "first": ["remove"] }]
         },
         "maven-deploy": {
           "severity": "high",
           "reason": "mvn deploy",
-          "explanation": "Artifacts go to a shared repository.",
-          "safer": [],
           "match": [{ "commands": ["mvn", "mvnw"], "seq": [["deploy"]] }]
         },
         "maven-release-perform": {
           "severity": "high",
           "reason": "mvn release:perform",
-          "explanation": "A release goes out.",
-          "safer": [],
           "match": [{ "commands": ["mvn", "mvnw"], "seq": [["release:perform"]] }]
         },
         "gradle-publish": {
           "severity": "high",
           "reason": "gradle publish",
-          "explanation": "Artifacts go to a shared repository.",
-          "safer": [],
           "match": [{ "commands": ["gradle", "gradlew"], "seq": [["publish"]] }]
         }
       }
@@ -281,57 +203,41 @@
         "docker-system-prune": {
           "severity": "high",
           "reason": "docker system prune",
-          "explanation": "Stopped containers, unused networks and images go; with --volumes, data volumes too.",
-          "safer": ["docker system df", "docker container prune"],
           "match": [{ "commands": ["docker", "podman"], "seq": [["system"], ["prune"]] }]
         },
         "podman-system-reset": {
           "severity": "critical",
           "reason": "podman system reset",
-          "explanation": "Every container, pod, image, network and volume goes.",
-          "safer": [],
           "match": [{ "commands": ["podman"], "seq": [["system"], ["reset"]] }]
         },
         "volume-prune": {
           "severity": "high",
           "reason": "volume prune removes data volumes",
-          "explanation": "Every volume no running container uses is deleted, with its data.",
-          "safer": ["docker volume ls"],
           "match": [{ "commands": ["docker", "podman"], "seq": [["volume"], ["prune"]] }]
         },
         "network-prune": {
           "severity": "high",
           "reason": "docker network prune",
-          "explanation": "Unused networks go.",
-          "safer": [],
           "match": [{ "commands": ["docker"], "seq": [["network"], ["prune"]] }]
         },
         "image-prune": {
           "severity": "medium",
           "reason": "image prune",
-          "explanation": "Unused images go and must be pulled again.",
-          "safer": [],
           "match": [{ "commands": ["docker", "podman"], "seq": [["image"], ["prune"]] }]
         },
         "container-prune": {
           "severity": "medium",
           "reason": "container prune",
-          "explanation": "Stopped containers go.",
-          "safer": [],
           "match": [{ "commands": ["docker", "podman"], "seq": [["container"], ["prune"]] }]
         },
         "pod-prune": {
           "severity": "medium",
           "reason": "podman pod prune",
-          "explanation": "Stopped pods go.",
-          "safer": [],
           "match": [{ "commands": ["podman"], "seq": [["pod"], ["prune"]] }]
         },
         "rm-force": {
           "severity": "high",
           "reason": "rm -f kills and removes a container",
-          "explanation": "A running container is killed and its writable layer lost.",
-          "safer": ["stop it, then rm"],
           "match": [
             { "commands": ["docker", "podman"], "first": ["rm"], "flags": ["-f", "--force", "short:f"] },
             { "commands": ["docker", "podman"], "seq": [["container"], ["rm"]], "flags": ["-f", "--force", "short:f"] }
@@ -340,29 +246,21 @@
         "rmi-force": {
           "severity": "high",
           "reason": "rmi -f removes images in use",
-          "explanation": "Containers lose their image.",
-          "safer": [],
           "match": [{ "commands": ["docker", "podman"], "first": ["rmi"], "flags": ["-f", "--force", "short:f"] }]
         },
         "volume-rm": {
           "severity": "high",
           "reason": "volume rm deletes a data volume",
-          "explanation": "The volume's data goes.",
-          "safer": ["Back the volume up with tar first"],
           "match": [{ "commands": ["docker", "podman"], "seq": [["volume"], ["rm", "remove"]] }]
         },
         "stop-all": {
           "severity": "high",
           "reason": "stop or kill of a list of containers from a substitution",
-          "explanation": "The list is only known at run time and may hold every container.",
-          "safer": ["Name the containers"],
           "match": [{ "commands": ["docker", "podman"], "first": ["stop", "kill"], "dynamicArg": true }]
         },
         "compose-down-volumes": {
           "severity": "critical",
           "reason": "compose down -v deletes the project's volumes",
-          "explanation": "The services' data volumes go with the containers.",
-          "safer": ["compose down without -v"],
           "match": [
             {
               "commands": ["docker-compose", "podman-compose"],
@@ -379,8 +277,6 @@
         "compose-down-rmi": {
           "severity": "high",
           "reason": "compose down --rmi all",
-          "explanation": "Every image the project used goes.",
-          "safer": [],
           "match": [
             { "commands": ["docker-compose", "podman-compose"], "first": ["down"], "flags": ["--rmi"] },
             { "commands": ["docker", "podman"], "seq": [["compose"], ["down"]], "flags": ["--rmi"] }
@@ -389,8 +285,6 @@
         "compose-rm-volumes": {
           "severity": "high",
           "reason": "compose rm -v",
-          "explanation": "Anonymous volumes go with the containers.",
-          "safer": [],
           "match": [
             { "commands": ["docker-compose", "podman-compose"], "first": ["rm"], "flags": ["-v", "--volumes"] },
             { "commands": ["docker", "podman"], "seq": [["compose"], ["rm"]], "flags": ["-v", "--volumes"] }
@@ -399,8 +293,6 @@
         "compose-rm-force": {
           "severity": "medium",
           "reason": "compose rm -f",
-          "explanation": "Stopped service containers go without a question.",
-          "safer": [],
           "match": [
             { "commands": ["docker-compose", "podman-compose"], "first": ["rm"], "flags": ["-f", "--force"] },
             { "commands": ["docker", "podman"], "seq": [["compose"], ["rm"]], "flags": ["-f", "--force"] }
@@ -415,10 +307,6 @@
         "secret-read-output": {
           "severity": "high",
           "reason": "a secret manager prints secret values",
-          "explanation": "The values land in the seat's transcript, where they stay.",
-          "safer": [
-            "op run -- <cmd>, doppler run -- <cmd> or infisical run -- <cmd> hand secrets to the command without printing them"
-          ],
           "match": [
             { "commands": ["op"], "first": ["read"] },
             { "commands": ["op"], "seq": [["item", "document"], ["get"]] },
@@ -447,15 +335,11 @@
         "kubectl-delete": {
           "severity": "high",
           "reason": "kubectl delete",
-          "explanation": "Cluster objects and the data they hold go.",
-          "safer": ["kubectl get first", "kubectl delete --dry-run=client"],
           "match": [{ "commands": ["kubectl", "oc"], "first": ["delete"] }]
         },
         "kubectl-delete-namespace": {
           "severity": "critical",
           "reason": "kubectl delete namespace",
-          "explanation": "Everything in the namespace goes.",
-          "safer": [],
           "match": [
             { "commands": ["kubectl", "oc"], "seq": [["delete"], ["namespace", "namespaces", "ns"]] },
             { "commands": ["kubectl", "oc"], "first": ["delete"], "flags": ["--all", "--all-namespaces", "-A"] }
@@ -464,36 +348,26 @@
         "kubectl-drain": {
           "severity": "high",
           "reason": "kubectl drain or cordon",
-          "explanation": "Workloads are evicted from the node.",
-          "safer": [],
           "match": [{ "commands": ["kubectl", "oc"], "first": ["drain", "cordon", "taint"] }]
         },
         "kubectl-scale-zero": {
           "severity": "high",
           "reason": "kubectl scale to zero",
-          "explanation": "The service stops serving.",
-          "safer": [],
           "match": [{ "commands": ["kubectl", "oc"], "first": ["scale"], "arg": "^--replicas=0$" }]
         },
         "kubectl-replace-force": {
           "severity": "high",
           "reason": "kubectl replace --force",
-          "explanation": "Objects are deleted and recreated.",
-          "safer": ["kubectl apply"],
           "match": [{ "commands": ["kubectl", "oc"], "first": ["replace"], "flags": ["--force"] }]
         },
         "helm-uninstall": {
           "severity": "high",
           "reason": "helm uninstall",
-          "explanation": "The release and its objects go.",
-          "safer": ["helm list"],
           "match": [{ "commands": ["helm"], "first": ["uninstall", "delete", "del"] }]
         },
         "helm-rollback": {
           "severity": "medium",
           "reason": "helm rollback",
-          "explanation": "The release goes back to an older revision.",
-          "safer": ["helm history"],
           "match": [{ "commands": ["helm"], "first": ["rollback"] }]
         }
       }
@@ -505,8 +379,6 @@
         "terraform-destroy": {
           "severity": "critical",
           "reason": "terraform destroy",
-          "explanation": "Every resource in the state is torn down.",
-          "safer": ["terraform plan -destroy"],
           "match": [
             { "commands": ["terraform", "tofu", "terragrunt"], "first": ["destroy"] },
             { "commands": ["terraform", "tofu", "terragrunt"], "first": ["apply"], "flags": ["-destroy", "--destroy"] }
@@ -515,8 +387,6 @@
         "terraform-apply-auto": {
           "severity": "high",
           "reason": "terraform apply -auto-approve",
-          "explanation": "Changes reach real infrastructure with nobody reading the plan.",
-          "safer": ["terraform plan"],
           "match": [
             {
               "commands": ["terraform", "tofu", "terragrunt"],
@@ -528,8 +398,6 @@
         "terraform-state-rm": {
           "severity": "high",
           "reason": "terraform state rm or force-unlock",
-          "explanation": "The state loses track of resources, or a lock held by another run is broken.",
-          "safer": ["terraform state list"],
           "match": [
             { "commands": ["terraform", "tofu"], "seq": [["state"], ["rm", "push", "replace-provider"]] },
             { "commands": ["terraform", "tofu"], "first": ["force-unlock"] }
@@ -538,8 +406,6 @@
         "pulumi-destroy": {
           "severity": "critical",
           "reason": "pulumi destroy",
-          "explanation": "Every resource in the stack is torn down.",
-          "safer": ["pulumi preview --diff"],
           "match": [
             { "commands": ["pulumi"], "first": ["destroy", "down"] },
             { "commands": ["pulumi"], "seq": [["stack"], ["rm"]] }
@@ -548,15 +414,11 @@
         "pulumi-up-yes": {
           "severity": "high",
           "reason": "pulumi up --yes",
-          "explanation": "Changes reach real infrastructure with nobody reading the preview.",
-          "safer": ["pulumi preview"],
           "match": [{ "commands": ["pulumi"], "first": ["up", "update"], "flags": ["--yes", "-y", "--skip-preview"] }]
         },
         "cdk-destroy": {
           "severity": "critical",
           "reason": "cdk destroy",
-          "explanation": "The stack's resources are torn down.",
-          "safer": ["cdk diff"],
           "match": [{ "commands": ["cdk"], "first": ["destroy"] }]
         }
       }
@@ -568,8 +430,6 @@
         "aws-delete": {
           "severity": "high",
           "reason": "an AWS call that deletes or terminates",
-          "explanation": "Cloud resources and their data go, often for good.",
-          "safer": ["Run the matching describe or list call first"],
           "match": [
             { "commands": ["aws"], "arg": "^(delete-|terminate-|deregister-|remove-|purge-|rb$|batch-delete)" },
             { "commands": ["aws"], "seq": [["s3"], ["rm"]], "flags": ["--recursive"] }
@@ -578,15 +438,11 @@
         "aws-s3-rb-force": {
           "severity": "critical",
           "reason": "aws s3 rb --force deletes a bucket and its objects",
-          "explanation": "Every object in the bucket goes.",
-          "safer": ["aws s3 ls first"],
           "match": [{ "commands": ["aws"], "seq": [["s3"], ["rb"]], "flags": ["--force"] }]
         },
         "gcloud-delete": {
           "severity": "high",
           "reason": "a gcloud call that deletes",
-          "explanation": "Cloud resources and their data go.",
-          "safer": ["Run the matching describe or list call first"],
           "match": [
             { "commands": ["gcloud"], "arg": "^(delete|reset)$" },
             { "commands": ["gsutil"], "first": ["rm", "rb"] }
@@ -595,22 +451,16 @@
         "gcloud-project-delete": {
           "severity": "critical",
           "reason": "gcloud projects delete",
-          "explanation": "The whole project and everything in it goes.",
-          "safer": [],
           "match": [{ "commands": ["gcloud"], "seq": [["projects"], ["delete"]] }]
         },
         "az-delete": {
           "severity": "high",
           "reason": "an az call that deletes",
-          "explanation": "Cloud resources and their data go.",
-          "safer": ["Run the matching show or list call first"],
           "match": [{ "commands": ["az"], "arg": "^(delete|purge)$" }]
         },
         "az-group-delete": {
           "severity": "critical",
           "reason": "az group delete",
-          "explanation": "Every resource in the group goes.",
-          "safer": [],
           "match": [{ "commands": ["az"], "seq": [["group"], ["delete"]] }]
         }
       }
@@ -622,15 +472,11 @@
         "rsync-delete": {
           "severity": "high",
           "reason": "rsync --delete removes files at the destination",
-          "explanation": "Whatever the source lacks is deleted from the destination.",
-          "safer": ["rsync --dry-run --delete first"],
           "match": [{ "commands": ["rsync"], "arg": "^--del", "noFlags": ["--dry-run", "-n", "short:n"] }]
         },
         "scp-overwrite-remote": {
           "severity": "medium",
           "reason": "scp onto a remote host",
-          "explanation": "scp overwrites remote files without a question.",
-          "safer": ["rsync --backup"],
           "match": [{ "commands": ["scp"], "last": "^[^/]*:" }]
         }
       }
@@ -642,22 +488,16 @@
         "gh-repo-delete": {
           "severity": "critical",
           "reason": "gh repo delete",
-          "explanation": "The repository, its issues and pull requests go.",
-          "safer": ["gh repo archive"],
           "match": [{ "commands": ["gh"], "seq": [["repo"], ["delete"]] }]
         },
         "gh-release-delete": {
           "severity": "high",
           "reason": "gh release delete",
-          "explanation": "The release and its assets go.",
-          "safer": [],
           "match": [{ "commands": ["gh"], "seq": [["release"], ["delete", "delete-asset"]] }]
         },
         "gh-secret-delete": {
           "severity": "high",
           "reason": "gh secret or variable delete",
-          "explanation": "Workflows that use it break.",
-          "safer": [],
           "match": [
             {
               "commands": ["gh"],
@@ -671,43 +511,31 @@
         "gh-api-delete": {
           "severity": "high",
           "reason": "gh api with DELETE",
-          "explanation": "A raw API delete skips every safety the CLI adds.",
-          "safer": [],
           "match": [{ "commands": ["gh"], "first": ["api"], "arg": "^(-X|--method)?=?DELETE$" }]
         },
         "gh-workflow-run": {
           "severity": "medium",
           "reason": "gh workflow run starts a CI workflow",
-          "explanation": "A workflow may deploy or publish.",
-          "safer": [],
           "match": [{ "commands": ["gh"], "seq": [["workflow"], ["run"]] }]
         },
         "vercel-remove": {
           "severity": "high",
           "reason": "vercel remove",
-          "explanation": "Deployments or the project go.",
-          "safer": [],
           "match": [{ "commands": ["vercel"], "first": ["remove", "rm"] }]
         },
         "netlify-delete": {
           "severity": "high",
           "reason": "netlify sites:delete",
-          "explanation": "The site goes.",
-          "safer": [],
           "match": [{ "commands": ["netlify"], "first": ["sites:delete"] }]
         },
         "heroku-destroy": {
           "severity": "critical",
           "reason": "heroku apps:destroy",
-          "explanation": "The app and its add-ons go.",
-          "safer": [],
           "match": [{ "commands": ["heroku"], "first": ["apps:destroy", "destroy", "pg:reset"] }]
         },
         "fly-destroy": {
           "severity": "critical",
           "reason": "fly apps destroy",
-          "explanation": "The app goes.",
-          "safer": [],
           "match": [{ "commands": ["fly", "flyctl"], "seq": [["apps", "volumes"], ["destroy"]] }]
         }
       }

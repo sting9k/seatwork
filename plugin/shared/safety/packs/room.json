@@ -1,5 +1,5 @@
 {
-  "$comment": "The room's packs. grant human: only the person may let a blocked command run.",
+  "$comment": "The room's packs: its own files and the agents' settings, git's config, the daemon, secrets, and software installs.",
   "packs": [
     {
       "id": "room.guard",
@@ -8,17 +8,11 @@
       "rules": {
         "room-file-write": {
           "severity": "critical",
-          "grant": "human",
-          "reason": "a write into the room's own files or an agent's settings",
-          "explanation": "The room's home, each seat's runtime, the agents' settings and the global git config decide what every seat may do and what runs on each git command; a seat changes none of them.",
-          "safer": ["Ask your Owner; the person changes these"]
+          "reason": "a write into the room's own files or an agent's settings"
         },
         "git-global-config": {
           "severity": "critical",
-          "grant": "human",
           "reason": "git config --global or --system changes git for every repository",
-          "explanation": "Global git config holds aliases, hooks paths and credential helpers that run on every git command anywhere on the machine.",
-          "safer": ["git config --local inside this repository"],
           "match": [
             {
               "commands": ["git"],
@@ -41,10 +35,7 @@
         },
         "guard-off": {
           "severity": "critical",
-          "grant": "human",
           "reason": "an attempt to turn off or route around the room's command guard",
-          "explanation": "An agent started from a seat's shell runs without the room's hooks, so whatever it does is never checked.",
-          "safer": ["Ask your Owner for another seat"],
           "match": [
             {
               "commands": ["claude", "cursor-agent", "gemini", "qwen", "droid"],
@@ -58,60 +49,31 @@
         },
         "git-config-write": {
           "severity": "critical",
-          "grant": "human",
-          "reason": "a write into .git where git reads programs from: config, hooks or attributes",
-          "explanation": "A filter, hook or external diff named in these files runs on the room's own git calls too, outside the guard.",
-          "safer": ["Ask your Owner; the person changes a repository's git configuration"]
+          "reason": "a write into .git where git reads programs from: config, hooks or attributes"
         },
         "git-config-exec": {
           "severity": "critical",
-          "grant": "human",
-          "reason": "git config names a program git runs later: a filter, a text conversion, an external diff, a hook path",
-          "explanation": "What the repository's config names runs on every git call there, the room's own included, outside the guard.",
-          "safer": ["Ask your Owner; the person changes a repository's git configuration"]
+          "reason": "git config names a program git runs later: a filter, a text conversion, an external diff, a hook path"
         },
         "git-no-verify": {
           "severity": "high",
-          "reason": "git told to skip the repository's hooks",
-          "explanation": "The hooks are the project's own checks on a commit or push; work that skips them goes in unchecked.",
-          "safer": [
-            "Run the hooks and fix what they report",
-            "If a hook itself is broken, tell your Owner with its output"
-          ]
+          "reason": "git told to skip the repository's hooks"
         },
         "git-attributes-driver": {
           "severity": "critical",
-          "grant": "human",
-          "reason": "a .gitattributes line that names a filter or driver of the repository's own",
-          "explanation": "git runs the program the repository's config gives such a name, on every git call there, the room's own included, outside the guard.",
-          "safer": ["Ask your Owner; the person changes how a repository's files are converted"]
+          "reason": "a .gitattributes line that names a filter or driver of the repository's own"
         },
         "paseo-cli": {
           "severity": "critical",
-          "grant": "human",
-          "reason": "a seat reaching other agents or the daemon through the Paseo CLI",
-          "explanation": "The Paseo CLI sends prompts to agents, starts, stops and schedules them, answers their permission requests and changes the daemon. What it sends arrives as if the person wrote it, and none of the room's checks stand between.",
-          "safer": [
-            "seatwork_mail writes to your Owner or to a seat you launched",
-            "Ask your Owner; the person runs the Paseo CLI"
-          ]
+          "reason": "a seat reaching other agents or the daemon through the Paseo CLI"
         },
         "paseo-daemon": {
           "severity": "critical",
-          "grant": "human",
-          "reason": "a seat reaching the Paseo daemon by its address or its client library",
-          "explanation": "The daemon takes a program on this machine for its owner: what it is sent prompts, starts and stops agents and changes the daemon, and none of the room's checks stand between.",
-          "safer": [
-            "seatwork_mail writes to your Owner or to a seat you launched",
-            "Ask your Owner; the person works with the daemon"
-          ]
+          "reason": "a seat reaching the Paseo daemon by its address or its client library"
         },
         "secret-read": {
           "severity": "critical",
-          "grant": "human",
-          "reason": "a seat reading a key the daemon or the room holds",
-          "explanation": "With the daemon's credential a program acts as its owner: it prompts, starts and stops agents and changes the daemon. With the room's keys it spends the room's money. None of the room's checks stand between.",
-          "safer": ["Leave the daemon's and the room's files alone; what you need from them, ask your Owner"]
+          "reason": "a seat reading a key the daemon or the room holds"
         }
       }
     },
@@ -122,11 +84,7 @@
       "rules": {
         "brew-install": {
           "severity": "high",
-          "mode": "ask",
-          "grant": "human",
           "reason": "brew puts software on the machine",
-          "explanation": "Installing, upgrading or tapping with Homebrew changes the machine for every project; the person decides what is installed.",
-          "safer": ["Use what is already installed", "Ask your Owner to ask the person"],
           "match": [
             {
               "commands": ["brew"],
@@ -136,11 +94,7 @@
         },
         "global-package": {
           "severity": "high",
-          "mode": "ask",
-          "grant": "human",
           "reason": "a global package install changes the machine, not the project",
-          "explanation": "npm -g, pnpm -g, yarn global and bun -g write outside the project and change commands every project sees.",
-          "safer": ["Install into the project (npm install --save-dev <pkg>)", "Run it once with npx"],
           "match": [
             {
               "commands": ["npm"],
@@ -173,11 +127,7 @@
         },
         "tool-install": {
           "severity": "high",
-          "mode": "ask",
-          "grant": "human",
           "reason": "a tool installer puts programs on the machine",
-          "explanation": "pipx, uv tool, cargo install, go install and gem install put programs on the user's PATH.",
-          "safer": ["uvx <tool> or npx <tool> runs it once without installing", "Ask your Owner"],
           "match": [
             {
               "commands": ["pipx"],
@@ -203,11 +153,7 @@
         },
         "runtime-install": {
           "severity": "high",
-          "mode": "ask",
-          "grant": "human",
           "reason": "a version manager downloads a runtime or toolchain",
-          "explanation": "nvm, fnm, volta, pyenv, rbenv, rustup, asdf, mise and sdkman download whole runtimes onto the machine.",
-          "safer": ["Use the runtime already installed", "Ask your Owner"],
           "match": [
             {
               "commands": ["nvm", "fnm", "volta", "pyenv", "rbenv", "nodenv", "goenv", "asdf", "sdk", "jenv"],
@@ -227,11 +173,7 @@
         },
         "browser-install": {
           "severity": "high",
-          "mode": "ask",
-          "grant": "human",
           "reason": "a test tool downloads browsers",
-          "explanation": "Browser downloads are large and land on the machine; the person chose which browser the room may use.",
-          "safer": ["Use the browser already installed", "Ask your Owner"],
           "match": [
             { "commands": ["playwright", "playwright-core"], "first": ["install", "install-deps"] },
             { "commands": ["puppeteer"], "seq": [["browsers"], ["install"]] },
@@ -241,11 +183,7 @@
         },
         "system-package": {
           "severity": "high",
-          "mode": "ask",
-          "grant": "human",
           "reason": "a system package manager installs software",
-          "explanation": "apt, yum, dnf, apk, pacman, port, mas and installer change the operating system.",
-          "safer": ["Ask your Owner"],
           "match": [
             {
               "commands": ["apt", "apt-get", "yum", "dnf", "zypper", "apk", "port"],
@@ -268,11 +206,7 @@
         },
         "download-and-run": {
           "severity": "critical",
-          "mode": "ask",
-          "grant": "human",
-          "reason": "a download piped straight into a shell or interpreter",
-          "explanation": "The downloaded text runs before anyone reads it; it can install or change anything the user can.",
-          "safer": ["Download to a file, read it, then ask your Owner"]
+          "reason": "a download piped straight into a shell or interpreter"
         }
       }
     }

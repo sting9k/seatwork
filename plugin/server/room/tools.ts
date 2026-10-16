@@ -96,32 +96,9 @@ const said = (value: unknown) => String(value ?? "").trim();
 const reasonOf = (args: Record<string, unknown>) => said(args.reason).slice(0, MOST_REASON_CHARS);
 const idOf = (args: Record<string, unknown>) => Number(String(args.id ?? "").replace(/^#/, ""));
 
-/** seatwork_safety: one action of the room's guard for the seat `me`. */
+/** seatwork_safety: one action of the room's safety for the seat `me`. */
 async function safetyTool(room: RoomContext, me: string, args: Record<string, unknown>): Promise<string> {
   const action = String(args.action ?? "");
-  if (action === "check") {
-    const command = said(args.command);
-    if (!command) throw new Error("seatwork_safety check: give the `command`");
-    return room.safety.explain(me, command, room.engine.seat(me)?.cwd ?? null);
-  }
-  if (action === "grant") {
-    const code = said(args.code);
-    if (!/^\d{6}$/.test(code)) throw new Error("seatwork_safety grant: give the six-digit `code`");
-    return room.safety.grant(code, me);
-  }
-  if (action === "waiting") {
-    const rows = room.safety.waitingUnder(
-      me,
-      room.engine.allSeats().map((s) => s.agentId),
-    );
-    if (!rows.length) return "No code waits for your grant.";
-    return rows
-      .map(
-        (r) =>
-          `${r.code} ${r.pack}:${r.rule} seat ${r.seat} in ${r.cwd ?? "?"}: ${r.shown}${r.grantor === "human" ? " (the person's to grant)" : ""}`,
-      )
-      .join("\n");
-  }
   if (action === "ack") {
     const id = said(args.id);
     const reason = reasonOf(args);
@@ -158,7 +135,7 @@ async function safetyTool(room: RoomContext, me: string, args: Record<string, un
       throw new Error("seatwork_safety control: give the `seat` of a writer under you, or beside you under one Owner");
     return room.safety.control(writer);
   }
-  throw new Error("seatwork_safety: `action` is check, grant, waiting, ack, council, label, rule or control");
+  throw new Error("seatwork_safety: `action` is ack, council, label, rule or control");
 }
 
 /** The open seats under `me`, each below its Owner, in the order the room registered them. */

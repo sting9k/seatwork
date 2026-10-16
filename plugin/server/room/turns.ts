@@ -279,9 +279,7 @@ function addRoomLines(
   const { role, id, task, contextTokens, early, check, findings } = about;
   let lined = false;
   try {
-    const guarded = [check ? handInLine(check) : null, room.safety.blocksLine(id), councilLine(findings)].filter(
-      (line): line is string => !!line,
-    );
+    const guarded = [check ? handInLine(check) : null, councilLine(findings)].filter((line): line is string => !!line);
     if (guarded.length) up.why = [up.why, ...guarded].filter(Boolean).join("; ");
     lined = findings.length > 0;
     const candidate = subjectSignal(up.subject) === "CANDIDATE";

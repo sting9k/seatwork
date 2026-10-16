@@ -10,10 +10,9 @@ interface RmHit {
   detail: string;
 }
 
-/** What the rm rules ask of the machine: which paths git leaves out of the project, and which the owner exempted. */
+/** What the rm rules ask of the machine: which paths git leaves out of the project. */
 export interface RmTools {
   ignored(paths: string[]): Promise<ReadonlySet<string>>;
-  exempt(rule: string, paths: string[]): boolean;
 }
 
 type Mode = "none" | "always" | "once";
@@ -172,7 +171,6 @@ async function judge(flags: Flags | null, scene: Scene, tools: RmTools): Promise
     // git is asked once, and only when every target could be something a build makes again
     if (!severe && generated) generated = (await tools.ignored(inside)).size === inside.length;
     const rule = recursiveRule(flags, severe);
-    if (tools.exempt(rule, named)) return "allow";
     if (!severe && generated) return { rule: "rm-generated", detail: named.join(", ") };
     return { rule, detail: named.join(", ") };
   }
@@ -224,7 +222,7 @@ function same(a: Flags | null, b: Flags | null): boolean {
   );
 }
 
-/** True when these arguments would be blocked had the command word been `rm`. */
+/** True when these arguments would be caught had the command word been `rm`. */
 export async function wouldBlockAsRm(scene: Scene, tools: RmTools): Promise<boolean> {
   const found = await rmRules({ ...scene, call: { ...scene.call, name: "rm" } }, tools);
   return found !== null && found.rule !== "rm-generated";

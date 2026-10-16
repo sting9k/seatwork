@@ -165,7 +165,6 @@ export function machineTools(since: () => number | null, baseOf?: (commonDir: st
       const done = await git(["check-ignore", "--", ...paths], dir);
       return new Set(done.out.split("\n").filter(Boolean));
     },
-    exempt: () => false,
     async alias(name, cwd) {
       const key = `${cwd ?? ""}\0${name}`;
       const known = aliases.get(key);

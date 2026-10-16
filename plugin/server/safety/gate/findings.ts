@@ -18,8 +18,6 @@ export class Findings {
       rule,
       severity: declared.severity as Severity,
       reason: detail ? `${declared.reason} (${detail})` : declared.reason,
-      ...(declared.explanation ? { explanation: declared.explanation } : {}),
-      ...(declared.safer?.length ? { safer: declared.safer } : {}),
       text,
     });
   }

@@ -1,11 +1,10 @@
-import { createHash, randomInt } from "node:crypto";
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { SQL_DIR } from "../paths";
 import { Sqlite, type Param, type SqliteFailure } from "../sqlite";
 import type { Label } from "./council/calibration";
 
-/** The safety store in the room home: decisions, codes, start commits, hand-in findings, the council's log and its appeals to the chair. */
+/** The safety store in the room home: what the guard saw, start commits, hand-in findings, the council's log and its appeals to the chair. */
 
 /** A failure of the store itself: the file is held by another process, or its layout does not fit this plugin. */
 export class SafetyError extends Error {
@@ -17,39 +16,17 @@ export class SafetyError extends Error {
   }
 }
 
-/** Who may grant a code: the Owner of the blocked seat, or only the person. */
-export type Grantor = "owner" | "human";
-
-/** One decision of the guard about a call. */
+/** A call a rule of the guard held for, as the guard saw it. */
 interface DecisionRow {
   seat: string | null;
   role: string | null;
   cli: string;
   cwd: string | null;
   command: string;
-  verdict: "allow" | "deny" | "warn" | "log" | "granted" | "unchecked";
   pack: string | null;
   rule: string | null;
   severity: string | null;
-  code: string | null;
   elapsedUs: number;
-}
-
-/** A one-time code for one call: `hash` binds it to a seat, a folder and a command; one grant and one use. */
-export interface CodeRow {
-  hash: string;
-  code: string;
-  seat: string | null;
-  cwd: string | null;
-  shown: string;
-  pack: string;
-  rule: string;
-  grantor: Grantor;
-  created_at: string;
-  expires_at: string;
-  granted_by: string | null;
-  granted_at: string | null;
-  used_at: string | null;
 }
 
 /** A seat's work as kept: the digest handed in, the last verdict and the digest it was given on. */
@@ -73,12 +50,6 @@ export interface FindingRow {
   ack: string | null;
   acked_at: string | null;
 }
-
-/** What a code is bound to: one seat, one folder, one command, byte for byte. */
-export const codeHash = (seat: string | null, cwd: string | null, command: string): string =>
-  createHash("sha256")
-    .update(JSON.stringify([seat, cwd, command]))
-    .digest("hex");
 
 /** The store's file in a folder. */
 export const databaseIn = (dir: string): string => join(dir, "safety.db");
@@ -170,151 +141,22 @@ export class SafetyStore extends Sqlite {
     return new Date(this.now().getTime() + offsetMs).toISOString();
   }
 
-  /** Keeps one decision; the command is cut to 2000 characters. */
+  /** Keeps one call a rule held for; the command is cut to 2000 characters. */
   record(d: DecisionRow): void {
     this.transaction("write", () =>
       this.run(
-        "INSERT INTO decisions (at, seat, role, cli, cwd, command, verdict, pack, rule, severity, code, elapsed_us) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "INSERT INTO decisions (at, seat, role, cli, cwd, command, pack, rule, severity, elapsed_us) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         this.stamp(),
         d.seat,
         d.role,
         d.cli,
         d.cwd,
         d.command.slice(0, 2000),
-        d.verdict,
         d.pack,
         d.rule,
         d.severity,
-        d.code,
         Math.round(d.elapsedUs),
       ),
-    );
-  }
-
-  /** The code for a blocked call: the one still open for it, or a new six-digit one. */
-  issue(c: {
-    hash: string;
-    seat: string | null;
-    cwd: string | null;
-    shown: string;
-    pack: string;
-    rule: string;
-    grantor: Grantor;
-    hours: number;
-  }): string {
-    return this.transaction("write", () => {
-      const open = this.row<{ code: string }>(
-        "SELECT code FROM codes WHERE hash = ? AND used_at IS NULL AND expires_at > ?",
-        c.hash,
-        this.stamp(),
-      );
-      if (open) return open.code;
-      let code = "";
-      do code = String(randomInt(0, 1_000_000)).padStart(6, "0");
-      while (this.row("SELECT 1 FROM codes WHERE code = ? AND expires_at > ?", code, this.stamp()));
-      this.run(
-        "INSERT OR REPLACE INTO codes (hash, code, seat, cwd, shown, pack, rule, grantor, created_at, expires_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-        c.hash,
-        code,
-        c.seat,
-        c.cwd,
-        c.shown.slice(0, 2000),
-        c.pack,
-        c.rule,
-        c.grantor,
-        this.stamp(),
-        this.stamp(c.hours * 3_600_000),
-      );
-      return code;
-    });
-  }
-
-  /** The open codes with this number. */
-  byCode(code: string): CodeRow[] {
-    return this.rows<CodeRow>(
-      "SELECT * FROM codes WHERE code = ? AND expires_at > ? AND used_at IS NULL",
-      code,
-      this.stamp(),
-    );
-  }
-
-  /** Grants the open code bound to `hash`, to be used once. */
-  grant(hash: string, by: string): void {
-    this.transaction("write", () =>
-      this.run(
-        "UPDATE codes SET granted_by = ?, granted_at = ? WHERE hash = ? AND used_at IS NULL",
-        by,
-        this.stamp(),
-        hash,
-      ),
-    );
-  }
-
-  /** A granted code for exactly this call, used up by it; null when there is none. */
-  consume(hash: string): CodeRow | null {
-    // nearly every command has no code waiting: a plain read says so without taking the write lock
-    if (!this.row("SELECT 1 AS found FROM codes WHERE hash = ? AND granted_at IS NOT NULL AND used_at IS NULL", hash))
-      return null;
-    return this.transaction("write", () => {
-      const row = this.row<CodeRow>(
-        "SELECT * FROM codes WHERE hash = ? AND granted_at IS NOT NULL AND used_at IS NULL AND expires_at > ?",
-        hash,
-        this.stamp(),
-      );
-      if (!row) return null;
-      this.run("UPDATE codes SET used_at = ? WHERE hash = ?", this.stamp(), hash);
-      return row;
-    });
-  }
-
-  /** The codes only the person may grant that still wait, newest first. */
-  forPerson(limit: number): CodeRow[] {
-    return this.rows<CodeRow>(
-      "SELECT * FROM codes WHERE grantor = 'human' AND granted_at IS NULL AND used_at IS NULL AND expires_at > ? ORDER BY created_at DESC LIMIT ?",
-      this.stamp(),
-      limit,
-    );
-  }
-
-  /** The codes waiting for a grant, for these seats, newest first. */
-  waiting(seats: readonly string[]): CodeRow[] {
-    if (!seats.length) return [];
-    // one statement for any number of seats: a list of marks would prepare a new one per count
-    return this.rows<CodeRow>(
-      "SELECT * FROM codes WHERE seat IN (SELECT value FROM json_each(?)) AND granted_at IS NULL AND used_at IS NULL AND expires_at > ? ORDER BY created_at DESC LIMIT 50",
-      JSON.stringify(seats),
-      this.stamp(),
-    );
-  }
-
-  /** How often a rule held a seat back since a moment. */
-  denials(seat: string, rule: string, since: Date): number {
-    return (
-      this.row<{ n: number }>(
-        "SELECT count(*) AS n FROM decisions WHERE seat = ? AND rule = ? AND at > ? AND verdict = 'deny'",
-        seat,
-        rule,
-        since.toISOString(),
-      )?.n ?? 0
-    );
-  }
-
-  /** True the first time a seat's repeated rule is reported since a moment; then noted. */
-  escalate(seat: string, rule: string, since: Date): boolean {
-    return this.transaction("write", () => {
-      if (this.row("SELECT 1 FROM escalations WHERE seat = ? AND rule = ? AND at > ?", seat, rule, since.toISOString()))
-        return false;
-      this.run("INSERT INTO escalations (seat, rule, at) VALUES (?, ?, ?)", seat, rule, this.stamp());
-      return true;
-    });
-  }
-
-  /** The blocks of a seat since a moment, for the line under its next report. */
-  blocksSince(seat: string, since: string): { rule: string; command: string; code: string | null }[] {
-    return this.rows(
-      "SELECT rule, command, code FROM decisions WHERE seat = ? AND at > ? AND verdict = 'deny' ORDER BY id LIMIT 20",
-      seat,
-      since,
     );
   }
 
@@ -456,7 +298,7 @@ export class SafetyStore extends Sqlite {
     });
   }
 
-  /** Drops decisions, escalations and findings older than `before`, codes that ran out by then and seats not seen since; decisions a slice at a time. */
+  /** Drops what the guard saw and the findings older than `before`, and seats not seen since; the guard's records a slice at a time. */
   expire(before: Date): number {
     const at = before.toISOString();
     const gone = this.deleteInSlices(
@@ -467,8 +309,6 @@ export class SafetyStore extends Sqlite {
       gone +
       this.transaction("write", () =>
         [
-          this.run("DELETE FROM codes WHERE expires_at < ?", at),
-          this.run("DELETE FROM escalations WHERE at < ?", at),
           this.run("DELETE FROM findings WHERE last_at < ?", at),
           this.run("DELETE FROM seats WHERE seen_at < ?", at),
           this.run("DELETE FROM repo_bases WHERE seen_at < ?", at),

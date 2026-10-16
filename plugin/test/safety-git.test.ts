@@ -46,7 +46,7 @@ function committed(ignore = "") {
   store.noteStart("seat", dir, head);
   const gate = {
     place: { home: "/Users/u", project: dir, tmp: null, start: dir, guard: null, roomFolder: ".seatwork" },
-    config: { packs: packsInForce(), exempt: {}, budgetMs: 1000, maxBytes: 65536 },
+    config: { packs: packsInForce(), budgetMs: 1000, maxBytes: 65536 },
     tools: machineTools(() => null),
   };
   return { dir, git, store, gate };

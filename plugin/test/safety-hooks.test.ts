@@ -47,8 +47,6 @@ function runHook(
   });
 }
 
-const reasonOf = (stdout: string) => JSON.parse(stdout).hookSpecificOutput.permissionDecisionReason as string;
-
 const DENY = {
   type: "application/json",
   text: JSON.stringify({
@@ -76,28 +74,28 @@ test("each CLI's hook carries the payload and the seat to the room, and prints e
   }
 });
 
-test("a call the room does not answer is blocked, each case with its reason", async () => {
+test("a call the room does not answer runs: no address, a refused request, or no answer in time", async () => {
   const unwired = await runHook("claude", { tool_name: "Bash" }, {});
-  assert.match(reasonOf(unwired.stdout), /no way to reach/);
+  assert.deepEqual([unwired.status, unwired.stdout], [0, ""]);
   const live = await room(async () => ({ type: "text/plain", text: "" }));
   const stalled = await room(
     () => new Promise((resolve) => setTimeout(() => resolve({ type: "text/plain", text: "" }), 3000)),
   );
   try {
     const failed = await runHook("codex", { tool_name: "Bash" }, { [GATE_ENV.url]: live.url.replace(/tok$/, "old") });
-    assert.match(reasonOf(failed.stdout), /failed to check/);
+    assert.deepEqual([failed.status, failed.stdout], [0, ""]);
     const slow = await runHook(
       "claude",
       { tool_name: "Bash" },
       { [GATE_ENV.url]: stalled.url, [GATE_ENV.seconds]: "1" },
     );
-    assert.match(reasonOf(slow.stdout), /took too long/);
+    assert.deepEqual([slow.status, slow.stdout], [0, ""]);
   } finally {
     await Promise.all([live.close(), stalled.close()]);
   }
 });
 
-test("a room that is down for a moment gets the whole call when it is back; one that stays down blocks it", async () => {
+test("a room that is down for a moment gets the whole call when it is back; one that stays down lets it run", async () => {
   const gone = await room(async () => ({ type: "text/plain", text: "" }));
   const restarting = await room(async () => ({ type: "text/plain", text: "" }));
   await Promise.all([gone.close(), restarting.close()]);
@@ -111,7 +109,7 @@ test("a room that is down for a moment gets the whole call when it is back; one 
     runHook("codex", write, { [GATE_ENV.url]: restarting.url }),
   ]);
   await (await back).close();
-  assert.match(reasonOf(down.stdout), /not answering/);
+  assert.deepEqual([down.status, down.stdout], [0, ""]);
   assert.equal(retried.stdout, DENY.text);
   assert.equal(JSON.parse(seen).tool_input.content.length, 200_000);
 });
@@ -123,7 +121,7 @@ function load(name: string, text: string): any {
   return require(file);
 }
 
-test("Pi's extension asks the room about bash, write, edit and read calls, and blocks with the room's reason", async () => {
+test("Pi's extension asks the room about bash, write, edit and read calls, blocks with the room's reason, and lets a call run when no answer comes", async () => {
   const live = await room(async (body) => ({
     type: "application/json",
     text: JSON.stringify(
@@ -141,10 +139,9 @@ test("Pi's extension asks the room about bash, write, edit and read calls, and b
     assert.deepEqual(await call("read", "rm -rf ~"), { block: true, reason: "no" }, "reading tools are asked about");
     assert.equal(await call("todo", "rm -rf ~"), undefined, "other tools are not");
     await live.close();
-    const reason = async () => ((await call("bash", "ls")) as { reason: string }).reason;
-    assert.match(await reason(), /not answering/);
+    assert.equal(await call("bash", "rm -rf ~"), undefined, "a room that is down");
     delete process.env[GATE_ENV.url];
-    assert.match(await reason(), /no way to reach/);
+    assert.equal(await call("bash", "rm -rf ~"), undefined, "a seat with no address");
   } finally {
     delete process.env[GATE_ENV.url];
     await live.close();

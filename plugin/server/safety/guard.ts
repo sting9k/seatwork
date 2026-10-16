@@ -1,40 +1,25 @@
 import { readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { evaluate, type Evaluation, type GateConfig, type Tools } from "./gate/evaluate";
-import { packsInForce, ruleOf, type Mode } from "./gate/packs";
-import { within } from "./gate/paths";
+import { packsInForce, ruleOf } from "./gate/packs";
 import { ATTRIBUTES_FILE, namesDriver } from "./gate/rules/attributes";
 import { guardThroughLinks } from "./gate/rules/files";
 import { guardOf } from "./gate/rules/protected";
 import { secretAt } from "./gate/rules/secrets";
 import { textWord } from "./gate/shell";
-import { SEVERITY_RANK, type Doubt, type Finding, type Place } from "./gate/types";
+import { SEVERITY_RANK, type Finding, type Place } from "./gate/types";
 import { redact } from "../redact";
-import { codeHash, type Grantor, type SafetyStore } from "./store";
+import type { SafetyStore } from "./store";
 import type { CouncilPolicy } from "./council/council";
 
-/** The command guard: packs, the owner's exceptions and one-time codes. */
-
-/** One exception of the owner's: a `pack:rule` lifted, or a command or prefix that runs as is, in `paths` (anywhere when absent) until `until`. */
-interface AllowEntry {
-  rule?: string;
-  command?: string;
-  prefix?: string;
-  paths?: string[];
-  until?: string;
-}
+/** The command guard: reads each call of a seat by the packs in force and keeps what a rule held for; it stops nothing. */
 
 /** The owner's settings for the guard, the council and the hand-in check, as the policy file holds them. */
 export interface SafetyPolicy {
   mode?: "on" | "off";
   packs?: { add?: string[]; remove?: string[] };
-  rules?: Record<string, Mode>;
-  allow?: AllowEntry[];
-  exempt?: Record<string, string[]>;
   budgetMs?: number;
   maxBytes?: number;
-  codeHours?: number;
-  repeat?: { count: number; minutes: number };
   handin?: { mode: "block" | "warn" | "off"; registry?: boolean };
   council?: CouncilPolicy;
 }
@@ -48,72 +33,45 @@ export interface SeatRef {
   start: string | null;
 }
 
-/** The guard's answer to one call: whether it runs, what the seat is told, the code that lets it run once, and `changes` when a line that runs writes the seat's tree. */
-export interface Ruling {
-  allow: boolean;
-  message: string | null;
-  finding: Finding | null;
-  code: string | null;
-  grantor: Grantor | null;
-  changes?: boolean;
-}
-
-/** What the guard needs of the room; `repeated` lets a seat's Owner hear of a rule the seat keeps hitting. */
+/** What the guard needs of the room. */
 interface GuardDeps {
   store(): SafetyStore;
   policy(): SafetyPolicy | undefined;
   tools(seat: SeatRef | null): Tools;
   place(seat: SeatRef | null): Place;
-  repeated(seat: SeatRef, rule: string, count: number, command: string): void;
 }
 
-/** One call under judgement: who asks, what, where, and when the guard began on it. */
+/** One call being read: who asks, what, where, and when the guard began on it. */
 interface Call {
   seat: SeatRef | null;
   cli: string;
   command: string;
   cwd: string | null;
-  dry: boolean;
   began: bigint;
 }
 
-/** What a project's file asks of the guard: packs to turn on and rules to raise. */
-interface ProjectRules {
-  add: string[];
-  rules: Record<string, Mode>;
-}
-
-const DEFAULTS = { budgetMs: 1000, maxBytes: 64 * 1024, codeHours: 24, repeat: { count: 3, minutes: 30 } };
-const LEADS_OUT = /[;&|`\n<>$~*?[\]\\'"]|(?:^|[\s/=])\.\.(?=$|[\s/])|\s[/-]/;
-const RANK: Record<Mode, number> = { log: 0, warn: 1, ask: 2, deny: 3 };
-const RULES_LOOKED_MS = 3000;
+const DEFAULTS = { budgetMs: 1000, maxBytes: 64 * 1024 };
 const SHOWN_CHARS = 4000;
-const NO_RULES: ProjectRules = { add: [], rules: {} };
+const PACKS_LOOKED_MS = 3000;
 
-/** Judges each shell command and file write of a seat by the packs in force, the owner's exceptions and granted codes. */
+/** Reads each shell command, file write and file read of a seat by the packs in force, and keeps the calls a rule held for. */
 export class Guard {
-  private projectRules = new Map<string, { mtime: number; at: number; rules: ProjectRules }>();
+  private projectPacks = new Map<string, { mtime: number; at: number; add: string[] }>();
 
   constructor(private readonly deps: GuardDeps) {}
 
-  /** One shell command a seat is about to run; `dry` keeps nothing. */
-  async check(seat: SeatRef | null, cli: string, command: string, cwd: string | null, dry = false): Promise<Ruling> {
-    return this.judge({ seat, cli, command, cwd, dry, began: process.hrtime.bigint() }, async (place) =>
+  /** One shell command a seat is about to run; true when the line writes or removes a file of the seat's tree. */
+  async check(seat: SeatRef | null, cli: string, command: string, cwd: string | null): Promise<boolean> {
+    return this.read({ seat, cli, command, cwd, began: process.hrtime.bigint() }, async (place) =>
       evaluate(command, cwd, place, this.gateConfig(place), this.deps.tools(seat)),
     );
   }
 
   /** A file an editing tool is about to write (Write, Edit, apply_patch, a plugin's write), with the text it adds when the call shows it. */
-  async checkWrite(
-    seat: SeatRef | null,
-    cli: string,
-    path: string,
-    cwd: string | null,
-    text?: string,
-  ): Promise<Ruling> {
-    const call = { seat, cli, command: `write ${path}`, cwd, dry: false, began: process.hrtime.bigint() };
+  async checkWrite(seat: SeatRef | null, cli: string, path: string, cwd: string | null, text?: string): Promise<void> {
+    const call = { seat, cli, command: `write ${path}`, cwd, began: process.hrtime.bigint() };
     const real = (target: string) => this.deps.tools(seat).real(target);
-    return this.judge(call, async (place) => ({
+    await this.read(call, async (place) => ({
       findings: writeFindings(path, text, place, cwd, real),
       doubts: [],
       changes: false,
@@ -121,20 +79,14 @@ export class Guard {
   }
 
   /** A file or folder a reading tool is about to open (Pi's and OpenCode's read, grep, find, list); `whole` when it reads every file under a folder. */
-  async checkRead(
-    seat: SeatRef | null,
-    cli: string,
-    path: string,
-    cwd: string | null,
-    whole: boolean,
-  ): Promise<Ruling> {
-    const call = { seat, cli, command: `read ${path}`, cwd, dry: false, began: process.hrtime.bigint() };
+  async checkRead(seat: SeatRef | null, cli: string, path: string, cwd: string | null, whole: boolean): Promise<void> {
+    const call = { seat, cli, command: `read ${path}`, cwd, began: process.hrtime.bigint() };
     const real = (target: string) => this.deps.tools(seat).real(target);
-    return this.judge(call, async (place) => {
+    await this.read(call, async (place) => {
       const secrets = place.guard?.secrets ?? [];
-      const found = [path, real(path)].find((at) => at !== null && secretAt(at, secrets, whole));
+      const found = [path, real(path)].some((at) => at !== null && secretAt(at, secrets, whole));
       return {
-        findings: found ? [findingOf("room.guard", "secret-read", found, `read ${path}`)] : [],
+        findings: found ? [findingOf("room.guard", "secret-read", `read ${path}`)] : [],
         doubts: [],
         changes: false,
       };
@@ -144,122 +96,46 @@ export class Guard {
   /** The gate's settings at a place: the policy's, with the packs the place's project adds. */
   gateConfig(place: Place): GateConfig {
     const policy = this.deps.policy() ?? {};
-    const added = [...(policy.packs?.add ?? []), ...this.rulesOf(place.project).add];
     return {
-      packs: packsInForce(added, policy.packs?.remove ?? []),
-      exempt: policy.exempt ?? {},
+      packs: packsInForce([...(policy.packs?.add ?? []), ...this.packsOf(place.project)], policy.packs?.remove ?? []),
       budgetMs: policy.budgetMs ?? DEFAULTS.budgetMs,
       maxBytes: policy.maxBytes ?? DEFAULTS.maxBytes,
     };
   }
 
-  /** The owner's exceptions, then a code granted for this call, then what the rules find. */
-  private async judge(call: Call, read: (place: Place) => Promise<Evaluation>): Promise<Ruling> {
-    const { seat, command, cwd } = call;
-    const policy = this.deps.policy() ?? {};
-    if ((policy.allow ?? []).some((e) => live(e) && inPaths(e, cwd) && runsAsIs(e, command))) return pass();
-    const used = call.dry ? null : this.deps.store().consume(codeHash(seat?.id ?? null, cwd, command));
-    if (used) {
-      this.record(call, { verdict: "granted", pack: used.pack, rule: used.rule, severity: null, code: used.code });
-      return pass();
+  /** Reads a call and keeps the gravest rule that held for it, or that the gate could not read it; true when the call writes the seat's tree. */
+  private async read(call: Call, look: (place: Place) => Promise<Evaluation>): Promise<boolean> {
+    const found = await look(this.deps.place(call.seat));
+    const top = [...found.findings].sort((a, b) => SEVERITY_RANK[b.severity] - SEVERITY_RANK[a.severity])[0] ?? null;
+    // a call no rule holds for is no news: what is kept is what a rule said something of
+    if (top) this.record(call, top.pack, top.rule, top.severity);
+    else if (found.doubts.length) this.record(call, "gate", "unverified", null);
+    return found.changes;
+  }
+
+  /** The packs a project's `.seatwork/safety.json` turns on; the file is looked at again every few seconds, not on every call. */
+  private packsOf(project: string | null): string[] {
+    if (!project) return [];
+    const file = join(project, ".seatwork", "safety.json");
+    const cached = this.projectPacks.get(file);
+    if (cached && Date.now() - cached.at < PACKS_LOOKED_MS) return cached.add;
+    let mtime = -1;
+    try {
+      mtime = statSync(file).mtimeMs;
+    } catch {
+      // no file turns no pack on
     }
-    const place = this.deps.place(seat);
-    const found = await read(place);
-    const lifted = (f: Finding) =>
-      (policy.allow ?? []).some((e) => live(e) && e.rule === `${f.pack}:${f.rule}` && inPaths(e, cwd));
-    const rules = { ...this.rulesOf(place.project).rules, ...(policy.rules ?? {}) };
-    const ruling = this.conclude(
-      call,
-      found.findings.filter((f) => !lifted(f)),
-      found.doubts,
-      { ...policy, rules },
-    );
-    return ruling.allow && found.changes ? { ...ruling, changes: true } : ruling;
-  }
-
-  /** Ranks what was found by how the rules treat it: a deny or an ask stops the call, anything else lets it run. */
-  private conclude(call: Call, findings: Finding[], doubts: Doubt[], policy: SafetyPolicy): Ruling {
-    const ranked = findings
-      .map((f) => ({ f, mode: modeOf(f, policy.rules ?? {}) }))
-      .sort((a, b) => RANK[b.mode] - RANK[a.mode] || SEVERITY_RANK[b.f.severity] - SEVERITY_RANK[a.f.severity]);
-    const blocks = ranked.filter((r) => r.mode === "deny" || r.mode === "ask");
-    if (blocks.length || doubts.length) return this.stop(call, blocks, doubts, policy);
-    const top = ranked[0];
-    const verdict = top ? (top.mode === "warn" ? "warn" : "log") : "allow";
-    // a command that only passes is no news: what is kept is what a rule said something of
-    if (!call.dry && verdict !== "allow")
-      this.record(call, {
-        verdict,
-        pack: top?.f.pack ?? null,
-        rule: top?.f.rule ?? null,
-        severity: top?.f.severity ?? null,
-        code: null,
-      });
-    return {
-      allow: true,
-      message: top?.mode === "warn" ? warning(top.f) : null,
-      finding: top?.f ?? null,
-      code: null,
-      grantor: null,
-    };
-  }
-
-  /** Stops a call: a code for it, a record, and a word to the seat's Owner when the seat keeps hitting the same rule. */
-  private stop(call: Call, blocks: { f: Finding }[], doubts: Doubt[], policy: SafetyPolicy): Ruling {
-    const { seat, command, cwd } = call;
-    const store = this.deps.store();
-    const decided = blocks[0]?.f ?? null;
-    const grantor: Grantor = blocks.some((b) => ruleOf(b.f.pack, b.f.rule)?.grant === "human") ? "human" : "owner";
-    const hours = policy.codeHours ?? DEFAULTS.codeHours;
-    const shown = shownOf(command);
-    if (call.dry)
-      return {
-        allow: false,
-        message: blocked(decided, doubts, "(none: a check gives no code)", grantor, shown, 0),
-        finding: decided,
-        code: null,
-        grantor,
-      };
-    const pack = decided?.pack ?? "gate";
-    const rule = decided?.rule ?? "unverified";
-    const code = store.issue({
-      hash: codeHash(seat?.id ?? null, cwd, command),
-      seat: seat?.id ?? null,
-      cwd,
-      shown,
-      pack,
-      rule,
-      grantor,
-      hours,
-    });
-    this.record(call, { verdict: "deny", pack, rule, severity: decided?.severity ?? null, code });
-    if (seat && decided) {
-      const repeat = policy.repeat ?? DEFAULTS.repeat;
-      const since = new Date(Date.now() - repeat.minutes * 60_000);
-      const count = store.denials(seat.id, decided.rule, since);
-      if (count >= repeat.count && store.escalate(seat.id, decided.rule, since))
-        this.deps.repeated(seat, `${decided.pack}:${decided.rule}`, count, shown);
+    if (cached && cached.mtime === mtime) {
+      cached.at = Date.now();
+      return cached.add;
     }
-    return {
-      allow: false,
-      message: blocked(decided, doubts, code, grantor, shown, hours),
-      finding: decided,
-      code,
-      grantor,
-    };
+    const add = mtime < 0 ? [] : readPacks(file);
+    this.projectPacks.set(file, { mtime, at: Date.now(), add });
+    return add;
   }
 
-  /** Keeps what the guard decided of a call. */
-  private record(
-    call: Call,
-    what: {
-      verdict: "granted" | "warn" | "log" | "deny";
-      pack: string | null;
-      rule: string | null;
-      severity: string | null;
-      code: string | null;
-    },
-  ): void {
+  /** Keeps a call a rule held for. */
+  private record(call: Call, pack: string, rule: string, severity: string | null): void {
     const { seat } = call;
     this.deps.store().record({
       seat: seat?.id ?? null,
@@ -267,44 +143,21 @@ export class Guard {
       cli: call.cli,
       cwd: call.cwd,
       command: shownOf(call.command),
-      ...what,
+      pack,
+      rule,
+      severity,
       elapsedUs: Number(process.hrtime.bigint() - call.began) / 1000,
     });
   }
-
-  /** A project's `.seatwork/safety.json`: turns packs on and raises rules, never loosens. */
-  private rulesOf(project: string | null): ProjectRules {
-    if (!project) return NO_RULES;
-    const file = join(project, ".seatwork", "safety.json");
-    const cached = this.projectRules.get(file);
-    // the file is looked at again every few seconds, not on every command
-    if (cached && Date.now() - cached.at < RULES_LOOKED_MS) return cached.rules;
-    let mtime = -1;
-    try {
-      mtime = statSync(file).mtimeMs;
-    } catch {
-      // no file raises no rule
-    }
-    if (cached && cached.mtime === mtime) {
-      cached.at = Date.now();
-      return cached.rules;
-    }
-    const rules = mtime < 0 ? NO_RULES : readRules(file);
-    this.projectRules.set(file, { mtime, at: Date.now(), rules });
-    return rules;
-  }
 }
 
-/** The packs and raised rules a project file names; an unreadable file names none. */
-function readRules(file: string): ProjectRules {
+/** The packs a project file turns on; an unreadable file turns none on. */
+function readPacks(file: string): string[] {
   try {
-    const raw = JSON.parse(readFileSync(file, "utf8")) as { packs?: { add?: string[] }; rules?: Record<string, Mode> };
-    const raised = Object.entries(raw.rules ?? {}).filter(
-      ([key, mode]) => RANK[mode] !== undefined && RANK[mode] >= RANK[baseMode(key)],
-    );
-    return { add: raw.packs?.add ?? [], rules: Object.fromEntries(raised) };
+    const add = (JSON.parse(readFileSync(file, "utf8")) as { packs?: { add?: unknown } }).packs?.add;
+    return Array.isArray(add) ? add.filter((pack): pack is string => typeof pack === "string") : [];
   } catch {
-    return NO_RULES;
+    return [];
   }
 }
 
@@ -320,91 +173,16 @@ function writeFindings(
   const found =
     guardOf({ text: path, prefix: path, quoted: true, glob: false, temp: false, word }, "write", { place, cwd }) ??
     (path.startsWith("/") ? guardThroughLinks(path, "write", { place }, real) : null);
-  const hits: { pack: string; rule: string; at: string }[] = found
-    ? [{ pack: found.pack, rule: found.rule, at: found.path }]
-    : [];
+  const hits: { pack: string; rule: string }[] = found ? [{ pack: found.pack, rule: found.rule }] : [];
   if (text !== undefined && ATTRIBUTES_FILE.test(path) && namesDriver(text))
-    hits.push({ pack: "room.guard", rule: "git-attributes-driver", at: path });
-  return hits.map((hit) => findingOf(hit.pack, hit.rule, hit.at, `write ${path}`));
+    hits.push({ pack: "room.guard", rule: "git-attributes-driver" });
+  return hits.map((hit) => findingOf(hit.pack, hit.rule, `write ${path}`));
 }
 
-/** A finding of a pack's rule at a path, as a file tool's call meets it. */
-function findingOf(pack: string, name: string, at: string, text: string): Finding {
+/** A finding of a pack's rule, as a file tool's call meets it. */
+function findingOf(pack: string, name: string, text: string): Finding {
   const rule = ruleOf(pack, name)!;
-  return {
-    pack,
-    rule: name,
-    severity: rule.severity,
-    reason: `${rule.reason} (${at})`,
-    explanation: rule.explanation,
-    safer: rule.safer,
-    text,
-  };
-}
-
-const pass = (): Ruling => ({ allow: true, message: null, finding: null, code: null, grantor: null });
-const live = (e: AllowEntry) => !e.until || Date.parse(e.until) > Date.now();
-const inPaths = (e: AllowEntry, cwd: string | null) =>
-  !e.paths?.length || (cwd !== null && e.paths.some((p) => within(cwd, p)));
-/** Whether an owner's entry lets a command run as is: the whole command, or its prefix followed by nothing that chains, expands, or leads out of what the prefix names. */
-const runsAsIs = (e: AllowEntry, command: string) =>
-  e.command === command ||
-  (e.prefix !== undefined && command.startsWith(e.prefix) && !LEADS_OUT.test(command.slice(e.prefix.length)));
-
-/** The mode a rule has with no setting of the owner's: its own, else by its level. */
-function baseMode(key: string): Mode {
-  const [pack, rule] = key.split(":");
-  const declared = ruleOf(pack, rule);
-  if (!declared) return "log";
-  return (
-    declared.mode ??
-    (declared.severity === "critical" || declared.severity === "high"
-      ? "deny"
-      : declared.severity === "medium"
-        ? "warn"
-        : "log")
-  );
-}
-
-/** How a finding is treated: the owner's rule setting, else the pack's, else its level. */
-function modeOf(f: Finding, rules: Record<string, Mode>): Mode {
-  const exact = rules[`${f.pack}:${f.rule}`];
-  if (exact) return exact;
-  const base = baseMode(`${f.pack}:${f.rule}`);
-  const broad = rules[`${f.pack}:*`];
-  // a pack-wide setting never lowers a critical rule; only the rule's own name can
-  if (broad && !(f.severity === "critical" && RANK[broad] < RANK[base])) return broad;
-  return base;
-}
-
-/** What a stopped seat reads: why, that the answer is final, and how its Owner lets it run once. */
-function blocked(
-  f: Finding | null,
-  doubts: Doubt[],
-  code: string,
-  grantor: Grantor,
-  shown: string,
-  hours: number,
-): string {
-  const lines: string[] = [];
-  if (f) {
-    lines.push(`The room's guard blocked this command: ${f.reason}.`);
-    lines.push(`Rule ${f.pack}:${f.rule} (${f.severity}).${f.explanation ? ` ${f.explanation}` : ""}`);
-    if (f.safer?.length) lines.push(`Safer: ${f.safer.join("; ")}.`);
-  } else
-    lines.push(
-      `The room's guard could not read this command, so it does not run: ${doubts.map((d) => d.reason).join("; ")}.`,
-    );
-  lines.push(
-    "This answer is final for this command: do not try another spelling, a script, an alias or another tool to do the same thing.",
-  );
-  lines.push(
-    grantor === "human"
-      ? `Only the person can let it run: tell your Owner why you need it and give code ${code}.`
-      : `If you need it, ask your Owner to allow it once with code ${code}: this exact command, in this folder, within ${hours} hours.`,
-  );
-  lines.push(`Command: ${shown.length > 400 ? `${shown.slice(0, 400)}...` : shown}`);
-  return lines.join("\n");
+  return { pack, rule: name, severity: rule.severity, reason: rule.reason, text };
 }
 
 /** A command as the room keeps and shows it: its start, cut between words so no secret is cut in half, with secrets hidden. */
@@ -413,9 +191,4 @@ function shownOf(command: string): string {
   const start = command.slice(0, SHOWN_CHARS);
   const space = start.search(/\s\S*$/);
   return redact(space > SHOWN_CHARS / 2 ? start.slice(0, space) : start);
-}
-
-/** The note that rides on a call the guard let run. */
-function warning(f: Finding): string {
-  return `The room's guard let this run with a note: ${f.reason} (rule ${f.pack}:${f.rule}).${f.explanation ? ` ${f.explanation}` : ""}`;
 }

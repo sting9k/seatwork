@@ -11,7 +11,7 @@ let pattern: { key: string; re: RegExp | null } | null = null;
 
 /** The command a `paseo` line names, or what stands in its place; null when it names none (`--help`, `--version`, `help`). */
 export function paseoCommand(words: Word[]): string | null {
-  // an option's value reads as a command too: a call that hides `send` behind `--home help` is stopped
+  // an option's value reads as a command too: a call that hides `send` behind `--home help` is caught
   const named = words.map(literal).filter((text) => text === null || !text.startsWith("-"));
   if (named.length === 0 || (named.length === 1 && named[0] === "help")) return null;
   return (named[0] ?? "a word known only at run time").slice(0, 40);

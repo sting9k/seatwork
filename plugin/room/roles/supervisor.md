@@ -24,7 +24,6 @@ A Lead's `DECISION_NEEDED` is your Owner's to answer: carry it to them with what
 - One correction at a time, to the Lead by mail, with the evidence and what it should change. You may ask a Peer a question; a change of course goes through its Lead.
 - From the room:
   - a `COUNCIL:` mail → `seatwork_safety` `label` it right or wrong;
-  - a guard code from a Lead → `grant` it only when the command is right;
   - a Lead past the context line → `seatwork_rotate` it;
   - `LEASE:` → tell the Lead whose work went back.
 

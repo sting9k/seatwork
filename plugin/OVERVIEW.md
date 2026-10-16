@@ -14,7 +14,7 @@ Seatwork turns Paseo into a room of coding agents that work as a small organizat
 Each role is a Paseo provider named after the agent CLI and the role, for example `claude-lead` or `codex-peer`. When an agent is created on one, the plugin gives it the room's prompt, its role's prompt and skills, the project's mission and law, and the room's tools. Seats write to each other by mail along the tree, and mail is delivered between turns.
 
 The room checks the work in code, not by asking seats to behave:
-- a guard checks every shell command and file write before it runs;
+- a guard reads every shell command and file write and records the risky ones; it stops none;
 - a hand-in check reads a Peer's diff before its Lead sees it;
 - a council reads each turn for the room's laws, with a decision model when it has a key;
 - tasks are leased, so work held by a seat that went quiet goes back;
@@ -40,7 +40,7 @@ Removing the plugin does not undo Init. Use "Remove the room" on the same screen
 | A sound when a seat waits on you | Chime, on the same screen |
 | Instructions every seat reads, on every agent CLI. Your own CLAUDE.md or AGENTS.md reaches no seat unless you list it. | `~/.config/seatwork/AGENTS.md`; `room.instructions` in the policy lists more files |
 | The decision model's key. Without one nothing leaves the host: the council's jurors and the read of a decision before it is kept are skipped, and the code checks still run. Calls stop at a monthly cap, 10 USD by default. | `~/.config/seatwork/jev/openrouter.key`, readable by your user only |
-| A project's daily spend cap, the guard's rules, the decision model's provider | `~/.config/seatwork/policy.json`. What you change there stays through Apply and plugin updates; a key you leave alone takes the new version's value. |
+| A project's daily spend cap, the guard's packs, the decision model's provider | `~/.config/seatwork/policy.json`. What you change there stays through Apply and plugin updates; a key you leave alone takes the new version's value. |
 
 ## What it touches
 

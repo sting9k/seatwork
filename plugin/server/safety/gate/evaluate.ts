@@ -1,7 +1,6 @@
 import { posix } from "node:path";
 import { languageOf } from "./embedded";
 import { Findings } from "./findings";
-import { treeGlob } from "./glob";
 import { baseName, invocationOf, valueWord, type Invocation } from "./normalize";
 import { DECLARED_COMMANDS, declaredHits } from "./packs";
 import { absolute, homeOf, isTemp, substitution, valueOf, within } from "./paths";
@@ -65,10 +64,9 @@ export interface Rc {
 
 const seededTables = new WeakMap<Rc, { aliases: Map<string, string[]>; funcs: Map<string, Defs> }>();
 
-/** The packs in force, the owner's exemptions (`pack:rule` to target globs), and the limits on a line. */
+/** The packs in force and the limits on a line. */
 export interface GateConfig {
   packs: ReadonlySet<string>;
-  exempt: Readonly<Record<string, string[]>>;
   budgetMs: number;
   maxBytes: number;
 }
@@ -768,7 +766,7 @@ class Walk implements Reader {
     return namesSecret(this.spelled(scene, state), secrets, this.place.home);
   }
 
-  /** A start of the Paseo CLI: stopped when the words after it name a command. */
+  /** A start of the Paseo CLI: caught when the words after it name a command. */
   private startsCli(scene: Scene, words: Word[]): void {
     const used = paseoCommand(words);
     if (used !== null) this.out.add("room.guard", "paseo-cli", scene.text, used);
@@ -790,7 +788,6 @@ class Walk implements Reader {
   private rmTools(): RmTools {
     return {
       ignored: (paths) => this.tools.ignored(paths),
-      exempt: (rule, paths) => exempted(this.config.exempt[`core.filesystem:${rule}`], paths, this.place.home),
     };
   }
 }
@@ -879,11 +876,4 @@ function isCondition(command: Compound, index: number): boolean {
 function lineStart(src: string, at: number): number {
   const before = src.lastIndexOf("\n", Math.max(0, at - 1));
   return before < 0 ? 0 : before + 1;
-}
-
-/** True when every path lies under one of the owner's globs for the rule. */
-function exempted(globs: readonly string[] | undefined, paths: string[], home: string): boolean {
-  if (!globs?.length || !paths.length) return false;
-  const tests = globs.map((g) => treeGlob(g, home));
-  return paths.every((p) => tests.some((t) => t(p)));
 }

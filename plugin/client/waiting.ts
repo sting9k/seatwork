@@ -1,9 +1,8 @@
-/** What waits on the Owner, asked of the room on a timer: a sound for each turn or code that newly waits, and each answer for whoever shows it. */
+/** What waits on the Owner, asked of the room on a timer: a sound for each turn that newly waits, and each answer for whoever shows it. */
 
 interface Answer {
   chime: boolean;
   waiting: readonly { key: string }[];
-  codes?: readonly { code: string }[];
 }
 
 const MAX_HEARD = 200;
@@ -25,11 +24,7 @@ export function watchWaiting<A extends Answer>(
     try {
       const answer = await ask();
       if (stopped) return;
-      const keys = [
-        ...answer.waiting.map((item) => item.key),
-        ...(answer.codes ?? []).map((one) => `code:${one.code}`),
-      ];
-      const fresh = keys.filter((key) => !heard.has(key));
+      const fresh = answer.waiting.map((item) => item.key).filter((key) => !heard.has(key));
       for (const key of fresh) heard.add(key);
       // the oldest keys go first: a room that answered nothing for a moment must not make the next answer news
       while (heard.size > MAX_HEARD) heard.delete(heard.values().next().value!);

@@ -31,9 +31,10 @@ What the plugin adds to Paseo:
   plugins, hooks, MCP servers or memory.
 - **Mail.** Agents write to each other without interrupting a running turn.
   The plugin checks who may mail whom and who may create whom.
-- **Checks in code.** A guard on every command and file write, a check of
-  each hand-in's diff, a council that reads turns for the room's law, leases
-  on tasks, and a daily spend cap per project.
+- **Checks in code.** A guard that records risky commands and file writes
+  (it stops none), a check of each hand-in's diff, a council that reads
+  turns for the room's law, leases on tasks, and a daily spend cap per
+  project.
 - **A decision model** (optional). With a key in
   `~/.config/seatwork/jev/`, the council and the room's records ask it.
   Without one nothing leaves your machine and the checks in code still run.
@@ -112,14 +113,14 @@ run `paseo plugin remove seatwork` first, then the script.
 - A mail server on `127.0.0.1` for the agents' mail tool.
 - `~/.config/seatwork`: logs, copies of your agent CLI config and each
   agent's temporary files, readable by your user only. Its `policy.json`
-  holds the guard's rules, spend caps and the decision model's settings:
+  holds the guard's packs, spend caps and the decision model's settings:
   what you change there stays through Apply and plugin updates.
 - In each project, `.seatwork/`: the mission, the law, and the stores of
   mail, work and record. The stores keep themselves out of the project's
   git.
 
-The room's rules guard against mistakes. They are not a security boundary:
-every agent runs under your account.
+The room's checks catch mistakes in the work. Nothing stops a command an
+agent runs: every agent runs under your account.
 
 ## Working on the room
 

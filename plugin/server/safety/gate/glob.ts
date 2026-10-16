@@ -1,5 +1,3 @@
-import { posix } from "node:path";
-
 /** Glob tests that read a text once, left to right, so no pattern or path can make them backtrack. */
 
 export type GlobTest = (text: string) => boolean;
@@ -13,8 +11,8 @@ type Token =
 
 const PATTERN_CHARS = 1000;
 
-/** True when the tokens span the whole text, or in `tree` mode the text up to a `/` or its end. */
-function spans(tokens: readonly Token[], text: string, tree: boolean): boolean {
+/** True when the tokens span the whole text. */
+function spans(tokens: readonly Token[], text: string): boolean {
   const end = text.length;
   let now = new Uint8Array(end + 1);
   now[0] = 1;
@@ -47,9 +45,7 @@ function spans(tokens: readonly Token[], text: string, tree: boolean): boolean {
     if (!live) return false;
     now = next;
   }
-  if (!tree) return now[end] === 1;
-  for (let at = 0; at <= end; at += 1) if (now[at] && (at === end || text[at] === "/")) return true;
-  return false;
+  return now[end] === 1;
 }
 
 /** A shell pattern for one name: `*`, `?`, `[set]`, `{a,b}`, case ignored; one it cannot read matches any name. */
@@ -96,24 +92,5 @@ export function componentGlob(pattern: string): GlobTest {
     return () => true;
   }
   flush();
-  return (name) => spans(tokens, name.toLowerCase(), false);
-}
-
-/** An owner's path glob: `*` stays in one folder, `**` crosses folders; it holds for a path and everything under it. */
-export function treeGlob(glob: string, home: string): GlobTest {
-  const tokens: Token[] = [];
-  const expanded = glob.startsWith("~/") ? posix.join(home, glob.slice(2)) : glob;
-  const add = (token: Token) => {
-    const last = tokens[tokens.length - 1];
-    if (token.kind === "run" && last?.kind === "run") last.across = last.across || token.across;
-    else tokens.push(token);
-  };
-  expanded.split("**").forEach((piece, i) => {
-    if (i > 0) add({ kind: "run", across: true });
-    piece.split("*").forEach((text, j) => {
-      if (j > 0) add({ kind: "run", across: false });
-      if (text) add({ kind: "lit", text });
-    });
-  });
-  return (path) => spans(tokens, path, true);
+  return (name) => spans(tokens, name.toLowerCase());
 }

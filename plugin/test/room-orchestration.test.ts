@@ -6,6 +6,7 @@ import { after, before, test } from "node:test";
 import contribute from "../index.server";
 import { briefFields } from "../server/orchestration/brief";
 import { parseHandoff } from "../server/orchestration/rotation";
+import { Rounds } from "../server/orchestration/rounds";
 import { TaskKeys } from "../server/orchestration/task-keys";
 import { MailEngine } from "../server/coordination/engine";
 import type { LiveSeat } from "../server/host";
@@ -64,17 +65,18 @@ test("an ended turn asks the work store which task the seat holds once, not once
 test("a report still goes up when the room cannot add its own lines under it", async () => {
   const lead = await seat("lead-lines", "claude-lead", null, "[Lead] lines");
   const peer = await seat("peer-lines", "claude-peer", lead.agent.id, "[Peer] lines");
-  const real = Safety.prototype.blocksLine;
-  Safety.prototype.blocksLine = () => {
-    throw new Error("database is locked");
+  const real = { handedIn: Rounds.prototype.handedIn, owesFreshEyes: Rounds.prototype.owesFreshEyes };
+  Rounds.prototype.handedIn = () => {
+    throw new Error("ENOSPC: no space left on device");
   };
+  Rounds.prototype.owesFreshEyes = () => false;
   try {
-    await turnEnds(peer, "QUESTION\nwhich unit?");
+    await turnEnds(peer, "CANDIDATE abc1\ndone");
   } finally {
-    Safety.prototype.blocksLine = real;
+    Object.assign(Rounds.prototype, real);
   }
   assert.equal(lead.inbox.length, 1);
-  assert.match(lead.inbox[0], /subject="QUESTION from peer/);
+  assert.match(lead.inbox[0], /subject="CANDIDATE from peer/);
 });
 
 test("a rotation whose successor stands is not reported as failed when a later step of it does not work", async () => {

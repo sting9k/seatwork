@@ -14,73 +14,53 @@
       "rules": {
         "stdin-unverified": {
           "severity": "high",
-          "reason": "psql reads statements the room cannot see",
-          "explanation": "Input from a file or a pipe is not shown to the room, so it may hold a DROP or a DELETE.",
-          "safer": ["Pass the statements with -c so they can be read"]
+          "reason": "psql reads statements the room cannot see"
         },
         "drop-database": {
           "severity": "critical",
           "sql": "\\bDROP\\s+DATABASE\\b",
-          "reason": "DROP DATABASE",
-          "explanation": "The database and all its data go.",
-          "safer": ["pg_dump it first"]
+          "reason": "DROP DATABASE"
         },
         "drop-table": {
           "severity": "high",
           "sql": "\\bDROP\\s+TABLE\\b",
-          "reason": "DROP TABLE",
-          "explanation": "The table and its rows go.",
-          "safer": ["pg_dump -t <table> first"]
+          "reason": "DROP TABLE"
         },
         "drop-schema": {
           "severity": "critical",
           "sql": "\\bDROP\\s+SCHEMA\\b",
-          "reason": "DROP SCHEMA",
-          "explanation": "Every table in the schema goes.",
-          "safer": ["pg_dump -n <schema> first"]
+          "reason": "DROP SCHEMA"
         },
         "truncate-table": {
           "severity": "high",
           "sql": "TRUNCATE\\s+(TABLE\\s+)?(ONLY\\s+)?[A-Za-z_\"][\\w.\"]*",
           "statement": true,
-          "reason": "TRUNCATE",
-          "explanation": "Every row of the table goes.",
-          "safer": ["SELECT count(*) first", "Back the table up"]
+          "reason": "TRUNCATE"
         },
         "delete-without-where": {
           "severity": "high",
           "sql": "DELETE\\s+FROM\\s+[\\w.\"]+\\s*(;|$)",
           "statement": true,
-          "reason": "DELETE with no WHERE",
-          "explanation": "Every row of the table goes.",
-          "safer": ["Add a WHERE clause", "Run the SELECT with the same WHERE first"]
+          "reason": "DELETE with no WHERE"
         },
         "update-without-where": {
           "severity": "high",
           "noWhere": true,
-          "reason": "UPDATE with no WHERE",
-          "explanation": "Every row of the table changes.",
-          "safer": ["Add a WHERE clause"]
+          "reason": "UPDATE with no WHERE"
         },
         "drop-column": {
           "severity": "high",
           "sql": "ALTER\\s+TABLE[\\s\\S]*?\\bDROP\\s+(COLUMN\\s+)?(?!(DEFAULT|NOT\\s+NULL|CONSTRAINT|IDENTITY|INDEX|PRIMARY|FOREIGN|EXPRESSION)\\b)[\\w\"]",
-          "reason": "ALTER TABLE ... DROP COLUMN",
-          "explanation": "The column's data goes.",
-          "safer": []
+          "reason": "ALTER TABLE ... DROP COLUMN"
         },
         "dropdb-cli": {
           "severity": "critical",
           "reason": "dropdb",
-          "explanation": "The database and all its data go.",
-          "safer": ["pg_dump it first"],
           "match": [{ "commands": ["dropdb"] }]
         },
         "pg-dump-clean": {
           "severity": "high",
           "reason": "pg_dump --clean writes DROP statements into the dump",
-          "explanation": "Restoring that dump drops the existing objects first.",
-          "safer": ["pg_dump without --clean"],
           "match": [{ "commands": ["pg_dump"], "flags": ["--clean", "-c", "short:c"] }]
         }
       }
@@ -91,94 +71,68 @@
       "rules": {
         "stdin-unverified": {
           "severity": "high",
-          "reason": "mysql reads statements the room cannot see",
-          "explanation": "Input from a file or a pipe is not shown to the room.",
-          "safer": ["Pass the statements with -e"]
+          "reason": "mysql reads statements the room cannot see"
         },
         "drop-database": {
           "severity": "critical",
           "sql": "\\bDROP\\s+(DATABASE|SCHEMA)\\b",
-          "reason": "DROP DATABASE",
-          "explanation": "The database and all its data go.",
-          "safer": ["mysqldump it first"]
+          "reason": "DROP DATABASE"
         },
         "drop-table": {
           "severity": "high",
           "sql": "\\bDROP\\s+TABLE\\b",
-          "reason": "DROP TABLE",
-          "explanation": "The table and its rows go.",
-          "safer": []
+          "reason": "DROP TABLE"
         },
         "truncate-table": {
           "severity": "high",
           "sql": "TRUNCATE\\s+(TABLE\\s+)?[A-Za-z_`][\\w.`]*",
           "statement": true,
-          "reason": "TRUNCATE",
-          "explanation": "Every row goes, and MySQL cannot roll it back.",
-          "safer": []
+          "reason": "TRUNCATE"
         },
         "delete-without-where": {
           "severity": "high",
           "sql": "DELETE\\s+FROM\\s+[\\w.`]+\\s*(;|$)",
           "statement": true,
-          "reason": "DELETE with no WHERE",
-          "explanation": "Every row of the table goes.",
-          "safer": ["Add a WHERE clause"]
+          "reason": "DELETE with no WHERE"
         },
         "update-without-where": {
           "severity": "high",
           "noWhere": true,
-          "reason": "UPDATE with no WHERE",
-          "explanation": "Every row of the table changes.",
-          "safer": ["Add a WHERE clause"]
+          "reason": "UPDATE with no WHERE"
         },
         "drop-column": {
           "severity": "high",
           "sql": "ALTER\\s+TABLE[\\s\\S]*?\\bDROP\\s+(COLUMN\\s+)?(?!(DEFAULT|INDEX|KEY|PRIMARY|FOREIGN|CONSTRAINT|CHECK)\\b)[\\w`]",
-          "reason": "ALTER TABLE ... DROP COLUMN",
-          "explanation": "The column's data goes.",
-          "safer": []
+          "reason": "ALTER TABLE ... DROP COLUMN"
         },
         "grant-all": {
           "severity": "high",
           "sql": "GRANT\\s+ALL\\b[\\s\\S]*\\bON\\s+\\*\\.\\*",
-          "reason": "GRANT ALL ON *.*",
-          "explanation": "The user gets every right on every database.",
-          "safer": []
+          "reason": "GRANT ALL ON *.*"
         },
         "drop-user": {
           "severity": "medium",
           "sql": "\\bDROP\\s+USER\\b",
-          "reason": "DROP USER",
-          "explanation": "The account can no longer log in.",
-          "safer": []
+          "reason": "DROP USER"
         },
         "reset-master": {
           "severity": "critical",
           "sql": "\\bRESET\\s+(MASTER|BINARY\\s+LOGS)\\b",
-          "reason": "RESET MASTER deletes the binary logs",
-          "explanation": "Replication and point-in-time recovery lose their history.",
-          "safer": []
+          "reason": "RESET MASTER deletes the binary logs"
         },
         "mysqladmin-drop": {
           "severity": "critical",
           "reason": "mysqladmin drop",
-          "explanation": "The database goes.",
-          "safer": [],
           "match": [{ "commands": ["mysqladmin"], "first": ["drop"] }]
         },
         "mysqldump-add-drop-database": {
           "severity": "high",
           "reason": "mysqldump --add-drop-database",
-          "explanation": "Restoring the dump drops the database first.",
-          "safer": [],
           "match": [{ "commands": ["mysqldump"], "flags": ["--add-drop-database"] }]
         },
         "mysqldump-add-drop-table": {
           "severity": "medium",
           "reason": "mysqldump --add-drop-table",
-          "explanation": "Restoring the dump drops each table first.",
-          "safer": [],
           "match": [{ "commands": ["mysqldump"], "flags": ["--add-drop-table"] }]
         }
       }
@@ -189,43 +143,31 @@
       "rules": {
         "stdin-unverified": {
           "severity": "high",
-          "reason": "the mongo shell reads a script the room cannot see",
-          "explanation": "Input from a file or a pipe is not shown to the room.",
-          "safer": ["Pass the script with --eval"]
+          "reason": "the mongo shell reads a script the room cannot see"
         },
         "drop-database": {
           "severity": "critical",
           "sql": "\\bdropDatabase\\s*\\(",
-          "reason": "dropDatabase()",
-          "explanation": "The database goes.",
-          "safer": ["mongodump first"]
+          "reason": "dropDatabase()"
         },
         "drop-collection": {
           "severity": "high",
           "sql": "\\.(drop|dropCollection)\\s*\\(",
-          "reason": "a collection drop",
-          "explanation": "The collection and its documents go.",
-          "safer": ["mongodump --collection first"]
+          "reason": "a collection drop"
         },
         "delete-all": {
           "severity": "high",
           "sql": "\\.(remove|deleteMany)\\s*\\(\\s*\\{\\s*\\}",
-          "reason": "deleteMany({}) removes every document",
-          "explanation": "An empty filter matches the whole collection.",
-          "safer": ["Give the filter"]
+          "reason": "deleteMany({}) removes every document"
         },
         "update-all": {
           "severity": "high",
           "sql": "\\.updateMany\\s*\\(\\s*\\{\\s*\\}",
-          "reason": "updateMany({}) changes every document",
-          "explanation": "An empty filter matches the whole collection.",
-          "safer": ["Give the filter"]
+          "reason": "updateMany({}) changes every document"
         },
         "mongorestore-drop": {
           "severity": "high",
           "reason": "mongorestore --drop",
-          "explanation": "Each collection is dropped before the restore.",
-          "safer": [],
           "match": [{ "commands": ["mongorestore"], "flags": ["--drop"] }]
         }
       }
@@ -236,85 +178,61 @@
       "rules": {
         "stdin-unverified": {
           "severity": "high",
-          "reason": "redis-cli reads commands the room cannot see",
-          "explanation": "Input from a file or a pipe is not shown to the room.",
-          "safer": ["Pass the command as arguments"]
+          "reason": "redis-cli reads commands the room cannot see"
         },
         "flushall": {
           "severity": "critical",
           "sql": "\\bFLUSHALL\\b",
-          "reason": "FLUSHALL",
-          "explanation": "Every key of every database goes.",
-          "safer": []
+          "reason": "FLUSHALL"
         },
         "flushdb": {
           "severity": "high",
           "sql": "\\bFLUSHDB\\b",
-          "reason": "FLUSHDB",
-          "explanation": "Every key of the database goes.",
-          "safer": []
+          "reason": "FLUSHDB"
         },
         "config-resetstat": {
           "severity": "medium",
           "sql": "\\bCONFIG\\s+RESETSTAT\\b",
-          "reason": "CONFIG RESETSTAT",
-          "explanation": "The server's counters are lost.",
-          "safer": []
+          "reason": "CONFIG RESETSTAT"
         },
         "debug-crash": {
           "severity": "critical",
           "sql": "\\bDEBUG\\s+(SEGFAULT|CRASH)\\b",
-          "reason": "DEBUG SEGFAULT",
-          "explanation": "The server crashes.",
-          "safer": []
+          "reason": "DEBUG SEGFAULT"
         },
         "debug-sleep": {
           "severity": "high",
           "sql": "\\bDEBUG\\s+SLEEP\\b",
-          "reason": "DEBUG SLEEP",
-          "explanation": "The server stops answering.",
-          "safer": []
+          "reason": "DEBUG SLEEP"
         },
         "shutdown": {
           "severity": "high",
           "sql": "\\bSHUTDOWN\\b",
-          "reason": "SHUTDOWN",
-          "explanation": "The server stops; with NOSAVE unsaved keys go.",
-          "safer": []
+          "reason": "SHUTDOWN"
         },
         "config-dangerous": {
           "severity": "critical",
           "sql": "\\bCONFIG\\s+SET\\s+(dir|dbfilename|slaveof|replicaof)\\b",
-          "reason": "CONFIG SET of a file path or replication source",
-          "explanation": "These settings are a known way to write files or hand the data to another server.",
-          "safer": []
+          "reason": "CONFIG SET of a file path or replication source"
         },
         "config-set-maxmemory": {
           "severity": "critical",
           "sql": "\\bCONFIG\\s+SET\\s+maxmemory(-policy)?\\b",
-          "reason": "CONFIG SET maxmemory",
-          "explanation": "A lower limit can evict keys at once.",
-          "safer": []
+          "reason": "CONFIG SET maxmemory"
         },
         "config-set-persistence": {
           "severity": "high",
           "sql": "\\bCONFIG\\s+SET\\s+(save|appendonly)\\b",
-          "reason": "CONFIG SET save or appendonly",
-          "explanation": "Persistence can be turned off.",
-          "safer": []
+          "reason": "CONFIG SET save or appendonly"
         },
         "config-rewrite": {
           "severity": "high",
           "sql": "\\bCONFIG\\s+REWRITE\\b",
-          "reason": "CONFIG REWRITE",
-          "explanation": "The running changes are written into the server's config file.",
-          "safer": []
+          "reason": "CONFIG REWRITE"
         },
         "mass-delete": {
           "severity": "high",
-          "reason": "keys from KEYS or SCAN piped into DEL",
-          "explanation": "The pattern may match far more keys than meant.",
-          "safer": ["Count the keys first"]
+          "reason": "keys from KEYS or SCAN piped into DEL"
         }
       }
     },
@@ -324,45 +242,33 @@
       "rules": {
         "stdin-unverified": {
           "severity": "high",
-          "reason": "sqlite3 reads statements the room cannot see",
-          "explanation": "Input from a file or a pipe is not shown to the room.",
-          "safer": ["Pass the statements as an argument"]
+          "reason": "sqlite3 reads statements the room cannot see"
         },
         "drop-table": {
           "severity": "critical",
           "sql": "\\bDROP\\s+TABLE\\b",
-          "reason": "DROP TABLE",
-          "explanation": "The table and its rows go.",
-          "safer": ["sqlite3 <db> .dump <table> first"]
+          "reason": "DROP TABLE"
         },
         "delete-without-where": {
           "severity": "critical",
           "sql": "DELETE\\s+FROM\\s+[\\w.\"]+\\s*(;|$)",
           "statement": true,
-          "reason": "DELETE with no WHERE",
-          "explanation": "Every row of the table goes.",
-          "safer": ["Add a WHERE clause"]
+          "reason": "DELETE with no WHERE"
         },
         "update-without-where": {
           "severity": "high",
           "noWhere": true,
-          "reason": "UPDATE with no WHERE",
-          "explanation": "Every row of the table changes.",
-          "safer": ["Add a WHERE clause"]
+          "reason": "UPDATE with no WHERE"
         },
         "drop-column": {
           "severity": "high",
           "sql": "ALTER\\s+TABLE[\\s\\S]*?\\bDROP\\s+(COLUMN\\s+)?[\\w\"]",
-          "reason": "ALTER TABLE ... DROP COLUMN",
-          "explanation": "The column's data goes.",
-          "safer": []
+          "reason": "ALTER TABLE ... DROP COLUMN"
         },
         "vacuum-into": {
           "severity": "medium",
           "sql": "\\bVACUUM\\s+INTO\\b",
-          "reason": "VACUUM INTO",
-          "explanation": "It writes over the target file if it exists.",
-          "safer": []
+          "reason": "VACUUM INTO"
         }
       }
     }

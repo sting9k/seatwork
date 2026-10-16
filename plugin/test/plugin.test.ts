@@ -1,4 +1,4 @@
-import { deferred, installRoom, PLUGIN_DIR, PROJECT, ROOM_HOME } from "./support/room";
+import { deferred, installRoom, PROJECT, ROOM_HOME } from "./support/room";
 import { BRIEF, prompt } from "./support/timeline";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
@@ -1256,22 +1256,12 @@ function gitRepo(name: string, files: Record<string, string>): string {
   return repo;
 }
 
-test("a seat's hook reaches the room's guard; a code its Lead grants lets the command run once; a focused test sends the candidate back until acknowledged", async () => {
+test("a focused test sends the candidate back until acknowledged, and its reason rides up with it", async () => {
   const repo = gitRepo("guarded", { "test/a.test.ts": 'test("a", () => expect(1).toBe(1));\n' });
   const lead = await seat("lead-guard", "claude-lead", null, "[Lead] stream", repo);
   const peer = await seat("peer-guard", "claude-peer", lead.agent.id, "[Peer] guarded", repo);
   // the guard notes the seat's starting commit beside its creation
   await new Promise((resolve) => setTimeout(resolve, 300));
-
-  const hook = (command: string) => peer.hook("Bash", { command }, repo);
-  const denied = JSON.parse(await hook("git reset --hard"));
-  assert.match(denied.hookSpecificOutput.permissionDecisionReason, /reset-hard[\s\S]*code (\d{6})/);
-  const code = /code (\d{6})/.exec(denied.hookSpecificOutput.permissionDecisionReason)![1];
-  assert.match(await lead.call("seatwork_safety", { action: "waiting" }), new RegExp(`${code} core.git:reset-hard`));
-  assert.match(await lead.call("seatwork_safety", { action: "grant", code }), /Granted/);
-  assert.equal(await hook("git reset --hard"), "");
-  assert.notEqual(await hook("git reset --hard"), "", "a grant runs the command once");
-  assert.equal(await hook("git status"), "");
 
   writeFileSync(join(repo, "test", "a.test.ts"), 'test.only("a", () => expect(1).toBe(1));\n');
   await turnEnds(peer, "CANDIDATE g1\nthe store holds");
@@ -1837,7 +1827,7 @@ test("the seat asked for its handoff is archived first: whoever asked is told, a
   );
 });
 
-test("the room's own seat runs the room through its tool; no seat writes the code that runs the room", async () => {
+test("the room's own seat runs the room through its tool", async () => {
   const hq = await seat("hq-ops", "claude-hq", null, "HQ Supervisor", join(ROOM_HOME, "hq-seatwork"));
   const lead = await seat("lead-ops", "claude-lead", null, "[Lead] ops", PROJECT);
   const peer = await seat("peer-ops", "claude-peer", lead.agent.id, "[Peer] ops", PROJECT);
@@ -1882,6 +1872,4 @@ test("the room's own seat runs the room through its tool; no seat writes the cod
     /"code":"BAD_REQUEST".*the room ships a skill named test-audit/,
   );
   assert.match(await lead.call("seatwork_room", { do: "skill" }).catch((error: Error) => error.message), /refused/);
-  const write = await lead.hook("Write", { file_path: join(PLUGIN_DIR, "server", "room", "room.ts"), content: "" });
-  assert.match(JSON.parse(write).hookSpecificOutput.permissionDecision, /deny/);
 });

@@ -2,43 +2,9 @@ import { basename } from "node:path";
 import { traits } from "../../shared/workflow";
 import type { JevCheck } from "../jev/index";
 import type { Decision } from "../knowledge/store";
-import { ruleOf } from "../safety/gate/packs";
 import type { RoomContext } from "./context";
 
-/** What the person's app asks of the room beyond its seats: the codes only they may grant, their grant, a folder's decisions, the decision provider. */
-
-const CODES_SHOWN = 50;
-
-/** A code only the person may grant, as the app shows it. */
-export interface PersonCode {
-  code: string;
-  agentId: string;
-  title: string | null;
-  project: string | null;
-  rule: string;
-  reason: string;
-  command: string;
-  at: string;
-  expiresAt: string;
-}
-
-/** The codes only the person may grant that still wait, newest first. */
-export function personCodes(room: RoomContext): PersonCode[] {
-  return room.safety.forPerson(CODES_SHOWN).map((row) => {
-    const project = row.seat ? room.engine.projectOf(row.seat) : null;
-    return {
-      code: row.code,
-      agentId: row.seat ?? "",
-      title: row.seat ? (room.engine.seat(row.seat)?.title ?? null) : null,
-      project: project ? basename(project) : null,
-      rule: row.rule,
-      reason: ruleOf(row.pack, row.rule)?.reason ?? row.rule,
-      command: row.shown,
-      at: row.created_at,
-      expiresAt: row.expires_at,
-    };
-  });
-}
+/** What the person's app asks of the room beyond its seats: a folder's decisions and the decision provider. */
 
 /** A decision as the app shows it: whom it was told to by the role of the seat that recorded it. */
 function decisionView(room: RoomContext, decision: Decision) {

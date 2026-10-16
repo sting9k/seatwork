@@ -17,7 +17,6 @@ const PROJECT = "/Users/u/proj";
 const place = { home: "/Users/u", project: PROJECT, tmp: null, start: PROJECT, guard: null, roomFolder: ".seatwork" };
 const tools = {
   ignored: async () => new Set<string>(),
-  exempt: () => false,
   alias: async () => null,
   external: async () => false,
   rebasing: async () => false,
@@ -26,13 +25,7 @@ const tools = {
   changed: async () => null,
 };
 const store = new SafetyStore(join(ROOM_HOME, "limits"), 1000);
-const guard = new Guard({
-  store: () => store,
-  policy: () => ({}),
-  tools: () => tools,
-  place: () => place,
-  repeated: () => {},
-});
+const guard = new Guard({ store: () => store, policy: () => ({}), tools: () => tools, place: () => place });
 const seat = { id: "peer", role: "peer", project: PROJECT, tmp: null, start: PROJECT };
 
 const patchOf = (files: number): string =>
@@ -55,15 +48,11 @@ async function fastest(call: () => Promise<unknown>, runs = 7): Promise<number> 
   return Math.min(...times);
 }
 
-test("a patch is checked for at most a fixed number of files, however many it names; a larger one does not run", async () => {
-  const small = await answerHook(guard, "codex", applyPatch(patchOf(150)), seat);
-  assert.equal(small.text, "", "a patch of ordinary size is let through");
-  const big = await answerHook(guard, "codex", applyPatch(patchOf(100_000)), seat);
-  assert.match(big.text, /"permissionDecision":"deny"/);
-  assert.match(big.text, /at most \d+ files/);
+test("a patch of any number of files runs, the guard reading a fixed number of them", async () => {
+  assert.equal((await answerHook(guard, "codex", applyPatch(patchOf(150)), seat)).text, "");
+  assert.equal((await answerHook(guard, "codex", applyPatch(patchOf(100_000)), seat)).text, "");
   const pi = await answerHook(guard, "pi", { tool: "patch", input: { patchText: patchOf(5000) }, cwd: PROJECT }, seat);
-  assert.match(pi.text, /"block":true/);
-  assert.match(pi.text, /at most \d+ files/);
+  assert.deepEqual(JSON.parse(pi.text), { block: false, note: null });
 });
 
 test("what the guard costs for a patch does not grow with the number of files it names", async () => {
@@ -78,48 +67,36 @@ test("what the guard costs for a patch does not grow with the number of files it
   assert.ok(large / small < 8, `50000 files cost ${(large / small).toFixed(1)} times 1000 files`);
 });
 
-test("a patch longer than the guard reads whole, or a path longer than a path can be, does not run", async () => {
-  const long = await answerHook(
-    guard,
-    "codex",
-    applyPatch(`*** Begin Patch\n*** Add File: a.ts\n${"+x\n".repeat(900_000)}*** End Patch`),
-    seat,
+test("a patch longer than the guard reads whole, a path longer than a path can be, or a long file runs", async () => {
+  const long = applyPatch(`*** Begin Patch\n*** Add File: a.ts\n${"+x\n".repeat(900_000)}*** End Patch`);
+  assert.equal((await answerHook(guard, "codex", long, seat)).text, "");
+  const path = { file_path: `/Users/u/proj/${"a".repeat(10_000)}`, content: "x" };
+  assert.equal(
+    (await answerHook(guard, "claude", { tool_name: "Write", tool_input: path, cwd: PROJECT }, seat)).text,
+    "",
   );
-  assert.match(long.text, /"permissionDecision":"deny"/);
-  assert.match(long.text, /MB in one patch/);
-  const path = await answerHook(
-    guard,
-    "claude",
-    {
-      tool_name: "Write",
-      tool_input: { file_path: `/Users/u/proj/${"a".repeat(10_000)}`, content: "x" },
-      cwd: PROJECT,
-    },
-    seat,
+  const file = { file_path: `${PROJECT}/a.ts`, content: "x".repeat(3_000_000) };
+  assert.equal(
+    (await answerHook(guard, "claude", { tool_name: "Write", tool_input: file, cwd: PROJECT }, seat)).text,
+    "",
   );
-  assert.match(path.text, /"permissionDecision":"deny"/);
-  assert.match(path.text, /path/i);
-  const ok = await answerHook(
-    guard,
-    "claude",
-    { tool_name: "Write", tool_input: { file_path: `${PROJECT}/a.ts`, content: "x".repeat(3_000_000) }, cwd: PROJECT },
-    seat,
-  );
-  assert.equal(ok.text, "", "the content of a file written is not read, however long");
 });
 
-test("a command too long to read is judged and recorded from its start, whatever its length", async () => {
+test("a command too long to read is kept as unread from its start, whatever its length", async () => {
   const lengths: number[] = [];
   const real = redactModule.redact;
   redactModule.redact = (text: string) => (lengths.push(text.length), real(text));
   try {
     const secret = ["sk", "proj", "Abcdefghijklmnopqrstuvwx12"].join("-");
     const long = `echo ${"x ".repeat(1990)}${secret} ${"y".repeat(4_000_000)}`;
-    const ruling = await guard.check(seat, "claude", long, PROJECT);
-    assert.equal(ruling.allow, false);
+    await guard.check(seat, "claude", long, PROJECT);
     assert.ok(Math.max(...lengths) <= 4000, `redaction read ${Math.max(...lengths)} characters`);
-    assert.ok(!(ruling.message ?? "").includes(secret));
-    assert.ok((ruling.message ?? "").length < 2000);
+    const kept = (store as unknown as { db: import("node:sqlite").DatabaseSync }).db
+      .prepare("SELECT rule, command FROM decisions ORDER BY id DESC LIMIT 1")
+      .get() as { rule: string; command: string };
+    assert.equal(kept.rule, "unverified");
+    assert.ok(!kept.command.includes(secret));
+    assert.ok(kept.command.length <= 2000);
   } finally {
     redactModule.redact = real;
   }

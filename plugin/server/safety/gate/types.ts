@@ -7,18 +7,16 @@ export type Severity = "critical" | "high" | "medium" | "low";
 
 export const SEVERITY_RANK: Record<Severity, number> = { low: 0, medium: 1, high: 2, critical: 3 };
 
-/** A rule that holds for a command, with the words the seat reads and the command text it was found in as written. */
+/** A rule that holds for a command, with its reason and the command text it was found in as written. */
 export interface Finding {
   pack: string;
   rule: string;
   severity: Severity;
   reason: string;
-  explanation?: string;
-  safer?: string[];
   text: string;
 }
 
-/** Something the gate could not finish reading; never an allow. */
+/** Something the gate could not finish reading. */
 export interface Doubt {
   reason: string;
   text: string;

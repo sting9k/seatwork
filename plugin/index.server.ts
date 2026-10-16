@@ -18,7 +18,7 @@ import { keptAt, roomFolders, takeRoomFiles, type ProjectFiles } from "./server/
 import { isSetUp, moveRoomHomeAside, readSetup } from "./server/paseo/setup/room-home";
 import { PASEO_HOME, ROOM_HOME } from "./server/paths";
 import { startRoom, type Room } from "./server/room/room";
-import { roomDecisions, roomGrant, roomStatus, roomWaiting } from "./shared/room";
+import { roomDecisions, roomStatus, roomWaiting } from "./shared/room";
 import {
   jevKey,
   jevState,
@@ -31,7 +31,7 @@ import {
 } from "./shared/setup";
 import { ROOM_PROJECT } from "./shared/workflow";
 
-const VERSION = "0.35.0";
+const VERSION = "0.36.0";
 const PLUGIN_ID = "seatwork";
 
 /** Seatwork on Paseo: the setup screen first; the room once it is set up. */
@@ -162,11 +162,7 @@ export default function contribute(server: PluginServerContext) {
 
   server.handle(roomWaiting, async (_input, { paseo }) => {
     await bringUp(paseo, false);
-    return room ? room.waiting() : { chime: false, waiting: [], codes: [], seats: [] };
-  });
-  server.handle(roomGrant, async ({ code }, { paseo }) => {
-    await bringUp(paseo, false);
-    return room ? room.grant(code) : { message: "No room is set up on this daemon." };
+    return room ? room.waiting() : { chime: false, waiting: [], seats: [] };
   });
   server.handle(roomDecisions, async ({ folder, earlier }, { paseo }) => {
     await bringUp(paseo, false);

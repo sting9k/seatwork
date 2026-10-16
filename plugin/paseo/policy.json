@@ -288,21 +288,13 @@
     }
   },
   "safety": {
-    "$comment": "The room's guard. rules: \"pack:rule\" or \"pack:*\" to deny, ask, warn or log; a pack-wide one never lowers a critical rule. allow and exempt are the person's to write. handin.mode: block, warn or off. handin.registry: a new dependency's first release is read from its public registry (npm, PyPI, crates.io).",
+    "$comment": "The room's safety. The guard reads every call of a seat by the packs in force and keeps those a rule holds for; it stops none. packs: those turned on or off over the shipped ones. budgetMs: how long the guard reads one call. handin.mode: block, warn or off. handin.registry: a new dependency's first release is read from its public registry (npm, PyPI, crates.io).",
     "mode": "on",
     "packs": {
       "add": [],
       "remove": []
     },
-    "rules": {},
-    "allow": [],
-    "exempt": {},
     "budgetMs": 1000,
-    "codeHours": 24,
-    "repeat": {
-      "count": 3,
-      "minutes": 30
-    },
     "handin": {
       "mode": "block",
       "registry": true

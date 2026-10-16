@@ -788,7 +788,7 @@ async function scriptCommands(change: Change, text: string, cwd: string, gate: G
         path: change.path,
         line,
         text: command,
-        hint: `${f.reason} (rule ${f.pack}:${f.rule}); a script runs this later where no guard checks it.`,
+        hint: `${f.reason} (rule ${f.pack}:${f.rule}); a script runs this later, with nobody watching.`,
       });
     }
   }

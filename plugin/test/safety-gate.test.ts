@@ -28,7 +28,6 @@ const place: Place = {
 function tools(over: Partial<Tools> = {}): Tools {
   return {
     ignored: async (paths) => new Set(paths.filter((path) => /\/(dist|node_modules)(\/|$)/.test(path))),
-    exempt: () => false,
     alias: async (name) => ({ st: "status", nuke: "!git reset --hard && git clean -fdx" })[name] ?? null,
     external: async (name) => name === "absorb",
     rebasing: async () => false,
@@ -43,7 +42,7 @@ function tools(over: Partial<Tools> = {}): Tools {
   };
 }
 
-const config = (add: string[] = []) => ({ packs: packsInForce(add), exempt: {}, budgetMs: 1000, maxBytes: 64 * 1024 });
+const config = (add: string[] = []) => ({ packs: packsInForce(add), budgetMs: 1000, maxBytes: 64 * 1024 });
 
 /** The rules a command trips, as `pack:rule`, and `doubt` for what the gate could not read. */
 async function hits(command: string, add: string[] = [], over: Partial<Tools> = {}, cwd = PROJECT): Promise<string[]> {
@@ -424,7 +423,7 @@ test("a database client's statements are read where they come from: an argument,
   assert.deepEqual(await hits("cat dump.sql | mysql", db), ["database.mysql:stdin-unverified"]);
 });
 
-test("during a rebase the five discard rules let a seat recover, and nothing else is lifted", async () => {
+test("during a rebase the five discard rules stand down, and nothing else does", async () => {
   const rebasing = { rebasing: async () => true };
   assert.deepEqual(await hits("git checkout -- a.ts", [], rebasing), []);
   assert.deepEqual(await hits("git restore a.ts", [], rebasing), []);
@@ -460,19 +459,6 @@ test("what the gate cannot finish is a doubt, never a pass: size, depth, time, a
   assert.deepEqual(await hits("rm -rf ~ ; echo 'open"), ["doubt"]);
   assert.deepEqual(await hits("ls; ( rm -rf ~"), ["doubt"]);
   assert.deepEqual(await hits("echo 'open"), []);
-});
-
-test("an exempted target lets an rm rule stand down only when every target is under the owner's globs", async () => {
-  const run = (command: string) =>
-    evaluate(
-      command,
-      PROJECT,
-      place,
-      { ...config(), exempt: { "core.filesystem:rm-rf-general": [`${PROJECT}/build/**`] } },
-      tools(),
-    );
-  assert.equal((await run("rm -rf build/out")).findings.length, 0);
-  assert.equal((await run("rm -rf build/out src")).findings[0]?.rule, "rm-rf-general");
 });
 
 test("a line built to make the reader work without end is read to a fixed budget, then is a doubt", async () => {
@@ -516,21 +502,6 @@ test("a pattern with many stars in a protected folder is read in time proportion
     // the glob test reads each name once; this bound only catches a pattern that backtracks without end
     assert.ok(performance.now() - started < 5_000, command);
   }
-});
-
-test("an owner's glob with several ** stands down no rule for a long path it does not match, and takes little time", async () => {
-  const exempt = { "core.filesystem:rm-rf-general": [`${PROJECT}/**/a/**/a/**/a/**/b`] };
-  const run = async (path: string) => {
-    const started = performance.now();
-    const read = await evaluate(`rm -rf ${path}`, PROJECT, place, { ...config(), exempt }, tools());
-    return { rules: read.findings.map((f) => f.rule), ms: performance.now() - started };
-  };
-  const long = await run(`${PROJECT}${"/a".repeat(400)}`);
-  assert.deepEqual(long.rules, ["rm-rf-general"]);
-  assert.ok(long.ms < 2_000, `${long.ms.toFixed(0)} ms`);
-  assert.deepEqual((await run(`${PROJECT}/x/a/y/a/z/a/w/b`)).rules, []);
-  assert.deepEqual((await run(`${PROJECT}/x/a/y/a/z/a/w/b/deeper`)).rules, []);
-  assert.deepEqual((await run(`${PROJECT}/x/a/y/a/z/a/w/bb`)).rules, ["rm-rf-general"]);
 });
 
 test("a rule found twice in one command text is reported once; different texts are reported each", async () => {

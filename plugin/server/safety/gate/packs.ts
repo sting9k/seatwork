@@ -21,15 +21,9 @@ interface Match {
   dynamicArg?: boolean;
 }
 
-export type Mode = "deny" | "ask" | "warn" | "log";
-
 interface Rule {
   severity: Severity;
   reason: string;
-  explanation?: string;
-  safer?: string[];
-  mode?: Mode;
-  grant?: "human";
   match?: Match[];
   sql?: string;
   statement?: boolean;

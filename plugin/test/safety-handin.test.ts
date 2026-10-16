@@ -50,7 +50,7 @@ function project(files: Record<string, string>, start = "") {
   store.noteStart("seat", join(dir, start), git("rev-parse", "HEAD"));
   const gate = {
     place: { home: "/Users/u", project: dir, tmp: null, start: join(dir, start), guard: null, roomFolder: ".seatwork" },
-    config: { packs: packsInForce(), exempt: {}, budgetMs: 1000, maxBytes: 65536 },
+    config: { packs: packsInForce(), budgetMs: 1000, maxBytes: 65536 },
     tools: machineTools(() => null),
   };
   return { dir, store, git, check: (lookups: Lookups = {}) => inspectHandIn("seat", store, gate, lookups) };
@@ -356,7 +356,7 @@ test("no change is said, a seat the room never saw start is not verified, and ne
   const store = new SafetyStore(join(ROOM_HOME, "handin-unknown"), 1000);
   const unknown = await inspectHandIn("nobody", store, {
     place: { home: "/x", project: null, tmp: null, start: null, guard: null, roomFolder: null },
-    config: { packs: packsInForce(), exempt: {}, budgetMs: 1000, maxBytes: 65536 },
+    config: { packs: packsInForce(), budgetMs: 1000, maxBytes: 65536 },
     tools: machineTools(() => null),
   });
   assert.equal(unknown.state, "partial");
@@ -544,7 +544,6 @@ test("the check reads scripts with the packs the project adds", async () => {
     tmpOf: () => join(dir, "tmp"),
     guard: { paths: [], except: [] },
     roomFolder: ".seatwork",
-    repeated: () => {},
     decider: null,
     log: () => {},
   });

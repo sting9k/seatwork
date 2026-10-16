@@ -56,7 +56,6 @@ A hard question or a design to judge goes to independent read-only Peers on diff
 | `REVIEW` | weigh each finding on its evidence; act, or note why not |
 | `QUESTION`, `DEPENDENCY_REQUEST` | `ANSWER`, `DEFER <who, when>`, or `REVISED BRIEF` |
 | `REOPEN_REQUEST`, `BLOCKED` | `HOLD: reproduce it` · `REVISED BRIEF` · `HOLD: candidate stands` · `NOTED` · `DECISION_NEEDED` |
-| a guard code | `seatwork_safety` `grant` it once when the command is right, or refuse with why |
 
 The same challenge twice means the brief is wrong: fix the brief.
 

@@ -295,7 +295,7 @@ test("setting the room up again keeps what was changed in the room's policy and 
   const file = join(ROOM_HOME, "policy.json");
   const changed = JSON.parse(readFileSync(file, "utf8"));
   changed.budget.projects["/work/app"] = { dailyUsd: 5 };
-  changed.jev.monthlyCapUsd = 3;
+  changed.jev.keepDays = 30;
   delete changed.knowledge.mode;
   changed.owner.chime = false;
   writeFileSync(file, JSON.stringify(changed));
@@ -304,7 +304,7 @@ test("setting the room up again keeps what was changed in the room's policy and 
   const next = join(ROOM_HOME, "..", "plugin-next");
   for (const dir of ["paseo", "room"]) cpSync(join(PLUGIN_DIR, dir), join(next, dir), { recursive: true });
   const shipped = JSON.parse(readFileSync(join(next, "paseo", "policy.json"), "utf8"));
-  shipped.jev.monthlyCapUsd = 20;
+  shipped.jev.keepDays = 120;
   shipped.mail.dedupeSeconds = 7;
   writeFileSync(join(next, "paseo", "policy.json"), JSON.stringify(shipped));
 
@@ -312,12 +312,12 @@ test("setting the room up again keeps what was changed in the room's policy and 
 
   const policy = JSON.parse(readFileSync(file, "utf8"));
   assert.deepEqual(policy.budget.projects, { "/work/app": { dailyUsd: 5 } });
-  assert.equal(policy.jev.monthlyCapUsd, 3);
+  assert.equal(policy.jev.keepDays, 30);
   assert.equal("mode" in policy.knowledge, false);
   assert.equal(policy.mail.dedupeSeconds, 7);
   // what the screen sets wins over the file
   assert.equal(policy.owner.chime, true);
-  assert.equal(loadPolicy().jev?.monthlyCapUsd, 3);
+  assert.equal(loadPolicy().jev?.keepDays, 30);
   assert.deepEqual(policyWarnings(warnings), []);
 });
 
@@ -346,7 +346,7 @@ test("a room's policy from before the shipped copy is kept aside whole, since wh
   await setUpRoom(source, {}, paseoAccepts);
   const file = join(ROOM_HOME, "policy.json");
   const old = JSON.parse(readFileSync(file, "utf8"));
-  old.jev.monthlyCapUsd = 3;
+  old.jev.keepDays = 30;
   writeFileSync(file, JSON.stringify(old));
   rmSync(join(ROOM_HOME, "policy.shipped.json"));
 
@@ -354,8 +354,8 @@ test("a room's policy from before the shipped copy is kept aside whole, since wh
 
   const kept = readdirSync(ROOM_HOME).filter((name) => name.startsWith("policy.json.unshipped-"));
   assert.equal(kept.length, 1);
-  assert.equal(JSON.parse(readFileSync(join(ROOM_HOME, kept[0]), "utf8")).jev.monthlyCapUsd, 3);
-  assert.notEqual(JSON.parse(readFileSync(file, "utf8")).jev.monthlyCapUsd, 3, "this version's policy is written");
+  assert.equal(JSON.parse(readFileSync(join(ROOM_HOME, kept[0]), "utf8")).jev.keepDays, 30);
+  assert.notEqual(JSON.parse(readFileSync(file, "utf8")).jev.keepDays, 30, "this version's policy is written");
   assert.ok(existsSync(join(ROOM_HOME, "policy.shipped.json")));
   assert.match(policyWarnings(warnings).join("\n"), new RegExp(`kept as ${kept[0]}`));
 });

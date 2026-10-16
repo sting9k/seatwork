@@ -44,7 +44,6 @@ export function jevView(room: RoomContext): {
   calls: number;
   failed: number;
   monthUsd: number;
-  capUsd: number;
   check: JevCheck | null;
 } {
   const policy = room.policy.jev;
@@ -59,7 +58,6 @@ export function jevView(room: RoomContext): {
     calls: today.reduce((sum, one) => sum + one.calls, 0),
     failed: today.reduce((sum, one) => sum + one.failed, 0),
     monthUsd: spent.usd,
-    capUsd: spent.capUsd,
     check: room.jev.checked(),
   };
 }

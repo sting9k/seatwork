@@ -130,13 +130,6 @@ export class JevStore extends Sqlite {
     return this.row<{ usd: number }>("SELECT usd FROM spend WHERE month = ?", month)?.usd ?? 0;
   }
 
-  /** What one district's calls cost on one day, in USD; the day as `YYYY-MM-DD`. */
-  spentOn(day: string, district: string): number {
-    return (
-      this.row<{ usd: number }>("SELECT usd FROM spend_daily WHERE day = ? AND district = ?", day, district)?.usd ?? 0
-    );
-  }
-
   /** The answers to the callers in [from, to) since a time, and how many of their calls failed. */
   answersOf(
     from: string,

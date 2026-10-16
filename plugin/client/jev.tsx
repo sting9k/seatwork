@@ -7,7 +7,7 @@ import { Text, View } from "react-native";
 import { jevKey, jevState, jevTry } from "../shared/setup";
 import { Btn, Card, KeyValue, Link, tint, type Colors } from "./kit";
 
-/** The decision provider on the Seatwork screen: its key, model, today's calls, the last check and the month's spend; a modal takes a new key. */
+/** The decision provider on the Seatwork screen: its key, model, today's calls, the last check and what it cost this month; a modal takes a new key. */
 
 type State = RpcOutput<typeof jevState>;
 
@@ -17,27 +17,6 @@ const PROVIDER_NAME: Record<string, string> = { openrouter: "OpenRouter", jev: "
 /** Hour and minute on this device's clock. */
 const clock = (at: string) =>
   new Date(at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hour12: false });
-
-/** The month's spend against its cap, as a line and a bar. */
-function Month(props: { usd: number; cap: number; colors: Colors }) {
-  const c = props.colors;
-  const share = props.cap > 0 ? Math.min(1, props.usd / props.cap) : 0;
-  return (
-    <View style={{ gap: 7 }}>
-      <KeyValue name="This month" value={`$${props.usd.toFixed(2)} of $${props.cap.toFixed(2)}`} colors={c} />
-      <View style={{ height: 4, borderRadius: 2, backgroundColor: tint(c.foreground, 0.08) }}>
-        <View
-          style={{
-            width: `${Math.round(share * 100)}%`,
-            height: 4,
-            borderRadius: 2,
-            backgroundColor: share >= 0.9 ? c.statusWarning : c.accent,
-          }}
-        />
-      </View>
-    </View>
-  );
-}
 
 /** The card: what the provider stands on, and a way to give it a key and to check it. */
 export function JevCard(props: { colors: Colors }) {
@@ -111,7 +90,7 @@ export function JevCard(props: { colors: Colors }) {
           ) : data.why ? (
             <Text style={{ ...small, color: c.statusWarning }}>{data.why}</Text>
           ) : null}
-          <Month usd={data.monthUsd} cap={data.capUsd} colors={c} />
+          <KeyValue name="This month" value={`$${data.monthUsd.toFixed(4)}`} colors={c} />
         </>
       ) : (
         <Text style={small}>

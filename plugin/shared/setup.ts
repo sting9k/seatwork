@@ -86,7 +86,6 @@ export const jevState = defineRpc({
     calls: z.number(),
     failed: z.number(),
     monthUsd: z.number(),
-    capUsd: z.number(),
     check: jevCheck.nullable(),
   }),
 });

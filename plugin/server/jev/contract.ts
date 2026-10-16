@@ -61,7 +61,6 @@ export interface Reply {
 export type DecisionFailure =
   | "OFF"
   | "NO_KEY"
-  | "CAP"
   | "NOT_ENGLISH"
   | "INVALID"
   | "TOO_LARGE"

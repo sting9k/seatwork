@@ -1152,8 +1152,6 @@ test("the gate's call goes to the Jev district as it takes it: English, one call
           usdPerMillionInput: 0.04,
         },
       } as never,
-      monthlyCapUsd: 1,
-      dailyCapUsd: { knowledge: 0.1 },
       attemptSeconds: 1,
       retries: 0,
       keepDays: 90,

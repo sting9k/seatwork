@@ -976,19 +976,6 @@ test("the reviewers a Lead launched in one turn report together: the Lead is wok
   assert.equal(lead.inbox.length, 2);
 });
 
-test("a seat asks the decision model through seatwork_ask_jev, and a model the room cannot reach is a refusal it can read", async () => {
-  const lead = await seat("lead-ask", "claude-lead", null, "[Lead] ask");
-  const peer = await seat("peer-ask", "claude-peer", lead.agent.id, "[Peer] ask");
-  const refused = await peer
-    .call("seatwork_ask_jev", {
-      questions: { done: { type: "noul", instructions: "Is the migration written?" } },
-      state: "the store gained a column",
-    })
-    .catch((error: Error) => JSON.parse(error.message).error);
-  assert.match(refused.code, /^(OFF|NO_KEY)$/);
-  assert.equal(refused.retryable, false);
-});
-
 test("a Supervisor's view of its Lead counts the reports held for the Lead's round, apart from the mail waiting for it", async () => {
   const supervisor = await seat("sup-held", "claude-supervisor", null, "[Supervisor] held");
   const lead = await seat("lead-held", "claude-lead", supervisor.agent.id, "[Lead] held");

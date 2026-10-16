@@ -19,7 +19,7 @@ function operations(operators: string[] = ["hq-1"]) {
   rmSync(dir, { recursive: true, force: true });
   let now = new Date("2026-10-15T00:00:00.000Z");
   const policy: Record<string, unknown> = {
-    jev: { monthlyCapUsd: 10, forks: ["report"] },
+    jev: { forks: ["report"], sharpAt: { wake: 0.8 } },
     knowledge: { keepDays: 60 },
   };
   const spent = { today: 0.01 };
@@ -220,25 +220,25 @@ test("with no operator nothing is mailed and nothing is lost; the digest comes o
 
 test("a tune rests on a reading and the log of its district in the same turn, stays in range, and can be reverted while nothing changed it since", () => {
   const { ops, policy, persisted } = operations();
-  const tune = { do: "tune", path: "jev.dailyCapUsd.forks", value: 0.5, ...GROUNDS };
+  const tune = { do: "tune", path: "jev.sharpAt.report", value: 0.5, ...GROUNDS };
   assert.throws(() => ops.act("hq-1", tune), /read jev in this turn first/);
   ops.act("hq-1", { do: "jev" });
   assert.throws(() => ops.act("hq-1", tune), /read the log of jev in this turn too/);
   ops.act("hq-1", { do: "log", district: "jev" });
-  assert.throws(() => ops.act("hq-1", { ...tune, value: 50 }), /from 0 to 10/);
+  assert.throws(() => ops.act("hq-1", { ...tune, value: 50 }), /from 0.5 to 0.99/);
   assert.throws(() => ops.act("hq-1", { ...tune, path: "safety.guard" }), /not one the room tunes on its own/);
   assert.throws(() => ops.act("hq-1", { ...tune, evidence: "đã đo rồi, ổn" }), /evidence: (say it|in English)/);
   const done = ops.act("hq-1", tune);
-  assert.deepEqual((policy.jev as { dailyCapUsd: object }).dailyCapUsd, { forks: 0.5 });
-  assert.deepEqual(persisted, [["jev.dailyCapUsd.forks", 0.5]]);
-  assert.match(String(done.line), /jev\.dailyCapUsd\.forks: unset -> 0\.5/);
+  assert.deepEqual((policy.jev as { sharpAt: object }).sharpAt, { wake: 0.8, report: 0.5 });
+  assert.deepEqual(persisted, [["jev.sharpAt.report", 0.5]]);
+  assert.match(String(done.line), /jev\.sharpAt\.report: unset -> 0\.5/);
   assert.equal(done.baseline, '{"spentToday":0.01}', "the district's reading is kept with the change");
   ops.turnStarted("hq-1");
   assert.throws(() => ops.act("hq-1", { do: "revert", id: done.id, ...GROUNDS }), /read jev in this turn first/);
   ops.act("hq-1", { do: "jev" });
   ops.act("hq-1", { do: "revert", id: done.id, ...GROUNDS });
-  assert.equal((policy.jev as { dailyCapUsd: Record<string, unknown> }).dailyCapUsd.forks, undefined);
-  assert.deepEqual(persisted.at(-1), ["jev.dailyCapUsd.forks", undefined]);
+  assert.equal((policy.jev as { sharpAt: Record<string, unknown> }).sharpAt.report, undefined);
+  assert.deepEqual(persisted.at(-1), ["jev.sharpAt.report", undefined]);
   assert.throws(() => ops.act("hq-1", { do: "revert", id: done.id, ...GROUNDS }), /changed again after #1/);
   assert.throws(
     () => ops.act("hq-1", { do: "tune", path: "jev.forks", value: ["report", "nope"], ...GROUNDS }),
@@ -252,19 +252,19 @@ test("a tune rests on a reading and the log of its district in the same turn, st
 test("the digest weighs each change still standing against its baseline; a key reverted twice needs evidence that answers why", async () => {
   const { ops, mailed, at, spent } = operations();
   readJev(ops);
-  const tune = { do: "tune", path: "jev.monthlyCapUsd", ...GROUNDS };
-  for (const value of [12, 14]) {
+  const tune = { do: "tune", path: "jev.sharpAt.wake", ...GROUNDS };
+  for (const value of [0.82, 0.84]) {
     const done = ops.act("hq-1", { ...tune, value });
     ops.act("hq-1", { do: "revert", id: done.id, ...GROUNDS });
   }
-  assert.throws(() => ops.act("hq-1", { ...tune, value: 16 }), /reverted 2 times in 30 days: #\d+ .*revisit true/);
-  ops.act("hq-1", { ...tune, value: 16, revisit: true });
+  assert.throws(() => ops.act("hq-1", { ...tune, value: 0.86 }), /reverted 2 times in 30 days: #\d+ .*revisit true/);
+  ops.act("hq-1", { ...tune, value: 0.86, revisit: true });
   spent.today = 0.09;
   at("2026-10-16T00:00:00.000Z");
   await ops.tick();
   assert.match(
     mailed.at(-1)!.body,
-    /jev\.monthlyCapUsd: 10 -> 16[^\n]*\n {2}then: \{"spentToday":0\.01\}\n {2}now: \{"spentToday":0\.09\}/,
+    /jev\.sharpAt\.wake: 0\.8 -> 0\.86[^\n]*\n {2}then: \{"spentToday":0\.01\}\n {2}now: \{"spentToday":0\.09\}/,
   );
   ops.close();
 });
@@ -290,10 +290,10 @@ test("a trace keeps its hypothesis and what it learned; after three undone chang
     text: "The minute's pass and the GC run at the same moment.",
   });
   readJev(ops);
-  for (const value of [11, 12, 13]) {
+  for (const value of [0.81, 0.82, 0.83]) {
     const done = ops.act("hq-1", {
       do: "tune",
-      path: "jev.monthlyCapUsd",
+      path: "jev.sharpAt.wake",
       value,
       trace: opened.id,
       revisit: true,
@@ -311,7 +311,14 @@ test("a trace keeps its hypothesis and what it learned; after three undone chang
   assert.match(String(trace.next), /Write your Owner the trace/);
   assert.throws(
     () =>
-      ops.act("hq-1", { do: "tune", path: "jev.monthlyCapUsd", value: 9, trace: opened.id, revisit: true, ...GROUNDS }),
+      ops.act("hq-1", {
+        do: "tune",
+        path: "jev.sharpAt.wake",
+        value: 0.79,
+        trace: opened.id,
+        revisit: true,
+        ...GROUNDS,
+      }),
     /write your Owner the trace instead/,
   );
   ops.act("hq-1", { do: "close", id: opened.id, conclusion: "The fault is in the code; the trace went to the Owner." });
@@ -333,7 +340,7 @@ test("an open trace nobody touched for the log's days is closed by the room with
   at("2026-10-17T00:00:00.000Z");
   ops.act("hq-1", { do: "trace", id: noted, kind: "evidence", text: "The log shows the lock at each minute's pass." });
   readJev(ops);
-  ops.act("hq-1", { do: "tune", path: "jev.monthlyCapUsd", value: 11, trace: tuned, ...GROUNDS });
+  ops.act("hq-1", { do: "tune", path: "jev.sharpAt.wake", value: 0.81, trace: tuned, ...GROUNDS });
 
   at("2026-10-18T01:00:00.000Z");
   ops.expire();

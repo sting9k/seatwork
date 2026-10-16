@@ -1,5 +1,5 @@
 {
-  "$comment": "Small choices about mail, work, seats and incidents put to the decision model: a label at sharpAt or more is acted on, anything less keeps the room's own rule. deadlineMs: how long a call may take. Empty criteria: the labels come with the call. escalate.signals: the subjects it reads. rotate.fromShare: the share of the rotation line from which it is asked. policy.jev.forks lists the forks that are on.",
+  "$comment": "Small choices about mail, work, seats and incidents put to the decision model: a label at sharpAt or more is acted on, anything less keeps the room's own rule. deadlineMs: how long a call may take. Empty criteria: the labels come with the call. escalate.signals: the subjects it reads. policy.jev.forks lists the forks that are on.",
   "forks": {
     "report": {
       "version": 1,
@@ -115,20 +115,6 @@
         "type": "choice",
         "instructions": "`new` holds issues just made and `open` issues still open, each by id; the labels name the open ones. Say which open issue asks for the same work as the new issue {{id}}, or none.",
         "criteria": {}
-      }
-    },
-    "rotate": {
-      "version": 1,
-      "sharpAt": 0.9,
-      "deadlineMs": 5000,
-      "fromShare": 0.6,
-      "question": {
-        "type": "choice",
-        "instructions": "`message` is the last message a software agent wrote when its turn ended, and `held_tokens` is how much context it carries. Say whether the agent is in the middle of its work or at a milestone.",
-        "criteria": {
-          "milestone": "a piece of work is finished and handed in or reported done, and what comes next starts fresh",
-          "mid_work": "the work goes on: something is half done, being tried or fixed, or waits for a result"
-        }
       }
     },
     "incident": {

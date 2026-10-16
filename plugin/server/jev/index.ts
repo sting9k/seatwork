@@ -18,7 +18,7 @@ import {
 } from "./contract";
 import { DIALECTS, type Dialect } from "./dialects";
 import { cleanState, guarded } from "./input";
-import { districtOf, JevStore, type CallRow } from "./store";
+import { JevStore, type CallRow } from "./store";
 
 /** The Jev district: decisions from the provider in force, input made safe, calls logged, costed, capped, and held off while it is down. */
 
@@ -33,12 +33,10 @@ export interface ProviderPolicy {
   usdPerMillionInput: number;
 }
 
-/** The policy's jev section: the provider in force and every provider's wire, the caps, a call's limits, and the forks. */
+/** The policy's jev section: the provider in force and every provider's wire, a call's limits, and the forks. */
 export interface JevPolicy {
   provider: ProviderName;
   providers: Record<ProviderName, ProviderPolicy>;
-  monthlyCapUsd: number;
-  dailyCapUsd?: Record<string, number>;
   attemptSeconds: number;
   retries: number;
   keepDays: number;
@@ -103,9 +101,6 @@ const OWN_FAULT = new Set([400, 413, 422]);
 function outOfRange(policy: JevPolicy, settings: ProviderPolicy): string | null {
   const within = (value: unknown, least: number, most: number) =>
     typeof value === "number" && Number.isFinite(value) && value >= least && value <= most;
-  if (!within(policy.monthlyCapUsd, 0, 10_000)) return "monthlyCapUsd";
-  for (const [district, cap] of Object.entries(policy.dailyCapUsd ?? {}))
-    if (!within(cap, 0, 10_000)) return `dailyCapUsd.${district}`;
   if (!within(policy.attemptSeconds, 1, 120)) return "attemptSeconds";
   if (!Number.isInteger(policy.retries) || !within(policy.retries, 0, 5)) return "retries";
   if (!within(policy.keepDays, 1, 3650)) return "keepDays";
@@ -351,10 +346,10 @@ export class Jev {
     return this.storeHandle || existsSync(join(this.deps.dir, "decisions.db")) ? this.store() : null;
   }
 
-  /** This month's spending, in USD, against the cap. */
-  spent(): { month: string; usd: number; capUsd: number } {
+  /** This month's spending, in USD. */
+  spent(): { month: string; usd: number } {
     const month = this.now().toISOString().slice(0, 7);
-    return { month, usd: this.existing()?.spent(month) ?? 0, capUsd: this.deps.policy()?.monthlyCapUsd ?? 0 };
+    return { month, usd: this.existing()?.spent(month) ?? 0 };
   }
 
   /** Asks the provider in force; every call is logged, a failed one with its error; `fresh` asks again what was answered lately. */
@@ -374,7 +369,7 @@ export class Jev {
     const text = JSON.stringify(sent);
     const stateHash = createHash("sha256").update(text).digest("hex");
     const logged = { caller, provider: name, modelAsked: settings.model, stateHash, suspect };
-    const refused = this.refusal(caller, policy, sent, asked);
+    const refused = this.refusal(sent, asked);
     if (refused) {
       this.store().record(failedRow(logged, refused, 0));
       throw refused;
@@ -477,20 +472,10 @@ export class Jev {
     );
   }
 
-  /** Why a call may not go out before it is sent: text that is not English, or a cap reached; null when it may. */
-  private refusal(caller: string, policy: JevPolicy, state: State, questions: Questions): DecisionError | null {
+  /** Why a call may not go out before it is sent: text that is not English; null when it may. */
+  private refusal(state: State, questions: Questions): DecisionError | null {
     const foreign = firstNotEnglish({ state, questions });
-    if (foreign) return new DecisionError("NOT_ENGLISH", `${foreign.path} ${foreign.why}; only English is sent`);
-    const { usd: spent, capUsd } = this.spent();
-    if (spent >= capUsd)
-      return new DecisionError("CAP", `this month's decisions cost ${spent.toFixed(4)} USD; the cap is ${capUsd} USD`);
-    const district = districtOf(caller);
-    const dailyCap = policy.dailyCapUsd?.[district];
-    if (dailyCap === undefined) return null;
-    const today = this.existing()?.spentOn(this.now().toISOString().slice(0, 10), district) ?? 0;
-    return today >= dailyCap
-      ? new DecisionError("CAP", `${district} spent ${today.toFixed(4)} USD today; its daily share is ${dailyCap} USD`)
-      : null;
+    return foreign ? new DecisionError("NOT_ENGLISH", `${foreign.path} ${foreign.why}; only English is sent`) : null;
   }
 
   /** What one caller's questions got since a time: answers, those as sure as `sharpAt`, failed calls. */

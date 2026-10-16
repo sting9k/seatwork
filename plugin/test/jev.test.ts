@@ -83,7 +83,7 @@ function provider(...replies: (Response | (() => Response))[]) {
   return { fetch: send, sent };
 }
 
-const POLICY = (provider: ProviderName, cap = 10): JevPolicy => ({
+const POLICY = (provider: ProviderName): JevPolicy => ({
   provider,
   providers: {
     jev: {
@@ -105,7 +105,6 @@ const POLICY = (provider: ProviderName, cap = 10): JevPolicy => ({
       usdPerMillionInput: 0,
     },
   },
-  monthlyCapUsd: cap,
   attemptSeconds: 1,
   retries: 2,
   keepDays: 90,
@@ -250,7 +249,7 @@ test("a request no provider would take is refused before anything is sent", asyn
   assert.equal(none.sent.length, 0);
 });
 
-test("the district is off without a provider or a key, and stops at the month's cap", async () => {
+test("the district is off without a provider or a key, and no spending stops a call: each one's cost is logged", async () => {
   const none = provider();
   await assert.rejects(district(undefined, none.fetch).jev.decide("t", "s", QUESTIONS), { code: "OFF" });
   const keyless = district(POLICY("openrouter"), none.fetch, false);
@@ -260,13 +259,11 @@ test("the district is off without a provider or a key, and stops at the month's 
     return true;
   });
 
-  const costly = () => json({ model: "m", answers: SYSTEM_ONE, usage: { input_tokens: 10, cost: 0.6 } });
-  const capped = provider(costly, costly, costly);
-  const { jev } = district(POLICY("openrouter", 1), capped.fetch);
-  await jev.decide("t", "s1", QUESTIONS);
-  await jev.decide("t", "s2", QUESTIONS);
-  await assert.rejects(jev.decide("t", "s3", QUESTIONS), { code: "CAP" });
-  assert.deepEqual([capped.sent.length, jev.spent().usd], [2, 1.2]);
+  const costly = () => json({ model: "m", answers: SYSTEM_ONE, usage: { input_tokens: 10, cost: 6 } });
+  const replies = provider(costly, costly, costly);
+  const { jev } = district(POLICY("openrouter"), replies.fetch);
+  for (const state of ["s1", "s2", "s3"]) await jev.decide("council.claims@1", state, QUESTIONS);
+  assert.deepEqual([replies.sent.length, jev.spent().usd], [3, 18]);
   jev.close();
 });
 
@@ -321,26 +318,6 @@ test("text that is not English is never sent; each refusal is logged as a failed
   await jev.decide("council.claims@1", { said: "Done — tests pass ✓" }, QUESTIONS);
   assert.equal(replies.sent.length, 1, "only the English state went out");
   assert.deepEqual(jev.today(), [{ district: "council", calls: 3, failed: 2 }]);
-  jev.close();
-});
-
-test("a district stops at its daily share while the others still ask", async () => {
-  const costly = () => json({ model: "m", answers: SYSTEM_ONE, usage: { input_tokens: 10, cost: 0.3 } });
-  const replies = provider(costly, costly, costly);
-  const { jev } = district({ ...POLICY("openrouter"), dailyCapUsd: { council: 0.5 } }, replies.fetch);
-  await jev.decide("council.claims@1", "s", QUESTIONS);
-  await jev.decide("council.scope@1", "s", QUESTIONS);
-  await assert.rejects(jev.decide("council.claims@1", "s", QUESTIONS), (error: DecisionError) => {
-    assert.equal(error.code, "CAP");
-    assert.match(error.message, /council spent 0\.6000 USD today/);
-    return true;
-  });
-  await jev.decide("knowledge.same@1", "s", QUESTIONS);
-  assert.equal(replies.sent.length, 3);
-  await assert.rejects(
-    district({ ...POLICY("openrouter"), dailyCapUsd: { council: -1 } }, replies.fetch).jev.decide("t", "s", QUESTIONS),
-    { code: "OFF", message: /jev\.dailyCapUsd\.council is out of range/ },
-  );
   jev.close();
 });
 

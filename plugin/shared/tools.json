@@ -621,23 +621,6 @@
         },
         "required": ["do"]
       }
-    },
-    "seatwork_ask_jev": {
-      "callers": "any",
-      "description": "Asks the room's decision model typed questions about files or a note, so you need not read them into your context: the room reads the files, the model answers, you get probabilities. Use it for a cheap read whose answer you will act on: does this file still call the old API, which of these modules owns the parser, how complete is this test. Read a file yourself when you will edit or quote it. `questions`: an object by id; each is {type: \"noul\", instructions} for the probability of yes, {type: \"choice\", instructions, criteria: {label: meaning}} to pick one label, or {type: \"score\", instructions, criteria: [lowest, ..., highest]} for 2 to 10 levels. Write each in English, about the state. `state`: your note, 8000 characters at most. `paths`: up to 20 text files of your project, each 256 KB at most, all together 120000 characters; a file outside the project, binary or too large is skipped with why. A call costs a fraction of a cent and comes from a daily share. Answers are JSON {answers, model, read, skipped, usd}; a probability is the model's, not a proof: check what you rest a hand-in on. A refusal is {\"error\": {code, message, retryable}}.",
-      "inputSchema": {
-        "type": "object",
-        "properties": {
-          "questions": { "type": "object", "description": "Typed questions by id." },
-          "state": { "type": "string", "description": "What the questions are about, in your words." },
-          "paths": {
-            "type": "array",
-            "items": { "type": "string" },
-            "description": "Files the room reads for the model, relative to your folder or absolute inside your project."
-          }
-        },
-        "required": ["questions"]
-      }
     }
   }
 }

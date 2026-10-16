@@ -19,15 +19,13 @@ const asked: { fork: string; labels: string[]; state: Record<string, unknown> }[
 
 /** The fork a question belongs to, read from the labels it offers. */
 const forkOf = (labels: string[]): string =>
-  labels.includes("milestone")
-    ? "rotate"
-    : labels.includes("unclear")
-      ? "gaps"
-      : labels.includes("person")
-        ? "escalate"
-        : labels.includes("none")
-          ? "duplicate"
-          : "tier";
+  labels.includes("unclear")
+    ? "gaps"
+    : labels.includes("person")
+      ? "escalate"
+      : labels.includes("none")
+        ? "duplicate"
+        : "tier";
 
 /** The model's wire, in the room's own process: the label a test set is answered sure, any other question split. */
 async function jev(url: unknown, init?: RequestInit): Promise<Response> {
@@ -57,7 +55,7 @@ before(() => {
   installRoom(["claude-hq", "claude-supervisor", "claude-lead", "claude-peer", "claude-lens"]);
   const file = join(ROOM_HOME, "policy.json");
   const policy = JSON.parse(readFileSync(file, "utf8"));
-  policy.jev.forks = ["tier", "gaps", "escalate", "duplicate", "rotate"];
+  policy.jev.forks = ["tier", "gaps", "escalate", "duplicate"];
   policy.knowledge.gate = false;
   policy.safety.council.mode = "off";
   writeFileSync(file, JSON.stringify(policy));
@@ -155,34 +153,6 @@ test("a claimed issue is read for what it lacks and a new one for what it repeat
   says.gaps = "ready";
   const plain = JSON.parse(await peer.call("seatwork_work", { do: "claim", id: second.id })) as { note?: string };
   assert.equal(plain.note, undefined);
-});
-
-test("a seat nearing the rotation line is named to its Owner at a milestone and left alone in the middle of its work", async () => {
-  reset();
-  const lead = await seat("lead-early", "claude-lead", null, "[Lead] stream");
-  const peer = await seat("peer-early", "claude-peer", lead.agent.id, "[Peer] store");
-  const holds = (tokens: number) =>
-    Object.assign(agents[peer.agent.id], {
-      current: () => ({ status: "idle", lastUsage: { contextWindowUsedTokens: tokens } }),
-    });
-
-  holds(100_000);
-  says.rotate = "milestone";
-  await turnEnds(peer, "DONE abc1\nthe endpoint is finished and handed in");
-  assert.equal(asked.length, 0, "under the share of the line the model is not asked");
-  assert.doesNotMatch(lead.inbox.at(-1)!, /\[room\]/);
-
-  holds(150_000);
-  await turnEnds(peer, "DONE abc2\nthe next endpoint is finished too");
-  assert.match(lead.inbox.at(-1)!, /\[room\] This Peer holds 150K tokens of context [^"]* goes to a new Peer\./);
-  assert.equal(asked.length, 1);
-
-  says.rotate = "mid_work";
-  await turnEnds(peer, "STATUS\nhalf the migration is written, the tests next");
-  assert.doesNotMatch(lead.inbox.at(-1)!, /\[room\]/);
-  says.rotate = undefined;
-  await turnEnds(peer, "STATUS\nstill on the migration");
-  assert.doesNotMatch(lead.inbox.at(-1)!, /\[room\]/, "unsure: nothing changes");
 });
 
 test("a task sent back twice: its Lead is told the tier a new Peer starts on, and a successor the room makes starts on it", async () => {

@@ -31,7 +31,7 @@ Before any key, `hillclimb`. In short:
 
 The room refuses a change without its district's reading and log in the same turn. A key reverted twice needs evidence before `revisit`.
 
-Jev is the room's fast decision model; the room's code calls it, and seats ask it with `seatwork_ask_jev` from their daily share (`jev.dailyCapUsd.seats`). `jev.sharpAt.<fork>` is the confidence at which a fork acts. Below it, the room keeps its own rule. It is a policy line, not a calibrated probability: move it by the share of acted versus split answers in the `jev` reading's `forksLastWeek`, and only English reaches Jev.
+Jev is the room's fast decision model; only the room's code calls it, and what each call costs is logged. `jev.sharpAt.<fork>` is the confidence at which a fork acts. Below it, the room keeps its own rule. It is a policy line, not a calibrated probability: move it by the share of acted versus split answers in the `jev` reading's `forksLastWeek`, and only English reaches Jev.
 
 ## Trace
 

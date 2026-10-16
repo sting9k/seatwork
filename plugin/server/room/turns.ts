@@ -4,7 +4,7 @@ import type { TurnEvent, TurnOutcome } from "../host";
 import { contextFell } from "../orchestration/compaction";
 import { clip } from "../orchestration/forks";
 import { classify, type FailureKind } from "../orchestration/recovery";
-import { atMilestone, nextTitle, parseHandoff, rotate } from "../orchestration/rotation";
+import { nextTitle, parseHandoff, rotate } from "../orchestration/rotation";
 import { familyOf } from "../orchestration/models";
 import { skillsLoaded } from "../orchestration/runtimes";
 import { FRESH_EYES, ownerNote } from "../orchestration/rounds";
@@ -271,12 +271,11 @@ function addRoomLines(
     id: string;
     task: string;
     contextTokens: number | null;
-    early: boolean;
     check: HandIn | null;
     findings: readonly Finding[];
   },
 ): boolean {
-  const { role, id, task, contextTokens, early, check, findings } = about;
+  const { role, id, task, contextTokens, check, findings } = about;
   let lined = false;
   try {
     const guarded = [check ? handInLine(check) : null, councilLine(findings)].filter((line): line is string => !!line);
@@ -289,7 +288,6 @@ function addRoomLines(
       rejected: candidate ? room.rounds.handedIn(task) : 0,
       contextTokens,
       rotateAtTokens: room.rotateAt,
-      early,
     });
     if (line) up.why = [up.why, line.replace(/\s*\n\s*/g, " ")].filter(Boolean).join("; ");
   } catch (error) {
@@ -463,12 +461,7 @@ export async function turnEnded(room: RoomContext, end: TurnEnd): Promise<void> 
   if (sendBack) kept = report = null;
   const up = kept ?? report;
   const contextTokens = usage?.contextWindowUsedTokens ?? null;
-  // a seat nearing the rotation line is replaced at a milestone, not in the middle of its work
-  const early =
-    role && up && outcome.kind === "completed" && !room.rotations.get(id)
-      ? await atMilestone(room.forks, { role, tokens: contextTokens, message: end.text }, room.rotateAt)
-      : false;
-  const lined = role && up ? addRoomLines(room, up, { role, id, task, contextTokens, early, check, findings }) : false;
+  const lined = role && up ? addRoomLines(room, up, { role, id, task, contextTokens, check, findings }) : false;
   if (up && subjectSignal(up.subject) === "REVIEW") await holdForRound(room, up, id);
   const asked = room.rotations.get(id);
   const record = eng.seat(id);

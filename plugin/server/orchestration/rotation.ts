@@ -1,13 +1,10 @@
 import { writeFileSync } from "node:fs";
 import { readJson, writeJson } from "../persisted";
 import { join } from "node:path";
-import catalog from "../../shared/forks.json";
-import { traits } from "../../shared/workflow";
 import type { MailEngine, SeatRecord } from "../coordination/engine";
 import type { Host } from "../host";
 import { keptOutOfGit } from "../sqlite";
 import { fromTemplate } from "./brief";
-import { clip, type Forks } from "./forks";
 import type { SeatFit } from "./models";
 
 /** A seat whose context has grown is replaced: its handoff is asked for and read, and its successor starts on it. */
@@ -299,17 +296,4 @@ export async function rotate(
   }
   if (left.length === 0) await host.archive(old.agentId).catch(failed("the old seat's archive"));
   return { id, file, model: model || "its provider's default", raised: higher !== undefined, left };
-}
-
-/** Whether the decision model reads a seat's last message as a milestone; asked only while its context is over a share of the rotation line and not yet past it. */
-export async function atMilestone(
-  forks: Pick<Forks, "take">,
-  seat: { role: string; tokens: number | null; message: string },
-  rotateAt: number,
-): Promise<boolean> {
-  const { tokens, message } = seat;
-  const from = rotateAt * catalog.forks.rotate.fromShare;
-  if (!traits(seat.role).rotate || tokens === null || !message.trim() || !(tokens >= from && tokens < rotateAt))
-    return false;
-  return (await forks.take("rotate", { message: clip(message.trim(), 2000), held_tokens: tokens })) === "milestone";
 }

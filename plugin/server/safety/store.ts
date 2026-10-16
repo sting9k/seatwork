@@ -267,6 +267,15 @@ export class SafetyStore extends Sqlite {
     });
   }
 
+  /** The codes only the person may grant that still wait, newest first. */
+  forPerson(limit: number): CodeRow[] {
+    return this.rows<CodeRow>(
+      "SELECT * FROM codes WHERE grantor = 'human' AND granted_at IS NULL AND used_at IS NULL AND expires_at > ? ORDER BY created_at DESC LIMIT ?",
+      this.stamp(),
+      limit,
+    );
+  }
+
   /** The codes waiting for a grant, for these seats, newest first. */
   waiting(seats: readonly string[]): CodeRow[] {
     if (!seats.length) return [];

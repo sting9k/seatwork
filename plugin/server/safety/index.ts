@@ -209,6 +209,11 @@ export class Safety {
     return out.join("\n");
   }
 
+  /** The codes only the person may grant that still wait, at most `most`. */
+  forPerson(most: number): CodeRow[] {
+    return this.on ? this.store().forPerson(most) : [];
+  }
+
   /** The codes waiting on a seat's word: those of the seats under it. */
   waitingUnder(agentId: string, all: readonly string[]): CodeRow[] {
     return this.store().waiting(all.filter((id) => id !== agentId && this.deps.isAncestor(agentId, id)));

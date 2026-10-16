@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { existsSync, readFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { firstNotEnglish } from "../english";
 import { probeChat, type ChatProbe } from "./chat";
@@ -68,6 +68,14 @@ export interface Decision {
   cached: boolean;
 }
 
+/** A check of the provider in force: when, whether it answered, in how many milliseconds, or why not. */
+export interface JevCheck {
+  at: string;
+  ok: boolean;
+  ms: number | null;
+  why: string | null;
+}
+
 /** A fork the room takes on the model's word: `sharp` when the model is sure and the state gave it no orders. */
 export interface Fork {
   label: string | null;
@@ -81,6 +89,10 @@ const BUSY_MS = 2000;
 const DEADLINE_MS = 20_000;
 const KEYLESS: readonly ProviderName[] = ["custom"];
 const KEY_KEPT_MS = 30_000;
+const CHECK = {
+  state: "The test suite ran after the last edit, and all 42 tests passed.",
+  questions: { passed: { type: "noul", instructions: "Does the text say the tests passed?" } } as Questions,
+};
 const FLOW = { inFlight: 8, waiting: 32 } as const;
 const BREAKER = { trips: 3, firstMs: 30_000, mostMs: 600_000 } as const;
 const CACHE = { entries: 256, keptMs: 600_000 } as const;
@@ -152,6 +164,7 @@ export class Jev {
   private readonly down = { failures: 0, opens: 0, until: 0, round: 0, probing: false };
   private readonly cache = new Map<string, { at: number; decision: Decision }>();
   private unfit: { wire: string; why: string } | null = null;
+  private lastCheck: JevCheck | null = null;
 
   constructor(private readonly deps: JevDeps) {}
 
@@ -199,6 +212,45 @@ export class Jev {
         why: `no key for ${name}: put it in ${this.keyFile(name)}${settings.keyEnv ? ` or ${settings.keyEnv}` : ""}`,
       };
     return { name, settings, policy, key };
+  }
+
+  /** Where the key of the provider in force comes from: its env variable, its file, nowhere, or none is needed. */
+  keySource(): "file" | "env" | "none" | "keyless" {
+    const policy = this.deps.policy();
+    const name = policy?.provider;
+    const settings = name ? policy?.providers?.[name] : undefined;
+    if (!name || !settings) return "none";
+    if (KEYLESS.includes(name)) return "keyless";
+    if (settings.keyEnv && (this.deps.env ?? process.env)[settings.keyEnv]?.trim()) return "env";
+    return this.key(name, settings) ? "file" : "none";
+  }
+
+  /** Keeps the person's key for the provider in force in its file, readable by them alone; the next call reads it. */
+  saveKey(key: string): void {
+    const name = this.deps.policy()?.provider;
+    if (!name) throw new Error("no decision provider is set up in the policy");
+    mkdirSync(this.deps.dir, { recursive: true, mode: 0o700 });
+    const file = this.keyFile(name);
+    writeFileSync(file, `${key.trim()}\n`, { mode: 0o600 });
+    chmodSync(file, 0o600);
+    this.keys.delete(name);
+  }
+
+  /** One call with a plain question, to tell whether the provider in force answers: how long it took, or why not. */
+  async check(): Promise<JevCheck> {
+    const at = this.now().toISOString();
+    try {
+      const { latencyMs } = await this.decide("check", CHECK.state, CHECK.questions, { fresh: true });
+      this.lastCheck = { at, ok: true, ms: latencyMs, why: null };
+    } catch (error) {
+      this.lastCheck = { at, ok: false, ms: null, why: error instanceof Error ? error.message : String(error) };
+    }
+    return this.lastCheck;
+  }
+
+  /** The last check since the room started, if any. */
+  checked(): JevCheck | null {
+    return this.lastCheck;
   }
 
   /** What a Chat Completions provider's endpoint gives the wire, measured with two calls; null for another dialect or for no provider. */

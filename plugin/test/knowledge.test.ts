@@ -560,6 +560,50 @@ test("a temporary decision ends on its date and gives the topic back; a withdraw
   knowledge.close();
 });
 
+test("the app is shown a folder's decisions: its project's and the room's in force, those still waiting, and how many ended, those too when asked", async () => {
+  const { knowledge, project } = district();
+  const record = async (agent: string, args: Record<string, unknown>, turnId: string) => {
+    knowledge.turnStarted(agent);
+    await decide(knowledge, agent, args);
+    endTurn(knowledge, agent, [{ kind: "prompt", text: `${args.topic} as I said` }], turnId);
+  };
+  await record("hq-d", { scope: "room", topic: "push", statement: "Push through a pull request only." }, "t1");
+  await record(
+    "hq-d",
+    { scope: "room", topic: "push", statement: "Nothing is pushed without my word.", replaces_version: 1 },
+    "t2",
+  );
+  await record("sup-d", { scope: "project", topic: "tables", statement: "Tables are out of scope for v1." }, "t3");
+  knowledge.turnStarted("sup-d");
+  await decide(knowledge, "sup-d", {
+    scope: "project",
+    topic: "node",
+    statement: "The CLI runs on Node 20 and later.",
+  });
+
+  const shown = knowledge.decisionsAt(join(project, "src"), false);
+  assert.equal(shown.project, project);
+  assert.deepEqual(shown.inForce.map((one) => [one.scopeKey, one.topic, one.version]).sort(), [
+    [`project:${project}`, "tables", 1],
+    ["room", "push", 2],
+  ]);
+  assert.deepEqual(
+    shown.pending.map((one) => one.topic),
+    ["node"],
+  );
+  assert.deepEqual(
+    [shown.ended, shown.endedList.length],
+    [1, 0],
+    "the ended ones are counted, and listed only when asked",
+  );
+  const asked = knowledge.decisionsAt(project, true);
+  assert.deepEqual(
+    asked.endedList.map((one) => [one.topic, one.version, one.state]),
+    [["push", 1, "superseded"]],
+  );
+  knowledge.close();
+});
+
 test("a replaced decision stays past the year closed ones are kept while it can come back, then goes", async () => {
   let now = new Date("2026-10-15T00:00:00.000Z");
   const { knowledge } = district({ now: () => now });

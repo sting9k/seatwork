@@ -38,7 +38,8 @@ import { Operations, OperationsRefused, writePolicyKey } from "../operations/ind
 import { addSkill, listSkills, removeSkill, SkillRefused, type SkillSource } from "../orchestration/local-skills";
 import { Vitals } from "../operations/vitals";
 import { OwedList, roomStatus } from "./status";
-import { Jev } from "../jev/index";
+import { folderDecisions, jevView, personCodes, type PersonCode } from "./owner";
+import { Jev, type JevCheck } from "../jev/index";
 import { Knowledge } from "../knowledge/index";
 import { Safety } from "../safety/index";
 import { secretsOf } from "../safety/gate/rules/secrets";
@@ -63,7 +64,7 @@ interface SeatStart extends Launched {
   mcpUrl: string;
 }
 
-/** A room set up and running on this machine: the app hands it each seat's start, session, turns and archive, and asks what waits for the Owner. */
+/** A room set up and running on this machine: the app hands it each seat's start, session, turns and archive, and asks what waits for the Owner, what only the person may grant, a folder's decisions and the decision provider. */
 export interface Room {
   policy: RuntimePolicy;
   filesFrom: string | undefined;
@@ -77,7 +78,17 @@ export interface Room {
   permissionAsked(seat: SeatEvent, request: unknown): Promise<void>;
   permissionAnswered(agentId: string): void;
   olderSeats(): Promise<string[]>;
-  waiting(): Promise<{ chime: boolean; waiting: Awaited<ReturnType<OwedList["current"]>> }>;
+  waiting(): Promise<{
+    chime: boolean;
+    waiting: Awaited<ReturnType<OwedList["current"]>>;
+    codes: PersonCode[];
+    seats: string[];
+  }>;
+  grant(code: string): { message: string };
+  decisions(folder: string, ended: boolean): ReturnType<typeof folderDecisions>;
+  jev(): ReturnType<typeof jevView>;
+  jevKey(key: string): Promise<JevCheck>;
+  jevCheck(): Promise<JevCheck>;
   status(): ReturnType<typeof roomStatus>;
   stop(): Promise<void>;
 }
@@ -742,8 +753,21 @@ export function startRoom(input: {
     },
     async waiting() {
       timers.touch();
-      return { chime: policy.owner.chime, waiting: await room.owed.current(() => host.live()) };
+      return {
+        chime: policy.owner.chime,
+        waiting: await room.owed.current(() => host.live()),
+        codes: personCodes(room),
+        seats: engine.allSeats().map((seat) => seat.agentId),
+      };
     },
+    grant: (code) => ({ message: safety.grant(code, "human") }),
+    decisions: (folder, ended) => folderDecisions(room, folder, ended),
+    jev: () => jevView(room),
+    async jevKey(key) {
+      jev.saveKey(key);
+      return jev.check();
+    },
+    jevCheck: () => jev.check(),
     status: async () => roomStatus(await host.live(), engine, room.owed),
     async stop() {
       timers.stop();

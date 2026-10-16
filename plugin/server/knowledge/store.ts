@@ -382,6 +382,36 @@ export class KnowledgeStore extends Sqlite {
     );
   }
 
+  /** The decisions of these scopes that still wait for their turn to end, oldest first. */
+  pendingIn(scopeKeys: readonly string[], limit: number): Decision[] {
+    return this.decisions(
+      `SELECT ${DECISION} FROM decisions
+         WHERE state = 'pending' AND scope_key IN (SELECT value FROM json_each(?)) ORDER BY created_at, id LIMIT ?`,
+      JSON.stringify(scopeKeys),
+      limit,
+    );
+  }
+
+  /** The decisions of these scopes that were in force and ended, newest first. */
+  endedIn(scopeKeys: readonly string[], limit: number): Decision[] {
+    return this.decisions(
+      `SELECT ${DECISION} FROM decisions
+         WHERE state IN ('superseded', 'expired', 'withdrawn') AND scope_key IN (SELECT value FROM json_each(?))
+         ORDER BY closed_at DESC, id DESC LIMIT ?`,
+      JSON.stringify(scopeKeys),
+      limit,
+    );
+  }
+
+  /** How many decisions of these scopes were in force and ended. */
+  countEnded(scopeKeys: readonly string[]): number {
+    return this.row<{ n: number }>(
+      `SELECT count(*) AS n FROM decisions
+         WHERE state IN ('superseded', 'expired', 'withdrawn') AND scope_key IN (SELECT value FROM json_each(?))`,
+      JSON.stringify(scopeKeys),
+    )!.n;
+  }
+
   /** Decisions in force in a scope on other topics that share a word with `words`: the ones a new topic may repeat. */
   nearby(scopeKey: string, words: string, topic: string, limit: number): Decision[] {
     return this.decisions(

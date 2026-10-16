@@ -128,7 +128,7 @@ test("a daemon that only downloaded the plugin: nothing is created, a room seat 
   await assert.rejects(createPeer(), /no room is set up on this daemon.*the Seatwork screen/);
   const own = { config: { provider: "claude", cwd: PROJECT }, env: {} };
   assert.deepEqual(await call("before agent.create", { request: own }), own, "an agent that is not a room seat");
-  assert.deepEqual(await call("rpc room.waiting", {}, context), { chime: false, waiting: [] });
+  assert.deepEqual(await call("rpc room.waiting", {}, context), { chime: false, waiting: [], codes: [], seats: [] });
   assert.deepEqual(await call("rpc room.status", {}, context), { waiting: [], projects: [] });
 
   const screen = await state();

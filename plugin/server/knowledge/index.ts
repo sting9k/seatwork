@@ -10,7 +10,7 @@ import { PairBook } from "./pairs";
 import { KnowledgeRefused } from "./refused";
 import { isoTime } from "./lint";
 import { ftsQueries, fuse, pack, QUERY_CHARS } from "./search";
-import { KnowledgeStore, type Filters, type Found, type Source, type SourceWords } from "./store";
+import { KnowledgeStore, type Decision, type Filters, type Found, type Source, type SourceWords } from "./store";
 
 /** The Knowledge district: the room's record of turns and mail, and its decisions, for seats to search and be told. */
 
@@ -76,6 +76,7 @@ const ADDRESS_CHARS = 500;
 const COMMAND = /^\/[\w:-]+(\s|$)/;
 const TELLING_MS = 30_000;
 const SUCCESSOR_CHARS = 2500;
+const DECISIONS_SHOWN = 100;
 
 /** A found entry as a seat reads it: where it is, when, whose, and the words. */
 function shown(found: Found, text: string) {
@@ -244,6 +245,24 @@ export class Knowledge {
   private existing(root: string | null): KnowledgeStore | null {
     const dir = this.dirOf(root);
     return this.stores.has(dir) || existsSync(join(dir, "knowledge.db")) ? this.storeOf(root) : null;
+  }
+
+  /** The decisions the app shows for a folder: its project's and the room's in force, those whose turn has not ended, how many ended, and those too when asked. */
+  decisionsAt(
+    folder: string,
+    ended: boolean,
+  ): { project: string | null; inForce: Decision[]; pending: Decision[]; ended: number; endedList: Decision[] } {
+    const project = this.deps.rootOf(folder);
+    const scopes = project ? [`project:${project}`, "room"] : ["room"];
+    const book = this.existing(null);
+    if (!book) return { project, inForce: [], pending: [], ended: 0, endedList: [] };
+    return {
+      project,
+      inForce: book.activeIn(scopes).slice(0, DECISIONS_SHOWN),
+      pending: book.pendingIn(scopes, DECISIONS_SHOWN),
+      ended: book.countEnded(scopes),
+      endedList: ended ? book.endedIn(scopes, DECISIONS_SHOWN) : [],
+    };
   }
 
   /** A turn began: its start time is the time of the words that opened it. */

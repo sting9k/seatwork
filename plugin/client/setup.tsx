@@ -37,6 +37,7 @@ import {
   type Colors,
   type Inside,
 } from "./kit";
+import { JevCard } from "./jev";
 import { ModelChip, RoleTree, type Harness } from "./models";
 
 type State = RpcOutput<typeof setupState>;
@@ -658,6 +659,8 @@ function RoomSetup({
 
   const rail = (
     <>
+      {applied ? <JevCard colors={c} /> : null}
+
       <Card colors={c} style={{ ...RAIL, flexDirection: "row", alignItems: "center" }}>
         <Icon name="Bell" size={15} color={c.foreground} />
         <View style={{ flex: 1, gap: 1 }}>

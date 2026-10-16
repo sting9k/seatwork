@@ -2,7 +2,7 @@ import { installRoom, hostOf, MAIL_POLICY, shipSql } from "./support/room";
 import assert from "node:assert/strict";
 import { mock, test } from "node:test";
 import { chime } from "../client/chime";
-import { onWaitingCount, waitingCount, watchWaiting } from "../client/waiting";
+import { watchWaiting } from "../client/waiting";
 import contribute from "../index.server";
 import { MailEngine } from "../server/coordination/engine";
 import { fakeServer } from "./support/server";
@@ -87,7 +87,7 @@ test("the chime is a WAV file whose header agrees with its samples, and it ends 
   assert.ok(Math.abs(file.readInt16LE(file.length - 2)) < 100, "the file ends on a click");
 });
 
-test("the app asks the room once per interval: a chime for a turn that newly waits, none for what waited when it opened, and the count for the sidebar", async () => {
+test("the app asks the room once per interval: a chime for a turn that newly waits, none for what waited when it opened, and each answer to whoever shows it", async () => {
   mock.timers.enable({ apis: ["setInterval"] });
   const answers = [
     { chime: true, waiting: [{ key: "a" }] },
@@ -100,15 +100,15 @@ test("the app asks the room once per interval: a chime for a turn that newly wai
   let sounds = 0;
   const counts: number[] = [];
   const settle = () => new Promise((resolve) => setImmediate(resolve));
-  const off = onWaitingCount((count) => void counts.push(count));
   const stop = watchWaiting(
     async () => answers[asked++],
     async () => void (sounds += 1),
     15_000,
+    (answer) => void counts.push(answer.waiting.length),
   );
   try {
     await settle();
-    assert.deepEqual([asked, sounds, waitingCount()], [1, 0, 1], "what waited when the app opened is not news");
+    assert.deepEqual([asked, sounds, counts.at(-1)], [1, 0, 1], "what waited when the app opened is not news");
     for (const [chimed, count] of [
       [1, 2],
       [1, 1],
@@ -117,23 +117,21 @@ test("the app asks the room once per interval: a chime for a turn that newly wai
     ]) {
       mock.timers.tick(15_000);
       await settle();
-      assert.deepEqual([sounds, waitingCount()], [chimed, count]);
+      assert.deepEqual([sounds, counts.at(-1)], [chimed, count]);
     }
     assert.equal(asked, 5, "one question to the room for each interval");
     assert.deepEqual(counts, [1, 2, 1, 2, 0]);
   } finally {
     stop();
-    off();
     mock.timers.reset();
   }
-  assert.equal(waitingCount(), 0, "a stopped watch leaves no count behind");
 });
 
 test("a question to the room that is still unanswered is not asked again at the next interval", async () => {
   mock.timers.enable({ apis: ["setInterval"] });
   let asked = 0;
   const stop = watchWaiting(
-    () => new Promise(() => void (asked += 1)),
+    () => new Promise<never>(() => void (asked += 1)),
     async () => {},
     15_000,
   );
@@ -147,14 +145,16 @@ test("a question to the room that is still unanswered is not asked again at the 
 });
 
 /** Watches a room that gives one of `answers` at each interval; how many questions were asked and sounds made once all were given. */
-async function watched(answers: { chime: boolean; waiting: { key: string }[] }[]) {
+async function watched(answers: { chime: boolean; waiting: { key: string }[]; codes?: { code: string }[] }[]) {
   mock.timers.enable({ apis: ["setInterval"] });
   let asked = 0;
   let sounds = 0;
+  const told: number[] = [];
   const stop = watchWaiting(
     async () => answers[asked++],
     async () => void (sounds += 1),
     15_000,
+    (answer) => void told.push(answer.waiting.length + (answer.codes?.length ?? 0)),
   );
   try {
     await new Promise((resolve) => setImmediate(resolve));
@@ -162,7 +162,7 @@ async function watched(answers: { chime: boolean; waiting: { key: string }[] }[]
       mock.timers.tick(15_000);
       await new Promise((resolve) => setImmediate(resolve));
     }
-    return { asked, sounds };
+    return { asked, sounds, told };
   } finally {
     stop();
     mock.timers.reset();
@@ -185,4 +185,13 @@ test("the app does not remember every turn that ever waited: a key long gone is 
     { chime: true, waiting: [{ key: "k1" }] },
   ]);
   assert.deepEqual([asked, sounds], [1001, 1000]);
+});
+
+test("a code only the person may grant is news as a waiting turn is: it chimes once", async () => {
+  const { asked, sounds, told } = await watched([
+    { chime: true, waiting: [{ key: "a" }], codes: [] },
+    { chime: true, waiting: [{ key: "a" }], codes: [{ code: "492536" }] },
+    { chime: true, waiting: [{ key: "a" }], codes: [{ code: "492536" }] },
+  ]);
+  assert.deepEqual([asked, sounds, told], [3, 1, [1, 2, 2]]);
 });

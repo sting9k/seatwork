@@ -196,6 +196,7 @@ test("every statement the safety store runs uses an index", async () => {
   await verdictOf(safety, "git reset --hard");
   for (let i = 0; i < 3; i += 1) await verdictOf(safety, `git push --force origin x${i}`);
   safety.waitingUnder("lead", ["peer", "peer2"]);
+  safety.forPerson(50);
   safety.blocksLine("peer");
   const store = safety.store();
   store.noteStart("peer", "/x", "abc");

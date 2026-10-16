@@ -1,7 +1,7 @@
 import { ROOM_HOME, shipSql } from "./support/room";
 import assert from "node:assert/strict";
 import { getEventListeners } from "node:events";
-import { chmodSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, statSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { DatabaseSync } from "node:sqlite";
 import { test } from "node:test";
@@ -267,6 +267,31 @@ test("the district is off without a provider or a key, and stops at the month's 
   await jev.decide("t", "s2", QUESTIONS);
   await assert.rejects(jev.decide("t", "s3", QUESTIONS), { code: "CAP" });
   assert.deepEqual([capped.sent.length, jev.spent().usd], [2, 1.2]);
+  jev.close();
+});
+
+test("a key the person saves is kept for them alone and used by the next call, and a check says how the provider answered", async () => {
+  const replies = provider(
+    json({ error: "bad key" }, 401),
+    json({
+      model: "typesafe/jev-1.13-20260917",
+      answers: { passed: { type: "noul", noul: 0.97 } },
+      usage: { input_tokens: 10 },
+    }),
+  );
+  const { jev, dir } = district(POLICY("openrouter"), replies.fetch, false);
+  assert.equal(jev.keySource(), "none");
+  jev.saveKey("key-old");
+  assert.equal(jev.keySource(), "file");
+  assert.equal(statSync(join(dir, "openrouter.key")).mode & 0o777, 0o600);
+  const refused = await jev.check();
+  assert.deepEqual([refused.ok, refused.ms], [false, null]);
+  assert.match(String(refused.why), /401/);
+  jev.saveKey("key-new");
+  const answered = await jev.check();
+  assert.deepEqual([answered.ok, typeof answered.ms], [true, "number"]);
+  assert.equal(replies.sent[1].headers.Authorization ?? replies.sent[1].headers.authorization, "Bearer key-new");
+  assert.deepEqual(jev.checked(), answered);
   jev.close();
 });
 

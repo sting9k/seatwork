@@ -72,3 +72,33 @@ export const setupProject = defineRpc({
   input: z.object({ name: z.string(), models: modelChoices.nullable() }),
   output: z.object({ own: z.boolean(), seats: z.array(z.string()) }),
 });
+
+const jevCheck = z.object({ at: z.string(), ok: z.boolean(), ms: z.number().nullable(), why: z.string().nullable() });
+
+export const jevState = defineRpc({
+  name: "jev.state",
+  input: z.object({}),
+  output: z.object({
+    provider: z.string().nullable(),
+    model: z.string().nullable(),
+    key: z.enum(["file", "env", "none", "keyless"]),
+    why: z.string().nullable(),
+    calls: z.number(),
+    failed: z.number(),
+    monthUsd: z.number(),
+    capUsd: z.number(),
+    check: jevCheck.nullable(),
+  }),
+});
+
+export const jevKey = defineRpc({
+  name: "jev.key",
+  input: z.object({ key: z.string().min(1).max(512) }),
+  output: jevCheck,
+});
+
+export const jevTry = defineRpc({
+  name: "jev.check",
+  input: z.object({}),
+  output: jevCheck,
+});

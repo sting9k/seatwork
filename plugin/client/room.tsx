@@ -1,13 +1,11 @@
-import type { PluginScreenProps, PluginSidebarItemProps } from "@getpaseo/plugin/client";
+import type { PluginScreenProps } from "@getpaseo/plugin/client";
 import { useRpc } from "@getpaseo/plugin/client";
 import { ScrollView } from "@getpaseo/plugin/client/react-native";
-import { SidebarRow } from "@getpaseo/plugin/client/ui";
 import { useQuery } from "@tanstack/react-query";
 import type { PluginTheme, RpcOutput } from "@getpaseo/plugin";
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { Pressable, Text, View } from "react-native";
 import { roomStatus } from "../shared/room";
-import { onWaitingCount, waitingCount } from "./waiting";
 
 type Room = RpcOutput<typeof roomStatus>;
 
@@ -147,25 +145,5 @@ export function RoomScreen({ theme, layout, navigation }: PluginScreenProps) {
         <Text style={muted}>No seat open: {empty.map((project) => project.name).join(", ")}</Text>
       )}
     </ScrollView>
-  );
-}
-
-/** The sidebar row: it opens the screen, and says how many turns wait on the Owner. */
-export function RoomItem({ theme, currentScreen, openScreen }: PluginSidebarItemProps) {
-  const [count, setCount] = useState(waitingCount());
-  useEffect(() => {
-    setCount(waitingCount());
-    return onWaitingCount(setCount);
-  }, []);
-  return (
-    <SidebarRow
-      icon="Network"
-      label="Room"
-      active={currentScreen?.screenId === "room"}
-      onPress={() => openScreen({ screenId: "room" })}
-      trailing={
-        count > 0 ? <Text style={{ color: theme.colors.statusWarning, fontSize: 12 }}>{count} waiting</Text> : undefined
-      }
-    />
   );
 }

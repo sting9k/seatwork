@@ -151,6 +151,20 @@ test("a message the app takes after its time goes again as it was, alone, and th
   engine.close();
 });
 
+test("mail the app could not say it handed over comes again marked as one the seat may have had, and only that mail", async () => {
+  const dir = mkdtempSync(join(PROJECT, "host-"));
+  const app = new StandInApp(join(dir, "app"));
+  const engine = mailOver(app, dir);
+  app.forget = 1;
+  const lost = await engine.post(note("FYI: lost"));
+  await engine.deliver("seat-a");
+  const [again] = app.received().map((one) => one.text);
+  assert.match(again, new RegExp(`^<mail id="${lost.id}" [^>]*repeat="[^"]*if you handled it, do nothing"`));
+  await engine.post(note("FYI: next"));
+  assert.doesNotMatch(app.received().at(-1)!.text, /repeat=/, "a mail that was never in doubt carries no mark");
+  engine.close();
+});
+
 test("a message the app lost track of goes again under a new id; after a restart the same mail in the same words is read once", async () => {
   const dir = mkdtempSync(join(PROJECT, "host-"));
   const app = new StandInApp(join(dir, "app"));

@@ -915,12 +915,14 @@ export class MailEngine implements Directory {
         await this.host.send(agentId, attempt.text, attempt.interrupt, attempt.id);
       } catch (error) {
         if (opensTurn) this.woke.delete(agentId);
-        store.mark(agentId, attempt.ids, "queued", "delivery-failed");
-        // an app that lost track of the message cannot hand it over once: its mail goes again under a new id
+        // the app lost track of it: it goes again under a new id, still marked sending, so the seat knows it may repeat
         if (/agent_request_(outcome_unknown|key_conflict)/.test(String(error))) {
           this.unsure.delete(agentId);
           this.spent.set(agentId, { made, times: spent?.made === made ? spent.times + 1 : 1 });
-        } else this.unsure.set(agentId, attempt);
+        } else {
+          store.mark(agentId, attempt.ids, "queued", "delivery-failed");
+          this.unsure.set(agentId, attempt);
+        }
         this.log(`mail: delivery to ${agentId} failed: ${errorText(error)}`);
         return;
       }

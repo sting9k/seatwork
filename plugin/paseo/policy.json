@@ -319,7 +319,7 @@
     }
   },
   "jev": {
-    "$comment": "The decision district. provider: jev (TypeSafe direct), openrouter (sent with zdr and no data collection) or custom (an url, a model and a dialect: systemone or openai-decisions). A key is read from keyEnv when set, else from <room home>/jev/<provider>.key. Calls stop at monthlyCapUsd, and a district's calls at its dailyCapUsd share. Only English text is sent. Calls no label holds are kept keepDays; the states they read go with the logs. forks: the room's small choices on mail and work (shared/forks.json) the model may take; a sure answer is acted on, the rest keep the room's own rule.",
+    "$comment": "The decision district. provider: jev (TypeSafe direct), openrouter (sent with zdr and no data collection) or custom (an url, a model and a dialect: systemone, openai-decisions, or openai-chat for a Chat Completions endpoint that gives log probabilities, one call a question). A key is read from keyEnv when set, else from <room home>/jev/<provider>.key. Calls stop at monthlyCapUsd, and a district's calls at its dailyCapUsd share (seats: what seats ask with seatwork_ask_jev). Only English text is sent. Calls no label holds are kept keepDays; the states they read go with the logs. forks: the room's small choices on mail and work (shared/forks.json) the model may take; a sure answer is acted on, the rest keep the room's own rule.",
     "provider": "openrouter",
     "providers": {
       "jev": {
@@ -339,7 +339,7 @@
       "custom": { "url": "", "model": "", "dialect": "systemone", "keyEnv": "", "usdPerMillionInput": 0 }
     },
     "monthlyCapUsd": 10,
-    "dailyCapUsd": { "council": 0.25, "knowledge": 0.1, "forks": 0.25 },
+    "dailyCapUsd": { "council": 0.25, "knowledge": 0.1, "forks": 0.25, "seats": 0.25 },
     "attemptSeconds": 10,
     "retries": 2,
     "keepDays": 90,

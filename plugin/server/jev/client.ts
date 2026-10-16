@@ -1,6 +1,7 @@
 import { redact } from "../redact";
+import { chatReply, chatRequest } from "./chat";
 import { DecisionError, type Questions, type Reply, type State } from "./contract";
-import { replyOf, requestOf, type Dialect, type Wire } from "./dialects";
+import { replyOf, requestOf, type Dialect, type Wire, type WireRequest } from "./dialects";
 
 /** One decision call: a deadline, retries on what may pass, the reply read into the room's shape. */
 
@@ -25,6 +26,7 @@ const RETRIED = (status: number) => status === 408 || status === 429 || status >
 const BACKOFF = { firstMs: 500, maxMs: 5000, jitter: 0.25 };
 const MAX_REPLY_BYTES = 2 * 1024 * 1024;
 const MAX_ERROR_BYTES = 4096;
+const CHAT_AT_ONCE = 8;
 
 /** `Retry-After` in seconds or as a date, and OpenRouter's `retry-after-ms`; null when absent. */
 function retryAfterMs(headers: Headers, now: number): number | null {
@@ -83,7 +85,7 @@ const pause = (ms: number, signal: AbortSignal | undefined) =>
 /** One attempt, its own timer and its own listener on the caller's signal, both gone when it ends. */
 async function attempt(
   send: typeof fetch,
-  request: ReturnType<typeof requestOf>,
+  request: WireRequest,
   limitMs: number,
   caller: AbortSignal | undefined,
 ): Promise<{ response: Response; text: string } | { failed: "timeout" | "network"; error: unknown }> {
@@ -119,21 +121,14 @@ async function attempt(
   }
 }
 
-/** Sends one request, retried with backoff on what may pass within the deadline; the reply is read into the room's shape. */
-export async function call(
-  dialect: Dialect,
-  wire: Wire,
-  state: State,
-  questions: Questions,
-  options: CallOptions,
-): Promise<CallResult> {
+/** Sends one request, retried with backoff on what may pass within the deadline; the reply is read by `read`. */
+async function sent(request: WireRequest, read: (json: unknown) => Reply, options: CallOptions): Promise<CallResult> {
   const send = options.fetch ?? fetch;
   const sleep = options.sleep ?? pause;
   const random = options.random ?? Math.random;
   const caller = options.signal;
   const started = Date.now();
   const deadline = started + options.deadlineMs;
-  const request = requestOf(dialect, wire, state, questions);
   let last = new DecisionError("TIMEOUT", "no time was left for the call");
   let attempts = 0;
   try {
@@ -156,7 +151,7 @@ export async function call(
         } catch {
           throw new DecisionError("CONTRACT", "the reply is no JSON");
         }
-        return { ...replyOf(dialect, questions, json), latencyMs: Date.now() - started, attempts };
+        return { ...read(json), latencyMs: Date.now() - started, attempts };
       } else {
         const status = done.response.status;
         last = new DecisionError(
@@ -179,4 +174,49 @@ export async function call(
     if (error instanceof DecisionError) error.attempts = attempts;
     throw error;
   }
+}
+
+/** One decision: one request on most wires, one request a question on Chat Completions, a few at a time; any that fails fails the decision. */
+export async function call(
+  dialect: Dialect,
+  wire: Wire,
+  state: State,
+  questions: Questions,
+  options: CallOptions,
+): Promise<CallResult> {
+  if (dialect !== "openai-chat")
+    return sent(requestOf(dialect, wire, state, questions), (json) => replyOf(dialect, questions, json), options);
+  const started = Date.now();
+  const stop = new AbortController();
+  const cancel = () => stop.abort();
+  options.signal?.addEventListener("abort", cancel, { once: true });
+  const asked = Object.entries(questions);
+  const parts: CallResult[] = [];
+  try {
+    for (let at = 0; at < asked.length; at += CHAT_AT_ONCE)
+      parts.push(
+        ...(await Promise.all(
+          asked.slice(at, at + CHAT_AT_ONCE).map(([id, question]) =>
+            sent(chatRequest(wire, state, id, question), (json) => chatReply(id, question, json), {
+              ...options,
+              signal: stop.signal,
+            }).catch((error: unknown) => {
+              stop.abort();
+              throw error;
+            }),
+          ),
+        )),
+      );
+  } finally {
+    options.signal?.removeEventListener("abort", cancel);
+  }
+  return {
+    model: parts[0]?.model ?? wire.model,
+    answers: Object.assign({}, ...parts.map((part) => part.answers)),
+    inputTokens: parts.reduce((sum, part) => sum + part.inputTokens, 0),
+    outputTokens: parts.reduce((sum, part) => sum + part.outputTokens, 0),
+    costUsd: null,
+    latencyMs: Date.now() - started,
+    attempts: parts.reduce((sum, part) => sum + part.attempts, 0),
+  };
 }

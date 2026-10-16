@@ -16,7 +16,6 @@ export interface LiveSeat {
   provider: string;
   title: string | null;
   cwd: string;
-  parentId: string | null;
   status: string;
   state: SeatState;
   waiting: boolean;

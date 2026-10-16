@@ -341,9 +341,53 @@ test("every statement of the log, the incidents, the tunes and the traces reads 
   store.close();
 });
 
+test("a measure whose low point keeps rising is told once a window; one that rises and falls back is not", () => {
+  const MB = 1024 * 1024;
+  let minute = 0;
+  // the heap climbs and drops back as it is collected: one low point rises with it, the other stays
+  const heap = () => (minute % 5 === 0 ? 200 : 260) + 2 * minute;
+  const rss = () => (minute % 5 === 0 ? 400 : 550);
+  const vitals = new Vitals(
+    () => [],
+    () => ({ "mail waiting": 3 }),
+    () => ({ heapUsed: heap() * MB, rss: rss() * MB }),
+  );
+  const told: string[] = [];
+  for (minute = 0; minute < 120; minute += 1) told.push(...vitals.minute().map((line) => `${minute} ${line}`));
+  assert.deepEqual(told, [
+    "59 room: room heap MB did not come down in the last 60 minutes: its low point rose from 200 to 290",
+    "119 room: room heap MB did not come down in the last 60 minutes: its low point rose from 320 to 410",
+  ]);
+  assert.ok(
+    told.every((line) => incidentOf(line.replace(/^\d+ /, "")) !== null),
+    "each is trouble the operator hears of",
+  );
+  const trend = vitals.reading().trend as {
+    name: string;
+    now: number;
+    change10: number | null;
+    change60: number | null;
+  }[];
+  assert.deepEqual(
+    trend.find((one) => one.name === "room heap MB"),
+    { name: "room heap MB", now: 498, change10: 20, change60: 120, minutes: 120 },
+  );
+  assert.deepEqual(trend.find((one) => one.name === "mail waiting")?.change60, 0);
+  vitals.close();
+});
+
 test("the vital signs say a store's new slow statements, a large write-ahead log, and an event loop held up", async () => {
   const stats: StoreStat[] = [
-    { name: "the mail store", file: "/m.db", calls: 10, slow: 0, slowestMs: 40, slowest: "SELECT 1", walBytes: 0 },
+    {
+      name: "the mail store",
+      file: "/m.db",
+      calls: 10,
+      slow: 0,
+      slowestMs: 40,
+      slowest: "SELECT 1",
+      walBytes: 0,
+      fileBytes: 0,
+    },
   ];
   const vitals = new Vitals(() => stats);
   assert.deepEqual(

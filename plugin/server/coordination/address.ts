@@ -1,5 +1,6 @@
 import config from "../../shared/mail.json";
 import { note, ROLES, routeOpen } from "../../shared/workflow";
+import type { NextCall } from "../refusal";
 import { seatLabel } from "./envelope";
 
 /** Whom a seat may write to, and which seat a word in `to` names. */
@@ -43,13 +44,14 @@ export type MailErrorCode =
   | "INVALID_ARGUMENT"
   | "STORE_UNAVAILABLE";
 
-/** A refusal a seat can act on: what went wrong, and what a right call looks like. */
+/** A refusal a seat can act on: what went wrong, what a right call looks like, and the call to make instead. */
 export class MailError extends Error {
   readonly retryable: boolean;
   constructor(
     readonly code: MailErrorCode,
     message: string,
     readonly fix?: unknown,
+    readonly next?: NextCall,
   ) {
     super(message);
     this.name = "MailError";

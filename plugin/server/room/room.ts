@@ -569,7 +569,7 @@ function startOperations(policy: RuntimePolicy, operators: ReadonlySet<string>, 
       safety: () => room().safety.councilLines(1).split("\n"),
       seats: () => ({ retrying: room().recovery.due(Number.MAX_SAFE_INTEGER).length }),
     },
-    vitals: new Vitals(),
+    vitals: new Vitals(undefined, () => ({ "mail waiting": room().engine.backlog() })),
     echo: (line) => console.log(`seatwork: ${line}`),
   });
 }

@@ -733,6 +733,11 @@ export class MailEngine implements Directory {
     return mails;
   }
 
+  /** How many deliveries wait to reach their seats across the stores the room's seats use. */
+  backlog(): number {
+    return this.known().reduce((sum, store) => sum + store.backlog(), 0);
+  }
+
   /** How many mails wait for a seat and since when the oldest has, and the reports held for their round with the first one's time; undefined when there are none. A held report is not waiting yet. Reads no body. */
   holding(
     agentId: string,

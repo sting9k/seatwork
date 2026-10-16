@@ -475,6 +475,7 @@ test("a seat's owed asks are counted from the open asks of the project, not from
   ]);
   store.waitingFor("lead", NOW);
   store.owedCount("lead");
+  assert.equal(store.backlog(), 1);
   const planOf = (needle: string) =>
     store
       .plans()
@@ -483,6 +484,10 @@ test("a seat's owed asks are counted from the open asks of the project, not from
       .join(" | ");
   assert.match(planOf("min(m.at) AS since FROM messages m"), /SCAN m USING INDEX messages_owed/);
   assert.doesNotMatch(planOf("min(m.at) AS since FROM messages m"), /deliveries_by_seat/);
+  assert.match(
+    planOf("FROM deliveries INDEXED BY deliveries_by_state WHERE state IN"),
+    /USING COVERING INDEX deliveries_by_state/,
+  );
   assert.match(
     planOf("AS later, min(CASE WHEN d.held_until"),
     /SEARCH d USING INDEX deliveries_by_state \(state=\? AND seat=\?\)/,

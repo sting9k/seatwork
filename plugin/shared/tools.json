@@ -3,7 +3,7 @@
   "tools": {
     "seatwork_mail": {
       "callers": "any",
-      "description": "Mail seats of your room; it is delivered between a recipient's turns and kept in the project's mail store. Answer a mail with `reply_to`. Start a thread with `to`; a seat with no seat under it may leave `to` out and writes to its owner. A body past {{mail_chars}} characters is shown cut, with the path of the file that holds all of it. A CANDIDATE, REVIEW or DONE to your owner is your turn's report: it is delivered when your turn ends, and your final message is not mailed again. `STOP`, to one seat you launched or one below it, ends its running turn and every running turn under it at once, and each reads your text next; use it when the work must not go on. `action` `wake` has the room mail you a WAKE at a set time, which starts your turn though nobody writes: to look at a run again, to read a number later. Give `at` (an ISO time with its zone) or `in_minutes`, and a short `note`; `to` wakes a seat you may mail instead of you. `wakes` lists the wake-ups waiting for you or set by you, `unwake` with `id` cancels one. The room checks for due wake-ups each minute, so one can come a minute late. The answer is JSON; a refusal is {\"error\": {code, message, retryable, fix}}.",
+      "description": "Mail seats of your room; it is delivered between a recipient's turns and kept in the project's mail store. Answer a mail with `reply_to`. Start a thread with `to`; a seat with no seat under it may leave `to` out and writes to its owner. A body past {{mail_chars}} characters is shown cut, with the path of the file that holds all of it. A CANDIDATE, REVIEW or DONE to your owner is your turn's report: it is delivered when your turn ends, and your final message is not mailed again. `STOP`, to one seat you launched or one below it, ends its running turn and every running turn under it at once, and each reads your text next; use it when the work must not go on. `action` `wake` has the room mail you a WAKE at a set time, which starts your turn though nobody writes: to look at a run again, to read a number later. Give `at` (an ISO time with its zone) or `in_minutes`, and a short `note`; `to` wakes a seat you may mail instead of you. `wakes` lists the wake-ups waiting for you or set by you, `unwake` with `id` cancels one. The room checks for due wake-ups each minute, so one can come a minute late. The answer is JSON; a refusal is {\"error\": {code, message, retryable, fix, next}}: `fix` the right arguments, `next` the call to make instead.",
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -290,7 +290,7 @@
     },
     "seatwork_work": {
       "callers": "any",
-      "description": "The project's work store: issues, what each waits for, who holds it. `do` names the one thing a call does. create: one issue, or a whole plan in `issues`, written all or none; each may carry a `key` and name its `parent` and `deps` by another's key; one that looks like an open issue comes back with `duplicate_of` and a note, the two linked as related. ready: open issues nothing holds back (no open blocker, blocked parent or open child), highest priority first. claim: take an issue; refused when another seat holds it or an open blocker of its own waits; the room opens it again, with a comment, if the seat that holds it is gone. blocked_by: a bare id blocks; `:parent-blocked` and `:child-open` only hold back from ready. note: a dated line of progress. depend: `id` waits for `on`. close: with `reason`, once its blockers and children are closed; the seat that holds an issue does not close it, its Owner does. show: an issue with its newest comments and `older_comments`, the count of the rest; comments: the rest, `limit` of them after `skip` of the newest. Also list, update, comment, undepend, reopen. Answers are JSON; a refusal is {\"error\": {code, message, retryable}}.",
+      "description": "The project's work store: issues, what each waits for, who holds it. `do` names the one thing a call does. create: one issue, or a whole plan in `issues`, written all or none; each may carry a `key` and name its `parent` and `deps` by another's key; one that looks like an open issue comes back with `duplicate_of` and a note, the two linked as related. ready: open issues nothing holds back (no open blocker, blocked parent or open child), highest priority first. claim: take an issue; refused when another seat holds it or an open blocker of its own waits; the room opens it again, with a comment, if the seat that holds it is gone. blocked_by: a bare id blocks; `:parent-blocked` and `:child-open` only hold back from ready. note: a dated line of progress. depend: `id` waits for `on`. close: with `reason`, once its blockers and children are closed; the seat that holds an issue does not close it, its Owner does. show: an issue with its newest comments and `older_comments`, the count of the rest; comments: the rest, `limit` of them after `skip` of the newest. Also list, update, comment, undepend, reopen. Answers are JSON; a refusal is {\"error\": {code, message, retryable, fix, next}}: `fix` the right arguments, `next` the call to make instead.",
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -526,7 +526,7 @@
     },
     "seatwork_knowledge": {
       "callers": "any",
-      "description": "The room's record and its decisions; `do` is the action. search: words in `q`, best first; other wordings in `also` find more; narrow by task, agent, kinds, since; you read what you or seats under you saw. view, expand: entries by `address`, in at most 30000 characters; the entries farthest from it are left out, and the answer says which. pack: a task's evidence. decide: a rule a person decided that later work follows, one English `statement` under a `topic`. `scope` room or project: the room's own seat records it, and it takes effect when your turn ends, on the person's words in it, or at once `from` their address. `scope` task: a seat that briefs records it, in force at once for 30 days unless `valid_until` says otherwise. Change: restate with `replaces_version`; withdraw: a `reason`. list: decisions in force for you. Answers are JSON, maybe with `notices`. A refusal is {\"error\": {code, message, retryable}}.",
+      "description": "The room's record and its decisions; `do` is the action. search: words in `q`, best first; other wordings in `also` find more; narrow by task, agent, kinds, since; you read what you or seats under you saw. view, expand: entries by `address`, in at most 30000 characters; the entries farthest from it are left out, and the answer says which. pack: a task's evidence. decide: a rule a person decided that later work follows, one English `statement` under a `topic`. `scope` room or project: the room's own seat records it, and it takes effect when your turn ends, on the person's words in it, or at once `from` their address. `scope` task: a seat that briefs records it, in force at once for 30 days unless `valid_until` says otherwise. Change: restate with `replaces_version`; withdraw: a `reason`. list: decisions in force for you. Answers are JSON, maybe with `notices`. A refusal is {\"error\": {code, message, retryable, fix, next}}: `fix` the right arguments, `next` the call to make instead.",
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -628,6 +628,23 @@
           }
         },
         "required": ["do"]
+      }
+    },
+    "seatwork_ask_jev": {
+      "callers": "any",
+      "description": "Asks the room's decision model typed questions about files or a note, so you need not read them into your context: the room reads the files, the model answers, you get probabilities. Use it for a cheap read whose answer you will act on: does this file still call the old API, which of these modules owns the parser, how complete is this test. Read a file yourself when you will edit or quote it. `questions`: an object by id; each is {type: \"noul\", instructions} for the probability of yes, {type: \"choice\", instructions, criteria: {label: meaning}} to pick one label, or {type: \"score\", instructions, criteria: [lowest, ..., highest]} for 2 to 10 levels. Write each in English, about the state. `state`: your note, 8000 characters at most. `paths`: up to 20 text files of your project, each 256 KB at most, all together 120000 characters; a file outside the project, binary or too large is skipped with why. A call costs a fraction of a cent and comes from a daily share. Answers are JSON {answers, model, read, skipped, usd}; a probability is the model's, not a proof: check what you rest a hand-in on. A refusal is {\"error\": {code, message, retryable}}.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "questions": { "type": "object", "description": "Typed questions by id." },
+          "state": { "type": "string", "description": "What the questions are about, in your words." },
+          "paths": {
+            "type": "array",
+            "items": { "type": "string" },
+            "description": "Files the room reads for the model, relative to your folder or absolute inside your project."
+          }
+        },
+        "required": ["questions"]
       }
     }
   }

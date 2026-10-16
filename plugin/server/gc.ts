@@ -190,9 +190,14 @@ export class Collector {
 
 type Line = Record<string, unknown>;
 
-const LOGS: readonly string[] = ["gc.log", "usage-log.jsonl"];
+const LOGS: readonly string[] = ["gc.log"];
 const SEAT_RECORDS = "registry-log.jsonl";
-const RETIRED: readonly string[] = [join("mail", "log.jsonl"), join("mail", "queue"), join("mail", "reports")];
+const RETIRED: readonly string[] = [
+  join("mail", "log.jsonl"),
+  join("mail", "queue"),
+  join("mail", "reports"),
+  "usage-log.jsonl",
+];
 
 /** Rewrites a log without the lines `keep` refuses, given its parsed lines in order (null where one is not JSON); returns how many went. */
 function trimLog(file: string, keep: (lines: readonly (Line | null)[]) => boolean[]): number {

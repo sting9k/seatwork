@@ -18,7 +18,6 @@ export const REGISTRY_FILE = join(ROOM_HOME, "projects.json");
 export const ROOM_PROJECT_DIR = join(ROOM_HOME, ROOM_PROJECT);
 export const REGISTRY_LOG = join(ROOM_HOME, "registry-log.jsonl");
 export const SEAT_TMP_DIR = join(ROOM_HOME, "tmp");
-export const USAGE_LOG = join(ROOM_HOME, "usage-log.jsonl");
 
 export const PASEO_HOME = process.env.PASEO_HOME?.trim() || join(USER_HOME, ".paseo");
 export const PASEO_SCHEDULES = join(PASEO_HOME, "schedules");

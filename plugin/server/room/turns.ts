@@ -11,7 +11,6 @@ import { FRESH_EYES, ownerNote } from "../orchestration/rounds";
 import { parseSeat } from "../orchestration/seats";
 import { handInLine, handInReturn, type HandIn } from "../safety/handin";
 import { asksOwner, DECIDES, signalOf, subjectSignal } from "../signals";
-import { noteUsage } from "../stats";
 import type { Finding } from "../safety/council/council";
 import { fromRoom, releaseWork, taskOf, type RoomContext } from "./context";
 import { councilLine, councilRead } from "./council";
@@ -372,8 +371,8 @@ export async function turnEnded(room: RoomContext, end: TurnEnd): Promise<void> 
   let kept = eng.takeReport(id);
   const mailed = room.mailedUp.get(id) ?? new Set<string>();
   room.mailedUp.delete(id);
-  const usage = role ? noteUsage(await room.host.seat(id).catch(() => null), role) : null;
-  if (role) room.operations.spent(id, usage?.totalCostUsd);
+  const usage = role ? ((await room.host.seat(id).catch(() => null))?.usage ?? null) : null;
+  if (role) room.operations.spent(id, usage?.totalCostUsd, role, usage?.outputTokens);
   if (usage) {
     const before = room.lastUsage.get(id);
     room.lastUsage.set(id, { ...usage });

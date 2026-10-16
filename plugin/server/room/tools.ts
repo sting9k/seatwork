@@ -10,7 +10,9 @@ import { handoffRequest } from "../orchestration/rotation";
 import { describeSeats, type SeatRow } from "../orchestration/seats-view";
 import { parseSeat } from "../orchestration/seats";
 import { afterWork } from "../orchestration/work-forks";
-import { refusedCaller, roomTool, TOOL_NAMES } from "./tool-table";
+import { enumRefusal, refusedCaller, roomTool, TOOL_NAMES } from "./tool-table";
+import { AskRefused, askJev, retryable } from "../jev/ask";
+import { DecisionError } from "../jev/contract";
 import { SUBJECT_SIGNALS } from "../signals";
 import { unreadScopes, type Plan, type Work } from "../tasks/graph";
 import { graph, work } from "../tasks/tools";
@@ -277,6 +279,23 @@ export function registerTools(room: RoomContext, mcp: McpHttpServer): void {
 
   add("seatwork_safety", (args, me) => safetyTool(room, me, args));
 
+  add("seatwork_ask_jev", async (args, me) => {
+    const seat = engine.seat(me);
+    const root = engine.projectOf(me) ?? seat?.cwd;
+    if (!seat || !root || !seat.cwd)
+      throw new Error(
+        refusal({ code: "BAD_REQUEST", message: "this seat has no folder the room knows", retryable: false }),
+      );
+    try {
+      return JSON.stringify(await askJev(room.jev, `seats.${seat.role}`, args, { root, cwd: seat.cwd }));
+    } catch (error) {
+      if (error instanceof AskRefused) throw new Error(refusal(error));
+      if (error instanceof DecisionError)
+        throw new Error(refusal({ code: error.code, message: error.message, retryable: retryable(error) }));
+      throw error;
+    }
+  });
+
   add("seatwork_seats", async (_args, me) =>
     describeSeats(seatRows(room, me, await room.host.live()), room.rotateAt, Date.now()),
   );
@@ -361,7 +380,11 @@ export function registerTools(room: RoomContext, mcp: McpHttpServer): void {
   for (const name of TOOL_NAMES) {
     const run = handlers.get(name);
     if (!run) throw new Error(`seatwork: shared/tools.json defines ${name}, which the room does not serve`);
-    mcp.register(roomTool(name, vars), run);
+    mcp.register(roomTool(name, vars), async (args, context) => {
+      const wrong = enumRefusal(name, args);
+      if (wrong) throw new Error(wrong);
+      return run(args, context);
+    });
   }
   // a seat is listed the tools its role may call; a session the room does not know yet is listed them all
   mcp.visible = (tool, context) => {

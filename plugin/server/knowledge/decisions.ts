@@ -3,10 +3,13 @@ import { isoTime, lintSentence } from "./lint";
 import type { PairBook } from "./pairs";
 import { parseAddress } from "./record";
 import { KnowledgeRefused } from "./refused";
+import type { NextCall } from "../refusal";
 import { ftsQueries } from "./search";
 import type { Decision, KnowledgeStore, PairChoice, Settled, SourceWords } from "./store";
 
 /** Decisions: what a person with the authority decided, recorded by a seat, settled on the person's words, pushed. */
+
+const IN_FORCE: NextCall = { tool: "seatwork_knowledge", args: { do: "list" } };
 
 const DECISION_LIMITS = {
   statement: 300,
@@ -281,10 +284,12 @@ export class DecisionBook {
           ? `${topic} is in force at version ${current.version}: "${current.statement}". Restate the whole decision and give replaces_version ${current.version}.`
           : `nothing is in force on ${topic}; leave replaces_version out`,
       );
-    if (action === "withdraw" && !current) throw new KnowledgeRefused(`nothing is in force on ${topic} to withdraw`);
+    if (action === "withdraw" && !current)
+      throw new KnowledgeRefused(`nothing is in force on ${topic} to withdraw`, IN_FORCE);
     if (action === "decide" && !current && book.countActive(key) >= DECISION_LIMITS.inForce)
       throw new KnowledgeRefused(
         `${DECISION_LIMITS.inForce} decisions are in force for the ${scopeLabel(key)}, the most one scope holds: replace or withdraw one first`,
+        IN_FORCE,
       );
     if (action === "decide" && !current && args.new_topic !== true) {
       const words = topic

@@ -926,6 +926,19 @@ test("the reviewers a Lead launched in one turn report together: the Lead is wok
   assert.equal(lead.inbox.length, 2);
 });
 
+test("a seat asks the decision model through seatwork_ask_jev, and a model the room cannot reach is a refusal it can read", async () => {
+  const lead = await seat("lead-ask", "claude-lead", null, "[Lead] ask");
+  const peer = await seat("peer-ask", "claude-peer", lead.agent.id, "[Peer] ask");
+  const refused = await peer
+    .call("seatwork_ask_jev", {
+      questions: { done: { type: "noul", instructions: "Is the migration written?" } },
+      state: "the store gained a column",
+    })
+    .catch((error: Error) => JSON.parse(error.message).error);
+  assert.match(refused.code, /^(OFF|NO_KEY)$/);
+  assert.equal(refused.retryable, false);
+});
+
 test("a Supervisor's view of its Lead counts the reports held for the Lead's round, apart from the mail waiting for it", async () => {
   const supervisor = await seat("sup-held", "claude-supervisor", null, "[Supervisor] held");
   const lead = await seat("lead-held", "claude-lead", supervisor.agent.id, "[Lead] held");
@@ -1587,13 +1600,14 @@ test("the work store through the room's tools: a Lead writes a plan, a Peer take
   const other = await seat("peer-work-b", "claude-peer", lead.agent.id, "[Peer] api", project);
   const does = async (who: TestSeat, tool: string, args: Record<string, unknown>) =>
     JSON.parse(await who.call(tool, args));
-  const refused = async (who: TestSeat, args: Record<string, unknown>) =>
+  const refusalOf = async (who: TestSeat, args: Record<string, unknown>) =>
     JSON.parse(
       await who.call("seatwork_work", args).then(
         () => "{}",
         (error: Error) => error.message,
       ),
-    ).error?.code;
+    ).error;
+  const refused = async (who: TestSeat, args: Record<string, unknown>) => (await refusalOf(who, args))?.code;
 
   const made = await does(lead, "seatwork_work", {
     do: "create",
@@ -1613,10 +1627,29 @@ test("the work store through the room's tools: a Lead writes a plan, a Peer take
   assert.equal((await does(peer, "seatwork_work", { do: "claim", id: schema })).assignee, peer.agent.id);
   assert.equal(await refused(other, { do: "claim", id: schema }), "ALREADY_ASSIGNED");
   assert.equal(await refused(other, { do: "claim", id: api }), "BLOCKED");
+  // a refusal names the call to make instead, and a word outside an enum the one it likely meant
+  assert.deepEqual((await refusalOf(other, { do: "claim", id: schema })).next, {
+    tool: "seatwork_work",
+    args: { do: "ready" },
+  });
+  assert.deepEqual((await refusalOf(other, { do: "claim", id: api })).next, {
+    tool: "seatwork_work",
+    args: { do: "show", id: schema },
+  });
+  assert.deepEqual(await refusalOf(other, { do: "Claimm", id: api }), {
+    code: "INVALID_ARGUMENT",
+    message:
+      '`do` is one of create, show, comments, list, ready, claim, update, note, comment, depend, undepend, close, reopen; "Claimm" is none of them',
+    retryable: false,
+    fix: { do: "claim" },
+  });
   await does(peer, "seatwork_work", { do: "note", id: schema, text: "tables written, migration next" });
-  assert.equal(
-    await refused(peer, { do: "close", id: schema, reason: "done in 4f2a91c, npm test 88/88" }),
-    "POLICY_VIOLATION",
+  assert.deepEqual(
+    await refusalOf(peer, { do: "close", id: schema, reason: "done in 4f2a91c, npm test 88/88" }).then((one) => [
+      one.code,
+      one.next,
+    ]),
+    ["POLICY_VIOLATION", { tool: "seatwork_mail", args: { to: "owner" } }],
   );
   assert.equal(await refused(lead, { do: "close", id: schema, reason: "ok" }), "POLICY_VIOLATION");
   const closed = await does(lead, "seatwork_work", {
@@ -1845,7 +1878,12 @@ test("the room's own seat runs the room through its tool; no seat writes the cod
   const refused = await hq
     .call("seatwork_room", { do: "tune", path: "knowledge.keepDays", value: 30 })
     .catch((error: Error) => error.message);
-  assert.match(refused, /read knowledge in this turn first/);
+  assert.deepEqual(JSON.parse(refused).error, {
+    code: "BAD_REQUEST",
+    message: "read knowledge in this turn first",
+    retryable: false,
+    next: { tool: "seatwork_room", args: { do: "knowledge" } },
+  });
   const skill = {
     do: "skill",
     action: "add",

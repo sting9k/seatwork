@@ -3,6 +3,7 @@ import { existsSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import config from "../../shared/work.json";
 import { SQL_DIR } from "../paths";
+import type { NextCall } from "../refusal";
 import { Sqlite, keptOutOfGit, type Param, type Row } from "../sqlite";
 
 /** A project's work store in SQLite: issues, dependencies, comments, an audit trail. */
@@ -111,12 +112,13 @@ export type WorkErrorCode =
   | "MIGRATION_INVALID"
   | "SCHEMA_TOO_NEW";
 
-/** A refusal of the store; `retryable` says the same call may go through a moment later. */
+/** A refusal of the store; `retryable` says the same call may go through a moment later, `next` is the call to make instead. */
 export class WorkError extends Error {
   readonly retryable: boolean;
   constructor(
     readonly code: WorkErrorCode,
     message: string,
+    readonly next?: NextCall,
   ) {
     super(message);
     this.retryable = code === "DATABASE_LOCKED";
@@ -151,6 +153,12 @@ export const CHILD_OPEN = ":child-open";
 
 /** The issue a blocker ref names, without the suffix that says it only holds back. */
 export const refIssue = (ref: string): string => ref.replace(/:(parent-blocked|child-open)$/, "");
+
+const READY: NextCall = { tool: "seatwork_work", args: { do: "ready" } };
+const TO_OWNER: NextCall = { tool: "seatwork_mail", args: { to: "owner" } };
+
+/** The call that reads the issue a blocker reference names. */
+const showOf = (ref: string): NextCall => ({ tool: "seatwork_work", args: { do: "show", id: refIssue(ref) } });
 const HELD = `
 WITH RECURSIVE
   held (id) AS (
@@ -477,7 +485,7 @@ export class WorkStore extends Sqlite {
     if (found.length === 1) return toIssue(found[0]);
     if (found.length > 1)
       throw new WorkError("AMBIGUOUS_ID", `"${id}" fits several issues: ${found.map((one) => one.id).join(", ")}`);
-    throw new WorkError("ISSUE_NOT_FOUND", `no issue ${id}`);
+    throw new WorkError("ISSUE_NOT_FOUND", `no issue ${id}`, { tool: "seatwork_work", args: { do: "list" } });
   }
 
   /** How many issues the store holds. */
@@ -760,6 +768,7 @@ export class WorkStore extends Sqlite {
       throw new WorkError(
         "UPDATE_PRECONDITION_FAILED",
         `${issue.id} is at revision ${issue.revision}, not ${ifRevision}: read it again`,
+        { tool: "seatwork_work", args: { do: "show", id: issue.id } },
       );
     const changes = lease === undefined ? set : { ...set, lease_until: lease };
     const assignments = Object.keys(changes).map((field) => `${field} = ?, `);
@@ -776,13 +785,14 @@ export class WorkStore extends Sqlite {
     return this.write(() => {
       const issue = this.get(id);
       if (issue.status === "closed" || issue.status === "deferred")
-        throw new WorkError("VALIDATION_FAILED", `${issue.id} is ${issue.status}: it cannot be claimed`);
+        throw new WorkError("VALIDATION_FAILED", `${issue.id} is ${issue.status}: it cannot be claimed`, READY);
       if (issue.assignee && issue.assignee !== actor)
-        throw new WorkError("ALREADY_ASSIGNED", `${issue.id} is already assigned to ${issue.assignee}`);
+        throw new WorkError("ALREADY_ASSIGNED", `${issue.id} is already assigned to ${issue.assignee}`, READY);
       if (issue.defer_until && issue.defer_until > this.stamp())
-        throw new WorkError("BLOCKED", `${issue.id} is put off until ${issue.defer_until}`);
+        throw new WorkError("BLOCKED", `${issue.id} is put off until ${issue.defer_until}`, READY);
       const blockers = this.startBlockers(issue.id);
-      if (blockers.length > 0) throw new WorkError("BLOCKED", `${issue.id} waits for ${blockers.join(", ")}`);
+      if (blockers.length > 0)
+        throw new WorkError("BLOCKED", `${issue.id} waits for ${blockers.join(", ")}`, showOf(blockers[0]));
       this.touch(issue, { assignee: actor, status: "in_progress" }, undefined, this.lease(actor));
       if (issue.status !== "in_progress") this.event(issue.id, "status_changed", actor, issue.status, "in_progress");
       if (issue.assignee !== actor) this.event(issue.id, "assignee_changed", actor, issue.assignee, actor);
@@ -804,22 +814,37 @@ export class WorkStore extends Sqlite {
     return this.write(() => {
       const issue = this.get(id);
       if (issue.status === "closed" && patch.status !== undefined)
-        throw new WorkError("VALIDATION_FAILED", `${issue.id} is closed: reopen it first`);
+        throw new WorkError("VALIDATION_FAILED", `${issue.id} is closed: reopen it first`, {
+          tool: "seatwork_work",
+          args: { do: "reopen", id: issue.id },
+        });
       if (patch.assignee !== undefined && patch.assignee !== issue.assignee && !owner) {
         if (patch.assignee !== null)
-          throw new WorkError("VALIDATION_FAILED", "take an issue with claim; only an Owner gives one to another seat");
+          throw new WorkError(
+            "VALIDATION_FAILED",
+            "take an issue with claim; only an Owner gives one to another seat",
+            {
+              tool: "seatwork_work",
+              args: { do: "claim", id: issue.id },
+            },
+          );
         if (issue.assignee && issue.assignee !== actor)
           throw new WorkError(
             "ALREADY_ASSIGNED",
             `${issue.id} is held by ${issue.assignee}: only it or an Owner lets it go`,
+            TO_OWNER,
           );
       }
       if (patch.status === "in_progress" && issue.status !== "in_progress") {
         const blockers = this.startBlockers(issue.id);
-        if (blockers.length > 0) throw new WorkError("BLOCKED", `${issue.id} waits for ${blockers.join(", ")}`);
+        if (blockers.length > 0)
+          throw new WorkError("BLOCKED", `${issue.id} waits for ${blockers.join(", ")}`, showOf(blockers[0]));
       }
       if ((patch as { status?: string }).status === "closed")
-        throw new WorkError("VALIDATION_FAILED", "an issue is closed with close, which asks for its reason");
+        throw new WorkError("VALIDATION_FAILED", "an issue is closed with close, which asks for its reason", {
+          tool: "seatwork_work",
+          args: { do: "close", id: issue.id },
+        });
       if (patch.status !== undefined && !STATUSES.includes(patch.status))
         throw new WorkError("VALIDATION_FAILED", `status is one of ${STATUSES.join(", ")}`);
       if (
@@ -891,10 +916,15 @@ export class WorkStore extends Sqlite {
         throw new WorkError(
           "POLICY_VIOLATION",
           `${issue.id} is yours: the seat that did the work does not close it, its Owner does`,
+          TO_OWNER,
         );
       const blockers = this.closeBlockers(issue.id);
       if (blockers.length > 0 && !force)
-        throw new WorkError("CLOSE_INCOMPLETE", `${issue.id} still waits for ${blockers.join(", ")}`);
+        throw new WorkError(
+          "CLOSE_INCOMPLETE",
+          `${issue.id} still waits for ${blockers.join(", ")}`,
+          showOf(blockers[0]),
+        );
       // what this close may free: the open issues it blocked, and its open parent
       const waiting = this.rows<{ id: string }>(
         `SELECT d.issue_id AS id FROM dependencies d JOIN issues w ON w.id = d.issue_id
@@ -923,7 +953,11 @@ export class WorkStore extends Sqlite {
   reopen(id: string, actor: string): Issue {
     return this.write(() => {
       const issue = this.get(id);
-      if (issue.status !== "closed") throw new WorkError("VALIDATION_FAILED", `${issue.id} is not closed`);
+      if (issue.status !== "closed")
+        throw new WorkError("VALIDATION_FAILED", `${issue.id} is not closed`, {
+          tool: "seatwork_work",
+          args: { do: "show", id: issue.id },
+        });
       this.touch(
         issue,
         { status: "open", closed_at: null, close_reason: null, closed_by: null },

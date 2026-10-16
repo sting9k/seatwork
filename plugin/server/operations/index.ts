@@ -3,6 +3,7 @@ import settings from "../../shared/operations.json";
 import { notEnglish } from "../english";
 import { readJson, writeJson } from "../persisted";
 import { hasSecret } from "../redact";
+import type { NextCall } from "../refusal";
 import { Budget, type MailMore } from "./budget";
 import { districtOf, incidentOf } from "./lines";
 import type { Vitals } from "./vitals";
@@ -40,6 +41,12 @@ export interface OperationsDeps {
 export class OperationsRefused extends Error {
   readonly code = "BAD_REQUEST";
   readonly retryable = false;
+  constructor(
+    message: string,
+    readonly next?: NextCall,
+  ) {
+    super(message);
+  }
 }
 
 /** A policy key the operator may tune: its district, its type, its range, and whether it may only be lowered. A path with `[*]` stands for the keys of every project. */
@@ -433,7 +440,10 @@ export class Operations {
     const id = Number(args.id);
     const incident = Number.isInteger(id) ? this.store.incident(id) : null;
     if (!incident)
-      throw new OperationsRefused(`no incident #${String(args.id)}: seatwork_room do=incidents lists them`);
+      throw new OperationsRefused(`no incident #${String(args.id)}`, {
+        tool: "seatwork_room",
+        args: { do: "incidents" },
+      });
     const note = words(state === "resolved" ? "note (the cause)" : "note", args.note);
     let until: string | null = null;
     if (state === "snoozed") {
@@ -469,7 +479,11 @@ export class Operations {
 
   private openTrace(raw: unknown): Trace {
     const trace = this.store.trace(Number(raw));
-    if (!trace) throw new OperationsRefused(`no trace #${String(raw)}: seatwork_room do=traces lists the open ones`);
+    if (!trace)
+      throw new OperationsRefused(`no trace #${String(raw)} is open`, {
+        tool: "seatwork_room",
+        args: { do: "traces" },
+      });
     if (trace.closedAt) throw new OperationsRefused(`trace #${trace.id} is closed`);
     return trace;
   }
@@ -500,10 +514,17 @@ export class Operations {
   ): { reason: string; evidence: string } {
     const read = this.readThisTurn.get(agent);
     if (!read?.has(`reading:${district}`))
-      throw new OperationsRefused(`read ${district} in this turn first (seatwork_room do=${district})`);
+      throw new OperationsRefused(`read ${district} in this turn first`, {
+        tool: "seatwork_room",
+        args: { do: district },
+      });
     if (withLog && !read.has(`log:${district}`))
       throw new OperationsRefused(
-        `read the log of ${district} in this turn too (seatwork_room do=log district=${district}): a change rests on a reading and the log`,
+        `read the log of ${district} in this turn too: a change rests on a reading and the log`,
+        {
+          tool: "seatwork_room",
+          args: { do: "log", district },
+        },
       );
     return { reason: words("reason", args.reason), evidence: words("evidence", args.evidence) };
   }
@@ -534,7 +555,10 @@ export class Operations {
       );
     const { tunable, project } = found;
     if (project !== undefined && !this.budget.knows(project))
-      throw new OperationsRefused(`no project ${project} in the room: seatwork_room do=budget lists them`);
+      throw new OperationsRefused(`no project ${project} in the room`, {
+        tool: "seatwork_room",
+        args: { do: "budget" },
+      });
     // a project's cap is changed under the key the policy already names its folder by, never beside it
     const key = project === undefined ? null : this.budget.keyOf(project);
     const path = key !== null && key !== project ? asked.replace(`[${project}]`, `[${key}]`) : asked;
@@ -636,9 +660,11 @@ export class Operations {
     this.counting(`the cost of ${seat} was not marked`, () => this.budget.opened(seat));
   }
 
-  /** A turn of a seat ended with the total cost it has so far, when known: it counts for the seat's project, and a project past its cap is held. */
-  spent(seat: string, totalUsd: number | undefined): void {
-    this.counting(`the spend of a turn of ${seat} was not kept`, () => this.budget.spent(seat, totalUsd));
+  /** A turn of a seat of `role` ended with the total cost it has so far and its output tokens, when known: it counts for the seat's project and role, and a project past its cap is held. */
+  spent(seat: string, totalUsd: number | undefined, role?: string, outputTokens?: number): void {
+    this.counting(`the spend of a turn of ${seat} was not kept`, () =>
+      this.budget.spent(seat, totalUsd, role, outputTokens),
+    );
   }
 
   /** Why a seat takes no mail now (its project is past its cap), or null; what cannot be read holds nothing. */

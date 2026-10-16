@@ -45,7 +45,10 @@ export function inbox(engine: MailEngine, me: string, args: InboxArgs, now: numb
   if (id) {
     const message = store?.get(id);
     if (!store || !message || (seenBy && !store.seen(id, seenBy)))
-      throw new MailError("UNKNOWN_MAIL", `no mail #${id} that you may read is in your project`);
+      throw new MailError("UNKNOWN_MAIL", `no mail #${id} that you may read is in your project`, undefined, {
+        tool: "seatwork_inbox",
+        args: { view: "all" },
+      });
     return envelope({ message, from: engine.label(message.sender, me) });
   }
   const view = text(args.view) ?? (text(args.thread) ? "thread" : text(args.q) ? "search" : "new");

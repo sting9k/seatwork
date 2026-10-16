@@ -16,7 +16,7 @@ import { join } from "node:path";
 import { test } from "node:test";
 import { collectFiles, Collector, dropSeatTmp, KEEP_LOG_DAYS, sweepRuntimes } from "../server/gc";
 import { MailEngine } from "../server/coordination/engine";
-import { costLines, roomStats } from "../server/stats";
+import { roomStats } from "../server/stats";
 
 shipSql();
 
@@ -74,7 +74,7 @@ const lines = (file: string) =>
         .map((line) => JSON.parse(line) as { subject?: string; kind: string })
     : [];
 
-test("GC's file sweep clears what the room left longer ago than it keeps logs, and the mail files no version writes any more", () => {
+test("GC's file sweep clears what the room left longer ago than it keeps logs, and the files no version writes any more", () => {
   const mailLog = join(ROOM_HOME, "mail", "log.jsonl");
   const gcLog = join(ROOM_HOME, "gc.log");
   const paseoHome = join(ROOM_HOME, "..", "paseo-of-tidy");
@@ -114,6 +114,7 @@ test("GC's file sweep clears what the room left longer ago than it keeps logs, a
 
   for (const folder of ["queue", "reports"]) mkdirSync(join(ROOM_HOME, "mail", folder), { recursive: true });
   writeFileSync(join(ROOM_HOME, "mail", "adoptions.json"), "{}");
+  writeFileSync(join(ROOM_HOME, "usage-log.jsonl"), `${JSON.stringify({ at: daysAgo(1), agentId: "p1" })}\n`);
   // local skills taken out: kept as long as a folder set aside by Remove
   const removed = join(ROOM_HOME, "skills-local", "removed");
   for (const at of ["20260901-120000", "20261015-120000"])
@@ -126,6 +127,7 @@ test("GC's file sweep clears what the room left longer ago than it keeps logs, a
   const done = collectFiles(ROOM_HOME, [{ dir: paseoHome, prefixes: ["config.json.bak-"], spare: 1 }], NOW);
 
   assert.deepEqual(readdirSync(join(ROOM_HOME, "mail")), ["adoptions.json"], "only what the room still reads is left");
+  assert.equal(existsSync(join(ROOM_HOME, "usage-log.jsonl")), false, "the usage log is the spend ledger's now");
   assert.deepEqual(
     lines(gcLog).map((line) => line.kind),
     ["deleted-heartbeat"],
@@ -137,7 +139,7 @@ test("GC's file sweep clears what the room left longer ago than it keeps logs, a
   ]);
   assert.deepEqual(readdirSync(removed), ["20261015-120000"]);
   assert.deepEqual(readdirSync(controls), ["20261019-120000"]);
-  assert.equal(done.length, 8);
+  assert.equal(done.length, 9);
   assert.deepEqual(
     collectFiles(ROOM_HOME, [{ dir: paseoHome, prefixes: ["config.json.bak-"], spare: 1 }], NOW),
     [],
@@ -199,31 +201,6 @@ test("GC deletes a closed seat's temporary directory once its keep has passed, a
   // aaaaaaaa is closed and past its keep, bbbbbbbb is past it and still open, cccccccc closed a minute short of it
   assert.deepEqual(dropSeatTmp(tmp, ["bbbbbbbb-1111-2222"]), [join(tmp, "aaaaaaaa")]);
   assert.deepEqual(readdirSync(tmp).sort(), ["bbbbbbbb", "cccccccc"]);
-});
-
-test("room stats add up what each seat used, across a seat's reopening", () => {
-  const log = join(ROOM_HOME, "usage-test.jsonl");
-  const line = (agentId: string, role: string, usd: number, out: number) =>
-    JSON.stringify({
-      at: new Date().toISOString(),
-      agentId,
-      role,
-      cwd: "/work/demo",
-      usage: { totalCostUsd: usd, outputTokens: out },
-    });
-  // the first seat's total runs up, then starts again at zero after it was reopened
-  writeFileSync(
-    log,
-    [
-      line("p1", "peer", 1, 1000),
-      line("p1", "peer", 3, 2000),
-      line("p1", "peer", 0.5, 500),
-      line("l1", "lead", 2, 4000),
-    ].join("\n"),
-  );
-  assert.deepEqual(costLines(0, log), [
-    "/work/demo: $5.50 as the agent CLIs report it, 8k output tokens (peer 1 seats $3.50, lead 1 seats $2.00)",
-  ]);
 });
 
 test("GC clears what agent CLIs left in a seat's home once no seat of it is open, and only what the table names", async () => {

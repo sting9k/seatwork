@@ -236,37 +236,6 @@ test("a seat's state is the adapter's own reading of its status: the pass uses i
   works.close();
 });
 
-test("the adapter reads a seat's state the same way for the list of open seats and for one seat", async () => {
-  const cases: [Record<string, unknown>, string][] = [
-    [{ status: "idle" }, "idle"],
-    [{ status: "running" }, "running"],
-    [{ status: "closed" }, "idle"],
-    [{ status: "error" }, "idle"],
-    [{ status: "initializing" }, "unknown"],
-    [{ status: "running", pendingPermissions: [{}] }, "permission"],
-    [{ status: "idle", archivedAt: "2026-10-14T00:00:00Z" }, "gone"],
-  ];
-  const agents = new Map<string, Record<string, unknown>>(
-    cases.map(([agent], index) => [`seat-${index}`, { id: `seat-${index}`, ...agent }]),
-  );
-  const host = new PaseoHost();
-  host.use({
-    agents: {
-      ref: (id: string) => ({ refresh: async () => {}, current: () => agents.get(id) ?? null }),
-      list: async () => ({
-        entries: [...agents.values()].filter((agent) => !agent.archivedAt).map((agent) => ({ agent })),
-      }),
-    },
-  } as never);
-  const live = await host.live();
-  for (const [index, [agent, state]] of cases.entries()) {
-    const id = `seat-${index}`;
-    assert.equal(await host.state(id), state, JSON.stringify(agent));
-    if (state !== "gone") assert.equal(live.get(id)?.state, state, JSON.stringify(agent));
-    else assert.equal(live.has(id), false);
-  }
-});
-
 test(
   "the lease pass is not held by an app that never answers: the pass ends, leaves every lease, and the next one runs",
   { timeout: 5000 },

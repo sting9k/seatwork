@@ -358,8 +358,8 @@ export class OperationsStore extends Sqlite {
     this.run("DELETE FROM spend_seats WHERE seat = ?", seat);
   }
 
-  /** Adds a turn of a seat to a project's day, with the change in the seat's `total` since it was last read (none at its first reading, and a total that fell is a seat resumed); returns the day's sums. */
-  spend(project: string, day: string, seat: string, total: number | null): Sums {
+  /** Adds a turn of a seat to a project's day, and to its `role`'s with the turn's output tokens, with the change in the seat's `total` since it was last read (none at its first reading, and a total that fell is a seat resumed); returns the day's sums. */
+  spend(project: string, day: string, seat: string, total: number | null, role?: string, outTokens?: number): Sums {
     return this.transaction("write", () => {
       let added = 0;
       if (total !== null) {
@@ -373,6 +373,17 @@ export class OperationsStore extends Sqlite {
           this.now().toISOString(),
         );
       }
+      if (role)
+        this.run(
+          `INSERT INTO spend_roles (project, day, role, usd, turns, out_tokens) VALUES (?, ?, ?, ?, 1, ?)
+             ON CONFLICT (project, day, role) DO UPDATE SET usd = usd + excluded.usd, turns = turns + 1,
+               out_tokens = out_tokens + excluded.out_tokens`,
+          project,
+          day,
+          role,
+          added,
+          Math.max(0, Math.round(outTokens ?? 0)),
+        );
       return this.row<Sums>(
         `INSERT INTO spend (project, day, usd, turns) VALUES (?, ?, ?, 1)
            ON CONFLICT (project, day) DO UPDATE SET usd = usd + excluded.usd, turns = turns + 1
@@ -398,6 +409,15 @@ export class OperationsStore extends Sqlite {
       since,
       SPEND_ROWS,
     ).map(({ project, day, usd, turns }) => ({ project, day, usd, turns }));
+  }
+
+  /** What each role's seats spent in each project on one UTC day. */
+  spendByRole(day: string): (Sums & { project: string; role: string; outTokens: number })[] {
+    return this.rows<Sums & { project: string; role: string; outTokens: number }>(
+      "SELECT project, role, usd, turns, out_tokens AS outTokens FROM spend_roles WHERE day = ? LIMIT ?",
+      day,
+      SPEND_ROWS,
+    ).map(({ project, role, usd, turns, outTokens }) => ({ project, role, usd, turns, outTokens }));
   }
 
   /** Whether any day of a project's spend is kept. */
@@ -439,6 +459,7 @@ export class OperationsStore extends Sqlite {
       "write",
       () =>
         this.run("DELETE FROM spend WHERE day < ?", before).changes +
+        this.run("DELETE FROM spend_roles WHERE day < ?", before).changes +
         this.run("DELETE FROM holds WHERE day < ?", before).changes +
         this.run("DELETE FROM spend_seats WHERE at < ?", seatsBefore).changes +
         this.run("DELETE FROM skill_loads WHERE day < ?", before).changes,

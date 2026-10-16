@@ -406,6 +406,13 @@ export class MailStore extends Sqlite {
     return new Map(rows.map((row) => [row.seat, { count: Number(row.n), since: row.since }]));
   }
 
+  /** How many deliveries of the store wait to reach their seats, held ones too. */
+  backlog(): number {
+    return this.row<{ n: number }>(
+      "SELECT count(*) AS n FROM deliveries INDEXED BY deliveries_by_state WHERE state IN ('queued', 'sending')",
+    )!.n;
+  }
+
   /** How many mails wait for one seat and since when the oldest does, and how many are held until a time after `now` and the first such time; undefined when there are none. Reads no body. */
   waitingFor(
     seat: string,

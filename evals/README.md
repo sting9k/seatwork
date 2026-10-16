@@ -1,0 +1,67 @@
+# Evals
+
+Each case opens one seat of a role in a real room and grades its turn. The plugin runs in a process of its own on a stand-in Paseo, with throwaway room and Paseo homes. The seat starts on its agent CLI from exactly what the room's hooks hand Paseo: the system prompt, the launch flags and folders, the environment, and the room's MCP server. It calls the room's real tools, and Paseo's agent tools through `paseo-stub.mjs`, whose `create_agent` goes through the room's own hooks. When the CLI exits, the turn's end goes to the room as Paseo would send it. The run is then graded on:
+- what the seat said;
+- what it called;
+- what the room holds after the turn: its mail, its issues, the agents created;
+- what the project holds: commits, changes and status since the turn began.
+
+## Run
+
+| Command | What it does | Costs |
+|---|---|---|
+| `node evals/run.cjs --list` | the runs a label would make | nothing |
+| `node evals/run.cjs --harness script --label check` | every case's right turn, scripted, against the real room | nothing |
+| `node evals/run.cjs --harness wrong --label wrong` | every case's wrong turn: each must come out `caught` | nothing |
+| `node evals/run.cjs --dry --label start` | every seat started whole on its CLI, its model calls sent to a port nothing answers: its prompt, tools, MCP servers and skills, each `started` | nothing |
+| `node evals/run.cjs --spend --label <name>` | the seats on their agent CLIs | model calls; only on the owner's word |
+| `node evals/run.cjs --regrade <name>` | a label's saved outcomes graded again | nothing |
+
+Options for a spending run:
+- `--harness claude|codex` keeps one agent CLI;
+- `--tiers default,cheap` sets the Peer tiers from `room/models.json`;
+- `--effort high` sets every seat's thinking;
+- `--only <regex>` picks cases;
+- `--jobs 2`, `--budget 4` (dollars a run, Claude), `--timeout 20` (minutes).
+
+A run without `--spend` on a real CLI is refused.
+
+Results land in `evals/results/<label>/`, which git ignores: `report.md`, `summary.json`, and one folder per run. A run's folder holds:
+- `system-prompt.md` and `prompt.md`;
+- `events.jsonl` or `script.jsonl`;
+- `paseo.jsonl`;
+- `final.md`;
+- `outcome.json`, with the grades and the room and project after the turn.
+
+A seat sees only paths under the system's temporary folder named after nothing (`sw-<hash>/<hash>`). A path that names "evals" or the case tells a seat it is graded.
+
+## A case
+
+Cases live in `cases.cjs`. A case has:
+- `role` and `title`, and `owner`: the fixture seat it reports to;
+- `rule`: the line of a role page or spec it guards;
+- `files`: the project, committed as its base, and `uncommitted`: what lies on top;
+- `arrange` and `before`: the seats and the state set before the seat opens and after;
+- `prompt`: text, or `ctx.delivered()` for the mail the room handed the seat;
+- `grades`: built with `g` from `graders.cjs`;
+- `script`: the turn a right answer takes, and `wrong`: one that breaks the rule;
+- `writes`: true for a seat that may edit; it then runs in the real seat's permission mode, and every other case is held to reading.
+
+Add a case when a rule of a role page, spec or skill has no run that would catch its loss.
+
+## Before a number is trusted
+
+- Its wrong turn is `caught` and its right turn passes, on the scripted harness. That proves the graders, not the prompt.
+- Red first on a model: a new case runs once against the room without its rule (a copy of `plugin/room` with the line removed). A case that passes there cannot fail.
+- Same cases before and after an edit, more than once each: a seat that passes three in four passes three in a row less than half the time.
+- Read a transcript. A pass says the graders were satisfied. Open `final.md` and the calls of a few runs before believing the number.
+- Check the variant: grep a run's `system-prompt.md` for a sentence only the variant has before reporting an A/B.
+
+What a run leaves out against a real seat:
+- the seat's later turns: one turn is graded;
+- Paseo's permission flow;
+- other seats acting: fixture seats only hold state.
+
+A Claude seat runs with a Claude folder of the run's own and the login Paseo gives its seats (`CLAUDE_CODE_OAUTH_TOKEN`, from the environment or Paseo's `claude` provider); the user's `~/.claude` is not touched. A dry run's Codex seat talks to a provider of its own on the dead port, and Codex's events show no MCP servers, so `--dry` proves less for Codex than for Claude.
+
+Codex runs on the room's runtime home for its role. Its sandbox is `workspace-write` for a case that writes and `read-only` otherwise, where a real seat runs with full access.

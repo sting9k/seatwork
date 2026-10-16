@@ -207,6 +207,7 @@ export function work(store: WorkStore, policy: WorkPolicy, caller: Caller, args:
         throw new WorkError(
           "POLICY_VIOLATION",
           "closing is your Owner's: report CANDIDATE or DONE, and it closes the issue",
+          { tool: "seatwork_mail", args: { to: "owner" } },
         );
       const closed = store.closeIssue(need(args, "id"), need(args, "reason"), actor, policy.close, args.force === true);
       return {

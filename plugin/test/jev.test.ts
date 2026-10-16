@@ -677,3 +677,115 @@ test("the same question about the same state is answered from memory for ten min
   );
   jev.close();
 });
+
+/** A Chat Completions endpoint that answers each question from the tokens `tops` gives for its user message. */
+function chatEndpoint(tops: (asked: string) => { token: string; p: number }[] | null) {
+  const sent: Record<string, unknown>[] = [];
+  const send = (async (_url: string, init: RequestInit) => {
+    const body = JSON.parse(String(init.body)) as { messages: { content: string }[] };
+    sent.push(body);
+    const top = tops(body.messages[1].content);
+    return json({
+      model: "qwen-chat",
+      choices: [
+        {
+          logprobs: top && {
+            content: [{ top_logprobs: top.map(({ token, p }) => ({ token, logprob: Math.log(p) })) }],
+          },
+        },
+      ],
+      usage: { prompt_tokens: 120, completion_tokens: 1 },
+    });
+  }) as typeof globalThis.fetch;
+  return { fetch: send, sent };
+}
+
+test("a Chat Completions endpoint is asked one question a call for one token, and each answer is read from that token's weights", async () => {
+  const questions: Questions = {
+    passed: { type: "noul", instructions: "Did the tests pass?" },
+    kind: {
+      type: "choice",
+      instructions: "What kind of change?",
+      criteria: { fix: "a repair", feature: null, docs: "words only" },
+    },
+    sure: { type: "score", instructions: "How sure?", criteria: ["unsure", "fairly", "certain"] },
+  };
+  const endpoint = chatEndpoint((asked) =>
+    asked.includes("Did the tests pass?")
+      ? [
+          { token: "yes", p: 0.7 },
+          { token: " Yes", p: 0.1 },
+          { token: "no", p: 0.15 },
+          { token: "maybe", p: 0.05 },
+        ]
+      : asked.includes("What kind")
+        ? [
+            { token: "B", p: 0.6 },
+            { token: " b", p: 0.1 },
+            { token: "A", p: 0.2 },
+            { token: "The", p: 0.1 },
+          ]
+        : [
+            { token: "2", p: 0.5 },
+            { token: "1", p: 0.4 },
+            { token: "x", p: 0.1 },
+          ],
+  );
+  const reply = await call(
+    "openai-chat",
+    { url: "http://127.0.0.1:8000/v1/chat/completions", model: "qwen-chat" },
+    "the suite ran",
+    questions,
+    {
+      attemptMs: 1000,
+      retries: 0,
+      deadlineMs: 2000,
+      fetch: endpoint.fetch,
+    },
+  );
+  assert.equal(endpoint.sent.length, 3, "one call a question");
+  for (const body of endpoint.sent)
+    assert.deepEqual([body.temperature, body.max_tokens, body.logprobs, body.top_logprobs], [0, 1, true, 20]);
+  assert.match(
+    String((endpoint.sent[1].messages as { content: string }[])[1].content),
+    /A: fix \(a repair\)\nB: feature\nC: docs \(words only\)\nAnswer with one of: A, B, C\./,
+  );
+  const near = (value: number, expected: number) =>
+    assert.ok(Math.abs(value - expected) < 1e-4, `${value} is not ${expected}`);
+  const { passed, kind, sure } = reply.answers as Record<string, any>;
+  near(passed.noul, 0.8 / 0.95);
+  assert.equal(kind.choice, "feature", "the variants of one letter are one answer");
+  near(kind.probabilities.feature, 0.7 / 0.9);
+  near(kind.probabilities.fix, 0.2 / 0.9);
+  near(sure.score, (0.4 + 2 * 0.5) / 0.9);
+  assert.deepEqual(sure.legend, { "0": "unsure", "1": "fairly", "2": "certain" });
+  assert.deepEqual([reply.model, reply.inputTokens, reply.costUsd], ["qwen-chat", 360, null]);
+});
+
+test("a Chat Completions answer is refused when the endpoint gives no log probabilities, when the model's weight lies elsewhere, or for more labels than letters", async () => {
+  const one: Questions = { passed: { type: "noul", instructions: "Did the tests pass?" } };
+  const wire = { url: "http://127.0.0.1:8000/v1/chat/completions", model: "qwen-chat" };
+  const options = { attemptMs: 1000, retries: 0, deadlineMs: 2000 };
+  await assert.rejects(call("openai-chat", wire, "s", one, { ...options, fetch: chatEndpoint(() => null).fetch }), {
+    code: "CONTRACT",
+    message: /no log probabilities/,
+  });
+  const elsewhere = chatEndpoint(() => [
+    { token: "The", p: 0.7 },
+    { token: "yes", p: 0.2 },
+  ]);
+  await assert.rejects(call("openai-chat", wire, "s", one, { ...options, fetch: elsewhere.fetch }), {
+    code: "CONTRACT",
+    message: /put 0.20 of its weight on the answers asked/,
+  });
+  const many: Questions = {
+    pick: {
+      type: "choice",
+      instructions: "Which?",
+      criteria: Object.fromEntries(Array.from({ length: 27 }, (_, i) => [`l${i}`, null])),
+    },
+  };
+  await assert.rejects(call("openai-chat", wire, "s", many, { ...options, fetch: elsewhere.fetch }), {
+    code: "INVALID",
+  });
+});

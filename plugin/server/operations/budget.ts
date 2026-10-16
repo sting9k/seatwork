@@ -154,13 +154,14 @@ export class Budget {
     this.deps.store.dropSeat(seat);
   }
 
-  /** A turn of a seat ended with its total cost so far, when known: it counts for the seat's project, and a project past its cap is held. */
-  spent(seat: string, total: number | undefined): void {
+  /** A turn of a seat of `role` ended with its total cost so far and its output tokens, when known: it counts for the seat's project and role, and a project past its cap is held. */
+  spent(seat: string, total: number | undefined, role?: string, outTokens?: number): void {
     const project = this.deps.projectOf(seat) ?? "";
     const day = this.day();
     const today = this.today(day);
     const known = typeof total === "number" && Number.isFinite(total) && total >= 0 ? total : null;
-    const sums = this.deps.store.spend(project, day, seat, known);
+    const out = typeof outTokens === "number" && Number.isFinite(outTokens) ? outTokens : undefined;
+    const sums = this.deps.store.spend(project, day, seat, known, role, out);
     today.set(project, sums);
     this.review(project, sums, day);
   }
@@ -235,10 +236,16 @@ export class Budget {
     this.deps.store.toldHold(hold.project);
   }
 
-  /** The reading: today's sums and the last days of each project that spent, ranked by today's dollars, with its cap and the projects held. */
+  /** The reading: today's sums of each project that spent, in all and by role, its last days, ranked by today's dollars, with its cap and the projects held. */
   reading(): Record<string, unknown> {
     const day = this.day();
     const today = this.today(day);
+    const roles = new Map<string, Record<string, { usd: number; turns: number; outputTokens: number }>>();
+    for (const row of this.deps.store.spendByRole(day))
+      roles.set(row.project, {
+        ...roles.get(row.project),
+        [row.role]: { usd: rounded(row.usd), turns: row.turns, outputTokens: row.outTokens },
+      });
     const days = new Map<string, { day: string; usd: number; turns: number }[]>();
     for (const row of this.deps.store.spendFrom(shiftDay(day, 1 - settings.spendRecentDays))) {
       const rows = days.get(row.project) ?? [];
@@ -256,6 +263,7 @@ export class Budget {
         return {
           project: project || NO_PROJECT,
           today: { usd: rounded(now?.usd ?? 0), turns: now?.turns ?? 0 },
+          ...(roles.has(project) ? { byRole: roles.get(project) } : {}),
           cap,
           recent: (days.get(project) ?? [])
             .filter((row) => row.day !== day)

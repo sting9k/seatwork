@@ -11,9 +11,9 @@ import {
 
 /** How each provider's wire is spoken: the request it takes and the reply it gives. */
 
-/** The wires providers speak: System One, OpenRouter's route to it, and OpenAI's Decisions. */
-export type Dialect = "systemone" | "openrouter" | "openai-decisions";
-export const DIALECTS: readonly Dialect[] = ["systemone", "openrouter", "openai-decisions"];
+/** The wires providers speak: System One, OpenRouter's route to it, OpenAI's Decisions, and Chat Completions read by log probabilities. */
+export type Dialect = "systemone" | "openrouter" | "openai-decisions" | "openai-chat";
+export const DIALECTS: readonly Dialect[] = ["systemone", "openrouter", "openai-decisions", "openai-chat"];
 
 /** Where a provider is and how to reach it. */
 export interface Wire {
@@ -78,6 +78,8 @@ function fromOpenAi(answers: unknown): Record<string, unknown> {
 
 /** The request a provider's wire takes for a state and its questions. */
 export function requestOf(dialect: Dialect, wire: Wire, state: State, questions: Questions): WireRequest {
+  if (dialect === "openai-chat")
+    throw new DecisionError("INVALID", "a Chat Completions wire is asked one question a call: chatRequest");
   const headers: Record<string, string> = { "Content-Type": "application/json", Accept: "application/json" };
   if (wire.key) headers.Authorization = `Bearer ${wire.key}`;
   const body =

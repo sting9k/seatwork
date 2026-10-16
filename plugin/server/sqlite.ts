@@ -11,7 +11,7 @@ export type Param = string | number | null;
 
 export type SqliteFailure = "DATABASE_LOCKED" | "SCHEMA_TOO_NEW" | "MIGRATION_INVALID";
 
-/** How one open store has done: its statements, the slow ones and the slowest, and its write-ahead log on disk. */
+/** How one open store has done: its statements, the slow ones and the slowest, and the size of its write-ahead log and its file on disk. */
 export interface StoreStat {
   name: string;
   file: string;
@@ -20,6 +20,7 @@ export interface StoreStat {
   slowestMs: number;
   slowest: string;
   walBytes: number;
+  fileBytes: number;
 }
 
 const SLOW_MS = 100;
@@ -122,14 +123,25 @@ export class Sqlite {
 
   /** How this store has done since it opened. */
   stat(): StoreStat {
-    let walBytes = 0;
-    try {
-      walBytes = statSync(`${this.file}-wal`).size;
-    } catch {
-      // no write-ahead log on disk: nothing waits to be checkpointed
-    }
+    const size = (file: string) => {
+      try {
+        return statSync(file).size;
+      } catch {
+        // no such file on disk: nothing is kept there
+        return 0;
+      }
+    };
     const { calls, slow, slowestMs, slowest } = this;
-    return { name: this.options.name, file: this.file, calls, slow, slowestMs, slowest, walBytes };
+    return {
+      name: this.options.name,
+      file: this.file,
+      calls,
+      slow,
+      slowestMs,
+      slowest,
+      walBytes: size(`${this.file}-wal`),
+      fileBytes: size(this.file),
+    };
   }
 
   /** Runs one statement or lock, counted, and kept as the slowest when it is; a write stalls the whole process while it waits. */

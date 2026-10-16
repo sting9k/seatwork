@@ -3,7 +3,7 @@ import mailConfig from "../../shared/mail.json";
 import { isAbsolute, join } from "node:path";
 import { note, owns } from "../../shared/workflow";
 import { exactSeat, MailError, namesTeam, reachable, resolve, shown } from "../coordination/address";
-import { refusal } from "../refusal";
+import { refusal, type NextCall } from "../refusal";
 import type { Mail, MailEngine, NewMail, Needs, SeatRecord } from "../coordination/engine";
 import { inbox } from "../coordination/reader";
 import { MailStoreError } from "../coordination/store";
@@ -19,6 +19,9 @@ import { tierUpNote } from "./launch";
 const INFORMS = new Set(["FYI", "HANDOFF"]);
 const MOST_THREAD_CHARS = 255;
 const WAKEUPS_SHOWN = 50;
+
+const INBOX: NextCall = { tool: "seatwork_inbox", args: { view: "all" } };
+const WAKES: NextCall = { tool: "seatwork_mail", args: { action: "wakes" } };
 
 /** A mail tool's refusal as JSON a seat can act on. */
 export function refused(room: RoomContext, seat: string | null, error: unknown): Error {
@@ -110,11 +113,19 @@ async function addressed(
     throw new MailError("INVALID_ARGUMENT", `\`thread\` is ${thread.length} characters; ${MOST_THREAD_CHARS} at most`);
   if (replyTo) {
     const ref = eng.lookupMail(replyTo, from);
-    if (!ref) throw new MailError("UNKNOWN_MAIL", `no mail #${replyTo} is known; copy the id from the mail you answer`);
+    if (!ref)
+      throw new MailError(
+        "UNKNOWN_MAIL",
+        `no mail #${replyTo} is known; copy the id from the mail you answer`,
+        undefined,
+        INBOX,
+      );
     if (!ref.to.includes(from))
       throw new MailError(
         "NOT_YOUR_MAIL",
         `mail #${replyTo} was not addressed to you; you can only answer your own mail`,
+        undefined,
+        INBOX,
       );
     if (ref.from === "room")
       throw new MailError("NOT_YOUR_MAIL", `#${replyTo} is a notice from the room; nobody waits for an answer`);
@@ -194,6 +205,8 @@ async function wakeUps(room: RoomContext, me: string, action: string, args: Reco
       throw new MailError(
         "UNKNOWN_WAKE",
         `no wake-up #${id} of yours is waiting; \`wakes\` lists them, and one that fired or was canceled is gone`,
+        undefined,
+        WAKES,
       );
     return JSON.stringify({ canceled: wake.id, seat: seenAs(eng, me, wake.seat), was_due: wake.due });
   }
@@ -214,6 +227,8 @@ async function wakeUps(room: RoomContext, me: string, action: string, args: Reco
         : added.full === "setter"
           ? `you already have ${perSetter} wake-ups waiting for ${seat}: ${fix}`
           : `other seats already have ${perSeat} wake-ups waiting for ${seat}; wait for one to fire, or ask a seat to cancel one`,
+      undefined,
+      added.full === "others" ? undefined : WAKES,
     );
   }
   return JSON.stringify({

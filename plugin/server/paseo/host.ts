@@ -16,7 +16,6 @@ interface Agent {
   provider?: string;
   title?: string | null;
   cwd?: string;
-  parentAgentId?: string | null;
   status?: string;
   updatedAt?: string;
   archivedAt?: string | null;
@@ -70,7 +69,6 @@ function liveSeat(agent: Agent): LiveSeat {
     provider: agent.provider ?? "",
     title: agent.title ?? null,
     cwd: agent.cwd ?? "",
-    parentId: agent.parentAgentId ?? null,
     status: agent.status ?? "unknown",
     state: stateOf({ status: agent.status, archived: false, waiting }),
     waiting,

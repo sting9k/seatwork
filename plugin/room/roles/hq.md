@@ -20,6 +20,7 @@ You escalate: a fault in the plugin's code, and any change outside what you may 
 - An incident you know: `ack` (it returns only at twice the rate), `snooze`, or `resolve` with its cause.
 - `policy`: the keys you may tune, their ranges, your last changes.
 - `budget`: you may only lower a cap; the person raises one.
+- `host`: its `trend` gives each measure's change over 10 and 60 minutes; judge by the change, not the level.
 
 ## Tune
 
@@ -30,7 +31,7 @@ Before any key, `hillclimb`. In short:
 
 The room refuses a change without its district's reading and log in the same turn. A key reverted twice needs evidence before `revisit`.
 
-Jev is the room's fast decision model; only code calls it. `jev.sharpAt.<fork>` is the confidence at which a fork acts. Below it, the room keeps its own rule. It is a policy line, not a calibrated probability: move it by the share of acted versus split answers in the `jev` reading's `forksLastWeek`, and only English reaches Jev.
+Jev is the room's fast decision model; the room's code calls it, and seats ask it with `seatwork_ask_jev` from their daily share (`jev.dailyCapUsd.seats`). `jev.sharpAt.<fork>` is the confidence at which a fork acts. Below it, the room keeps its own rule. It is a policy line, not a calibrated probability: move it by the share of acted versus split answers in the `jev` reading's `forksLastWeek`, and only English reaches Jev.
 
 ## Trace
 

@@ -329,6 +329,7 @@ test("held mail goes out only when its time has come: not with other mail, not b
     "held mail is not mail waiting for the seat; it is counted apart, with its time",
   );
   assert.equal(inbox(r.engine, id.lead, {}, r.clock.ms), "inbox empty", "the inbox does not hand it out");
+  assert.equal(r.engine.backlog(), 1, "but it is in the room's backlog");
   assert.deepEqual(r.engine.takeHeld(id.lead, true), []);
 
   await r.engine.post(mail(id.lead, "INSTRUCTION: rebase"));

@@ -122,6 +122,23 @@ test("a project's spend is the change in its seats' totals between turns, per UT
   again.ops.close();
 });
 
+test("a project's spend is kept by role too, with the output tokens of its turns", () => {
+  const { ops, budget } = rig();
+  ops.opened("a1");
+  ops.opened("a2");
+  ops.spent("a1", 1.5, "peer", 1200);
+  ops.spent("a2", 2, "lead", 400);
+  ops.spent("a1", 2, "peer", 800);
+  ops.spent("a2", 2.5);
+  const row = budget().projects.find((one) => one.project === A) as { today: object; byRole?: object };
+  assert.deepEqual(row.today, { usd: 4.5, turns: 4 }, "a turn with no role counts for the project only");
+  assert.deepEqual(row.byRole, {
+    peer: { usd: 2, turns: 2, outputTokens: 2000 },
+    lead: { usd: 2, turns: 1, outputTokens: 400 },
+  });
+  ops.close();
+});
+
 test("the budget reading ranks projects by today's spend and is bounded", () => {
   const { ops, budget, state } = rig();
   state.projects = {
@@ -415,8 +432,9 @@ test("every statement of the spend ledger and the skill loads reads by an index"
   rmSync(dir, { recursive: true, force: true });
   const store = new OperationsStore(dir, 1000);
   store.baseline("s1");
-  store.spend("/p/a", "2026-10-15", "s1", 2);
+  store.spend("/p/a", "2026-10-15", "s1", 2, "peer", 900);
   store.spendOn("2026-10-15");
+  store.spendByRole("2026-10-15");
   store.spendFrom("2026-10-09");
   store.knowsProject("/p/a");
   store.addHold({ project: "/p/a", day: "2026-10-15", since: "2026-10-15T00:00:00.000Z", reason: "r" });
@@ -433,7 +451,7 @@ test("every statement of the spend ledger and the skill loads reads by an index"
   ];
   const scans = store
     .plans()
-    .filter(({ plan }) => /\bSCAN (spend|spend_seats|holds|skill_loads)\b(?! USING)/.test(plan))
+    .filter(({ plan }) => /\bSCAN (spend|spend_seats|spend_roles|holds|skill_loads)\b(?! USING)/.test(plan))
     .filter(({ sql }) => !whole.some((known) => sql.includes(known)));
   assert.deepEqual(scans, []);
   store.close();

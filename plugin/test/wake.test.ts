@@ -261,7 +261,10 @@ test("wakes lists what is pending for the caller and what it set for others; unw
   // a seat that neither set nor holds it is told no such wake-up, as for an id that never was
   assert.equal((await r.call(id.peer, { action: "unwake", id: elsewhere.wake })).code, "UNKNOWN_WAKE");
   assert.equal((await r.call(id.lead, { action: "unwake", id: elsewhere.wake })).code, "UNKNOWN_WAKE");
-  assert.equal((await r.call(id.peer, { action: "unwake", id: 99_999 })).code, "UNKNOWN_WAKE");
+  assert.deepEqual(await r.call(id.peer, { action: "unwake", id: 99_999 }).then(({ code, next }) => ({ code, next })), {
+    code: "UNKNOWN_WAKE",
+    next: { tool: "seatwork_mail", args: { action: "wakes" } },
+  });
   assert.equal((await r.call(id.peer, { action: "unwake", id: set.wake })).canceled, set.wake, "the seat it wakes");
   assert.equal((await r.call(id.lead, { action: "unwake", id: `#${set.wake}` })).code, "UNKNOWN_WAKE", "once");
   const second = await r.call(id.lead, { action: "wake", to: id.peer, in_minutes: 20, note: "again" });

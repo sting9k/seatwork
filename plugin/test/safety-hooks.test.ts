@@ -6,7 +6,7 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { test } from "node:test";
 import { McpHttpServer } from "../server/mcp-http";
-import { claudePlugin, codexHooks, GATE_ENV, openCodePlugin, piExtension } from "../server/safety/hooks";
+import { claudePlugin, codexHooks, GATE_ENV, openCodePlugin, piExtension, SKILLS_ENV } from "../server/safety/hooks";
 
 const DIR = join(ROOM_HOME, "hooks-test");
 mkdirSync(DIR, { recursive: true });
@@ -200,4 +200,29 @@ test("the room's server reads a letter split between two chunks whole, and a cli
   process.off("unhandledRejection", note);
   assert.deepEqual(unhandled, []);
   await live.close();
+});
+
+test("after a compaction a Claude seat is told its skills again, each with its description, from its own folder", () => {
+  const [entry] = JSON.parse(claudePlugin()["hooks/hooks.json"]).hooks.SessionStart;
+  assert.equal(entry.matcher, "compact");
+  const dir = join(ROOM_HOME, "compact-skills");
+  for (const [name, about] of [
+    ["lenses", '"Ask read-only Peers on different families."'],
+    ["seat-law", "How to judge a breach of the law."],
+  ]) {
+    mkdirSync(join(dir, name), { recursive: true });
+    writeFileSync(join(dir, name, "SKILL.md"), `---\nname: ${name}\ndescription: ${about}\n---\nBody.\n`);
+  }
+  const run = (env: Record<string, string>) =>
+    spawnSync(entry.hooks[0].command, entry.hooks[0].args, {
+      encoding: "utf8",
+      env: { PATH: process.env.PATH, ...env },
+    });
+  const told = run({ [SKILLS_ENV]: dir });
+  assert.equal(told.status, 0);
+  assert.equal(
+    told.stdout,
+    "After the compaction, your skills, each loaded by the Skill tool when its moment comes:\n- lenses: Ask read-only Peers on different families.\n- seat-law: How to judge a breach of the law.\n",
+  );
+  assert.deepEqual([run({}).status, run({}).stdout], [0, ""], "a session the room did not start is told nothing");
 });

@@ -59,7 +59,7 @@ async function open(id: string, provider: string, title: string, cwd: string) {
 test("with its own seat alone the room starts, the seat runs it, records the room's decisions, and lists projects", async () => {
   const hq = await open("hq-alone", "claude-hq", "HQ", join(ROOM_HOME, "hq-seatwork"));
   const health = JSON.parse(await hq.tool("seatwork_room", { do: "health" }));
-  assert.deepEqual(health.readings, ["jev", "knowledge", "mail", "safety", "seats", "host", "budget"]);
+  assert.deepEqual(health.readings, ["jev", "knowledge", "skills", "mail", "safety", "seats", "host", "budget"]);
   for (const reading of health.readings) assert.ok(JSON.parse(await hq.tool("seatwork_room", { do: reading })));
   await call("on agent.turn_started", { agent: hq.agent, turnId: "t1" }, context);
   const decided = JSON.parse(

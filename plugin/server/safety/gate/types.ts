@@ -24,7 +24,7 @@ export interface Doubt {
   text: string;
 }
 
-/** The machine around a command: the seat's own temp folder, where its agent began it, the room's own files no seat writes (save `except`), and the room's folder in each project. */
+/** The machine around a command: the seat's own temp folder, where its agent began it, the room's own files no seat writes (save `except`), the room's folder in each project, and the app's listen address. */
 export interface Place {
   home: string;
   project: string | null;
@@ -32,6 +32,7 @@ export interface Place {
   start: string | null;
   guard: { paths: string[]; except: string[] } | null;
   roomFolder: string | null;
+  daemon?: string | null;
 }
 
 /** A shell variable the walk knows; `temp` when its value came from `mktemp`. */

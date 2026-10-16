@@ -291,6 +291,56 @@ test("the log keeps its days and its size; incidents not seen within the days an
   store.close();
 });
 
+test("every statement of the log, the incidents, the tunes and the traces reads by an index, but the two named here with their reason", () => {
+  const dir = join(ROOM_HOME, "operations-plans");
+  rmSync(dir, { recursive: true, force: true });
+  const store = new OperationsStore(dir, 1000);
+  store.record("mail", "mail: delivery to x failed", "mail|x");
+  store.record("gc", "gc: deleted 1", null);
+  store.lines({ district: "mail", since: "2026-10-01", words: "failed" }, 5);
+  store.lines({ since: "2026-10-01" }, 5);
+  store.incident(1);
+  store.incidents("2026-10-01", 10);
+  store.untold("2026-10-16T09:00:00.000Z", 10);
+  store.told([1]);
+  store.setState(1, "acknowledged", "seen");
+  store.unasked(5);
+  store.setKinds([[1, "code"]]);
+  const trace = store.openTrace("hq-1", 1, "The store is locked by a long write.");
+  store.addNote(trace.id, "evidence", "the lock lasts five seconds");
+  const tune = store.addTune({
+    seat: "hq-1",
+    path: "room.work.busyTimeoutMs",
+    before: "5000",
+    after: "8000",
+    reason: "locked writes",
+    evidence: "five-second locks",
+    baseline: "{}",
+    trace: trace.id,
+    reverts: null,
+  });
+  store.tune(tune.id);
+  store.tunes(10);
+  store.standing("2026-10-01");
+  store.revertsOf("room.work.busyTimeoutMs", "2026-10-01");
+  store.trace(trace.id);
+  store.openTraces();
+  store.closeTrace(trace.id, "the timeout was raised");
+  store.expire(new Date("2026-10-01T00:00:00.000Z"), 5, new Date("2026-10-01T00:00:00.000Z"));
+  // newest first to their limit: the log of all districts, and the tunes
+  const whole = [
+    "SELECT at, district, line FROM log WHERE at >=",
+    "SELECT id, at, seat, path, before, after, reason, evidence, baseline, trace, reverts FROM tunes ORDER BY id DESC",
+  ];
+  const scans = store
+    .plans()
+    .map(({ sql, plan }) => ({ sql: sql.replace(/\s+/g, " ").trim(), plan }))
+    .filter(({ plan }) => /\bSCAN (log|incidents|i|tunes|t|traces|trace_notes)\b(?! USING)/.test(plan))
+    .filter(({ sql }) => !whole.some((known) => sql.startsWith(known)));
+  assert.deepEqual(scans, []);
+  store.close();
+});
+
 test("the vital signs say a store's new slow statements, a large write-ahead log, and an event loop held up", async () => {
   const stats: StoreStat[] = [
     { name: "the mail store", file: "/m.db", calls: 10, slow: 0, slowestMs: 40, slowest: "SELECT 1", walBytes: 0 },

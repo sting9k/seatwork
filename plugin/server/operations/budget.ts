@@ -1,4 +1,7 @@
+import { realpathSync } from "node:fs";
+import { resolve } from "node:path";
 import settings from "../../shared/operations.json";
+import { USER_HOME } from "../paths";
 import type { HoldRow, OperationsStore, Sums } from "./store";
 
 /** The room's budget: what each project's seats spend in a UTC day, the caps the machine's policy sets, and the breaker that holds a project past its cap. */
@@ -53,6 +56,28 @@ function capIn(entry: unknown): Cap | null {
 
 const turnsOf = (n: number): string => `${n} turn${n === 1 ? "" : "s"}`;
 
+/** The real folder a project key names: `~` is the user's home, a relative or trailing part is resolved, a link followed. */
+function folderOf(key: string): string {
+  const path = resolve(key.replace(/^~(?=\/|$)/, USER_HOME));
+  try {
+    return realpathSync.native(path);
+  } catch {
+    return path;
+  }
+}
+
+const folders = new WeakMap<object, { keys: string; byFolder: Map<string, string> }>();
+
+/** The policy's keys of the project caps, by the real folder each names; a later key for the same folder wins, as JSON reads it. */
+function keysByFolder(projects: Record<string, unknown>): Map<string, string> {
+  const keys = Object.keys(projects);
+  const known = folders.get(projects);
+  if (known?.keys === keys.join("\0")) return known.byFolder;
+  const byFolder = new Map(keys.map((key) => [folderOf(key), key]));
+  folders.set(projects, { keys: keys.join("\0"), byFolder });
+  return byFolder;
+}
+
 /** Why a day's sums have reached a cap, or null when they have not. */
 function reached(cap: Cap, sums: Sums): string | null {
   const reasons: string[] = [];
@@ -91,12 +116,19 @@ export class Budget {
     return this.mirror;
   }
 
+  /** The policy's key for a project: the one that names its folder, however it is written; null when none does. */
+  keyOf(project: string): string | null {
+    const projects = (this.deps.policy().budget as BudgetPolicy | undefined)?.projects;
+    if (!projects || typeof projects !== "object") return null;
+    if (Object.hasOwn(projects, project)) return project;
+    return keysByFolder(projects).get(folderOf(project)) ?? null;
+  }
+
   /** The cap of a project: its own entry in the policy, else the default's; null for none. */
   private capOf(project: string): (Cap & { from: "project" | "default" }) | null {
     const budget = this.deps.policy().budget as BudgetPolicy | undefined;
-    const projects = budget?.projects;
-    const own =
-      projects && typeof projects === "object" && Object.hasOwn(projects, project) ? capIn(projects[project]) : null;
+    const key = this.keyOf(project);
+    const own = key !== null ? capIn(budget!.projects![key]) : null;
     if (own) return { ...own, from: "project" };
     const fallback = capIn(budget?.default);
     return fallback ? { ...fallback, from: "default" } : null;
@@ -109,11 +141,7 @@ export class Budget {
 
   /** Whether a project is one the room knows: it has a cap of its own, or it has spent. */
   knows(project: string): boolean {
-    const projects = (this.deps.policy().budget as BudgetPolicy | undefined)?.projects;
-    return (
-      (!!projects && typeof projects === "object" && Object.hasOwn(projects, project)) ||
-      this.deps.store.knowsProject(project)
-    );
+    return this.keyOf(project) !== null || this.deps.store.knowsProject(project);
   }
 
   /** A seat is new: the first cost it reports counts whole. */

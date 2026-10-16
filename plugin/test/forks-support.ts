@@ -7,9 +7,9 @@ export interface Asked {
   labels: string[];
 }
 
-/** A decision model that answers every question with `pick` at `probability`, as Jev would: a label outside the question's is no answer. It keeps what it was asked. */
+/** A decision model that answers each question with `pick` at `probability`, as Jev would: a label outside the question's is no answer. It keeps what it was asked. */
 export function modelSaying(
-  pick: string | null | ((labels: string[], state: Record<string, unknown>) => string | null),
+  pick: string | null | ((labels: string[], state: Record<string, unknown>, id: string) => string | null),
   probability = 0.95,
 ) {
   const asked: Asked[] = [];
@@ -20,13 +20,15 @@ export function modelSaying(
       const first = questions[ids[0]] as unknown as { criteria?: Record<string, unknown> };
       const labels = Object.keys(first.criteria ?? {});
       asked.push({ caller, state, labels });
-      const said = typeof pick === "function" ? pick(labels, state) : pick;
-      const label = said !== null && labels.includes(said) ? said : null;
       return Object.fromEntries(
-        ids.map((id): [string, Fork] => [
-          id,
-          { label, probability, sharp: label !== null && probability >= sharpAt, askId: asked.length, why: null },
-        ]),
+        ids.map((id): [string, Fork] => {
+          const said = typeof pick === "function" ? pick(labels, state, id) : pick;
+          const label = said !== null && labels.includes(said) ? said : null;
+          return [
+            id,
+            { label, probability, sharp: label !== null && probability >= sharpAt, askId: asked.length, why: null },
+          ];
+        }),
       );
     },
   };

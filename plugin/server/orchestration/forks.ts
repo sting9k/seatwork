@@ -136,5 +136,5 @@ export class Forks {
   }
 }
 
-/** What a district asks of the forks: whether one is on, and its sharp label. */
-export type Asker = Pick<Forks, "open" | "take">;
+/** What a district asks of the forks: whether one is on, and its sharp label, for one question or several. */
+export type Asker = Pick<Forks, "open" | "take" | "takeMany">;

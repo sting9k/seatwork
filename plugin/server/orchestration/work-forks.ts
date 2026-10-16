@@ -10,6 +10,7 @@ const RESEARCH = "Research: ";
 const READ = /\sroom\] gaps: /;
 const POOL = 100;
 const NEAR = 3;
+const PLAN_MOST = 6;
 const OPEN_RESEARCH_SEEN = 5;
 const COMMON = new Set(["the", "and", "for", "with", "from", "into", "that", "this", "are", "not"]);
 
@@ -179,7 +180,7 @@ const wordsOf = (title: string): Set<string> =>
   new Set((title.toLowerCase().match(/[a-z0-9]{3,}/g) ?? []).filter((word) => !COMMON.has(word)));
 
 /** The open issues whose titles share at least two words and half the shorter title with `title`, the closest first, at most NEAR. */
-function similar(title: string, pool: readonly Issue[]): Issue[] {
+function similar<T extends Pick<Issue, "title">>(title: string, pool: readonly T[]): T[] {
   const mine = wordsOf(title);
   return pool
     .map((issue) => {
@@ -193,41 +194,60 @@ function similar(title: string, pool: readonly Issue[]): Issue[] {
     .map(({ issue }) => issue);
 }
 
-/** The open issue a new one repeats, as the decision model reads it, linked to it as related; never merged or closed. */
-async function readDuplicates(deps: WorkForkDeps, store: WorkStore, id: string) {
-  if (!deps.forks.open("duplicate")) return null;
-  const made = store.get(id);
+/** The open issues new ones repeat, as the decision model reads them in one call, each linked to its twin as related; never merged or closed. A plan's own issues are not compared with each other. */
+async function readDuplicates(
+  deps: WorkForkDeps,
+  store: WorkStore,
+  ids: readonly string[],
+): Promise<Map<string, { duplicate_of: string; note: string }>> {
+  const found = new Map<string, { duplicate_of: string; note: string }>();
+  if (!deps.forks.open("duplicate")) return found;
+  const mine = new Set(ids);
   const pool = (["open", "in_progress"] as const)
-    .flatMap((status) => store.list({ status, limit: POOL }).issues)
-    .filter((issue) => issue.id !== made.id);
-  const near = similar(made.title, pool);
-  if (near.length === 0) return null;
-  const label = await deps.forks.take(
+    .flatMap((status) => store.titles(status, POOL))
+    .filter((issue) => !mine.has(issue.id));
+  const asked = ids
+    .map((id) => store.get(id))
+    .map((made) => ({ made, near: similar(made.title, pool) }))
+    .filter(({ near }) => near.length > 0)
+    .slice(0, PLAN_MOST);
+  if (asked.length === 0) return found;
+  const open = new Map(asked.flatMap(({ near }) => near.map((issue) => [issue.id, store.get(issue.id)] as const)));
+  const labels = await deps.forks.takeMany(
     "duplicate",
     {
-      new: { title: clip(made.title, 300), description: clip(made.description.trim(), 600) || "(none)" },
+      new: Object.fromEntries(
+        asked.map(({ made }) => [
+          made.id,
+          { title: clip(made.title, 300), description: clip(made.description.trim(), 600) || "(none)" },
+        ]),
+      ),
       open: Object.fromEntries(
-        near.map((issue) => [
+        [...open.values()].map((issue) => [
           issue.id,
           { title: clip(issue.title, 200), description: clip(issue.description.trim(), 300) || "(none)" },
         ]),
       ),
     },
+    asked.map(({ made }) => made.id),
     {
       none: "it is a different piece of work from every open issue listed",
-      ...Object.fromEntries(near.map((issue) => [issue.id, `it asks for the same work as ${issue.id}`])),
+      ...Object.fromEntries([...open.keys()].map((id) => [id, `it asks for the same work as ${id}`])),
     },
   );
-  const twin = near.find((issue) => issue.id === label);
-  if (!twin) return null;
-  store.addDependency(made.id, twin.id, "related", ROOM.agentId);
-  return {
-    duplicate_of: twin.id,
-    note: `${twin.id} "${clip(twin.title, 100)}" is open and looks like the same work. The two are linked as related. Read it before you start, and tell your Owner if they are one.`,
-  };
+  asked.forEach(({ made }, at) => {
+    const twin = labels[at] ? open.get(labels[at]!) : undefined;
+    if (!twin) return;
+    store.addDependency(made.id, twin.id, "related", ROOM.agentId);
+    found.set(made.id, {
+      duplicate_of: twin.id,
+      note: `${twin.id} "${clip(twin.title, 100)}" is open and looks like the same work. The two are linked as related. Read it before you start, and tell your Owner if they are one.`,
+    });
+  });
+  return found;
 }
 
-/** What the forks add to a seat's work call: after a claim, what the issue lacks; after a create, the open issue it may repeat. A fork that fails leaves the call's own answer. */
+/** What the forks add to a seat's work call: after a claim, what the issue lacks; after a create, of one issue or a plan, the open issue each may repeat. A fork that fails leaves the call's own answer. */
 export async function afterWork(
   deps: WorkForkDeps,
   store: WorkStore,
@@ -235,14 +255,22 @@ export async function afterWork(
   args: Record<string, unknown>,
   answer: unknown,
 ): Promise<unknown> {
-  const id = (answer as { id?: unknown } | null)?.id;
-  const fork = args.do === "claim" ? "gaps" : args.do === "create" && !Array.isArray(args.issues) ? "duplicate" : null;
-  if (!fork || typeof id !== "string") return answer;
+  const made = (Array.isArray(answer) ? answer : [answer]).map((one) => (one as { id?: unknown } | null)?.id);
+  const fork = args.do === "claim" ? "gaps" : args.do === "create" ? "duplicate" : null;
+  if (!fork || made.length === 0 || !made.every((id): id is string => typeof id === "string")) return answer;
   try {
-    const found = fork === "gaps" ? await readGaps(deps, store, seat, id) : await readDuplicates(deps, store, id);
-    return found ? { ...(answer as object), ...found } : answer;
+    if (fork === "gaps") {
+      const found = await readGaps(deps, store, seat, made[0]);
+      return found ? { ...(answer as object), ...found } : answer;
+    }
+    const found = await readDuplicates(deps, store, made);
+    if (found.size === 0) return answer;
+    const marked = (one: unknown) => ({ ...(one as object), ...found.get((one as { id: string }).id) });
+    return Array.isArray(answer) ? answer.map(marked) : marked(answer);
   } catch (error) {
-    deps.log(`fork ${fork}: nothing was done for ${id}: ${error instanceof Error ? error.message : String(error)}`);
+    deps.log(
+      `fork ${fork}: nothing was done for ${made.join(", ")}: ${error instanceof Error ? error.message : String(error)}`,
+    );
     return answer;
   }
 }

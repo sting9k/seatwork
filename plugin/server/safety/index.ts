@@ -17,10 +17,11 @@ import { machineTools } from "./system";
 
 /** The Safety district: the command guard, the hand-in check, the council and the codes. */
 
-/** What the district needs of the room: a folder for its store and hooks, the room's own files no seat writes, a way to tell an Owner of a rule its seat keeps hitting, and the seat that rules on appeals. */
+/** What the district needs of the room: a folder for its store and hooks, the app's listen address, the room's own files no seat writes, a way to tell an Owner of a rule its seat keeps hitting, and the seat that rules on appeals. */
 export interface SafetyDeps {
   dir: string;
   userHome: string;
+  daemon: string;
   policy(): SafetyPolicy | undefined;
   seat(agentId: string): { role: string; cwd: string | null } | null;
   projectOf(agentId: string): string | null;
@@ -322,6 +323,7 @@ export class Safety {
       start: seat?.start ?? null,
       guard: this.deps.guard,
       roomFolder: this.deps.roomFolder,
+      daemon: this.deps.daemon,
     };
   }
 }

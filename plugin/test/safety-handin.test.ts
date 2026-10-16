@@ -325,6 +325,7 @@ test("the check reads scripts with the packs the project adds", async () => {
   const safety = new Safety({
     dir: join(dir, ".store"),
     userHome: "/Users/u",
+    daemon: "127.0.0.1:6767",
     policy: () => ({}),
     seat: () => ({ role: "peer", cwd: dir }),
     projectOf: () => dir,

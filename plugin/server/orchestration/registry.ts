@@ -1,5 +1,5 @@
-import { existsSync, readFileSync, realpathSync, renameSync, writeFileSync } from "node:fs";
-import { dirname, join, resolve } from "node:path";
+import { existsSync, readFileSync, realpathSync, renameSync, statSync, writeFileSync } from "node:fs";
+import { basename, dirname, join, relative, resolve } from "node:path";
 import { REGISTRY_FILE, ROOM_PROJECT_DIR } from "../paths";
 import { inRoom, ROOM_PROJECT } from "../../shared/workflow";
 
@@ -141,10 +141,44 @@ export function findRoomMarker(cwd: string): (ProjectFiles & { root: string }) |
   return root ? { root, ...readProjectFiles(root, root.split("/").pop() ?? root) } : null;
 }
 
-/** The project a folder lies in, by the registry or by the room's marker above it; only its root. */
+/** The same place in the main checkout of the linked git worktree a folder lies in, read from the `.git` file at the worktree's top; null for a folder in none. */
+export function inMainCheckout(cwd: string): string | null {
+  const real = realOrSelf(cwd);
+  let dir = real;
+  for (let i = 0; i < 64; i += 1) {
+    const dotGit = join(dir, ".git");
+    if (existsSync(dotGit)) {
+      try {
+        if (!statSync(dotGit).isFile()) return null;
+        const named = /^gitdir:\s*(.+)$/m.exec(readFileSync(dotGit, "utf8"))?.[1]?.trim();
+        if (!named) return null;
+        const own = resolve(dir, named);
+        const listed = join(own, "commondir");
+        const common = existsSync(listed)
+          ? resolve(own, readFileSync(listed, "utf8").trim())
+          : basename(dirname(own)) === "worktrees"
+            ? dirname(dirname(own))
+            : null;
+        return common && basename(common) === ".git" ? join(dirname(common), relative(dir, real)) : null;
+      } catch {
+        return null;
+      }
+    }
+    const parent = dirname(dir);
+    if (parent === dir) break;
+    dir = parent;
+  }
+  return null;
+}
+
+/** The project a folder lies in, by the registry or by the room's marker above it, or else those of the main checkout of its git worktree; only its root. */
 export function projectRootOf(cwd: string): string | null {
   const registry = loadRegistry();
-  return (registry ? entryFor(registry, cwd)?.cwd : undefined) ?? markerRoot(cwd);
+  const rootOf = (folder: string) => (registry ? entryFor(registry, folder)?.cwd : undefined) ?? markerRoot(folder);
+  const own = rootOf(cwd);
+  if (own) return own;
+  const main = inMainCheckout(cwd);
+  return main ? rootOf(main) : null;
 }
 
 /** The skills of a role that a law names in backticks. */

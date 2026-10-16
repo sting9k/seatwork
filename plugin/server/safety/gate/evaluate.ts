@@ -7,10 +7,10 @@ import { absolute, homeOf, substitution, valueOf } from "./paths";
 import { SHELLS, stdinText } from "./programs";
 import { CopyTrail } from "./rules/copies";
 import { databaseHits, scanDeletesKeys } from "./rules/databases";
-import { fileRules, forkBomb, guardedWrites, type FileTools } from "./rules/files";
+import { fileRules, forkBomb, guardedWrites, type FileTools, writesOf } from "./rules/files";
 import { gitRules, givesProgram, PROGRAM_VARIABLES, type GitTools } from "./rules/git";
 import { namesDriver, ATTRIBUTES_FILE } from "./rules/attributes";
-import { cliWords, paseoCommand, startsPaseo } from "./rules/paseo";
+import { cliWords, namesPaseo, paseoCommand, reachesDaemon, startsPaseo } from "./rules/paseo";
 import { rmRules, wouldBlockAsRm, type RmTools } from "./rules/rm";
 import { execFlags, runners } from "./runners";
 import { writtenTexts } from "./writes";
@@ -39,15 +39,27 @@ import {
   type Def,
   type Reader,
   type State,
+  type Defs,
 } from "./state";
 import type { Doubt, Finding, Known, Place, Scene, Variable } from "./types";
 
 /** Walks a command line as the shell would; the rules are those of DCG, a destructive command guard, and the packs. */
 
-/** What the rules ask of the machine: git, the file system, and the files changed since the last commit. */
+/** What the rules ask of the machine: git, the file system, the files changed since the last commit, and the real file a command word runs. */
 export interface Tools extends RmTools, GitTools, FileTools {
   changed(path: string): Promise<string | null>;
+  folder?(path: string): boolean;
+  rc?(): Rc | null;
+  program?(word: string, cwd: string | null, path: string | null): string | null;
 }
+
+/** The aliases and the text of the functions a seat's shell starts with, from the user's rc. */
+export interface Rc {
+  aliases: ReadonlyMap<string, string>;
+  functions: string;
+}
+
+const seededFunctions = new WeakMap<Rc, Map<string, Defs>>();
 
 /** The packs in force, the owner's exemptions (`pack:rule` to target globs), and the limits on a line. */
 export interface GateConfig {
@@ -83,9 +95,30 @@ export async function evaluate(
     walk.out.doubt(`the command is longer than ${config.maxBytes} bytes`, command.slice(0, 200));
     return walk.result();
   }
-  await walk.text(command, startState(cwd), 0);
+  const start = startState(cwd);
+  const rc = tools.rc?.() ?? null;
+  if (rc) await seed(start, rc, place, config, tools);
+  await walk.text(command, start, 0);
   walk.finish();
   return walk.result();
+}
+
+/** A line's start with the aliases and functions of the user's rc: what they run is judged where the line calls them. */
+async function seed(state: State, rc: Rc, place: Place, config: GateConfig, tools: Tools): Promise<void> {
+  for (const [name, value] of rc.aliases) state.aliases.set(name, [value]);
+  let functions = seededFunctions.get(rc);
+  if (!functions) {
+    // read apart: a line of the rc the room cannot parse is no doubt about the seat's command
+    const scratch = startState(null);
+    await new Walk(place, config, { ...tools, rc: undefined }, Date.now() + config.budgetMs).text(
+      rc.functions,
+      scratch,
+      0,
+    );
+    functions = scratch.funcs;
+    seededFunctions.set(rc, functions);
+  }
+  for (const [name, defs] of functions) state.funcs.set(name, defs);
 }
 
 /** One evaluation: reads the line, keeps the state the shell would, and judges each simple command. */
@@ -153,35 +186,47 @@ class Walk implements Reader {
     for (const sequence of script) await this.sequence(sequence, state, ctx);
   }
 
+  /** The state of a pipeline that failed: where a cd that failed left the shell; the state itself when nothing in it can fail that way. */
+  private failure(state: State): State {
+    if (state.failedCwd === undefined) return state;
+    const failed = fork(state);
+    failed.cwd = state.failedCwd;
+    failed.moved = failed.cwd !== this.place.start;
+    state.failedCwd = failed.failedCwd = undefined;
+    return failed;
+  }
+
   /** Pipelines joined by `&&` and `||`: each later one runs only where the ones before let it, and what follows may stand after any of them. */
   private async sequence(sequence: Sequence, state: State, ctx: Context): Promise<void> {
     const { pipelines, ops } = sequence;
     const own = sequence.background ? fork(state) : state;
     await this.pipeline(pipelines[0], own, ctx);
     this.outcome = null;
+    const firstFailed = this.failure(own);
     if (ops.length) {
       const first = fork(own);
       let succeeded = [first];
-      let failed = [first];
+      let failed = [firstFailed === own ? first : firstFailed];
       for (let i = 1; i < pipelines.length; i += 1) {
         const and = ops[i - 1] === "&&";
         const from = and ? succeeded : failed;
         const here = fork(from[0]);
         meet(here, from.slice(1));
         await this.pipeline(pipelines[i], here, ctx);
+        const bad = this.failure(here);
         if (and) {
           succeeded = [here];
-          failed.push(here);
+          failed.push(bad);
         } else {
           succeeded.push(here);
-          failed = [here];
+          failed = [bad];
         }
       }
       const ends = [...new Set([...succeeded, ...failed])];
       copyInto(own, ends[0]);
       meet(own, ends.slice(1));
       this.outcome = { succeeded, failed };
-    }
+    } else if (firstFailed !== own) meet(own, [firstFailed]);
     if (sequence.background) keepWrites(state, own);
   }
 
@@ -344,7 +389,7 @@ class Walk implements Reader {
     const call = invocationOf(simple);
     if (call.query) return;
     if (call.name === null && call.command) return this.dynamicCommand(simple, call, state, ctx);
-    const scene = this.scene(simple, throughUnread(call), state, ctx);
+    const scene = this.scene(simple, this.named(throughUnread(call), state), state, ctx);
     this.seenNames.add(scene.call.name ?? "");
     await this.builtins(scene, state, ctx);
     await this.judge(scene, state, ctx);
@@ -478,7 +523,12 @@ class Walk implements Reader {
       // a bare `pushd` swaps the two top folders and `pushd +1` rotates them: neither is a folder the line names
       if (!target) state.cwd = name === "cd" ? homeOf(this.known(state)) : null;
       else if (text === "-" || (name === "pushd" && /^[+-]\d+$/.test(text ?? ""))) state.cwd = null;
-      else state.cwd = absolute(valueOf(target, this.known(state)), state.cwd);
+      else {
+        const to = absolute(valueOf(target, this.known(state)), state.cwd);
+        // a cd into a folder that is not there fails and leaves the shell where it was
+        if (to && this.tools.folder && !this.tools.folder(to)) state.failedCwd = state.cwd;
+        state.cwd = to;
+      }
       state.moved = state.cwd !== this.place.start;
     } else if (name === "popd") {
       state.cwd = null;
@@ -531,16 +581,26 @@ class Walk implements Reader {
     this.noteWrites(scene, state);
   }
 
-  /** The text of files this command writes from literals, for a shell or interpreter that runs them later; a `.gitattributes` that names a driver is a finding. */
+  /** The text of files this command writes from literals, for a shell or interpreter that runs them later; a `.gitattributes` that names a driver is a finding, and one written with text the room cannot read is a doubt. */
   private noteWrites(scene: Scene, state: State): void {
     const known = this.known(state);
+    const read = new Set<string>();
     for (const { target, text } of writtenTexts(scene, known, state.written)) {
       const at = valueOf(target, known);
       const path = absolute(at, state.cwd);
       if (path) state.written.set(path, text);
       const spelled = at.text ?? at.prefix;
+      read.add(spelled);
       if (ATTRIBUTES_FILE.test(spelled) && namesDriver(text))
         this.out.add("room.guard", "git-attributes-driver", scene.text, spelled);
+    }
+    for (const write of writesOf(scene)) {
+      const spelled = write.value.text ?? write.value.prefix;
+      if (write.mode !== "remove" && ATTRIBUTES_FILE.test(spelled) && !read.has(spelled))
+        this.out.doubt(
+          `${write.how} writes ${spelled} with lines the room cannot read; write it with the file tool`,
+          scene.text,
+        );
     }
   }
 
@@ -575,6 +635,8 @@ class Walk implements Reader {
     if (cli) this.startsCli(scene, cli);
     else if (name === "ln" && this.linksCli(scene, state))
       this.out.add("room.guard", "paseo-cli", scene.text, "a link to the Paseo CLI");
+    const reach = reachesDaemon(this.spelled(scene, state), this.place);
+    if (reach) this.out.add("room.guard", "paseo-daemon", scene.text, reach);
     this.copies.note(scene);
     for (const hit of declaredHits(scene, this.config.packs)) this.out.add(hit.pack, hit.rule, scene.text);
     // files written earlier on the line are not read for a client, so its input stays unverified
@@ -603,6 +665,24 @@ class Walk implements Reader {
       if (key === null || givesProgram(key)) take(read(`GIT_CONFIG_VALUE_${n}`) ?? null, key ?? `GIT_CONFIG_KEY_${n}`);
     }
     return out;
+  }
+
+  /** A command under another name, a link by path or on PATH, read as the program it runs when a rule reads that one. */
+  private named(call: Invocation, state: State): Invocation {
+    if (!call.name || !call.command || !this.tools.program || knownCommand(call.name) || state.funcs.has(call.name))
+      return call;
+    const word = valueOf(call.command, this.known(state)).text;
+    const target = word ? this.tools.program(word, state.cwd, state.vars.get("PATH")?.value ?? null) : null;
+    if (!target) return call;
+    const name = namesPaseo(target) ? "paseo" : baseName(target);
+    return name !== call.name && knownCommand(name) ? { ...call, name } : call;
+  }
+
+  /** A command as written and with the values its words are known to have, redirects included. */
+  private spelled(scene: Scene, state: State): string {
+    const known = this.known(state);
+    const words = [scene.call.command, ...scene.call.args, ...scene.simple.redirects.map((r) => r.target)];
+    return [scene.text, ...words.map((word) => (word ? (valueOf(word, known).text ?? "") : ""))].join("\n");
   }
 
   /** A start of the Paseo CLI: stopped when the words after it name a command. */

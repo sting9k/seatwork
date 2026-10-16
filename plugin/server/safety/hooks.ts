@@ -165,7 +165,23 @@ esac
 `;
 }
 
-/** A Claude plugin folder, loaded with --plugin-dir: its manifest and its PreToolUse hook. */
+export const SKILLS_ENV = "ROOM_SKILLS_DIR";
+
+/** Prints the name and description of each skill in the seat's folder: after a compaction Claude Code has dropped its own list. */
+function skillsScript(): string {
+  return `dir="\${${SKILLS_ENV}:-}"
+[ -d "$dir" ] || exit 0
+echo "After the compaction, your skills, each loaded by the Skill tool when its moment comes:"
+for file in "$dir"/*/SKILL.md; do
+  [ -f "$file" ] || continue
+  name=$(sed -n 's/^name:[[:space:]]*//p' "$file" | head -n 1)
+  about=$(sed -n 's/^description:[[:space:]]*//p' "$file" | head -n 1 | sed 's/^"//; s/"$//')
+  echo "- $name: $about"
+done
+`;
+}
+
+/** A Claude plugin folder, loaded with --plugin-dir: its manifest, its PreToolUse hook, and its skills told again after a compaction. */
 export function claudePlugin(): Record<string, string> {
   return {
     ".claude-plugin/plugin.json": `${JSON.stringify({ name: "room-guard", description: "The room's command guard: every shell command and file write is checked first." }, null, 2)}\n`,
@@ -183,6 +199,12 @@ export function claudePlugin(): Record<string, string> {
                   timeout: 10,
                 },
               ],
+            },
+          ],
+          SessionStart: [
+            {
+              matcher: "compact",
+              hooks: [{ type: "command", command: "/bin/sh", args: ["-c", skillsScript()], timeout: 10 }],
             },
           ],
         },

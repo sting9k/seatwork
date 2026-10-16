@@ -4,7 +4,7 @@ import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { test } from "node:test";
 import { PaseoHost } from "../server/paseo/host";
-import { PASEO_SCHEDULES } from "../server/paths";
+import { PASEO_HOME, PASEO_SCHEDULES } from "../server/paths";
 
 test("with no client from Paseo yet, the room reads seats and writes to one at rest through the paseo CLI; a running seat waits", async () => {
   const bin = join(ROOM_HOME, "..", "paseo-host-cli");
@@ -120,4 +120,28 @@ test("a list of open agents that never ends is refused, not read as the whole li
 
   await assert.rejects(host.live(), /more than \d+ open agents/);
   assert.ok(pages <= 50, `${pages} pages read`);
+});
+
+test("the host gives the daemon's address the way Paseo settles it: PASEO_LISTEN, config.json, then PORT", () => {
+  const host = new PaseoHost();
+  const config = join(PASEO_HOME, "config.json");
+  const env = { listen: process.env.PASEO_LISTEN, port: process.env.PORT };
+  mkdirSync(PASEO_HOME, { recursive: true });
+  try {
+    delete process.env.PASEO_LISTEN;
+    process.env.PORT = "7001";
+    assert.equal(host.address(), "127.0.0.1:7001");
+    writeFileSync(config, JSON.stringify({ daemon: { listen: "unix:///tmp/paseo.sock" } }));
+    assert.equal(host.address(), "unix:///tmp/paseo.sock");
+    process.env.PASEO_LISTEN = "0.0.0.0:7002";
+    assert.equal(host.address(), "0.0.0.0:7002");
+  } finally {
+    rmSync(config, { force: true });
+    for (const [name, value] of [
+      ["PASEO_LISTEN", env.listen],
+      ["PORT", env.port],
+    ] as const)
+      if (value === undefined) delete process.env[name];
+      else process.env[name] = value;
+  }
 });

@@ -317,7 +317,10 @@ test("a second project held the same day is an incident of its own, told when th
 test("the operator may lower a cap and never raise one: not by a value, not by undoing its own change", () => {
   const { ops, policy, persisted } = rig({
     policy: {
-      budget: { default: { dailyUsd: 20 }, projects: { [A]: { dailyUsd: 5 }, "/work/my.app": { dailyUsd: 9 } } },
+      budget: {
+        default: { dailyUsd: 20 },
+        projects: { [A]: { dailyUsd: 5 }, "/work/my.app": { dailyUsd: 9 }, "/work/beta/": { dailyUsd: 8 } },
+      },
     },
   });
   ops.opened("a1");
@@ -344,6 +347,11 @@ test("the operator may lower a cap and never raise one: not by a value, not by u
   // a project with a dot in its folder name is addressed whole
   tune("budget.projects[/work/my.app].dailyUsd", 4);
   assert.deepEqual((policy.budget as { projects: Record<string, unknown> }).projects["/work/my.app"], { dailyUsd: 4 });
+  // a folder the owner spelled another way is changed under the owner's key, never beside it under a second one
+  assert.throws(() => tune("budget.projects[/work/beta].dailyUsd", 9), /is 8: you may only lower it/);
+  tune("budget.projects[/work/beta].dailyUsd", 6);
+  assert.deepEqual(Object.keys((policy.budget as { projects: object }).projects), [A, "/work/my.app", "/work/beta/"]);
+  assert.deepEqual(persisted.at(-1), ["budget.projects[/work/beta/].dailyUsd", 6]);
   // a cap where none stands is a lowering from none; the default's keys are tunable the same way
   assert.deepEqual(
     (ops.act("hq-1", { do: "policy" }).tunable as Record<string, { value: unknown }>)["budget.default.dailyTurns"]
@@ -402,7 +410,7 @@ test("the retention of the spend rows: days past the keep, a seat's total unseen
   store.close();
 });
 
-test("every statement of the spend ledger reads by an index", () => {
+test("every statement of the spend ledger and the skill loads reads by an index", () => {
   const dir = join(ROOM_HOME, "budget-plans");
   rmSync(dir, { recursive: true, force: true });
   const store = new OperationsStore(dir, 1000);
@@ -416,6 +424,8 @@ test("every statement of the spend ledger reads by an index", () => {
   store.toldHold("/p/a");
   store.dropHold("/p/a");
   store.dropSeat("s1");
+  store.skillsLoaded("2026-10-15", "peer", ["test-audit", "blast-radius"]);
+  store.skillLoads("2026-10-09");
   store.expireSpend("2026-09-01", "2026-09-01T00:00:00.000Z");
   const whole = [
     "SELECT project, day, usd, turns FROM spend WHERE day >=",
@@ -423,7 +433,7 @@ test("every statement of the spend ledger reads by an index", () => {
   ];
   const scans = store
     .plans()
-    .filter(({ plan }) => /\bSCAN (spend|spend_seats|holds)\b(?! USING)/.test(plan))
+    .filter(({ plan }) => /\bSCAN (spend|spend_seats|holds|skill_loads)\b(?! USING)/.test(plan))
     .filter(({ sql }) => !whole.some((known) => sql.includes(known)));
   assert.deepEqual(scans, []);
   store.close();

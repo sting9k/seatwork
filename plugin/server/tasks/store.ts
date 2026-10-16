@@ -731,6 +731,15 @@ export class WorkStore extends Sqlite {
     });
   }
 
+  /** The id and title of the issues in a status, best first, at most `limit`; reads no other column. */
+  titles(status: Status, limit: number): Pick<Issue, "id" | "title">[] {
+    return this.rows<Pick<Issue, "id" | "title">>(
+      `SELECT id, title FROM issues INDEXED BY issues_by_status WHERE status = ? ORDER BY ${ORDERED} LIMIT ?`,
+      status,
+      limit,
+    );
+  }
+
   /** The id of the issue in progress a seat holds, the first `list` would give; undefined when it holds none. Reads one row. */
   heldBy(seat: string): string | undefined {
     return this.row<{ id: string }>(

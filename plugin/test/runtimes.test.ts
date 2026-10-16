@@ -4,7 +4,13 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, symlinkSync, 
 import { join } from "node:path";
 import { test } from "node:test";
 import { loadPolicy, type CodexRuntimePolicy, type RuntimePolicy } from "../server/policy";
-import { claudeRoleDir, ensureRuntime, roleSkillNames, runtimeDir } from "../server/orchestration/runtimes";
+import {
+  claudeRoleDir,
+  ensureRuntime,
+  roleSkillNames,
+  runtimeDir,
+  skillsLoaded,
+} from "../server/orchestration/runtimes";
 import { parseToml, type TomlTable } from "../server/toml";
 import { addSkill, listSkills, removeSkill } from "../server/orchestration/local-skills";
 import { LOCAL_SKILLS_DIR } from "../server/paths";
@@ -283,4 +289,25 @@ test("a skill the room's seat adds reaches its role's seats and no other's, keep
   assert.ok(!existsSync(link));
   assert.deepEqual(listSkills(), []);
   assert.equal(readdirSync(join(LOCAL_SKILLS_DIR, "removed")).length, 1);
+});
+
+test("a turn's skill loads are read each agent CLI's way: Claude's and OpenCode's skill tools, a SKILL.md Codex reads in a shell or Pi reads", () => {
+  const done = "completed" as const;
+  assert.deepEqual(
+    skillsLoaded([
+      { kind: "tool", name: "Skill", label: "test-audit", status: done },
+      { kind: "tool", name: "skill", label: "lenses", status: done },
+      {
+        kind: "shell",
+        command: "sed -n 1,80p /h/runtimes/codex/peer/skills/blast-radius/SKILL.md",
+        exitCode: 0,
+        output: "",
+        status: done,
+      },
+      { kind: "read", path: "/h/runtimes/pi/lead/skills/seat-law/SKILL.md" },
+      { kind: "read", path: "/repo/src/SKILL.mdx" },
+      { kind: "tool", name: "Read", label: "SKILL.md", status: done },
+    ]),
+    ["blast-radius", "lenses", "seat-law", "test-audit"],
+  );
 });

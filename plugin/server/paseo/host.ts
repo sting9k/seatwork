@@ -5,7 +5,7 @@ import { join } from "node:path";
 import callLimits from "../../shared/host.json";
 import type { Host, LiveSeat, NewSeat, SeatState, SeatUsage, TurnEvent } from "../host";
 import { latestTurn } from "./timeline";
-import { PASEO_SCHEDULES } from "../paths";
+import { PASEO_HOME, PASEO_SCHEDULES } from "../paths";
 import type { PaseoApi } from "./api";
 import { paseoCli } from "./cli";
 
@@ -133,6 +133,19 @@ export class PaseoHost implements Host {
     return this.client;
   }
 
+  /** The daemon's listen address the way Paseo settles it: PASEO_LISTEN, then config.json, then PORT on 127.0.0.1. */
+  address(): string {
+    const set = process.env.PASEO_LISTEN?.trim();
+    if (set) return set;
+    try {
+      const listen = JSON.parse(readFileSync(join(PASEO_HOME, "config.json"), "utf8"))?.daemon?.listen;
+      if (typeof listen === "string" && listen.trim()) return listen.trim();
+    } catch {
+      // no config, or one being written: Paseo's default stands
+    }
+    return `127.0.0.1:${process.env.PORT ?? 6767}`;
+  }
+
   private sdk(): PaseoApi {
     if (!this.client) throw new Error("Paseo has handed the room no client yet");
     return this.client;
@@ -173,13 +186,12 @@ export class PaseoHost implements Host {
     });
   }
 
-  async send(agentId: string, text: string, interrupt: boolean): Promise<void> {
+  async send(agentId: string, text: string, interrupt: boolean, id?: string): Promise<void> {
     if (this.client) {
       const handle = this.client.agents.ref(agentId);
       // the SDK interrupts a running agent by default; the room does so for a stop order only
-      await within(this.limits.writeSeconds, `the message to ${agentId}`, () =>
-        handle.send(text, { activeTurnBehavior: interrupt ? "interrupt" : "steer" } as never),
-      );
+      const options = { activeTurnBehavior: interrupt ? "interrupt" : "steer", ...(id ? { messageId: id } : {}) };
+      await within(this.limits.writeSeconds, `the message to ${agentId}`, () => handle.send(text, options as never));
       return;
     }
     // the CLI has no steer: without a client only a seat at rest, or a stop order, is written to

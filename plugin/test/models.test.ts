@@ -18,7 +18,6 @@ test("a project's model table matches a model id whole, slashes included", () =>
         },
       },
     },
-    lens: { tiers: {} },
     modes: {},
   };
   const cases: [provider: string, model: string, allowed: boolean][] = [
@@ -37,11 +36,9 @@ test("a harness without session modes is one a seat is told to create with no mo
   const table: Models = {
     seats: { hq: seat, supervisor: seat, lead: seat },
     peer: { reviewThinking: "high", tiers: {} },
-    lens: { tiers: {} },
     modes: { claude: "bypassPermissions", pi: null, opencode: "build" },
   };
   const params = {
-    heartbeatCron: "*/15 * * * *",
     reviewStallMinutes: 30,
     readBudgetTokens: 80000,
     cheapReadBudgetTokens: 40000,

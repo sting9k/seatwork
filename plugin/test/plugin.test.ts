@@ -170,7 +170,12 @@ test("a seat's session opens with the seat's own environment every time, not onl
     );
     assert.deepEqual(
       withoutUrl(await opened("claude-peer", reason)),
-      { ...CLAUDE_SWITCHES, ...tmp("claude-peer"), ...guard("claude-peer") },
+      {
+        ...CLAUDE_SWITCHES,
+        ...tmp("claude-peer"),
+        ...guard("claude-peer"),
+        ROOM_SKILLS_DIR: join(ROOM_HOME, "role-skills", "claude", "peer", ".claude", "skills"),
+      },
       reason,
     );
   }
@@ -921,6 +926,19 @@ test("the reviewers a Lead launched in one turn report together: the Lead is wok
   assert.equal(lead.inbox.length, 2);
 });
 
+test("a Supervisor's view of its Lead counts the reports held for the Lead's round, apart from the mail waiting for it", async () => {
+  const supervisor = await seat("sup-held", "claude-supervisor", null, "[Supervisor] held");
+  const lead = await seat("lead-held", "claude-lead", supervisor.agent.id, "[Lead] held");
+  const first = await seat("peer-held-a", "claude-peer", lead.agent.id, "[Peer:review] abc1: correctness");
+  await seat("peer-held-b", "claude-peer", lead.agent.id, "[Peer:review] abc1: compatibility");
+  await turnEnds(first, "REVIEW\nACCEPTABLE: holds");
+  assert.equal(lead.inbox.length, 0, "held for the other reviewer");
+  const view = await supervisor.call("seatwork_seats", {});
+  const line = view.split("\n").find((one) => one.includes("lead-held"))!;
+  assert.match(line, / · 1 report held for a round, due in \d+ min$/);
+  assert.doesNotMatch(line, /mails? held for it/, "a held report is not mail waiting for the seat");
+});
+
 test("the last answer of a round says when answers to one question came from one model family", async () => {
   const brief = (angle: string) =>
     [
@@ -1624,14 +1642,18 @@ test("the work store through the room's tools: a Lead writes a plan, a Peer take
   assert.equal(existsSync(join(project, ".worktrees", "store", ".seatwork")), false);
 });
 
-test("a seat is listed every tool shared/tools.json defines, and is refused the ones its role may not call", async () => {
+test("a seat is listed the tools its role may call, and is refused one it calls anyway", async () => {
   const defined = JSON.parse(readFileSync(join(__dirname, "..", "shared", "tools.json"), "utf8")).tools as Record<
     string,
     { callers: "any" | "spawners" | "room" }
   >;
+  const of = (...callers: string[]) => Object.keys(defined).filter((name) => callers.includes(defined[name].callers));
+  const hq = await seat("hq-tools", "claude-hq", null, "HQ Supervisor", join(ROOM_HOME, "hq-seatwork"));
   const lead = await seat("lead-tools", "claude-lead", null, "[Lead] stream");
   const peer = await seat("peer-tools", "claude-peer", lead.agent.id, "[Peer] task");
-  assert.deepEqual(await peer.listed(), Object.keys(defined));
+  assert.deepEqual(await peer.listed(), of("any"));
+  assert.deepEqual(await lead.listed(), of("any", "spawners"));
+  assert.deepEqual(await hq.listed(), of("any", "spawners", "room"));
   for (const [name, { callers }] of Object.entries(defined)) {
     const answer = await peer.call(name, {}).catch((error: Error) => error.message);
     const why =
@@ -1797,7 +1819,27 @@ test("the room's own seat runs the room through its tool; no seat writes the cod
   const hq = await seat("hq-ops", "claude-hq", null, "HQ Supervisor", join(ROOM_HOME, "hq-seatwork"));
   const lead = await seat("lead-ops", "claude-lead", null, "[Lead] ops", PROJECT);
   const health = JSON.parse(await hq.call("seatwork_room", { do: "health" }));
-  assert.deepEqual(health.readings, ["jev", "knowledge", "mail", "safety", "seats", "host", "budget"]);
+  assert.deepEqual(health.readings, ["jev", "knowledge", "skills", "mail", "safety", "seats", "host", "budget"]);
+  const peer = await seat("peer-ops", "claude-peer", lead.agent.id, "[Peer] ops", PROJECT);
+  await call(
+    "on agent.turn_ended",
+    {
+      agent: peer.agent,
+      turnId: null,
+      outcome: { kind: "completed" },
+      timeline: [
+        { type: "tool_call", name: "Skill", status: "completed", detail: { type: "plain_text", label: "test-audit" } },
+        { type: "assistant_message", text: "STATUS: read the tests" },
+      ],
+    },
+    context,
+  );
+  const { skills } = JSON.parse(await hq.call("seatwork_room", { do: "skills" }));
+  assert.deepEqual(
+    skills.loads.filter((one: { skill: string }) => one.skill === "test-audit"),
+    [{ role: "peer", skill: "test-audit", loads: 1 }],
+  );
+  assert.deepEqual(skills.never.peer, ["blast-radius"]);
   const policy = JSON.parse(await hq.call("seatwork_room", { do: "policy" }));
   assert.equal(policy.tunable["knowledge.keepDays"].value, 60);
   const refused = await hq

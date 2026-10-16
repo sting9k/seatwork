@@ -445,13 +445,13 @@ test("what waits for a seat and what it owes are counted, with the age of the ol
   // nothing is delivered yet: all of it waits and none of it is owed
   const waiting = store.queued("lead");
   assert.equal(waiting.length, 6);
-  assert.deepEqual(store.waitingFor("lead", NOW), { count: 6, since: waiting[0].at });
+  assert.deepEqual(store.waitingFor("lead", NOW), { count: 6, since: waiting[0].at, later: 0, due: null });
   assert.equal(store.owedCount("lead"), undefined);
 
   store.mark("lead", [first.id, second.id, closed.id], "delivered", "idle");
   store.mark("lead", [info.id], "sending");
   store.mark("lead", [second.id], "read", "inbox");
-  assert.deepEqual(store.waitingFor("lead", NOW), { count: 3, since: store.queued("lead")[0].at });
+  assert.deepEqual(store.waitingFor("lead", NOW), { count: 3, since: store.queued("lead")[0].at, later: 0, due: null });
   const owed = store.owedBy("lead");
   assert.equal(owed.length, 2);
   assert.deepEqual(store.owedCount("lead"), { count: 2, since: owed[0].at });
@@ -484,7 +484,7 @@ test("a seat's owed asks are counted from the open asks of the project, not from
   assert.match(planOf("min(m.at) AS since FROM messages m"), /SCAN m USING INDEX messages_owed/);
   assert.doesNotMatch(planOf("min(m.at) AS since FROM messages m"), /deliveries_by_seat/);
   assert.match(
-    planOf("min(m.at) AS since FROM deliveries d"),
+    planOf("AS later, min(CASE WHEN d.held_until"),
     /SEARCH d USING INDEX deliveries_by_state \(state=\? AND seat=\?\)/,
   );
 });

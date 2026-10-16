@@ -28,6 +28,7 @@ function fresh(policy: SafetyPolicy = {}, project: string | null = null) {
   const deps: SafetyDeps = {
     dir: join(ROOM_HOME, `safety-${(rooms += 1)}`),
     userHome: HOME,
+    daemon: "127.0.0.1:6767",
     policy: () => policy,
     seat: (id) => (id in PARENT ? { role: id.replace(/\d$/, ""), cwd: "/Users/u/proj" } : null),
     projectOf: () => project,

@@ -188,7 +188,8 @@ function seatRows(room: RoomContext, me: string, live: ReadonlyMap<string, LiveS
         updatedAt: now.updatedAt || null,
         turnStartedAt: now.turnStartedAt,
         heldMail: held?.mails ?? 0,
-        ...(held ? { heldSince: held.oldestAt } : {}),
+        ...(held?.oldestAt ? { heldSince: held.oldestAt } : {}),
+        ...(held?.later ? { heldForRound: { reports: held.later, dueAt: held.dueAt! } } : {}),
         owes: engine.owes(seat.agentId),
         retry: retry ? retryNote(retry) : null,
         error: now.status === "error" ? (now.error ?? "").slice(0, 160) || null : null,
@@ -362,4 +363,9 @@ export function registerTools(room: RoomContext, mcp: McpHttpServer): void {
     if (!run) throw new Error(`seatwork: shared/tools.json defines ${name}, which the room does not serve`);
     mcp.register(roomTool(name, vars), run);
   }
+  // a seat is listed the tools its role may call; a session the room does not know yet is listed them all
+  mcp.visible = (tool, context) => {
+    const role = engine.seat(room.callers.seatOf(context.nonce) ?? "")?.role;
+    return role === undefined || refusedCaller(tool, role) === null;
+  };
 }

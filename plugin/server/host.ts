@@ -61,8 +61,8 @@ export type TurnOutcome = { kind: "completed" } | { kind: "canceled" } | { kind:
 
 export interface Host {
   state(agentId: string): Promise<SeatState>;
-  /** Hands text to a seat; `interrupt` ends a running turn first, else it steers. */
-  send(agentId: string, text: string, interrupt: boolean): Promise<void>;
+  /** Hands text to a seat; `interrupt` ends a running turn first, else it steers. The app hands over once what comes again under its `id` with the same text and `interrupt`. */
+  send(agentId: string, text: string, interrupt: boolean, id?: string): Promise<void>;
   /** Moves the app's own record of a seat's parent. */
   reparent(child: string, parent: string): Promise<void>;
   /** Every open seat, by id. */
@@ -79,4 +79,6 @@ export interface Host {
   projects(): Promise<{ name: string; path: string }[]>;
   /** Deletes the app's timers that wake a seat `seat` calls gone, or a live one's the app finished (null: not the room's agent); names what went and what could not. */
   dropWakers(seat: (agentId: string) => "gone" | "live" | null): Promise<{ deleted: string[]; failed: string[] }>;
+  /** Where the app listens for programs on this machine: `host:port`, a port, or a socket path. */
+  address(): string;
 }

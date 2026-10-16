@@ -1,8 +1,12 @@
 import assert from "node:assert/strict";
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { test } from "node:test";
 import { evaluate, type Tools } from "../server/safety/gate/evaluate";
 import { packsInForce } from "../server/safety/gate/packs";
 import type { Place } from "../server/safety/gate/types";
+import { claudeRc, machineTools } from "../server/safety/system";
 
 const HOME = "/Users/u";
 const PROJECT = "/Users/u/proj";
@@ -13,6 +17,7 @@ const place: Place = {
   start: PROJECT,
   guard: { paths: ["/Users/u/.config/room"], except: ["/Users/u/.config/room/tmp"] },
   roomFolder: ".seatwork",
+  daemon: "127.0.0.1:6767",
 };
 
 /** The machine as the gate sees it here: dist and node_modules are ignored, two git aliases exist. */
@@ -56,6 +61,35 @@ const cases: [string, string[]][] = [
   ["git checkout .", ["core.git:checkout-discard-cwd"]],
   ["git checkout main file.txt", []],
   ["git checkout -f main", ["core.git:checkout-force"]],
+  // a .gitattributes written with lines the room cannot read could name a driver: the file tool shows them
+  ["sed -i 's/x/y/' .gitattributes", ["doubt"]],
+  ["dd if=/tmp/a of=.gitattributes", ["core.filesystem:dd-overwrite-general", "doubt"]],
+  ["cp /tmp/a .gitattributes", ["doubt"]],
+  ["echo '*.png binary' >> .gitattributes", []],
+  ["sed -i 's/x/y/' README.md", []],
+  // a program an option names runs on this machine: ssh's commands, rsync's remote shell, awk's shell lines
+  ['ssh -o ProxyCommand="rm -rf ~" host', ["core.filesystem:rm-rf-root-home"]],
+  ['ssh -oProxyCommand="rm -rf ~" host true', ["core.filesystem:rm-rf-root-home"]],
+  ["ssh -o ProxyCommand=none host true", []],
+  ["scp -o 'ProxyCommand=rm -rf ~' a host:b", ["core.filesystem:rm-rf-root-home"]],
+  ['rsync -e "rm -rf ~" a host:b', ["core.filesystem:rm-rf-root-home"]],
+  ["rsync -e \"ssh -o ProxyCommand='rm -rf ~'\" a host:b", ["core.filesystem:rm-rf-root-home"]],
+  ["rsync -a a host:b", []],
+  ["awk 'BEGIN { system(\"rm -rf ~\") }'", ["core.filesystem:rm-rf-root-home"]],
+  ["awk 'BEGIN { \"rm -rf ~\" | getline x }'", ["core.filesystem:rm-rf-root-home"]],
+  ["awk '{ print $1 | \"rm -rf ~\" }' f", ["core.filesystem:rm-rf-root-home"]],
+  ["awk '{ system($1) }' f", ["doubt"]],
+  ["awk '/a|b/ { print }' f", []],
+  ['awk -F, \'{ if ($1 == "a" || "b") print $2 }\' f', []],
+  // the daemon takes any program on the machine for its owner: its address and its client library are the CLI's reach
+  ["curl -s http://127.0.0.1:6767/api/status", ["room.guard:paseo-daemon"]],
+  ["websocat ws://localhost:6767/ws", ["room.guard:paseo-daemon"]],
+  ["H=localhost; P=6767; curl http://$H:$P/", ["room.guard:paseo-daemon"]],
+  ["exec 3<>/dev/tcp/127.0.0.1/6767", ["room.guard:paseo-daemon"]],
+  ["python3 -c \"import socket; socket.create_connection(('localhost', 6767))\"", ["room.guard:paseo-daemon"]],
+  ["node -e \"const { DaemonClient } = require('@getpaseo/client')\"", ["room.guard:paseo-daemon"]],
+  ["curl -s http://127.0.0.1:16767/ http://localhost:67670/", []],
+  ["npm install @getpaseo/client", []],
   // the repository's hooks are its own checks: skipping them is the room's rule
   ["git commit --no-verify -m wip", ["room.guard:git-no-verify"]],
   ["git -C /tmp/r commit -anm wip", ["room.guard:git-no-verify"]],
@@ -249,6 +283,77 @@ for (const [command, expected] of cases)
   test(`gate: ${JSON.stringify(command)} ${expected.length ? `trips ${expected.join(", ")}` : "passes"}`, async () => {
     assert.deepEqual(await hits(command), [...expected].sort());
   });
+
+test("a cd into a folder that is not there leaves the shell where it was, for what runs whatever the cd did", async () => {
+  const unbuilt = (path: string) => path === PROJECT;
+  const built = (path: string) => path === PROJECT || path === `${PROJECT}/dist`;
+  assert.deepEqual(await hits("cd dist; rm -rf src", [], { folder: unbuilt }), ["core.filesystem:rm-rf-general"]);
+  assert.deepEqual(await hits("cd dist || rm -rf src", [], { folder: unbuilt }), ["core.filesystem:rm-rf-general"]);
+  assert.deepEqual(await hits("cd dist && rm -rf src", [], { folder: unbuilt }), ["core.filesystem:rm-generated"]);
+  assert.deepEqual(await hits("cd dist; rm -rf src", [], { folder: built }), ["core.filesystem:rm-generated"]);
+});
+
+test("a command under another name is judged as the program its link runs, by path or on PATH", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "bin-"));
+  const cli = join(dir, "lib", "node_modules", "@getpaseo", "cli", "bin");
+  mkdirSync(cli, { recursive: true });
+  writeFileSync(join(cli, "paseo.js"), "", { mode: 0o755 });
+  symlinkSync("/bin/rm", join(dir, "del"));
+  symlinkSync(join(cli, "paseo.js"), join(dir, "p"));
+  const looked = { program: machineTools(() => null).program };
+  try {
+    assert.deepEqual(await hits(`PATH=${dir}:/usr/bin; del -rf ~`, [], looked), ["core.filesystem:rm-rf-root-home"]);
+    assert.deepEqual(await hits(`${dir}/del -rf ~`, [], looked), ["core.filesystem:rm-rf-root-home"]);
+    assert.deepEqual(await hits(`PATH=${dir}; p send agent hi`, [], looked), ["room.guard:paseo-cli"]);
+    assert.deepEqual(await hits(`PATH=${dir}; del() { echo; }; del -rf ~`, [], looked), [], "a function comes first");
+    assert.deepEqual(await hits(`PATH=${dir}; ls -la`, [], looked), []);
+    assert.deepEqual(await hits(`PATH=${dir}; del -rf ~`), [], "without the lookup the name runs nothing known");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("a daemon on a socket is reached by naming the socket, however its listen address spells it", async () => {
+  for (const daemon of ["unix:///Users/u/.paseo/d.sock", "~/.paseo/d.sock"]) {
+    const at = { ...place, daemon };
+    const rules = async (command: string) =>
+      (await evaluate(command, PROJECT, at, config(), tools())).findings.map((f) => `${f.pack}:${f.rule}`);
+    assert.deepEqual(await rules("curl --unix-socket /Users/u/.paseo/d.sock http://x/api"), [
+      "room.guard:paseo-daemon",
+    ]);
+    assert.deepEqual(await rules("curl -s http://127.0.0.1:6767/"), [], daemon);
+  }
+});
+
+test("an alias or a function of the user's shell is judged by what it runs, where the line calls it", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "rc-"));
+  const snapshot = [
+    "# Snapshot file",
+    "unalias -a 2>/dev/null || true",
+    "# Functions",
+    "deploy () {",
+    "\tgit push --force origin main",
+    "}",
+    "# Shell Options",
+    "setopt login",
+    "# Aliases",
+    "alias -- nuke='rm -rf ~'",
+    "alias -- quiet='ls -la'",
+    "alias -- say='echo '\\''hi'\\'''",
+  ];
+  writeFileSync(join(dir, "snapshot-zsh-1-abc.sh"), `${snapshot.join("\n")}\n`);
+  try {
+    const rc = claudeRc(dir);
+    assert.equal(rc?.aliases.get("say"), "echo 'hi'");
+    const seeded = { rc: () => rc };
+    assert.deepEqual(await hits("nuke", [], seeded), ["core.filesystem:rm-rf-root-home"]);
+    assert.deepEqual(await hits("deploy", [], seeded), ["core.git:push-force-long"]);
+    assert.deepEqual(await hits("quiet; say", [], seeded), []);
+    assert.deepEqual(await hits("nuke; deploy", []), [], "without the shell's rc the names run nothing known");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
 
 test("packs that are off hold nothing until the policy turns them on", async () => {
   for (const [command, rule] of [

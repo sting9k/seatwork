@@ -14,9 +14,10 @@ export interface Defs {
   maybe: boolean;
 }
 
-/** What the shell has been told so far on one line: folder, variables, functions, aliases, input, and files written from literals. */
+/** What the shell has been told so far on one line: folder, variables, functions, aliases, input, and files written from literals; `failedCwd` is where a cd into a folder not there leaves it. */
 export interface State {
   cwd: string | null;
+  failedCwd?: string | null;
   moved: boolean;
   vars: Map<string, Variable>;
   funcs: Map<string, Defs>;

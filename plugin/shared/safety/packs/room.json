@@ -95,6 +95,16 @@
             "seatwork_mail writes to your Owner or to a seat you launched",
             "Ask your Owner; the person runs the Paseo CLI"
           ]
+        },
+        "paseo-daemon": {
+          "severity": "critical",
+          "grant": "human",
+          "reason": "a seat reaching the Paseo daemon by its address or its client library",
+          "explanation": "The daemon takes a program on this machine for its owner: what it is sent prompts, starts and stops agents and changes the daemon, and none of the room's checks stand between.",
+          "safer": [
+            "seatwork_mail writes to your Owner or to a seat you launched",
+            "Ask your Owner; the person works with the daemon"
+          ]
         }
       }
     },

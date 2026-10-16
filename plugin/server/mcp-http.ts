@@ -47,11 +47,12 @@ async function bodyOf(req: IncomingMessage): Promise<string | null> {
   return Buffer.concat(chunks).toString("utf8");
 }
 
-/** The room's loopback server: MCP for the seats' tools, plain routes for the guard's hooks. */
+/** The room's loopback server: MCP for the seats' tools, plain routes for the guard's hooks; `visible` picks the tools a session is listed. */
 export class McpHttpServer {
   private server: Server | null = null;
   private readonly tools = new Map<string, { tool: McpTool; handler: McpToolHandler }>();
   private readonly routes = new Map<string, Route>();
+  visible: ((tool: string, context: McpCallContext) => boolean) | null = null;
 
   constructor(
     private readonly token: string,
@@ -214,7 +215,11 @@ export class McpHttpServer {
         case "ping":
           return rpcResult(id, {});
         case "tools/list":
-          return rpcResult(id, { tools: [...this.tools.values()].map((entry) => entry.tool) });
+          return rpcResult(id, {
+            tools: [...this.tools.values()]
+              .filter((entry) => this.visible?.(entry.tool.name, context) ?? true)
+              .map((entry) => entry.tool),
+          });
         case "tools/call": {
           const name = typeof request.params?.name === "string" ? request.params.name : "";
           const entry = this.tools.get(name);

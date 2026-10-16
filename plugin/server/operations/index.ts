@@ -60,6 +60,7 @@ const LABEL_LINE_CHARS = 300;
 const NOTE_KINDS: readonly TraceNoteKind[] = ["evidence", "eliminated", "hypothesis"];
 const HOUR = 3_600_000;
 const DAY = 24 * HOUR;
+const SKILL_DAYS = 7;
 const SHOWN = { lines: 50, linesMost: 500, incidents: 20, tunes: 10, untold: 20, reverts: 2 } as const;
 
 /** The keys of a dotted path; a key in brackets may hold dots, as a project's folder does. */
@@ -221,6 +222,24 @@ export class Operations {
       // a store that cannot keep the line must not log about itself again
       this.deps.echo(`operations: a log line was not kept: ${(error as Error).message}`);
     }
+  }
+
+  /** Counts the skills a seat of `role` loaded in a turn that ended. */
+  skillsLoaded(role: string, skills: readonly string[]): void {
+    if (skills.length) this.store.skillsLoaded(this.now().toISOString().slice(0, 10), role, skills);
+  }
+
+  /** The skills each role loaded over the last week, and of the skills `given` each role, those it never loaded. */
+  skillReading(given: (role: string) => readonly string[], roles: readonly string[]): Record<string, unknown> {
+    const since = new Date(this.now().getTime() - SKILL_DAYS * DAY).toISOString().slice(0, 10);
+    const loads = this.store.skillLoads(since);
+    const never = Object.fromEntries(
+      roles.map((role) => [
+        role,
+        given(role).filter((skill) => !loads.some((one) => one.role === role && one.skill === skill)),
+      ]),
+    );
+    return { days: SKILL_DAYS, loads, never };
   }
 
   /** A turn of an operator began: what it reads from now on is what its changes may rest on. */
@@ -507,15 +526,18 @@ export class Operations {
 
   /** Changes one tunable key, in memory and in the room's policy file, with what it rests on and the district's reading as its baseline. */
   private tune(agent: string, args: Record<string, unknown>): Record<string, unknown> {
-    const path = String(args.path ?? "");
-    const found = tunableOf(path);
+    const asked = String(args.path ?? "");
+    const found = tunableOf(asked);
     if (!found)
       throw new OperationsRefused(
-        `${path || "that key"} is not one the room tunes on its own; tunable: ${Object.keys(TUNABLES).join(", ")}`,
+        `${asked || "that key"} is not one the room tunes on its own; tunable: ${Object.keys(TUNABLES).join(", ")}`,
       );
     const { tunable, project } = found;
     if (project !== undefined && !this.budget.knows(project))
       throw new OperationsRefused(`no project ${project} in the room: seatwork_room do=budget lists them`);
+    // a project's cap is changed under the key the policy already names its folder by, never beside it
+    const key = project === undefined ? null : this.budget.keyOf(project);
+    const path = key !== null && key !== project ? asked.replace(`[${project}]`, `[${key}]`) : asked;
     const value = checked(path, tunable, args.value);
     const { reason, evidence } = this.grounds(agent, tunable.district, args, true);
     const trace = args.trace === undefined ? null : this.openTrace(args.trace);

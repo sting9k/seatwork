@@ -6,6 +6,7 @@ import { clip } from "../orchestration/forks";
 import { classify, type FailureKind } from "../orchestration/recovery";
 import { atMilestone, nextTitle, parseHandoff, rotate } from "../orchestration/rotation";
 import { familyOf } from "../orchestration/models";
+import { skillsLoaded } from "../orchestration/runtimes";
 import { FRESH_EYES, ownerNote } from "../orchestration/rounds";
 import { parseSeat } from "../orchestration/seats";
 import { handInLine, handInReturn, type HandIn } from "../safety/handin";
@@ -349,6 +350,12 @@ export async function turnEnded(room: RoomContext, end: TurnEnd): Promise<void> 
   const role = parseSeat(seat.provider)?.role;
   // the task is read once, so every part of this turn's end speaks of the same one
   const task = role ? taskOf(room, id) : id;
+  if (role)
+    try {
+      room.operations.skillsLoaded(role, skillsLoaded(end.events));
+    } catch (error) {
+      room.log(`the skills ${id} loaded were not counted: ${errorText(error)}`);
+    }
   // only the room's own seats are kept: the council's and the decision model's calls are no seats
   if (role)
     room.knowledge.turnEnded({

@@ -1,10 +1,13 @@
 import { baseName } from "../normalize";
 import { literal, type Word } from "../shell";
-import type { Scene } from "../types";
+import type { Place, Scene } from "../types";
 
 /** The Paseo CLI: any command it names reaches other agents or the daemon, so only a call that names none runs. */
 
 const CLI_PACKAGE = /(^|\/)@getpaseo\/cli\//;
+const LIBRARY = /@getpaseo\/[\w.-]+/;
+const LOOPBACK = String.raw`127(?:\.\d{1,3}){1,3}|localhost|::1|0\.0\.0\.0|0`;
+let pattern: { key: string; re: RegExp | null } | null = null;
 
 /** The command a `paseo` line names, or what stands in its place; null when it names none (`--help`, `--version`, `help`). */
 export function paseoCommand(words: Word[]): string | null {
@@ -32,4 +35,33 @@ export function cliWords(scene: Pick<Scene, "call">): Word[] | null {
   if (name !== "yarn" && name !== "pnpm") return null;
   const at = args.findIndex((w) => !(literal(w) ?? "-").startsWith("-"));
   return at >= 0 && literal(args[at]) === "paseo" ? args.slice(at + 1) : null;
+}
+
+/** What names the daemon at a listen address: its port after a host of this machine, or its socket's path; null for none. */
+function daemonPattern(listen: string | null | undefined, home: string): RegExp | null {
+  if (!listen) return null;
+  const key = `${listen}\0${home}`;
+  if (pattern?.key === key) return pattern.re;
+  const escape = (text: string) => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const socket = listen.startsWith("unix://") ? listen.slice(7) : /^[/~]/.test(listen) ? listen : null;
+  let re: RegExp | null = null;
+  if (socket) re = new RegExp(escape(socket.replace(/^~(?=\/|$)/, home)));
+  else {
+    const at = listen.lastIndexOf(":");
+    const port = /^\d+$/.test(listen.trim()) ? listen.trim() : listen.slice(at + 1);
+    const host = at < 0 ? "" : listen.slice(0, at).replace(/^\[(.*)\]$/, "$1");
+    const hosts = host && !new RegExp(`^(?:${LOOPBACK}|::)$`).test(host) ? `${LOOPBACK}|${escape(host)}` : LOOPBACK;
+    if (/^\d+$/.test(port)) re = new RegExp(`(?<![\\w.:-])\\[?(?:${hosts})\\]?(?::|/|[\\s'",]+)${port}(?!\\d)`);
+  }
+  pattern = { key, re };
+  return re;
+}
+
+/** How a text reaches the daemon, a program's by its client library too; null when it does not. */
+export function reachesDaemon(text: string, place: Pick<Place, "daemon" | "home">, program = false): string | null {
+  if (program) {
+    const library = LIBRARY.exec(text);
+    if (library) return `loads ${library[0]}`;
+  }
+  return daemonPattern(place.daemon, place.home)?.test(text) ? "names the daemon's address" : null;
 }

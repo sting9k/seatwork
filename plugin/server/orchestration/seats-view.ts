@@ -11,6 +11,7 @@ export interface SeatRow {
   turnStartedAt: string | null;
   heldMail: number;
   heldSince?: string;
+  heldForRound?: { reports: number; dueAt: string };
   owes?: { asks: number; oldestAt: string };
   retry: string | null;
   error: string | null;
@@ -57,6 +58,11 @@ export function describeSeats(rows: readonly SeatRow[], rotateAtTokens: number, 
       parts.push(
         `${row.heldMail} mail${row.heldMail === 1 ? "" : "s"} held for it${waited === null ? "" : `, the oldest for ${waited} min`}`,
       );
+    }
+    if (row.heldForRound) {
+      const { reports, dueAt } = row.heldForRound;
+      const due = Math.max(0, Math.ceil((Date.parse(dueAt) - now) / 60_000));
+      parts.push(`${reports} report${reports === 1 ? "" : "s"} held for a round, due in ${due} min`);
     }
     if (row.owes)
       parts.push(

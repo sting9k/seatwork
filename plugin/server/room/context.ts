@@ -50,6 +50,7 @@ export interface RoomContext {
 const HELD_MOST = 8;
 const TITLE_SHOWN = 80;
 const DOWN_MS = vocabulary.leaseDownHours * 3_600_000;
+const OPENING_MS = vocabulary.leaseMinutes * 60_000;
 
 /** The issues a seat holds in progress in its project's work store; none when the store cannot be read. */
 function held(room: RoomContext, seat: string): string[] {
@@ -75,9 +76,12 @@ export function releaseWork(room: RoomContext, from: string, to: string | null):
   if (moved.length > 0) room.log(`work: ${moved.join(", ")} of ${from} ${to ? `now held by ${to}` : "open again"}`);
 }
 
-/** Whether the app shows a seat closed or failed, and has for longer than a claim is kept for such a seat; a seat with no time shown is not. */
-const downLong = (seat: LiveSeat, now: number) =>
-  (seat.status === "closed" || seat.status === "error") && now - Date.parse(seat.updatedAt) > DOWN_MS;
+/** Whether the app shows a seat closed or failed for longer than a claim is kept for such a seat, or still opening for longer than a lease; a seat with no time shown is not. */
+function downLong(seat: LiveSeat, now: number): boolean {
+  const after =
+    seat.status === "initializing" ? OPENING_MS : ["closed", "error"].includes(seat.status) ? DOWN_MS : null;
+  return after !== null && now - Date.parse(seat.updatedAt) > after;
+}
 
 /** The seats the app lists, by whether their state is known, a seat down for long left out of both; null, said in the log, when the list cannot be read. */
 async function seatingOf(room: RoomContext): Promise<Seating | null> {

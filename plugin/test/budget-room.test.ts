@@ -1,5 +1,6 @@
 import { installRoom, PROJECT, ROOM_HOME } from "./support/room";
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
 import { mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { after, before, mock, test } from "node:test";
@@ -25,7 +26,8 @@ before(() => {
   installRoom(["claude-hq", "claude-lead", "claude-peer"]);
   const file = join(ROOM_HOME, "policy.json");
   const policy = JSON.parse(readFileSync(file, "utf8"));
-  policy.budget = { projects: { [capped]: { dailyUsd: 1 } } };
+  // the owner's spelling of the folder, not the registry's: a trailing slash, the path before its links
+  policy.budget = { projects: { [`${join(PROJECT, "..", "budget-capped")}/`]: { dailyUsd: 1 } } };
   writeFileSync(file, JSON.stringify(policy));
   console.log = console.error = () => {};
   mock.timers.enable({ apis: ["setInterval"] });
@@ -131,4 +133,37 @@ test("a project past its cap takes no mail and no new seat; the room's operator 
   mock.timers.tick(60_000);
   await settle();
   assert.equal(hq.inbox.length, 1, "once");
+});
+
+test("a worktree of a held project outside its folder starts no seat; a cap the owner raises in the policy file lifts the hold with no restart", async () => {
+  const git = (...args: string[]) =>
+    execFileSync("git", ["-C", capped, ...args], {
+      env: {
+        ...process.env,
+        GIT_AUTHOR_NAME: "t",
+        GIT_AUTHOR_EMAIL: "t@t",
+        GIT_COMMITTER_NAME: "t",
+        GIT_COMMITTER_EMAIL: "t@t",
+      },
+      stdio: "ignore",
+    });
+  git("init", "-q");
+  writeFileSync(join(capped, "README.md"), "capped\n");
+  git("add", "README.md");
+  git("commit", "-qm", "base");
+  const outside = join(PROJECT, "..", "budget-capped-wt");
+  git("worktree", "add", "-q", outside);
+  await assert.rejects(
+    async () => call("before agent.create", createRequest("claude-peer", outside), context),
+    /claude-peer refused: .*budget-capped is held by the room's budget/,
+  );
+
+  const file = join(ROOM_HOME, "policy.json");
+  const policy = JSON.parse(readFileSync(file, "utf8"));
+  policy.budget.projects = { [capped]: { dailyUsd: 10 } };
+  writeFileSync(file, JSON.stringify(policy));
+  mock.timers.tick(60_000);
+  await settle();
+  await call("before agent.create", createRequest("claude-peer", capped), context);
+  await call("before agent.create", createRequest("claude-peer", outside), context);
 });

@@ -406,15 +406,22 @@ export class MailStore extends Sqlite {
     return new Map(rows.map((row) => [row.seat, { count: Number(row.n), since: row.since }]));
   }
 
-  /** How many mails wait for one seat, and since when the oldest does; undefined when none does. A mail held until a time after `now` is not waiting yet. Reads no body. */
-  waitingFor(seat: string, now: string): { count: number; since: string } | undefined {
-    const row = this.row<{ n: number; since: string | null }>(
-      `SELECT count(*) AS n, min(m.at) AS since FROM deliveries d CROSS JOIN messages m ON m.id = d.message_id
-       WHERE d.seat = ? AND d.state IN ('queued', 'sending') AND (d.held_until IS NULL OR d.held_until <= ?)`,
+  /** How many mails wait for one seat and since when the oldest does, and how many are held until a time after `now` and the first such time; undefined when there are none. Reads no body. */
+  waitingFor(
+    seat: string,
+    now: string,
+  ): { count: number; since: string | null; later: number; due: string | null } | undefined {
+    const row = this.row<{ n: number | null; since: string | null; later: number | null; due: string | null }>(
+      `SELECT sum(d.held_until IS NULL OR d.held_until <= ?2) AS n,
+              min(CASE WHEN d.held_until IS NULL OR d.held_until <= ?2 THEN m.at END) AS since,
+              sum(d.held_until > ?2) AS later, min(CASE WHEN d.held_until > ?2 THEN d.held_until END) AS due
+       FROM deliveries d CROSS JOIN messages m ON m.id = d.message_id
+       WHERE d.seat = ?1 AND d.state IN ('queued', 'sending')`,
       seat,
       now,
     );
-    return row && row.n > 0 ? { count: Number(row.n), since: String(row.since) } : undefined;
+    const [count, later] = [Number(row?.n ?? 0), Number(row?.later ?? 0)];
+    return count + later > 0 ? { count, since: row!.since, later, due: row!.due } : undefined;
   }
 
   /** Withdraws as expired mail sent only to be read and unread before `before`; never an ask. */
@@ -688,8 +695,8 @@ export class MailStore extends Sqlite {
     return this.rows(`SELECT ${WAKEUP} FROM wakeups WHERE due <= ? ORDER BY due, id LIMIT ?`, now, limit).map(toWakeUp);
   }
 
-  /** A wake-up is over: it fired, was dropped with its seat, or was canceled; false when it was over already. */
-  closeWakeUp(id: number, outcome: "fired" | "dropped" | "canceled"): boolean {
+  /** A wake-up is over: it fired, was dropped with its seat, or was canceled; false when it was over already. A pass that closes several copies them once itself. */
+  closeWakeUp(id: number, outcome: "fired" | "dropped" | "canceled", copy = true): boolean {
     const closed = this.transaction("write", () => {
       const wake = this.wakeUp(id);
       if (!wake) return false;
@@ -697,12 +704,12 @@ export class MailStore extends Sqlite {
       this.event(`wakeup-${outcome}`, null, wake.seat, { id, by: wake.by, due: wake.due });
       return true;
     });
-    if (closed) this.copyWakeUps();
+    if (closed && copy) this.copyWakeUps();
     return closed;
   }
 
   /** Writes the pending wake-ups and the highest id given beside the database, so a rebuilt store has them back and gives no id twice; a copy that cannot be written is said and never undoes the change. */
-  private copyWakeUps(): void {
+  copyWakeUps(): void {
     try {
       const after = this.row<{ seq: number }>("SELECT seq FROM sqlite_sequence WHERE name = 'wakeups'")?.seq ?? 0;
       const wakeups = this.rows(`SELECT ${WAKEUP} FROM wakeups ORDER BY id`).map(toWakeUp);

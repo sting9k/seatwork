@@ -16,7 +16,7 @@ You escalate: a fault in the plugin's code, and any change outside what you may 
 ## seatwork_room
 
 - `health` first, then `traces`.
-- Readings by name: `budget`, `jev`, `knowledge`, `mail`, `safety`, `seats`, `host`. Also `log`, filtered by `district`, `since` or `q`, and `incidents`.
+- Readings by name: `budget`, `jev`, `knowledge`, `mail`, `safety`, `seats`, `skills`, `host`. Also `log`, filtered by `district`, `since` or `q`, and `incidents`.
 - An incident you know: `ack` (it returns only at twice the rate), `snooze`, or `resolve` with its cause.
 - `policy`: the keys you may tune, their ranges, your last changes.
 - `budget`: you may only lower a cap; the person raises one.

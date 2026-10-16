@@ -261,7 +261,7 @@ function newFileUnderHome(path: string, tools: FileTools): boolean {
 }
 
 /** Every file a command writes, with how: redirects, tee, cp, mv, dd, sed -i, downloads. */
-function writesOf(scene: Scene): { value: Value; mode: WriteMode; how: string }[] {
+export function writesOf(scene: Scene): { value: Value; mode: WriteMode; how: string }[] {
   const out: { value: Value; mode: WriteMode; how: string }[] = [];
   const add = (word: Word, mode: WriteMode, how: string) => out.push({ value: valueOf(word, scene), mode, how });
   for (const r of scene.simple.redirects) {

@@ -273,7 +273,7 @@ export class OperationsStore extends Sqlite {
   /** Changes made since `since` that nothing undid yet, and that undo nothing: what the digest weighs against now. */
   standing(since: string): Tune[] {
     return this.rows<Tune>(
-      `SELECT ${TUNE} FROM tunes t WHERE at >= ? AND reverts IS NULL
+      `SELECT ${TUNE} FROM tunes t INDEXED BY tunes_by_at WHERE at >= ? AND reverts IS NULL
          AND NOT EXISTS (SELECT 1 FROM tunes r WHERE r.reverts = t.id) ORDER BY id`,
       since,
     ).map((row) => ({ ...row }));
@@ -433,15 +433,39 @@ export class OperationsStore extends Sqlite {
     this.run("DELETE FROM holds WHERE project = ?", project);
   }
 
-  /** Drops days of spend and holds before the UTC day `before`, and totals of seats not read since `seatsBefore`; how many rows went. */
+  /** Drops days of spend, holds and skill loads before the UTC day `before`, and totals of seats not read since `seatsBefore`; how many rows went. */
   expireSpend(before: string, seatsBefore: string): number {
     return this.transaction(
       "write",
       () =>
         this.run("DELETE FROM spend WHERE day < ?", before).changes +
         this.run("DELETE FROM holds WHERE day < ?", before).changes +
-        this.run("DELETE FROM spend_seats WHERE at < ?", seatsBefore).changes,
+        this.run("DELETE FROM spend_seats WHERE at < ?", seatsBefore).changes +
+        this.run("DELETE FROM skill_loads WHERE day < ?", before).changes,
     );
+  }
+
+  /** Counts one load of each skill by a seat of `role` on the UTC day `day`. */
+  skillsLoaded(day: string, role: string, skills: readonly string[]): void {
+    if (skills.length === 0) return;
+    this.transaction("write", () => {
+      for (const skill of skills)
+        this.run(
+          `INSERT INTO skill_loads (day, role, skill, loads) VALUES (?, ?, ?, 1)
+             ON CONFLICT (day, role, skill) DO UPDATE SET loads = loads + 1`,
+          day,
+          role,
+          skill,
+        );
+    });
+  }
+
+  /** Each role's loads of each skill since the UTC day `since`. */
+  skillLoads(since: string): { role: string; skill: string; loads: number }[] {
+    return this.rows<{ role: string; skill: string; loads: number }>(
+      "SELECT role, skill, SUM(loads) AS loads FROM skill_loads WHERE day >= ? GROUP BY role, skill ORDER BY role, skill",
+      since,
+    ).map(({ role, skill, loads }) => ({ role, skill, loads }));
   }
 
   /** Drops log lines past their days and the store's size, incidents not seen within the days, and old closed traces; in slices. The record of changes stays. */

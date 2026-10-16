@@ -1,6 +1,6 @@
 import { appendFileSync, chmodSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
-import { inRoom, maySpawn, reviews, routeOpen, SPAWN, traits } from "../../shared/workflow";
+import { inRoom, maySpawn, reviews, ROLES, routeOpen, SPAWN, traits } from "../../shared/workflow";
 import { MailEngine } from "../coordination/engine";
 import { Collector } from "../gc";
 import type { Host } from "../host";
@@ -13,7 +13,7 @@ import { Rotations } from "../orchestration/rotation";
 import { keepOperator } from "../orchestration/operator";
 import { Rounds } from "../orchestration/rounds";
 import { TaskKeys } from "../orchestration/task-keys";
-import { describeIsolation, ensureRuntime, envFor } from "../orchestration/runtimes";
+import { claudeRoleDir, describeIsolation, ensureRuntime, envFor, roleSkillNames } from "../orchestration/runtimes";
 import { enabledSeats, parseSeat } from "../orchestration/seats";
 import {
   CLAUDE_HOME,
@@ -32,7 +32,7 @@ import {
   USER_HOME,
 } from "../paths";
 import { readJson } from "../persisted";
-import { loadPolicy, POLICY_FILE, type RuntimePolicy } from "../policy";
+import { followBudget, loadPolicy, POLICY_FILE, type RuntimePolicy } from "../policy";
 import { roomStats } from "../stats";
 import { Operations, OperationsRefused, writePolicyKey } from "../operations/index";
 import { addSkill, listSkills, removeSkill, SkillRefused, type SkillSource } from "../orchestration/local-skills";
@@ -41,7 +41,7 @@ import { OwedList, roomStatus } from "./status";
 import { Jev } from "../jev/index";
 import { Knowledge } from "../knowledge/index";
 import { Safety } from "../safety/index";
-import { render, type Cli } from "../safety/hooks";
+import { render, SKILLS_ENV, type Cli } from "../safety/hooks";
 import { WorkStores } from "../tasks/stores";
 import { Callers, serverToken } from "./callers";
 import { fromRoom, releaseWork, sweepLeases, taskOf, type RoomContext } from "./context";
@@ -148,10 +148,17 @@ function startKnowledge(
 }
 
 /** The Safety district over the room's seats; the notice of a rule a seat keeps hitting goes to its Owner by mail. */
-function startSafety(engine: MailEngine, jev: Jev, policy: RuntimePolicy, log: (message: string) => void): Safety {
+function startSafety(
+  engine: MailEngine,
+  jev: Jev,
+  policy: RuntimePolicy,
+  log: (message: string) => void,
+  daemon: string,
+): Safety {
   const safety = new Safety({
     dir: SAFETY_DIR,
     userHome: USER_HOME,
+    daemon,
     policy: () => policy.safety,
     seat: (id) => {
       const record = engine.seat(id);
@@ -491,7 +498,6 @@ function topSeatOf(engine: MailEngine, project: string): string | null {
   );
 }
 
-/** The room's operations: its log and incidents told to the room's own seats, the policy those seats tune, and the budget of each project. */
 /** A local skill's refusal as the operator's tool gives it. */
 function refusedAs<T>(act: () => T): T {
   try {
@@ -502,11 +508,13 @@ function refusedAs<T>(act: () => T): T {
   }
 }
 
+/** The room's operations: its log and incidents told to the room's own seats, the policy those seats tune, and the budget of each project. */
 function startOperations(policy: RuntimePolicy, operators: ReadonlySet<string>, room: () => RoomContext): Operations {
+  const budgetNow = followBudget(policy);
   return new Operations({
     dir: OPERATIONS_DIR,
     busyTimeoutMs: policy.room.work?.busyTimeoutMs ?? 5000,
-    policy: () => policy as unknown as Record<string, unknown>,
+    policy: () => (budgetNow(), policy as unknown as Record<string, unknown>),
     persist: (path, value) => writePolicyKey(POLICY_FILE, path, value),
     operators: () => [...operators],
     mail: (to, subject, body, more) =>
@@ -551,6 +559,7 @@ function startOperations(policy: RuntimePolicy, operators: ReadonlySet<string>, 
         forksLastWeek: room().forks.reading(),
       }),
       knowledge: () => room().knowledge.reading(),
+      skills: () => room().operations.skillReading(roleSkillNames, ROLES),
       mail: () =>
         roomStats(
           1,
@@ -605,7 +614,7 @@ export function startRoom(input: {
   const knowledge = startKnowledge(engine, jev, policy, () => room, log);
   engine.appendix = (agentId) => knowledge.appendix(agentId);
   engine.chooseAsk = chooseAsk(forks);
-  const safety = startSafety(engine, jev, policy, log);
+  const safety = startSafety(engine, jev, policy, log, host.address());
   const operators = new Set<string>();
   operations = startOperations(policy, operators, () => room);
   engine.holds = (seat) => operations.holds(seat);
@@ -702,6 +711,7 @@ export function startRoom(input: {
         ...envFor(seat, policy),
         TMPDIR: tmp,
         ...safety.env(agentId, served.mcp.routeUrl(served.port(), "gate")),
+        ...(seat.harness === "claude" ? { [SKILLS_ENV]: join(claudeRoleDir(seat.role), ".claude", "skills") } : {}),
       };
     },
     created(agent) {

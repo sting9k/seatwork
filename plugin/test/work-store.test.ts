@@ -269,6 +269,7 @@ test("every query the store runs is served by an index, but the whole-store ones
   store.list({ assignee: "p1", status: "in_progress", limit: 1 });
   store.list({ status: "open" });
   store.list({ limit: 5 });
+  store.titles("open", 5);
   store.heldBy("p1");
   store.get(b.id.slice(0, 6));
   store.blockers(c.id);

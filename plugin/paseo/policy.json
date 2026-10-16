@@ -158,8 +158,6 @@
       }
     },
     "$comment_launch": "How a seat starts. Claude seats run on the user's ~/.claude: extraArgs keep the sign-in only (no user settings, no personal MCP server) and env turns off what Claude Code adds itself; strict-mcp-config alone still loads claude.ai connectors. Paseo's own settings flag (fastMode) replaces any other, so the Co-Authored-By reminder is called off in room/harness/claude-system.md instead. Other harnesses get a home of their own: {runtime} is ~/.config/seatwork/runtimes/<harness>/<role>. Setup writes each launch block into the harness's providers (env; extraArgs under options), so a seat starts this way with the plugin off too.",
-    "shareFiles": ["CLAUDE.md"],
-    "$comment_shareFiles": "Files of ~/.claude appended to a Claude seat's prompt; its personal settings are off.",
     "deniedSkills": [
       "loop",
       "schedule",
@@ -185,7 +183,7 @@
       }
     },
     "runtime": {
-      "shareFiles": ["auth.json", "AGENTS.md", "rules", "version.json"],
+      "shareFiles": ["auth.json", "rules", "version.json"],
       "shareSkills": [],
       "sharePlugins": false,
       "shareHooks": false,
@@ -216,7 +214,7 @@
     },
     "runtime": {
       "$comment": "A Pi seat gets the room's and Paseo's tools through Pi's built-in MCP (Pi 0.99+), where Paseo registers its servers. settings overlays the user's settings.json: no user package or extension reaches the seat or stands in for that MCP.",
-      "shareFiles": ["auth.json", "models.json", "models-store.json", "AGENTS.md"],
+      "shareFiles": ["auth.json", "models.json", "models-store.json"],
       "shareDirs": [],
       "settings": {
         "extensions": [],
@@ -348,9 +346,10 @@
     "forks": ["report", "wake", "failure", "answers", "overlap"]
   },
   "room": {
-    "$comment_params": "Quoted by role prompts as {{placeholders}}; change them here, never in a prompt. heartbeatCron: the Supervisor's beat; Lead reports that ask or close already wake it, so it only catches what slipped between. mailChars: how much of a mail's body a seat is shown; the rest is in the mail's file, whose path the mail gives. reviewStallMinutes: how long a review round waits for its last review, search or scout seat, which read long before writing. readBudgetTokens: reading per Peer task before the Lead must split it; ~80k tokens (~320 KB of source) is what a default-tier model reasons over well. cheapReadBudgetTokens: the same for the cheap tier, which loses the thread sooner. rotateAtTokens: a Lead or Peer past this is named with its size to the seat above under its next report; each step rereads the whole context, so its next task goes to a fresh seat.",
+    "$comment_instructions": "Files whose text every seat reads after the room's prompt, on every agent CLI: a path in the room home, or one under ~/ for a file of the user's. The room's AGENTS.md is the person's to write; none of the user's own instruction files reach a seat unless listed here.",
+    "instructions": ["AGENTS.md"],
+    "$comment_params": "Quoted by role prompts as {{placeholders}}; change them here, never in a prompt. mailChars: how much of a mail's body a seat is shown; the rest is in the mail's file, whose path the mail gives. reviewStallMinutes: how long a review round waits for its last review, search or scout seat, which read long before writing. readBudgetTokens: reading per Peer task before the Lead must split it; ~80k tokens (~320 KB of source) is what a default-tier model reasons over well. cheapReadBudgetTokens: the same for the cheap tier, which loses the thread sooner. rotateAtTokens: a Lead or Peer past this is named with its size to the seat above under its next report; each step rereads the whole context, so its next task goes to a fresh seat.",
     "params": {
-      "heartbeatCron": "*/30 * * * *",
       "reviewStallMinutes": 30,
       "readBudgetTokens": 80000,
       "cheapReadBudgetTokens": 40000,
@@ -390,7 +389,7 @@
     "gate": true
   },
   "budget": {
-    "$comment": "What a project's seats may spend in a UTC day. projects: a cap for a project folder, as the registry lists it: dailyUsd (dollars as the agent CLIs report them) and, besides, dailyTurns. default: the cap of a project with none of its own. A cap is above 0; with none set the room only measures. A project that reaches its cap starts no turn from mail and no new seat until the next UTC day or until its cap is raised; running turns finish. The room's operator seat may lower a cap and never raise one: the owner does, here.",
+    "$comment": "What a project's seats may spend in a UTC day. projects: a cap for a project folder, however written (`~`, a trailing slash, a link): dailyUsd (dollars as the agent CLIs report them) and, besides, dailyTurns. default: the cap of a project with none of its own. A cap is above 0; with none set the room only measures. A project that reaches its cap starts no turn from mail and no new seat until the next UTC day or until its cap is raised; running turns finish. The room's operator seat may lower a cap and never raise one: the owner does, here, and a change here holds within a minute with no restart.",
     "projects": {}
   }
 }

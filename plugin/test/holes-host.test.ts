@@ -173,3 +173,119 @@ test("the mail sweep goes on to the next seat when the app does not answer for o
   assert.deepEqual(sent, ["seat-b"], "seat-a's unanswered state costs the sweep its limit, not the rest of its pass");
   engine.close();
 });
+
+test(
+  "a message the app takes after its time goes again as it was, under its id, so the seat reads it once",
+  { timeout: 5000 },
+  async () => {
+    const dir = mkdtempSync(join(PROJECT, "host-"));
+    const arrived: string[] = [];
+    const asked: { id: string; text: string; behaviour: string }[] = [];
+    const receipts = new Map<string, string>();
+    let slow = true;
+    const host = new PaseoHost(QUICK);
+    host.use({
+      agents: {
+        ref: () => ({
+          refresh: () => Promise.resolve(),
+          current: () => ({ id: "seat-a", status: "idle" }),
+          send: async (text: string, options: { messageId: string; activeTurnBehavior: string }) => {
+            asked.push({ id: options.messageId, text, behaviour: options.activeTurnBehavior });
+            const seen = receipts.get(options.messageId);
+            if (seen !== undefined && seen !== text) throw new Error("agent_request_key_conflict");
+            if (seen === undefined) arrived.push(text);
+            receipts.set(options.messageId, text);
+            if (slow) await wait(80);
+          },
+        }),
+      },
+    } as never);
+    const engine = new MailEngine(host, MAIL_POLICY, () => {}, { rootOf: () => dir });
+    engine.rememberSeat({
+      agentId: "seat-a",
+      parentAgentId: null,
+      role: "lead",
+      provider: "claude-lead",
+      title: "seat-a",
+      cwd: dir,
+    });
+    const note = (subject: string) => ({
+      from: { agentId: "room", role: "system" },
+      to: "seat-a",
+      priority: "action" as const,
+      subject,
+      body: subject,
+      needs: "nothing" as const,
+    });
+    await engine.post(note("FYI: first"));
+    assert.equal(arrived.length, 1, "the app took it, but answered after the room gave up");
+    slow = false;
+    await engine.post(note("FYI: second"));
+    await wait(20);
+    assert.deepEqual(
+      asked.map((one) => one.id),
+      [asked[0].id, asked[0].id, asked[2].id],
+      "the first goes again under its id, alone, and the second in a message of its own",
+    );
+    assert.equal(asked[1].text, asked[0].text);
+    assert.notEqual(asked[2].id, asked[0].id);
+    assert.equal(arrived.length, 2);
+    assert.match(arrived[0], /first/);
+    assert.doesNotMatch(arrived[0], /second/);
+    assert.match(arrived[1], /second/);
+    engine.close();
+  },
+);
+
+test("a message the app lost track of goes again under a new id; the same mail in the same words after a restart keeps its id", async () => {
+  const dir = mkdtempSync(join(PROJECT, "host-"));
+  const asked: string[] = [];
+  let answer: (id: string) => Promise<void> = async () => {};
+  const host = new PaseoHost(QUICK);
+  host.use({
+    agents: {
+      ref: () => ({
+        refresh: () => Promise.resolve(),
+        current: () => ({ id: "seat-a", status: "idle" }),
+        send: async (_text: string, options: { messageId: string }) => {
+          asked.push(options.messageId);
+          await answer(options.messageId);
+        },
+      }),
+    },
+  } as never);
+  const seat = { agentId: "seat-a", parentAgentId: null, role: "lead", provider: "claude-lead", title: "a", cwd: dir };
+  const note = (subject: string) => ({
+    from: { agentId: "room", role: "system" },
+    to: "seat-a",
+    priority: "action" as const,
+    subject,
+    body: subject,
+    needs: "nothing" as const,
+  });
+  const engineOf = () => {
+    const engine = new MailEngine(host, MAIL_POLICY, () => {}, { rootOf: () => dir });
+    engine.rememberSeat(seat);
+    return engine;
+  };
+
+  const first = engineOf();
+  answer = async (id) => {
+    if (id === asked[0]) throw new Error("agent_request_outcome_unknown");
+  };
+  await first.post(note("FYI: lost"));
+  await first.deliver("seat-a");
+  assert.equal(asked.length, 2);
+  assert.notEqual(asked[1], asked[0], "a new id once the app lost track of the first");
+  assert.equal(first.storeOf("seat-a")!.queued("seat-a").length, 0, "and the mail is delivered");
+
+  answer = () => wait(80).then(() => {});
+  await first.post(note("FYI: late"));
+  first.close();
+  answer = async () => {};
+  const next = engineOf();
+  await next.deliver("seat-a");
+  assert.equal(asked.length, 4);
+  assert.equal(asked[3], asked[2], "after a restart the same mail in the same words keeps its id");
+  next.close();
+});

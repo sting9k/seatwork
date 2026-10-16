@@ -3,19 +3,22 @@ import {
   constants,
   existsSync,
   lstatSync,
+  readdirSync,
   readFileSync,
   realpathSync,
   statSync,
   type Stats,
 } from "node:fs";
-import { delimiter, dirname, join } from "node:path";
+import { delimiter, dirname, isAbsolute, join, resolve } from "node:path";
 import { runGit } from "../git";
-import type { Tools } from "./gate/evaluate";
+import type { Rc, Tools } from "./gate/evaluate";
+import { CLAUDE_HOME } from "../paths";
 
 /** The guard's questions to the machine: git, a rebase under way, changed files. */
 
 const GIT_TIMEOUT_MS = 400;
 const MAX_SCRIPT = 256 * 1024;
+const MAX_SNAPSHOT = 1024 * 1024;
 
 function git(args: string[], cwd: string | null): Promise<{ code: number; out: string }> {
   return runGit(cwd, args, { timeoutMs: GIT_TIMEOUT_MS, maxBytes: 1 << 20 });
@@ -67,6 +70,35 @@ async function differsFromCommit(path: string, stat: Stats): Promise<boolean> {
   return false;
 }
 
+let snapshot: { file: string; mtimeMs: number; rc: Rc } | null = null;
+
+/** The aliases and functions in the newest shell snapshot Claude Code took of the user's rc, which its seats' shells start from; null when there is none. */
+export function claudeRc(dir = join(CLAUDE_HOME, "shell-snapshots")): Rc | null {
+  let newest: { file: string; mtimeMs: number } | null = null;
+  try {
+    for (const name of readdirSync(dir)) {
+      if (!/^snapshot-.+\.sh$/.test(name)) continue;
+      const stat = statSync(join(dir, name));
+      if (stat.size <= MAX_SNAPSHOT && (!newest || stat.mtimeMs > newest.mtimeMs))
+        newest = { file: join(dir, name), mtimeMs: stat.mtimeMs };
+    }
+  } catch {
+    return null;
+  }
+  if (!newest) return null;
+  if (snapshot?.file === newest.file && snapshot.mtimeMs === newest.mtimeMs) return snapshot.rc;
+  const text = readFileSync(newest.file, "utf8");
+  const aliases = new Map<string, string>();
+  for (const [, name, value] of text.matchAll(/^alias (?:-- )?([^=\s]+)=(.*)$/gm))
+    aliases.set(
+      name,
+      value.startsWith("'") && value.endsWith("'") ? value.slice(1, -1).replaceAll("'\\''", "'") : value,
+    );
+  const functions = /^# Functions\n([\s\S]*?)^# /m.exec(text)?.[1] ?? "";
+  snapshot = { ...newest, rc: { aliases, functions } };
+  return snapshot.rc;
+}
+
 /** Tools for one seat: `since` is when it started; a file written after it may be the seat's own. */
 export function machineTools(since: () => number | null): Tools {
   return {
@@ -113,12 +145,37 @@ export function machineTools(since: () => number | null): Tools {
         return { exists: false, link: false, dir: false };
       }
     },
+    rc: () => claudeRc(),
+    folder(path) {
+      try {
+        return statSync(path).isDirectory();
+      } catch {
+        return false;
+      }
+    },
     real(path) {
       try {
         return realpathSync.native(path);
       } catch {
         return null;
       }
+    },
+    program(word, cwd, path) {
+      const spots = word.includes("/")
+        ? [isAbsolute(word) || cwd ? resolve(cwd ?? "/", word) : null]
+        : (path ?? process.env.PATH ?? "")
+            .split(delimiter)
+            .map((dir) => (isAbsolute(dir) ? join(dir, word) : cwd ? join(resolve(cwd, dir || "."), word) : null));
+      for (const spot of spots) {
+        if (!spot) continue;
+        try {
+          accessSync(spot, constants.X_OK);
+          return realpathSync.native(spot);
+        } catch {
+          continue;
+        }
+      }
+      return null;
     },
     async changed(path) {
       try {

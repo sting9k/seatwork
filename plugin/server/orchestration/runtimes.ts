@@ -10,7 +10,7 @@ import {
   unlinkSync,
   writeFileSync,
 } from "node:fs";
-import { join } from "node:path";
+import { isAbsolute, join } from "node:path";
 import {
   CLAUDE_HOME,
   CODEX_HOME,
@@ -18,12 +18,15 @@ import {
   PI_HOME,
   ROLE_SKILLS_DIR,
   ROOM_DIR,
+  ROOM_HOME,
   RUNTIMES_DIR,
   USER_AGENTS_SKILLS,
+  USER_HOME,
 } from "../paths";
 import { loadPolicy, type RuntimePolicy } from "../policy";
 import { codexHooks, codexTrust, openCodePlugin, piExtension } from "../safety/hooks";
 import { localSkills, localSkillsOf } from "./local-skills";
+import type { TurnEvent } from "../host";
 import type { Harness, Seat } from "./seats";
 import { formatToml, parseToml, type TomlTable } from "../toml";
 
@@ -33,6 +36,9 @@ const RUNTIME_VERSION = 15;
 const MARKER = ".seatwork-runtime.json";
 const SKILL_DEPTH = 4;
 const SKILL_FILES_MOST = 500;
+const INSTRUCTIONS_MOST = 16 * 1024;
+const SKILL_FILE = /([\w.-]+)\/SKILL\.md\b/g;
+const PROJECT_SKILL_FOLDERS = [".claude/skills", ".agents/skills", ".opencode/skills", ".pi/skills"];
 
 function ensureDir(path: string): void {
   mkdirSync(path, { recursive: true });
@@ -291,12 +297,14 @@ export function ensureRuntime(seat: Pick<Seat, "harness" | "role">, policy: Runt
   return dir;
 }
 
-/** The files of ~/.claude the policy shares (CLAUDE.md), as text for the seat's prompt. */
-export function sharedClaudeFiles(policy: RuntimePolicy = loadPolicy()): string | null {
-  const texts = policy.claude.shareFiles
-    .map((name) => join(CLAUDE_HOME, name))
-    .filter((file) => existsSync(file))
-    .map((file) => readFileSync(file, "utf8").trim());
+/** The instruction files the policy gives every seat, as text after the room's prompt: a path in the room home, or one under ~/ of the user's. */
+export function sharedInstructions(policy: RuntimePolicy = loadPolicy()): string | null {
+  const texts = (policy.room.instructions ?? [])
+    .map((name) =>
+      name.startsWith("~/") ? join(USER_HOME, name.slice(2)) : isAbsolute(name) ? name : join(ROOM_HOME, name),
+    )
+    .filter((file) => existsSync(file) && statSync(file).isFile())
+    .map((file) => readFileSync(file, "utf8").trim().slice(0, INSTRUCTIONS_MOST));
   return texts.filter(Boolean).join("\n\n") || null;
 }
 
@@ -314,9 +322,31 @@ export function envFor(
 /** A line for the logs: what each harness's runtime leaves out of the user's setup. */
 export function describeIsolation(policy: RuntimePolicy = loadPolicy()): string {
   return [
-    `claude: user home, personal settings off; shares ${policy.claude.shareFiles.join(",") || "nothing"}; denied skills ${policy.claude.deniedSkills.length}`,
+    `claude: user home, personal settings off; denied skills ${policy.claude.deniedSkills.length}`,
     `codex: strips [${policy.codex.stripTables.join(",")}], features off ${policy.codex.featuresOff.length}, user and bundled skills off`,
     `pi: shares ${policy.pi.shareFiles.join(",")}; no user package, extension or skill`,
     `opencode: task denied, built-in subagents disabled, only the role's skills`,
   ].join(" | ");
+}
+
+/** The skills a turn loaded, each agent CLI's way: Claude's Skill tool and OpenCode's skill tool by their label, Codex reading a SKILL.md in a shell, Pi reading one. */
+export function skillsLoaded(events: readonly TurnEvent[]): string[] {
+  const names = new Set<string>();
+  for (const event of events) {
+    if (event.kind === "tool" && (event.name === "Skill" || event.name === "skill") && event.label)
+      names.add(event.label.trim().split(/\s+/)[0]);
+    else if (event.kind === "shell") for (const [, name] of event.command.matchAll(SKILL_FILE)) names.add(name);
+    else if (event.kind === "read") for (const [, name] of event.path.matchAll(SKILL_FILE)) names.add(name);
+  }
+  return [...names].filter(Boolean).sort();
+}
+
+/** The skills of a project, in the folders the agent CLIs read, named like one the room gives `role`: on Claude the project's hides the room's. */
+export function projectSkillsShadowing(root: string, role: string): { name: string; folder: string }[] {
+  const given = new Set(roleSkillNames(role));
+  return PROJECT_SKILL_FOLDERS.flatMap((folder) =>
+    skillsIn(join(root, folder))
+      .filter((name) => given.has(name))
+      .map((name) => ({ name, folder })),
+  );
 }

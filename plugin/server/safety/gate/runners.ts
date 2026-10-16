@@ -72,6 +72,16 @@ export async function runners(rd: Reader, scene: Scene, state: State, ctx: Conte
       return joined(rd, scene, name, state, nested);
     case "ssh":
       return remote(rd, scene, state, nested);
+    case "scp":
+    case "sftp":
+      return sshLocal(rd, scene, state, nested);
+    case "rsync":
+      return rsyncShell(rd, scene, state, nested);
+    case "awk":
+    case "gawk":
+    case "mawk":
+    case "nawk":
+      return awkProgram(rd, scene, state, nested);
     case "su":
     case "sg":
     case "runuser":
@@ -245,7 +255,85 @@ async function joined(rd: Reader, scene: Scene, name: string, state: State, dept
   else rd.out.doubt(`${name} runs a line known only at run time`, scene.text);
 }
 
-/** ssh: the words after the host are the remote line, run somewhere the local folder means nothing. */
+const LOCAL_SSH_OPTION = /^\s*(ProxyCommand|LocalCommand|KnownHostsCommand)\s*(?:=\s*|\s+)(.+)$/is;
+
+/** An ssh `-o` value that names a program run on this machine, read as a line here; one not known until run time is a doubt. */
+async function sshOption(
+  rd: Reader,
+  word: Word | undefined,
+  text: string | null,
+  state: State,
+  depth: number,
+  scene: Scene,
+): Promise<void> {
+  if (text === null) {
+    if (/command/i.test(word?.raw ?? "")) rd.out.doubt("ssh runs a local program named only at run time", scene.text);
+    return;
+  }
+  const found = LOCAL_SSH_OPTION.exec(text);
+  if (found && found[2].trim().toLowerCase() !== "none") await rd.text(found[2], fork(state), depth);
+}
+
+/** scp and sftp: the programs their ssh options and `-S` run on this machine. */
+async function sshLocal(rd: Reader, scene: Scene, state: State, depth: number): Promise<void> {
+  const args = scene.call.args;
+  for (let i = 0; i < args.length; i += 1) {
+    const t = literal(args[i]);
+    if (t === "-o") await sshOption(rd, args[i + 1], args[i + 1] ? literal(args[i + 1]) : null, state, depth, scene);
+    else if (t?.startsWith("-o") && t.length > 2) await sshOption(rd, args[i], t.slice(2), state, depth, scene);
+    else if (t === "-S" && args[i + 1]) await shellWord(rd, args[i + 1], state, depth, scene);
+  }
+}
+
+/** rsync: the program `-e` or `--rsh` names runs on this machine, as a line of its own. */
+async function rsyncShell(rd: Reader, scene: Scene, state: State, depth: number): Promise<void> {
+  const args = scene.call.args;
+  for (let i = 0; i < args.length; i += 1) {
+    const t = literal(args[i]);
+    if ((t === "-e" || t === "--rsh") && args[i + 1]) await shellWord(rd, args[i + 1], state, depth, scene);
+    else if (t?.startsWith("--rsh=")) await rd.text(t.slice("--rsh=".length), fork(state), depth);
+  }
+}
+
+const AWK_STRING = String.raw`"((?:[^"\\]|\\.)*)"`;
+const AWK_SYSTEM = new RegExp(String.raw`\bsystem\s*\(\s*` + AWK_STRING + String.raw`\s*\)`, "g");
+const AWK_PIPE_OUT = new RegExp(String.raw`(?<!\|)\|(?!\|)&?\s*` + AWK_STRING, "g");
+const AWK_PIPE_IN = new RegExp(AWK_STRING + String.raw`\s*\|&?\s*getline`, "g");
+const AWK_BUILT =
+  /\bsystem\s*\((?!\s*"(?:[^"\\]|\\.)*"\s*\))|\bprintf?\b[^;{}]*\|&?\s*[A-Za-z_$(]|[A-Za-z_)]\s*\|&?\s*getline/;
+
+/** awk: the shell lines its program runs, by `system`, a pipe out of `print` or a pipe into `getline`; one built at run time is a doubt. */
+async function awkProgram(rd: Reader, scene: Scene, state: State, depth: number): Promise<void> {
+  const args = scene.call.args;
+  let program: Word | undefined;
+  for (let i = 0; i < args.length; i += 1) {
+    const t = literal(args[i]);
+    if (t === "-f" || t === "--file") return rd.out.doubt("awk runs a program file the room does not read", scene.text);
+    if (t === "-F" || t === "-v" || t === "--assign" || t === "--field-separator") {
+      i += 1;
+      continue;
+    }
+    if (t === "-e" || t === "--source") {
+      program = args[i + 1];
+      break;
+    }
+    if (t !== null && t.startsWith("-") && t !== "-") continue;
+    program = args[i];
+    break;
+  }
+  if (!program) return;
+  const text = literal(program);
+  if (text === null) {
+    if (/system|getline|\|/.test(program.raw)) rd.out.doubt("awk runs a program known only at run time", scene.text);
+    return;
+  }
+  const unescape = (value: string) => value.replace(/\\(.)/g, "$1");
+  for (const pattern of [AWK_SYSTEM, AWK_PIPE_OUT, AWK_PIPE_IN])
+    for (const [, line] of text.matchAll(pattern)) await rd.text(unescape(line), fork(state), depth);
+  if (AWK_BUILT.test(text)) rd.out.doubt("awk runs a shell line built at run time", scene.text);
+}
+
+/** ssh: the words after the host are the remote line, run somewhere the local folder means nothing; a program its options name runs here. */
 async function remote(rd: Reader, scene: Scene, state: State, depth: number): Promise<void> {
   const args = scene.call.args;
   const valued = /^-[bcDEeFIiJLlmOopQRSWw]$/;
@@ -258,6 +346,8 @@ async function remote(rd: Reader, scene: Scene, state: State, depth: number): Pr
       break;
     }
     if (!t.startsWith("-")) break;
+    if (t === "-o") await sshOption(rd, args[i + 1], args[i + 1] ? literal(args[i + 1]) : null, state, depth, scene);
+    else if (t.startsWith("-o") && t.length > 2) await sshOption(rd, args[i], t.slice(2), state, depth, scene);
     if (valued.test(t)) i += 1;
   }
   const command = args.slice(i + 1);

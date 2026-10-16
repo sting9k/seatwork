@@ -1,7 +1,7 @@
 import { languageOf, scanEmbedded, type Language } from "./embedded";
 import { baseName, programNames, invocationOf } from "./normalize";
 import { absolute, isTemp, lossOf, valueOf } from "./paths";
-import { paseoCommand, startsPaseo } from "./rules/paseo";
+import { paseoCommand, reachesDaemon, startsPaseo } from "./rules/paseo";
 import { guardOf } from "./rules/protected";
 import type { Part, Pipeline, Word } from "./shell";
 import { fork, type Reader, type State } from "./state";
@@ -110,6 +110,8 @@ export async function program(
   const known = rd.known(state);
   const source = text ?? (code ? valueOf(code, known).text : null);
   if (source === null || source === undefined) return;
+  const reach = reachesDaemon(source, known.place, true);
+  if (reach) rd.out.add("room.guard", "paseo-daemon", scene.text, `${language} ${reach}`);
   const found = scanEmbedded(language, source);
   for (const line of found.shell) await rd.text(line, fork(state), depth);
   for (const del of found.deletes) {

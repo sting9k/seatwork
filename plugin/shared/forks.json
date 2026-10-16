@@ -108,12 +108,12 @@
       }
     },
     "duplicate": {
-      "version": 1,
+      "version": 2,
       "sharpAt": 0.85,
       "deadlineMs": 5000,
       "question": {
         "type": "choice",
-        "instructions": "`new` is an issue just made; `open` holds issues still open, by id. The labels name them. Say which open issue asks for the same work as the new one, or none.",
+        "instructions": "`new` holds issues just made and `open` issues still open, each by id; the labels name the open ones. Say which open issue asks for the same work as the new issue {{id}}, or none.",
         "criteria": {}
       }
     },

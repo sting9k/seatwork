@@ -12,7 +12,13 @@ import {
   type SeatFit,
 } from "../orchestration/models";
 import { checkPlacement, findProject, findRoomMarker, loadRegistry, projectBlock } from "../orchestration/registry";
-import { claudeRoleDir, ensureRuntime, roleSkillNames, sharedClaudeFiles } from "../orchestration/runtimes";
+import {
+  claudeRoleDir,
+  ensureRuntime,
+  projectSkillsShadowing,
+  roleSkillNames,
+  sharedInstructions,
+} from "../orchestration/runtimes";
 import { enabledSeats, knownSpecs, parseSeat, rolePrompt } from "../orchestration/seats";
 import { SAFETY_DIR } from "../paths";
 import type { RuntimePolicy } from "../policy";
@@ -100,6 +106,24 @@ export async function tierUpNote(host: Pick<Host, "seat">, seat: SeatRecord): Pr
     : null;
 }
 
+const told = new Set<string>();
+const TOLD_MOST = 500;
+
+/** A line for each project skill named like one of the role's that this process has not told of yet. */
+function shadowLines(root: string, role: string): string[] {
+  const lines: string[] = [];
+  for (const { name, folder } of projectSkillsShadowing(root, role)) {
+    const key = `${root}\0${folder}\0${name}`;
+    if (told.has(key)) continue;
+    if (told.size >= TOLD_MOST) told.delete(told.values().next().value!);
+    told.add(key);
+    lines.push(
+      `skills: the project "${root}" has its own "${name}" in "${folder}", so its Claude seats cannot see the room's "${name}"; rename one`,
+    );
+  }
+  return lines;
+}
+
 /** A room seat's start: held to its project and table, given its prompt; throws when refused. A creator that named no model may have the decision model pick the tier. */
 export async function launch(
   request: SeatLaunch,
@@ -136,6 +160,8 @@ export async function launch(
     log(
       `${seat.provider}: asked for ${request.model ?? "its default model"}, starts on ${fit.model} as the model table says`,
     );
+  const root = project?.root ?? (inRoom(seat.role) ? null : request.cwd);
+  if (root) for (const line of shadowLines(root, seat.role)) log(line);
   // without its own home a seat would start on the user's, with the user's MCP servers and plugins
   try {
     ensureRuntime(seat, policy);
@@ -147,7 +173,7 @@ export async function launch(
   const systemPrompt = [
     rolePrompt(seat.role, { harness: seat.harness, spec, params: policy.room.params, models }),
     project ? projectBlock(project.name, project.root, project.mission, project.law, roleSkillNames(seat.role)) : null,
-    seat.harness === "claude" ? sharedClaudeFiles(policy) : null,
+    sharedInstructions(policy),
     request.systemPrompt,
   ]
     .filter((part): part is string => typeof part === "string" && part.trim().length > 0)

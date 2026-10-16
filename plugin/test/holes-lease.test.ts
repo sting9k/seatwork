@@ -146,7 +146,8 @@ function roomOf(open: () => Map<string, Partial<LiveSeat>>, host?: PaseoHost) {
       cwd: root,
     });
   seat("lead-1", "lead", null);
-  for (const peer of ["peer-a", "peer-b", "peer-c", "peer-d", "peer-e"]) seat(peer, "peer", "lead-1");
+  for (const peer of ["peer-a", "peer-b", "peer-c", "peer-d", "peer-e", "peer-f", "peer-g"])
+    seat(peer, "peer", "lead-1");
   const works = new WorkStores(
     RULES,
     (line) => logs.push(line),
@@ -176,7 +177,7 @@ function roomOf(open: () => Map<string, Partial<LiveSeat>>, host?: PaseoHost) {
 
 const hoursAgo = (hours: number) => new Date(Date.now() - hours * 3_600_000).toISOString();
 
-test("a seat the app shows closed or failed for longer than the set time gives its claims back; one that is at rest, or only lately down, keeps them", async () => {
+test("a seat the app shows closed or failed for longer than the set time, or still opening after a lease, gives its claims back; one at rest, or only lately down, keeps them", async () => {
   const listed = new Map<string, Partial<LiveSeat>>([
     ["lead-1", { status: "idle" }],
     ["peer-a", { status: "closed", updatedAt: hoursAgo(DOWN_HOURS + 1) }],
@@ -184,6 +185,8 @@ test("a seat the app shows closed or failed for longer than the set time gives i
     ["peer-c", { status: "closed", updatedAt: hoursAgo(DOWN_HOURS - 1) }],
     ["peer-d", { status: "idle", updatedAt: hoursAgo(DOWN_HOURS * 5) }],
     ["peer-e", { status: "closed", updatedAt: "" }],
+    ["peer-f", { status: "initializing", state: "unknown", updatedAt: hoursAgo((LEASE + 5) / 60) }],
+    ["peer-g", { status: "initializing", state: "unknown", updatedAt: hoursAgo(2 / 60) }],
   ]);
   const { room, root, works, sent, hold } = roomOf(() => listed);
   const closed = hold("peer-a", "schema");
@@ -191,20 +194,26 @@ test("a seat the app shows closed or failed for longer than the set time gives i
   const lately = hold("peer-c", "routes");
   const resting = hold("peer-d", "auth");
   const undated = hold("peer-e", "docs");
+  const stuck = hold("peer-f", "search");
+  const opening = hold("peer-g", "export");
 
   await sweepLeases(room);
   const { store } = works.of(root);
-  for (const id of [closed, failed]) {
+  for (const id of [closed, failed, stuck]) {
     assert.equal(store.get(id).assignee, null, "back on the board");
     assert.equal(store.get(id).status, "open");
-    assert.match(store.comments(id).comments[0].text, /(peer-a|peer-b) is gone or has stopped.*back on the board/);
+    assert.match(
+      store.comments(id).comments[0].text,
+      /(peer-a|peer-b|peer-f) is gone or has stopped.*back on the board/,
+    );
   }
+  assert.equal(store.get(opening).assignee, "peer-g", "a seat lately opening keeps its claim");
   for (const id of [lately, resting, undated]) {
     assert.equal(store.get(id).status, "in_progress", "kept");
     assert.ok(Date.parse(store.get(id).lease_until!) > Date.now(), "and its lease is pushed on");
   }
   assert.equal(sent.length, 1, "its Owner is told once");
-  assert.match(sent[0].text, /subject="LEASE: 2 claimed issues went back to the board"/);
+  assert.match(sent[0].text, /subject="LEASE: 3 claimed issues went back to the board"/);
   assert.match(sent[0].text, /gone or has stopped/);
   works.close();
 });

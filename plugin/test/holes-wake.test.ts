@@ -1,6 +1,6 @@
 import { hostOf, MAIL_POLICY, PROJECT, shipSql } from "./support/room";
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { test } from "node:test";
 import type { MailError } from "../server/coordination/address";
@@ -242,6 +242,30 @@ test("the copy of the wake-ups follows a seat to its successor, and a copy that 
   after.engine.close();
 });
 
+test("a pass that fires several wake-ups writes their copy once, and the copy holds what still waits", async () => {
+  const id = names("lead");
+  const r = rig([[id.lead, "lead", null]]);
+  for (const note of ["one", "two", "three", "four"]) await r.call(id.lead, { action: "wake", in_minutes: 1, note });
+  await r.call(id.lead, { action: "wake", in_minutes: 90, note: "later" });
+  const store = r.engine.storeOf(id.lead)!;
+  const copy = store.copyWakeUps.bind(store);
+  let copies = 0;
+  store.copyWakeUps = () => {
+    copies += 1;
+    copy();
+  };
+  await r.pass(2);
+  assert.equal(copies, 1, "one copy for the pass");
+  const kept = JSON.parse(readFileSync(join(r.dir, ".seatwork", ".mail", "wakeups.json"), "utf8")) as {
+    wakeups: { note: string }[];
+  };
+  assert.deepEqual(
+    kept.wakeups.map((wake) => wake.note),
+    ["later"],
+  );
+  r.engine.close();
+});
+
 test("a store that was not lost is never filled from the copy of its wake-ups", async () => {
   const id = names("lead");
   const first = rig([[id.lead, "lead", null]]);
@@ -299,7 +323,11 @@ test("held mail goes out only when its time has come: not with other mail, not b
   const id = names("lead");
   const r = rig([[id.lead, "lead", null]]);
   await r.engine.post(mail(id.lead, "REVIEW: one", { round: "r1", heldUntil: r.at(10) }));
-  assert.equal(r.engine.holding(id.lead), undefined, "held mail is not mail waiting for the seat");
+  assert.deepEqual(
+    r.engine.holding(id.lead),
+    { mails: 0, oldestAt: null, later: 1, dueAt: r.at(10) },
+    "held mail is not mail waiting for the seat; it is counted apart, with its time",
+  );
   assert.equal(inbox(r.engine, id.lead, {}, r.clock.ms), "inbox empty", "the inbox does not hand it out");
   assert.deepEqual(r.engine.takeHeld(id.lead, true), []);
 
@@ -310,7 +338,11 @@ test("held mail goes out only when its time has come: not with other mail, not b
   assert.equal(r.engine.storeOf(id.lead)!.queued(id.lead).length, 1, "it still waits");
 
   r.clock.ms += 11 * MINUTE;
-  assert.equal(r.engine.holding(id.lead)?.mails, 1, "counted once its time has come");
+  assert.deepEqual(
+    [r.engine.holding(id.lead)?.mails, r.engine.holding(id.lead)?.later],
+    [1, 0],
+    "counted once its time has come",
+  );
   assert.match(inbox(r.engine, id.lead, {}, r.clock.ms), /REVIEW: one/, "and handed out");
 });
 

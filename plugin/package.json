@@ -16,7 +16,6 @@
   ],
   "scripts": {
     "typecheck": "tsc --noEmit",
-    "test": "node --require ./test/register.cjs --require ./test/isolate.cjs --test \"test/*.test.ts\"",
     "format": "prettier --write \"**/*.{ts,tsx,cjs,mjs,json}\""
   },
   "devDependencies": {

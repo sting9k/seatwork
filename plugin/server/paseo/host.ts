@@ -256,7 +256,7 @@ export class PaseoHost implements Host {
       idempotencyKey: seat.key,
       agentId: agentIdOf(seat.key),
       config: {
-        provider: seat.model ? `${seat.provider}/${seat.model}` : seat.provider,
+        provider: `${seat.provider}/${seat.model}`,
         ...(seat.mode ? { modeId: seat.mode } : {}),
         ...(seat.thinking ? { thinkingOptionId: seat.thinking } : {}),
       },

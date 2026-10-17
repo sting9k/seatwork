@@ -1,5 +1,6 @@
 import { ROOM_ROLE, traits } from "../../shared/workflow";
 import type { Host } from "../host";
+import type { SeatFit } from "./models";
 import { parseSeat } from "./seats";
 
 /** The room's own seat, kept: when none is open, one is started again on the provider set up for it. */
@@ -8,10 +9,11 @@ const WAIT_MS = 10 * 60_000;
 const START =
   "The room started you because its own seat was gone. You run the room: read seatwork_room do=health and the incidents, and act only on what you measured.";
 
-/** What keeping the seat needs: the app, the provider set up for the room's role, the room's folder, a log. */
+/** What keeping the seat needs: the app, the provider set up for the room's role, the table in force at a folder, the room's folder, a log. */
 interface OperatorDeps {
   host: Pick<Host, "live" | "create">;
   provider(): string | undefined;
+  fit(cwd: string, role: string, provider: string, model: string | undefined): SeatFit;
   folder: string;
   log(line: string): void;
 }
@@ -34,9 +36,13 @@ export async function keepOperator(deps: OperatorDeps, open: Set<string>, starti
   if (!provider) return null;
   starting.at = Date.now();
   try {
+    const fit = deps.fit(deps.folder, ROOM_ROLE, provider, undefined);
+    if (!fit.ok || !fit.model) throw new Error(`the room's model table lists no ${ROOM_ROLE} model on ${provider}`);
     const id = await deps.host.create({
       key: `operator:${starting.at}`,
       provider,
+      model: fit.model,
+      ...(fit.thinking && fit.thinking !== "default" ? { thinking: fit.thinking } : {}),
       cwd: deps.folder,
       title: `[${traits(ROOM_ROLE).label}] the room's operator`,
       prompt: START,

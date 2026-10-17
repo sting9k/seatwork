@@ -264,6 +264,7 @@ export const HOST_CONTRACT: { [M in keyof Host]: Clause[] } = {
         const id = await host.create({
           key: "start-2",
           provider: "claude-peer",
+          model: "opus",
           cwd: "/work/p",
           title: "t",
           prompt: "p",
@@ -279,7 +280,14 @@ export const HOST_CONTRACT: { [M in keyof Host]: Clause[] } = {
       async run({ host, app }) {
         app.hang.add("create");
         await assert.rejects(
-          host.create({ key: "start-3", provider: "claude-peer", cwd: "/work/p", title: "t", prompt: "p" }),
+          host.create({
+            key: "start-3",
+            provider: "claude-peer",
+            model: "opus",
+            cwd: "/work/p",
+            title: "t",
+            prompt: "p",
+          }),
           /did not answer the start of "t"/,
         );
       },

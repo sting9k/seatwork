@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { LiveSeat, NewSeat } from "../server/host";
+import type { SeatFit } from "../server/orchestration/models";
 import { keepOperator, operatorState } from "../server/orchestration/operator";
 
 /** An app whose open seats are `providers` by id, keeping every seat it was asked to start. */
@@ -20,17 +21,25 @@ function app(providers: Record<string, string>) {
 const deps = (host: ReturnType<typeof app>["host"], provider: string | null = "claude-hq") => ({
   host,
   provider: () => provider ?? undefined,
+  fit: (cwd: string, role: string, on: string, model: string | undefined): SeatFit =>
+    cwd === "/room-home/hq-seatwork" && role === "hq" && on === "claude-hq" && model === undefined
+      ? { ok: true, model: "claude-opus-5-5", thinking: "high" }
+      : { ok: false, listed: [] },
   folder: "/room-home/hq-seatwork",
   log: () => {},
 });
 
-test("the room's own seat, when none is open, is started once on the provider set up for it, in the room's folder", async () => {
+test("the room's own seat, when none is open, is started once on the provider set up for it and the model and thinking its table gives, in the room's folder", async () => {
   const gone = app({ "lead-1": "claude-lead" });
   const open = new Set<string>(["hq-old"]);
   const starting = { at: 0, failed: null };
   assert.equal(await keepOperator(deps(gone.host), open, starting), "new-1");
   assert.deepEqual(open, new Set(), "a seat the app no longer lists is no operator");
-  assert.equal(gone.started[0].provider, "claude-hq");
+  assert.deepEqual(
+    [gone.started[0].provider, gone.started[0].model, gone.started[0].thinking],
+    ["claude-hq", "claude-opus-5-5", "high"],
+    "the app refuses a start that names no model",
+  );
   assert.equal(gone.started[0].cwd, "/room-home/hq-seatwork");
   assert.match(gone.started[0].title, /^\[HQ\] /);
   assert.equal(await keepOperator(deps(gone.host), open, starting), null, "one start, then a wait");

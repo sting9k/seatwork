@@ -129,9 +129,8 @@ export async function sweepLeases(room: RoomContext): Promise<void> {
         to: owner,
         priority: "action",
         subject: `LEASE: ${issues.length} claimed issue${issues.length === 1 ? "" : "s"} went back to the board`,
-        body: `The seat that held each issue below is gone or has stopped. Each is back on the board with no holder, and carries a comment saying so.\n${lines.join("\n")}\nBrief a new seat for each, or claim it yourself with seatwork_work do=claim.`,
+        body: `The seat that held each issue below is gone or has stopped, and each is back on the board with no holder:\n${lines.join("\n")}`,
         needs: "nothing",
-        why: "a seat under you is gone or stopped and its claimed work went back to the board",
       })
       .catch((error) => log(`work: ${owner} was not told of the issues given back: ${String(error)}`));
   }

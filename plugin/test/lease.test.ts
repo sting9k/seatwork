@@ -427,7 +427,7 @@ function roomOf(open: () => Map<string, Partial<LiveSeat>>, host?: PaseoHost) {
   return { room, root, works, sent, logs, hold, engine, clock };
 }
 
-test("the minute's pass gives back the issues of a seat the app no longer lists, and its Owner gets one mail with what to do", async () => {
+test("the minute's pass gives back the issues of a seat the app no longer lists, and its Owner gets one mail that lists them", async () => {
   const listed = new Map<string, Partial<LiveSeat>>([
     ["sup-1", {}],
     ["lead-1", {}],
@@ -457,7 +457,6 @@ test("the minute's pass gives back the issues of a seat the app no longer lists,
   assert.match(lead, /subject="LEASE: 2 claimed issues went back to the board/);
   for (const what of [first, "schema", second, "migrations", "[Peer] schema"]) assert.ok(lead.includes(what), what);
   assert.doesNotMatch(lead, /views|routes/);
-  assert.match(lead, /brief a new seat|claim it/i);
   assert.match(
     sent.find((mail) => mail.to === "lead-2")!.text,
     /subject="LEASE: 1 claimed issue went back to the board/,

@@ -101,7 +101,6 @@ async function lookAt(room: RoomContext, id: string, live: LiveSeat): Promise<vo
       subject: `COUNCIL: ${finding.member} on ${live.title ?? id}`,
       body: finding.line,
       needs: "nothing",
-      why: "the room's council saw a running turn of a seat under you",
     });
     safety.council.shown([finding]);
   }

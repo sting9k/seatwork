@@ -119,7 +119,7 @@ test("a wake-up fires on the first pass after its time, as one WAKE mail that st
   assert.equal(got(r, id.lead).length, 1);
   assert.match(
     got(r, id.lead)[0],
-    /^<mail id="\d+" from="room" subject="WAKE: look at the CI run again" needs="nothing" thread="m\d+" note="[^"]+">\nlook at the CI run again\n\nWake-up #\d+, set by you at 2026-10-15 08:00 UTC for 2026-10-15 08:20 UTC\.\n<\/mail>$/,
+    /^<mail id="\d+" from="room" subject="WAKE: look at the CI run again" needs="nothing" thread="m\d+">\nlook at the CI run again\n<\/mail>$/,
   );
   await r.pass(5);
   assert.equal(got(r, id.lead).length, 1, "fired once");
@@ -169,7 +169,6 @@ test("a wake-up set before a restart fires at the first pass after the room star
   await next.engine.sweep();
   assert.equal(got(next, id.lead).length, 1);
   assert.match(got(next, id.lead)[0], /subject="WAKE: check the deploy"/);
-  assert.match(got(next, id.lead)[0], /for 2026-10-15 09:00 UTC/);
   next.engine.close();
 });
 
@@ -217,7 +216,7 @@ test("a wake-up follows a seat to the seat that replaces it, whether the old sea
   assert.equal(got(r, id.next).length, 2);
   assert.match(got(r, id.next).join("\n"), /own check[\s\S]*from the lead|from the lead[\s\S]*own check/);
   assert.equal(got(r, id.lead).length, 1);
-  assert.match(got(r, id.lead)[0], new RegExp(`set by peer ${id.next.slice(0, 8)}`));
+  assert.match(got(r, id.lead)[0], new RegExp(`Set by peer ${id.next.slice(0, 8)}`));
 });
 
 test("a wake-up for another seat goes only where the workflow's routes let the caller mail, and says who set it", async () => {
@@ -237,8 +236,8 @@ test("a wake-up for another seat goes only where the workflow's routes let the c
   assert.equal(stranger.code, "ROUTE_REFUSED");
   await r.pass(6);
   assert.match(got(r, id.peer)[0], /report your progress/);
-  assert.match(got(r, id.peer)[0], new RegExp(`set by owner at`));
-  assert.match(got(r, id.lead)[0], new RegExp(`set by peer ${id.peer.slice(0, 8)}`));
+  assert.match(got(r, id.peer)[0], /\n\nSet by owner\.\n/);
+  assert.match(got(r, id.lead)[0], new RegExp(`Set by peer ${id.peer.slice(0, 8)}`));
 });
 
 test("wakes lists what is pending for the caller and what it set for others; unwake cancels one for the seat it wakes or the seat that set it, no one else", async () => {

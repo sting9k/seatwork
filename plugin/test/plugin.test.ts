@@ -757,14 +757,14 @@ test("a task's rounds are counted by what happened: a revised brief that answers
   await handsIn(peer, "CANDIDATE abc2\nsecond try");
   assert.match(
     lead.inbox.at(-1)!,
-    /note="[^"]*\[room\] Second candidate of this task: one rejection [^"]* goes to a new Peer /,
+    /note="[^"]*\[room\] Second candidate of this task, after one rejection\. [^"]* goes to a new Peer /,
   );
   assert.doesNotMatch(await sendsBack("REJECT abc2: the cost of small ingests"), /rejection/);
   await handsIn(peer, "CANDIDATE abc3\nthird try");
   assert.match(lead.inbox.at(-1)!, /\[room\] Candidate 3 of this task: 2 rejections .* your Owner's call/);
   assert.match(
     await sendsBack("REVISED BRIEF (abc3 not accepted) round 4"),
-    /^\{"sent":\d+,"to":\["peer peer-rounds"\].*"note":"This is rejection 3 of this Peer's task since its last ACCEPT: .*your Owner's call.*DECISION_NEEDED/,
+    /^\{"sent":\d+,"to":\["peer peer-rounds"\].*"note":"Rejection 3 of this task since its last ACCEPT: .*your Owner's call.*DECISION_NEEDED/,
   );
   await handsIn(peer, "CANDIDATE abc4\nfourth try");
   await lead.mail({ to: peer.agent.id, subject: "ACCEPT abc4: holds", body: "Released.", needs: "nothing" });
@@ -876,12 +876,9 @@ test("the reviewers a Lead launched in one turn report together: the Lead is wok
   assert.equal(mails(lead.inbox[0]), 3);
   assert.match(
     lead.inbox[0],
-    /subject="REVIEW from peer \[Peer:search\] abc1: correctness"[^>]*note="[^"]*; held for the 2 others of its review round">\n/,
+    /subject="REVIEW from peer \[Peer:search\] abc1: correctness"[^>]*note="held for the 2 others of its review round">\n/,
   );
-  assert.match(
-    lead.inbox[0],
-    /subject="REVIEW from peer \[Peer\] scout-01 closure"[^>]*note="the seat ended its turn with REVIEW">\n/,
-  );
+  assert.match(lead.inbox[0], /subject="REVIEW from peer \[Peer\] scout-01 closure" needs="reply" thread="m\d+">\n/);
 
   // a writer is no reviewer: its candidate waits for nobody
   await handsIn(writer, "CANDIDATE abc2\ndone");
@@ -927,7 +924,7 @@ test("the last answer of a round says when answers to one question came from one
   assert.equal(lead.inbox.length, 1);
   assert.match(
     lead.inbox[0],
-    /; 2 answers to one question in this round came from one model family: their agreement is weak evidence/,
+    /note="2 answers to one question in this round came from one model family: their agreement is weak evidence/,
   );
 
   const other = await seat("lead-family-2", "claude-lead", null, "[Lead] stream");

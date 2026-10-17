@@ -303,10 +303,7 @@ export class Operations {
     const due = this.store.untold(new Date(now - settings.retellHours * HOUR).toISOString(), SHOWN.untold);
     if (due.length === 0) return;
     this.lastIncidentMail = now;
-    const body = [
-      "The room met these since you were last told. Read the district and its log before you change anything: seatwork_room.",
-      ...grouped(due),
-    ].join("\n");
+    const body = ["The room met these since you were last told:", ...grouped(due)].join("\n");
     await this.send(
       operators,
       `INCIDENT: ${due.length} in ${[...new Set(due.map((one) => one.district))].join(", ")}`,
@@ -346,7 +343,6 @@ export class Operations {
           `${tuneLine(one)}\n  then: ${one.baseline}\n  now: ${this.readingOf(tunableOf(one.path)?.tunable.district ?? "")}`,
       ),
       `Open traces: ${traces.length ? traces.map((one) => `#${one.id} ${one.hypothesis}`).join("; ") : "none"}`,
-      "Weigh each change against its baseline; revert one that did not help. Tune only what a reading and the log show.",
     ].join("\n");
   }
 

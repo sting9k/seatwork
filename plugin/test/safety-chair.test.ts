@@ -100,7 +100,7 @@ test("the lines a juror and the chair read are cut to a length and hide secrets"
 });
 
 let homes = 0;
-const sent: { to: string; subject: string; body: string; needs: string; why: string }[] = [];
+const sent: { to: string; subject: string; body: string; needs: string }[] = [];
 
 /** A council, a chair and a store sharing one clock; `answers` are the scores the decision district gives, in order. */
 function harness(

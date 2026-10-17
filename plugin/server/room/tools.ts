@@ -270,7 +270,6 @@ export function registerTools(room: RoomContext, mcp: McpHttpServer): void {
       subject: "HANDOFF: write your handoff; a fresh seat continues your work",
       body: handoffRequest(clip(said(args.why), MOST_WHY_CHARS)),
       needs: "reply",
-      why: "the seat above you is replacing this seat with a fresh one, for the size of its context",
     });
     room.rotations.ask(target, me, asked.id, Date.now());
     return `asked ${seat.role} ${target} for its handoff${status === "running" ? "; it reads the request when its turn ends" : ""}. When it answers, the room starts its successor, hands its open seats over and archives it. You get one notice with the new seat's id.`;
@@ -288,9 +287,8 @@ export function registerTools(room: RoomContext, mcp: McpHttpServer): void {
         to: child,
         priority: "fyi",
         subject: "OWNER CHANGED: you were handed over",
-        body: "Your Owner seat changed. Mail addressed `to: owner`, your final messages and your permission requests now reach the new Owner; answer its mail with reply_to as usual. Your brief stands until the new Owner writes; continue your current work.",
+        body: "You report to a new Owner now. Your brief stands until it writes: continue your current work.",
         needs: "nothing",
-        why: "a handoff moved you under a new Owner",
       });
     return `adopted ${seat.role} ${child} (${seat.title ?? ""}); it now reports to you. Mail it its brief and your disposition of its last signal.`;
   });

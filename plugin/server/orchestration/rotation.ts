@@ -27,11 +27,11 @@ export function handoffRequest(why: string): string {
     "Write the handoff as your whole final message, 500 words at most: first line `HANDOFF`, then these headings, each on a line of its own:",
     "CURRENT TASK: what you are doing, in a sentence or two",
     "PROGRESS: what is done (commit ids, paths) and what is still to do",
-    "KEY DECISIONS: what you chose yourself and what you ruled out, with why; the decisions people made and recorded (seatwork_knowledge do=list) go to your successor on their own, so name one only to point at it",
+    "KEY DECISIONS: what you chose yourself and what you ruled out, with why; recorded decisions reach your successor on their own",
     "ACTIVE FILES: what you were changing or reading, and what is uncommitted",
     "BLOCKERS: what you wait for, and from whom; `none` when nothing",
     `${VERBATIM} (optional): the exact strings your successor needs unchanged: commands, error messages, ids, constants, paths, one per line, ${VERBATIM_CHARS} characters at most and outside the 500 words; the room carries them as written, where a summary would lose them`,
-    "Start no new work for it. When your turn ends the room starts your successor on your brief and this handoff, hands it the seats you launched, and archives you.",
+    "Start no new work for it: your successor starts on your brief and this handoff when your turn ends.",
   ].join("\n");
 }
 
@@ -310,9 +310,8 @@ async function moveOver(deps: RotateDeps, old: SeatRecord, id: string): Promise<
         to: child.agentId,
         priority: "fyi",
         subject: "OWNER CHANGED: your Owner continues in a fresh seat",
-        body: "Your Owner was replaced by a fresh seat that holds its brief and its handoff. Mail addressed `to: owner`, your final messages and your permission requests reach the new seat; your brief stands. Continue your work.",
+        body: "Your Owner continues in a fresh seat with its brief and its handoff, and you report to it now. Your brief stands: continue your work.",
         needs: "nothing",
-        why: "the seat that launched you was rotated out",
       })
       .catch(failedTo(left, `the notice to ${child.role} ${child.title ?? child.agentId}`));
   }

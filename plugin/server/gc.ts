@@ -152,7 +152,6 @@ export class Collector {
             subject: `GC: archived ${seat.role} ${seat.title ?? seat.agentId} after ${idleHours}h idle`,
             body: `The room archived ${seat.role} ${seat.agentId} ("${seat.title ?? ""}"): idle for ${idleHours} hours with nothing alive below it. Nothing was waiting on it. If its work still matters, launch a new seat with the brief and what was tried.`,
             needs: "nothing",
-            why: "a seat you launched was archived for inactivity",
           }),
         );
       }

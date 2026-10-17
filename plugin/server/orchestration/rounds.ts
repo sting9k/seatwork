@@ -104,8 +104,7 @@ export function ownerNote(standing: Standing): string | null {
 }
 
 export const FRESH_EYES = [
-  "Your candidate has not gone to your Owner yet: first one pass over it with fresh eyes.",
-  "Read again everything you wrote or changed for this task as if another seat had written it and you were hunting its defects:",
+  "Before your candidate goes to your Owner, read everything you wrote or changed for this task as if another seat had written it and you were hunting its defects:",
   "1. each line of the brief's contract and acceptance evidence, against the code that answers it;",
   "2. each test you added: the wrong behavior it would still let through;",
   "3. each file you changed: an edit the brief did not ask for, a leftover, a check made weaker than it was.",

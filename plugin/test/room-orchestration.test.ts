@@ -324,7 +324,7 @@ test("the rejections a task has met go with it to the seat that takes the seat o
   await call("on agent.archived", { agent: peer.agent }, context);
   await turnEnds(successor, "CANDIDATE abc2\nsecond");
   await turnEnds(successor, "CANDIDATE abc2\nFresh eyes: nothing");
-  assert.match(lead.inbox.at(-1)!, /\[room\] Second candidate of this task: one rejection/);
+  assert.match(lead.inbox.at(-1)!, /\[room\] Second candidate of this task, after one rejection/);
 });
 
 test("a successor is given the old seat's exact strings, the decisions in force for its task and where the old seat's record is read, and can read it", async () => {

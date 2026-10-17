@@ -246,7 +246,6 @@ async function refuseSpawn(
     subject: `SPAWN REFUSED: a ${role} may create only ${allowed}`,
     body: `You created ${what} titled "${agent.title ?? ""}". ${outcome} Create only the roles your role allows (${allowed}), on the room's providers, and continue.`,
     needs: "nothing",
-    why: "a seat you created was outside the room's spawn rules",
   });
 }
 
@@ -448,7 +447,6 @@ async function seatArchived(room: RoomContext, gc: Collector, seat: SeatEvent): 
         subject: `ROTATION FAILED: ${seat.title ?? id} was archived before its handoff`,
         body: "The seat you asked to replace was archived before it wrote its handoff. Nothing was started for it; brief a new seat if its work still matters.",
         needs: "nothing",
-        why: "the rotation you asked for did not happen",
       })
       .catch((error) => room.log(`the notice of a failed rotation was not sent: ${String(error)}`));
   try {
@@ -516,7 +514,6 @@ function startOperations(policy: RuntimePolicy, operators: ReadonlySet<string>, 
         subject,
         body,
         needs: "nothing",
-        why: "the room's operations",
         ...more,
       }),
     // the room's own seats are in no project a cap reaches

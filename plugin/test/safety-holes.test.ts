@@ -4,7 +4,6 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { join } from "node:path";
 import { evaluate, type Tools } from "../server/safety/gate/evaluate";
-import { packsInForce } from "../server/safety/gate/packs";
 import { namesDriver } from "../server/safety/gate/rules/attributes";
 import type { Place } from "../server/safety/gate/types";
 import { Guard } from "../server/safety/guard";
@@ -34,16 +33,15 @@ const tools: Tools = {
   ignored: async (paths) => new Set(paths.filter((path) => /\/node_modules(\/|$)/.test(path))),
   alias: async () => null,
   external: async () => false,
-  rebasing: async () => false,
   stat: () => ({ exists: false, link: false, dir: false }),
   real: (path) => LINKS[path] ?? null,
   changed: async () => null,
 };
 
-/** The rules a command trips, as `pack:rule`, sorted, with `doubt` for each thing the gate could not read. */
+/** What the guard keeps of a command, as `effect:rule`, sorted, with `doubt` for each thing the gate could not read. */
 async function rules(command: string, cwd: string | null = PROJECT): Promise<string[]> {
-  const found = await evaluate(command, cwd, place, { packs: packsInForce(), budgetMs: 1000, maxBytes: 65536 }, tools);
-  return [...found.findings.map((f) => `${f.pack}:${f.rule}`), ...found.doubts.map(() => "doubt")].sort();
+  const found = await evaluate(command, cwd, place, { budgetMs: 1000, maxBytes: 65536 }, tools);
+  return [...found.findings.map((f) => `${f.effect}:${f.rule}`), ...found.doubts.map(() => "doubt")].sort();
 }
 
 /** A guard over these tools with a store of its own. */
@@ -54,7 +52,7 @@ function guardAt(name: string, secrets: readonly string[] = []): { guard: Guard;
 }
 const seat = { id: "peer", role: "peer", project: PROJECT, tmp: null, start: PROJECT };
 
-const PASEO = ["room.guard:paseo-cli"];
+const PASEO = ["room:paseo-cli"];
 
 test("the Paseo CLI is caught when a runtime or a shell starts it by the path of its script", async () => {
   for (const line of [
@@ -193,7 +191,7 @@ test("a package runner is read through the options that come before its subcomma
     "pnpm paseo send abc hi",
   ])
     assert.deepEqual(await rules(line), PASEO, line);
-  assert.deepEqual(await rules("pnpm --filter app exec rm -rf /"), ["core.filesystem:rm-rf-root-home"]);
+  assert.deepEqual(await rules("pnpm --filter app exec rm -rf /"), ["delete:system"]);
   for (const line of [
     "pnpm --silent dlx cowsay hi",
     "pnpm --filter app exec ls",
@@ -207,7 +205,7 @@ test("a package runner is read through the options that come before its subcomma
     assert.deepEqual(await rules(line), [], line);
 });
 
-const ATTRIBUTES = ["room.guard:git-attributes-driver"];
+const ATTRIBUTES = ["room:attributes-driver"];
 
 test("a shell command that writes a filter or driver into .gitattributes is caught, whichever way it shows the text", async () => {
   for (const line of [
@@ -274,12 +272,12 @@ test("the guard reads .gitattributes by the rule of the hand-in check", async ()
   const { guard, store } = guardAt("holes-attributes");
   await guard.check(seat, "claude", "echo '* filter=x' >> .gitattributes", PROJECT);
   await guard.check(seat, "claude", "echo '*.png binary' >> .gitattributes", PROJECT);
-  assert.deepEqual(keptRules(store), ["room.guard:git-attributes-driver"]);
+  assert.deepEqual(keptRules(store), ["room:attributes-driver"]);
 });
 
-const ROOT = ["core.filesystem:rm-rf-root-home"];
-const GENERAL = ["core.filesystem:rm-rf-general"];
-const GENERATED = ["core.filesystem:rm-generated"];
+const ROOT = ["delete:system"];
+const UNKNOWN = ["delete:unknown"];
+const BUILT: string[] = [];
 
 test("a cd inside a function reaches the line from where the function is called", async () => {
   for (const line of [
@@ -299,29 +297,26 @@ test("a cd inside a function reaches the line from where the function is called"
     "setup() { mkdir -p out; }; setup; rm -rf node_modules",
     "clean() { rm -rf node_modules; }; clean",
   ])
-    assert.deepEqual(await rules(line), GENERATED, line);
+    assert.deepEqual(await rules(line), BUILT, line);
   assert.deepEqual(await rules("build() { cd app && npm run build; }; build"), []);
 });
 
 test("a function body is read in the folder of its caller, and one the line may define two ways runs both", async () => {
-  assert.deepEqual(await rules("f() { rm -rf node_modules; }; cd /; f"), [...GENERATED, ...ROOT].sort());
+  assert.deepEqual(await rules("f() { rm -rf node_modules; }; cd /; f"), ROOT);
   for (const line of [
     "f() { cd /; }; echo x | f; rm -rf node_modules",
     "if true; then f() { cd /; }; else f() { cd /tmp; }; fi; f; rm -rf node_modules",
     "if false; then f() { cd /; }; fi; f; rm -rf node_modules",
     "f() { [ -d x ] && cd x; }; f; rm -rf node_modules",
   ])
-    assert.deepEqual(await rules(line), GENERAL, line);
+    assert.deepEqual(await rules(line), UNKNOWN, line);
   assert.deepEqual(await rules("f() { f; }; f"), []);
-  assert.deepEqual(await rules("f() { g; }; g() { f; }; f; rm -rf node_modules"), GENERATED);
-  assert.deepEqual(await rules("f() { cd /; }; unset -f f; f; rm -rf node_modules"), GENERATED);
+  assert.deepEqual(await rules("f() { g; }; g() { f; }; f; rm -rf node_modules"), BUILT);
+  assert.deepEqual(await rules("f() { cd /; }; unset -f f; f; rm -rf node_modules"), BUILT);
 });
 
 test("what a function declares local is gone when it returns", async () => {
-  assert.deepEqual(
-    await rules("f() { local d=/; cd $d; }; d=/Users/u/proj/sub; f; cd $d; rm -rf node_modules"),
-    GENERATED,
-  );
+  assert.deepEqual(await rules("f() { local d=/; cd $d; }; d=/Users/u/proj/sub; f; cd $d; rm -rf node_modules"), BUILT);
   assert.deepEqual(await rules("f() { local d=/Users/u/proj; }; d=/; f; cd $d; rm -rf etc"), ROOT);
 });
 
@@ -333,7 +328,7 @@ test("a variable that holds a folder is followed, and unknown wherever the line 
     "export d=/; cd $d; rm -rf etc",
   ])
     assert.deepEqual(await rules(line), ROOT, line);
-  assert.deepEqual(await rules("d=/Users/u/proj; d+=/sub; cd $d; rm -rf node_modules"), GENERATED);
+  assert.deepEqual(await rules("d=/Users/u/proj; d+=/sub; cd $d; rm -rf node_modules"), BUILT);
   for (const line of [
     "cd $d; rm -rf node_modules",
     "d=/; if cmd; then d=/Users/u/proj; fi; cd $d; rm -rf node_modules",
@@ -356,15 +351,15 @@ test("a variable that holds a folder is followed, and unknown wherever the line 
     "d=/; true || d=/Users/u/proj; cd $d; rm -rf node_modules",
     "d=/; false && d=/Users/u/proj; cd $d; rm -rf node_modules",
   ])
-    assert.deepEqual(await rules(line), GENERAL, line);
+    assert.deepEqual(await rules(line), UNKNOWN, line);
 });
 
 test("~ and a bare cd follow HOME when the line sets it", async () => {
   assert.deepEqual(await rules("HOME=/; cd ~; rm -rf etc"), ROOT);
   assert.deepEqual(await rules("HOME=/; cd; rm -rf etc"), ROOT);
-  assert.deepEqual(await rules("HOME=$X; cd ~; rm -rf node_modules"), GENERAL);
-  assert.deepEqual(await rules("pushd; rm -rf node_modules"), GENERAL);
-  assert.deepEqual(await rules("pushd +1; rm -rf node_modules"), GENERAL);
+  assert.deepEqual(await rules("HOME=$X; cd ~; rm -rf node_modules"), UNKNOWN);
+  assert.deepEqual(await rules("pushd; rm -rf node_modules"), UNKNOWN);
+  assert.deepEqual(await rules("pushd +1; rm -rf node_modules"), UNKNOWN);
 });
 
 test("eval and source run in the line's own shell, so what they change stays", async () => {
@@ -381,7 +376,7 @@ test("eval and source run in the line's own shell, so what they change stays", a
     "echo 'cd /' > e.sh; sh e.sh; rm -rf node_modules",
     "echo 'cd /' > e.sh; bash ./e.sh; rm -rf node_modules",
   ])
-    assert.deepEqual(await rules(line), GENERATED, line);
+    assert.deepEqual(await rules(line), BUILT, line);
 });
 
 test("in a list of && and ||, each command runs where the ones before let it, and what follows stands after any of them", async () => {
@@ -408,7 +403,7 @@ test("in a list of && and ||, each command runs where the ones before let it, an
     "true && echo a || echo b; rm -rf node_modules",
     "test -d x && echo y || echo n; rm -rf node_modules",
   ])
-    assert.deepEqual(await rules(line), GENERATED, line);
+    assert.deepEqual(await rules(line), BUILT, line);
   for (const line of [
     "cd / || cd /Users/u/proj; rm -rf node_modules",
     "cd /; true || cd /Users/u/proj; rm -rf node_modules",
@@ -419,7 +414,7 @@ test("in a list of && and ||, each command runs where the ones before let it, an
     "cd / && a || cd /Users/u/proj; rm -rf node_modules",
     "true | cd /; rm -rf node_modules",
   ])
-    assert.deepEqual(await rules(line), GENERAL, line);
+    assert.deepEqual(await rules(line), UNKNOWN, line);
 });
 
 test("a file written in a subshell or a stage of a pipeline is written all the same", async () => {
@@ -466,7 +461,7 @@ test("a program that a git option or a git variable gives is read as a shell lin
   for (const line of [
     "git -c core.pager='rm -rf /' log",
     "git -c core.editor='rm -rf /' commit",
-    "git -c credential.helper='!rm -rf /' push",
+    "git -c credential.helper='!rm -rf /' fetch",
     "git -c diff.external='rm -rf /' diff",
     "git -c core.fsmonitor='rm -rf /' status",
     "git -c filter.x.clean='rm -rf /' add .",
@@ -475,12 +470,12 @@ test("a program that a git option or a git variable gives is read as a shell lin
     "GIT_EXTERNAL_DIFF='rm -rf /' git diff",
     "GIT_PAGER='rm -rf /' git log",
     "env GIT_EDITOR='rm -rf /' git commit",
-    "export GIT_ASKPASS='rm -rf /'; git push",
+    "export GIT_ASKPASS='rm -rf /'; git fetch",
     "GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=core.pager GIT_CONFIG_VALUE_0='rm -rf /' git log",
   ])
     assert.deepEqual(await rules(line), ROOT, line);
   assert.deepEqual(await rules("git -c core.sshCommand='paseo send a b' fetch"), PASEO);
-  assert.deepEqual(await rules("git -c core.pager=$PAGER log"), ["room.guard:git-config-exec"]);
+  assert.deepEqual(await rules("git -c core.pager=$PAGER log"), ["room:git-config-exec"]);
   for (const line of [
     "git -c core.hooksPath=/dev/null commit -m x",
     "git -c core.fsmonitor=false status",
@@ -497,27 +492,27 @@ test("a program that a git option or a git variable gives is read as a shell lin
     assert.deepEqual(await rules(line), [], line);
 });
 
-test("a write through a link that leads into a protected place is a write into it", async () => {
-  assert.deepEqual(await rules("echo x > cfg/gh/hosts.yml"), ["core.filesystem:credential-file-write"]);
-  assert.deepEqual(await rules("cp token creds"), ["core.filesystem:credential-file-write"]);
-  assert.deepEqual(await rules("tee hooks/pre-commit < hook.sh"), ["room.guard:git-config-write"]);
-  assert.deepEqual(await rules("echo x > hooks/new/deeper/pre-push"), ["room.guard:git-config-write"]);
-  assert.deepEqual(await rules("ln -s ~/.ssh ssh-link"), ["core.filesystem:credential-file-write"]);
-  assert.deepEqual(await rules("ln -s /Users/u/.aws/credentials aws.txt"), ["core.filesystem:credential-file-write"]);
+test("a write or a read through a link that leads into a protected place is a write or a read there", async () => {
+  assert.deepEqual(await rules("echo x > cfg/gh/hosts.yml"), ["overwrite:credentials"]);
+  assert.deepEqual(await rules("cp token creds"), ["overwrite:credentials"]);
+  assert.deepEqual(await rules("tee hooks/pre-commit < hook.sh"), ["overwrite:startup"]);
+  assert.deepEqual(await rules("echo x > hooks/new/deeper/pre-push"), ["overwrite:startup"]);
+  assert.deepEqual(await rules("ln -s ~/.ssh ssh-link"), ["overwrite:credentials"]);
+  assert.deepEqual(await rules("ln -s /Users/u/.aws/credentials aws.txt"), ["overwrite:credentials"]);
+  assert.deepEqual(await rules("cat cfg/gh/hosts.yml"), ["read:credentials"]);
   for (const line of [
     "echo x > out/a.txt",
     "echo x > shared/a.txt",
     "ln -s ../shared shared2",
     "ln -s ~/.config cfg2",
     "ln -s /opt/homebrew/bin/jq jq",
-    "cat cfg/gh/hosts.yml",
     "echo x > cfg2/notes.txt",
   ])
     assert.deepEqual(await rules(line), [], line);
   const { guard, store } = guardAt("holes-links");
   await guard.checkWrite(seat, "claude", `${PROJECT}/cfg/gh/hosts.yml`, PROJECT);
   await guard.checkWrite(seat, "claude", `${PROJECT}/out/a.txt`, PROJECT);
-  assert.deepEqual(keptRules(store), ["core.filesystem:credential-file-write"]);
+  assert.deepEqual(keptRules(store), ["overwrite:credentials"]);
 });
 
 test("a file tool that adds a filter or driver to .gitattributes is kept, by the text it shows", async () => {

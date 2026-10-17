@@ -34,10 +34,13 @@ test("a seat's command a grave rule holds for runs and is kept, nothing waits on
 
   const db = new DatabaseSync(join(SAFETY_DIR, "safety.db"), { readOnly: true });
   try {
-    const kept = db.prepare("SELECT rule FROM decisions WHERE seat = ?").all(peer.agent.id) as { rule: string }[];
+    const kept = db.prepare("SELECT pack, rule FROM decisions WHERE seat = ?").all(peer.agent.id) as {
+      pack: string;
+      rule: string;
+    }[];
     assert.deepEqual(
-      kept.map(({ rule }) => rule),
-      ["room-file-write"],
+      kept.map(({ pack, rule }) => `${pack}:${rule}`),
+      ["overwrite:room"],
     );
   } finally {
     db.close();

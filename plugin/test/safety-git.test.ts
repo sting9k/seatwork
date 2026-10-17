@@ -4,7 +4,6 @@ import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { test } from "node:test";
-import { packsInForce } from "../server/safety/gate/packs";
 import { inspectHandIn } from "../server/safety/handin";
 import { SafetyStore } from "../server/safety/store";
 import { machineTools } from "../server/safety/system";
@@ -46,7 +45,7 @@ function committed(ignore = "") {
   store.noteStart("seat", dir, head);
   const gate = {
     place: { home: "/Users/u", project: dir, tmp: null, start: dir, guard: null, roomFolder: ".seatwork" },
-    config: { packs: packsInForce(), budgetMs: 1000, maxBytes: 65536 },
+    config: { budgetMs: 1000, maxBytes: 65536 },
     tools: machineTools(() => null),
   };
   return { dir, git, store, gate };

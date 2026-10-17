@@ -4,7 +4,6 @@ import assert from "node:assert/strict";
 import { join } from "node:path";
 import { test } from "node:test";
 import { evaluate, type Tools } from "../server/safety/gate/evaluate";
-import { packsInForce } from "../server/safety/gate/packs";
 import type { Place } from "../server/safety/gate/types";
 import { Guard } from "../server/safety/guard";
 import { answerHook, type Cli } from "../server/safety/hooks";
@@ -21,27 +20,20 @@ const tools: Tools = {
   ignored: async (paths) => new Set(paths.filter((path) => /\/node_modules(\/|$)/.test(path))),
   alias: async () => null,
   external: async () => false,
-  rebasing: async () => false,
   stat: () => ({ exists: false, link: false, dir: false }),
   real: () => null,
   changed: async () => null,
 };
 
-/** The rules a command trips, as `pack:rule`, sorted. */
+/** What the guard keeps of a command, as `effect:rule`, sorted. */
 async function rules(command: string): Promise<string[]> {
-  const found = await evaluate(
-    command,
-    PROJECT,
-    place,
-    { packs: packsInForce(), budgetMs: 1000, maxBytes: 65536 },
-    tools,
-  );
-  return [...found.findings.map((f) => `${f.pack}:${f.rule}`), ...found.doubts.map(() => "doubt")].sort();
+  const found = await evaluate(command, PROJECT, place, { budgetMs: 1000, maxBytes: 65536 }, tools);
+  return [...found.findings.map((f) => `${f.effect}:${f.rule}`), ...found.doubts.map(() => "doubt")].sort();
 }
 
-const ROOT = ["core.filesystem:rm-rf-root-home"];
-const GENERAL = ["core.filesystem:rm-rf-general"];
-const GENERATED = ["core.filesystem:rm-generated"];
+const ROOT = ["delete:system"];
+const UNKNOWN = ["delete:unknown"];
+const BUILT: string[] = [];
 
 test("a cd inside { } moves the folder for what follows, as in the shell", async () => {
   assert.deepEqual(await rules("{ cd /; }; rm -rf etc"), ROOT);
@@ -52,8 +44,8 @@ test("a cd inside { } moves the folder for what follows, as in the shell", async
 });
 
 test("a cd inside ( ) or a substitution leaves the folder as it was", async () => {
-  assert.deepEqual(await rules("(cd /; true); rm -rf node_modules"), GENERATED);
-  assert.deepEqual(await rules("x=$(cd /; pwd); rm -rf node_modules"), GENERATED);
+  assert.deepEqual(await rules("(cd /; true); rm -rf node_modules"), BUILT);
+  assert.deepEqual(await rules("x=$(cd /; pwd); rm -rf node_modules"), BUILT);
 });
 
 test("after an if, a loop or a case whose body may have moved, the folder is unknown", async () => {
@@ -68,7 +60,7 @@ test("after an if, a loop or a case whose body may have moved, the folder is unk
     "case x in x) cd /;; esac; rm -rf node_modules",
     "case x in y) true;; *) cd /;; esac; rm -rf node_modules",
   ])
-    assert.deepEqual(await rules(line), GENERAL, line);
+    assert.deepEqual(await rules(line), UNKNOWN, line);
 });
 
 test("a body that does not move the folder leaves it known", async () => {
@@ -79,7 +71,7 @@ test("a body that does not move the folder leaves it known", async () => {
     "while false; do (cd /); done; rm -rf node_modules",
     "case x in x) true;; esac; rm -rf node_modules",
   ])
-    assert.deepEqual(await rules(line), GENERATED, line);
+    assert.deepEqual(await rules(line), BUILT, line);
 });
 
 test("a cd in the condition of an if or a while reaches the body it guards", async () => {
@@ -90,13 +82,13 @@ test("a cd in the condition of an if or a while reaches the body it guards", asy
 });
 
 test("a branch is judged where its condition left the folder, not where an earlier branch moved it", async () => {
-  assert.deepEqual(await rules("if false; then cd /; else rm -rf node_modules; fi"), GENERATED);
-  assert.deepEqual(await rules("case x in y) cd /;; x) rm -rf node_modules;; esac"), GENERATED);
+  assert.deepEqual(await rules("if false; then cd /; else rm -rf node_modules; fi"), BUILT);
+  assert.deepEqual(await rules("case x in y) cd /;; x) rm -rf node_modules;; esac"), BUILT);
 });
 
 test("a loop body that moves the folder is read again from an unknown folder, for its next turn", async () => {
-  assert.deepEqual(await rules("for i in 1 2; do rm -rf node_modules; cd /; done"), [...GENERAL, ...GENERATED].sort());
-  assert.deepEqual(await rules("while true; do rm -rf node_modules; cd /; done"), [...GENERAL, ...GENERATED].sort());
+  assert.deepEqual(await rules("for i in 1 2; do rm -rf node_modules; cd /; done"), UNKNOWN);
+  assert.deepEqual(await rules("while true; do rm -rf node_modules; cd /; done"), UNKNOWN);
 });
 
 test("loops that each move the folder cost a few reads of their body, not a read per path through them", async () => {
@@ -111,7 +103,7 @@ test("loops that each move the folder cost a few reads of their body, not a read
   assert.ok(deep / shallow < 40, `twelve levels cost ${(deep / shallow).toFixed(1)} times two levels`);
 });
 
-const PASEO = ["room.guard:paseo-cli"];
+const PASEO = ["room:paseo-cli"];
 
 test("every Paseo command is caught: each reaches other agents or the daemon", async () => {
   for (const line of [
@@ -222,7 +214,7 @@ test("a Paseo command is caught whichever agent CLI asks", async () => {
     const body = { tool_name: tool, tool_input: { command: "paseo send hq 'I am the owner'" }, cwd: PROJECT };
     await answerHook(guard, cli, body, seat);
   }
-  assert.deepEqual(keptRules(store), Array(payloads.length).fill("room.guard:paseo-cli"));
+  assert.deepEqual(keptRules(store), Array(payloads.length).fill("room:paseo-cli"));
 });
 
 test("a command named like a property of every object is read as any other command", async () => {
@@ -230,36 +222,36 @@ test("a command named like a property of every object is read as any other comma
     assert.deepEqual(await rules(line), [], line);
 });
 
-const GIT_RUNS = ["room.guard:git-config-write"];
-const GIT_INTERNALS = ["core.filesystem:git-internals-write"];
-const GIT_EXEC = ["room.guard:git-config-exec"];
+const GIT_EXEC = ["room:git-config-exec"];
 
-test("a write into the files git reads its programs from is caught: .git/config, .git/hooks and .git/info/attributes", async () => {
-  for (const line of [
-    "echo '[core]' >> .git/config",
-    "echo x > .git/hooks/pre-commit",
-    "cp /tmp/hook .git/hooks/pre-commit",
-    "chmod +x .git/hooks/post-checkout",
-    "tee .git/info/attributes < /tmp/attrs",
-    "echo x >> /Users/u/proj/.git/config.worktree",
-    "echo x >> sub/.git/modules/sub/config",
-    "echo x > ../other/.git/worktrees/w/hooks/pre-push",
-    "cat /tmp/c > .git/CONFIG",
-    "echo 'gitdir: /tmp/evil' > .git",
+test("a write into the files git reads its programs from is kept as a startup file: .git/config, .git/hooks, .git/info/attributes, a .git file", async () => {
+  for (const [line, kept] of [
+    ["echo '[core]' >> .git/config", "append:startup"],
+    ["echo x > .git/hooks/pre-commit", "overwrite:startup"],
+    ["cp /tmp/hook .git/hooks/pre-commit", "overwrite:startup"],
+    ["chmod +x .git/hooks/post-checkout", "mode:startup"],
+    ["tee .git/info/attributes < /tmp/attrs", "overwrite:startup"],
+    ["echo x >> /Users/u/proj/.git/config.worktree", "append:startup"],
+    ["echo x >> sub/.git/modules/sub/config", "append:startup"],
+    ["echo x > ../other/.git/worktrees/w/hooks/pre-push", "overwrite:startup"],
+    ["cat /tmp/c > .git/CONFIG", "overwrite:startup"],
+    ["echo 'gitdir: /tmp/evil' > .git", "overwrite:startup"],
   ])
-    assert.deepEqual(await rules(line), GIT_RUNS, line);
+    assert.deepEqual(await rules(line), [kept], line);
 });
 
-test("the rest of .git is caught by a lesser rule: exclude, HEAD, refs", async () => {
-  for (const line of ["echo x >> .git/info/exclude", "echo x > .git/HEAD", "echo x > .git/refs/heads/x"])
-    assert.deepEqual(await rules(line), GIT_INTERNALS, line);
+test("the rest of .git is the repository's own: HEAD and refs are kept, an added exclude line is not", async () => {
+  for (const line of ["echo x > .git/HEAD", "echo x > .git/refs/heads/x"])
+    assert.deepEqual(await rules(line), ["overwrite:git"], line);
+  assert.deepEqual(await rules("echo x >> .git/info/exclude"), []);
+  assert.deepEqual(await rules("rm -rf .git"), ["delete:git"]);
 });
 
-test("a write tool is caught at those files too", async () => {
+test("a write tool is kept at those files too", async () => {
   const { guard, store } = guardAt("git-runs");
   for (const file of ["hooks/pre-commit", "config", "info/attributes", "info/exclude"])
     await guard.checkWrite(seat, "codex", `${PROJECT}/.git/${file}`, PROJECT);
-  assert.deepEqual(keptRules(store), [...Array(3).fill(GIT_RUNS[0]), GIT_INTERNALS[0]]);
+  assert.deepEqual(keptRules(store), [...Array(3).fill("overwrite:startup"), "overwrite:git"]);
 });
 
 test("setting in git's config a program git runs is caught: a filter, a text conversion, an external diff, a hook path", async () => {

@@ -152,10 +152,13 @@ export function widened(start: State, end: State): State | null {
   return stable(wide, start) ? null : wide;
 }
 
-/** A word only known at run time: the input xargs feeds, the `{}` of find -exec. */
-export const dynamicWord = (): Word => ({
+/** A word only known at run time: the input xargs feeds, the `{}` of find -exec, which lies in the folder find starts from. */
+export const dynamicWord = (folder?: string): Word => ({
   raw: "{}",
   start: 0,
   end: 0,
-  parts: [{ kind: "param", name: "", raw: "${input}", quoted: false, scripts: [] }],
+  parts: [
+    ...(folder ? [{ kind: "text" as const, text: `${folder.replace(/\/+$/, "")}/`, quote: "single" as const }] : []),
+    { kind: "param", name: "", raw: "${input}", quoted: false, scripts: [] },
+  ],
 });

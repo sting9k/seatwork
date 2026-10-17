@@ -20,7 +20,6 @@ const tools = {
   ignored: async () => new Set<string>(),
   alias: async () => null,
   external: async () => false,
-  rebasing: async () => false,
   stat: () => ({ exists: false, link: false, dir: false }),
   real: () => null,
   changed: async () => null,
@@ -81,7 +80,7 @@ test("a command too long to read is kept as unread from its start, whatever its 
     await guard.check(seat, "claude", long, PROJECT);
     assert.ok(Math.max(...lengths) <= 4000, `redaction read ${Math.max(...lengths)} characters`);
     const kept = store.kept("", 1)[0];
-    assert.equal(kept.rule, "unverified");
+    assert.equal(`${kept.pack}:${kept.rule}`, "unread:command");
     assert.ok(!kept.command.includes(secret));
     assert.ok(kept.command.length <= 2000);
   } finally {

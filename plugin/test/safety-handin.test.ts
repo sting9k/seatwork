@@ -13,7 +13,6 @@ import fs, {
 } from "node:fs";
 import { join } from "node:path";
 import { test } from "node:test";
-import { packsInForce } from "../server/safety/gate/packs";
 import { handInLine, handInReturn, inspectHandIn, workDigest } from "../server/safety/handin";
 import { changedSince, snapshot } from "../server/safety/council/git";
 import { buildControl } from "../server/safety/control";
@@ -49,7 +48,7 @@ function project(files: Record<string, string>, start = "") {
   store.noteStart("seat", join(dir, start), git("rev-parse", "HEAD"));
   const gate = {
     place: { home: "/Users/u", project: dir, tmp: null, start: join(dir, start), guard: null, roomFolder: ".seatwork" },
-    config: { packs: packsInForce(), budgetMs: 1000, maxBytes: 65536 },
+    config: { budgetMs: 1000, maxBytes: 65536 },
     tools: machineTools(() => null),
   };
   return { dir, store, git, check: () => inspectHandIn("seat", store, gate) };
@@ -350,7 +349,7 @@ test("no change is said, a seat the room never saw start is not verified, and ne
   const store = new SafetyStore(join(ROOM_HOME, "handin-unknown"), 1000);
   const unknown = await inspectHandIn("nobody", store, {
     place: { home: "/x", project: null, tmp: null, start: null, guard: null, roomFolder: null },
-    config: { packs: packsInForce(), budgetMs: 1000, maxBytes: 65536 },
+    config: { budgetMs: 1000, maxBytes: 65536 },
     tools: machineTools(() => null),
   });
   assert.equal(unknown.state, "partial");
@@ -426,11 +425,12 @@ test("a seat started below the repository root is read at the paths git names: t
   );
 });
 
-test("a line that runs on another machine, in CI or a container, is not read by the rules that keep this one", async () => {
+test("a line that runs on another machine, in CI or a container, counts only for what it does to state kept off it", async () => {
   const { dir, check } = project(START);
   write(dir, {
     Dockerfile: "FROM node:22\nRUN npm install -g typescript\nRUN rm -rf /\n",
-    ".github/workflows/ci.yml": "jobs:\n  test:\n    steps:\n      - run: git config --global user.name ci\n",
+    ".github/workflows/ci.yml":
+      "jobs:\n  test:\n    steps:\n      - run: git config --global user.name ci\n      - run: npm publish\n",
     "scripts/setup.sh": "npm install -g typescript\n",
   });
   const result = await check();
@@ -440,8 +440,24 @@ test("a line that runs on another machine, in CI or a container, is not read by 
       .filter((r) => r.rule === "destructive-script")
       .map((r) => `${r.path}:${r.line}`)
       .sort(),
-    ["Dockerfile:3", "scripts/setup.sh:1"],
+    [".github/workflows/ci.yml:5", "scripts/setup.sh:1"],
   );
+});
+
+test("a script that publishes, deploys or installs goes up as a warning; one that harms this machine sends the candidate back", async () => {
+  const { dir, check } = project(START);
+  write(dir, {
+    "package.json":
+      '{"name":"x","scripts":{"test":"jest","release":"npm publish","down":"terraform destroy","tools":"npm i -g tsx","wipe":"rm -rf ~"}}\n',
+  });
+  const result = await check();
+  const scripts = (found: typeof result.open) =>
+    found
+      .filter((r) => r.rule === "destructive-script")
+      .map((r) => r.text.split(" :: ")[0])
+      .sort();
+  assert.deepEqual(scripts(result.open), ["rm -rf ~"]);
+  assert.deepEqual(scripts(result.warnings), ["npm i -g tsx", "npm publish", "terraform destroy"]);
 });
 
 test("a link in the work tree is not followed to a file outside it", async () => {

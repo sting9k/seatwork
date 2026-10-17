@@ -95,7 +95,7 @@ its own schedule.
 - A mail server on `127.0.0.1` for the agents' mail tool.
 - `~/.config/seatwork`: logs, copies of your agent CLI config and each
   agent's temporary files, readable by your user only. Its `policy.json`
-  holds the guard's packs, spend caps and the decision model's settings:
+  holds the guard's limits, spend caps and the decision model's settings:
   what you change there stays through Apply and plugin updates.
 - In each project, `.seatwork/`: the mission, the law, and the stores of
   mail, work and record. The stores keep themselves out of the project's

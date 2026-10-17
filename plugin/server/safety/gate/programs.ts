@@ -1,8 +1,8 @@
 import { languageOf, scanEmbedded, type Language } from "./embedded";
 import { baseName, programNames, invocationOf } from "./normalize";
-import { absolute, isTemp, lossOf, valueOf } from "./paths";
+import { absolute, valueOf } from "./paths";
+import { whereOf } from "./places";
 import { paseoCommand, reachesDaemon, startsPaseo } from "./rules/paseo";
-import { guardOf } from "./rules/protected";
 import { namesSecret } from "./rules/secrets";
 import { textWord, type Part, type Pipeline, type Word } from "./shell";
 import { fork, type Reader, type State } from "./state";
@@ -17,7 +17,7 @@ const DOWNLOADERS = new Set(["curl", "wget", "fetch", "http", "https", "xh", "ar
 export async function shellWord(rd: Reader, word: Word, state: State, depth: number, scene: Scene): Promise<void> {
   const value = valueOf(word, rd.known(state));
   if (value.text !== null) return rd.text(value.text, fork(state), depth);
-  if (downloads(word.parts)) rd.out.add("room.software", "download-and-run", scene.text);
+  if (downloads(word.parts)) rd.out.named("install:download-run", scene.text);
   else rd.out.doubt("a shell runs a line known only at run time", scene.text);
 }
 
@@ -32,7 +32,7 @@ export async function scriptFile(
   inShell = false,
 ): Promise<void> {
   if (word.parts.some((p) => p.kind === "process")) {
-    if (downloads(word.parts)) rd.out.add("room.software", "download-and-run", scene.text);
+    if (downloads(word.parts)) rd.out.named("install:download-run", scene.text);
     else rd.out.doubt("a shell runs the output of a command", scene.text);
     return;
   }
@@ -41,7 +41,7 @@ export async function scriptFile(
   if (startsPaseo(value.text, path, (target) => rd.real(target))) {
     const { command, args } = scene.call;
     const used = paseoCommand(command === word ? args : args.slice(args.indexOf(word) + 1));
-    if (used !== null) rd.out.add("room.guard", "paseo-cli", scene.text, used);
+    if (used !== null) rd.out.named("room:paseo-cli", scene.text, used);
     return;
   }
   if (!path) return;
@@ -64,7 +64,7 @@ export async function stdinProgram(
   if (fed === undefined) return;
   if (fed === null) {
     if (scene.stage > 0 && scene.pipeline && pipeDownloads(scene.pipeline, scene.stage))
-      rd.out.add("room.software", "download-and-run", scene.text);
+      rd.out.named("install:download-run", scene.text);
     else rd.out.doubt(`${language === "shell" ? "a shell" : language} runs input the room cannot read`, scene.text);
     return;
   }
@@ -98,7 +98,7 @@ export function stdinText(scene: Scene, known: Known, written: ReadonlyMap<strin
   return null;
 }
 
-/** A program in an interpreter's language: its shell lines, deletes and writes, judged. */
+/** A program in an interpreter's language: its shell lines, deletes and writes, judged; the room does not look whether a file it writes is there, so a write counts only where what the file held does not matter. */
 export async function program(
   rd: Reader,
   language: Language,
@@ -112,32 +112,33 @@ export async function program(
   const source = text ?? (code ? valueOf(code, known).text : null);
   if (source === null || source === undefined) return;
   const reach = reachesDaemon(source, known.place, true);
-  if (reach) rd.out.add("room.guard", "paseo-daemon", scene.text, `${language} ${reach}`);
+  if (reach) rd.out.named("room:paseo-daemon", scene.text, `${language} ${reach}`);
   const secret = known.place.guard?.secrets?.length
     ? namesSecret(source, known.place.guard.secrets, known.place.home)
     : null;
-  if (secret) rd.out.add("room.guard", "secret-read", scene.text, `${language} ${secret}`);
+  if (secret) rd.out.effect("read", "room", scene.text, `${language} ${secret}`);
   const found = scanEmbedded(language, source);
   for (const line of found.shell) await rd.text(line, fork(state), depth);
   for (const del of found.deletes) {
     const value = valueOf(textWord(del.path, "single"), known);
     rd.noteChange(value, known);
-    const how = `${language} ${del.how} ${del.path}`;
-    if (del.recursive) {
-      if (isTemp(value, known)) continue;
-      const severe = lossOf(value, known, known.place.project) === "critical";
-      rd.out.add("core.filesystem", severe ? "rm-rf-root-home" : "rm-rf-general", scene.text, how);
-    } else if (guardOf(value, "remove", known)) rd.out.add("core.filesystem", "rm-protected-file", scene.text, how);
+    rd.out.effect(
+      del.recursive ? "delete-tree" : "delete",
+      whereOf(value, known),
+      scene.text,
+      `${language} ${del.how} ${del.path}`,
+    );
   }
   if (found.unreadWrite) rd.noteChange(null, known);
   for (const write of found.writes) {
     const value = valueOf(textWord(write.path, "single"), known);
     rd.noteChange(value, known);
-    const guard = guardOf(value, write.append ? "append" : "write", known);
-    if (guard) rd.out.add(guard.pack, guard.rule, scene.text, `${language} ${write.how} ${write.path}`);
+    const where = whereOf(value, known);
+    if (where !== "outside" && where !== "unknown")
+      rd.out.effect(write.append ? "append" : "overwrite", where, scene.text, `${language} ${write.how} ${write.path}`);
   }
   if (found.dynamicExec.length)
-    rd.out.add("core.filesystem", "interpreter-runs-dynamic-shell", scene.text, `${language} ${found.dynamicExec[0]}`);
+    rd.out.doubt(`${language} runs a shell line built at run time (${found.dynamicExec[0]})`, scene.text);
 }
 
 /** True when a stage before `stage` of the pipeline downloads something. */

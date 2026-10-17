@@ -1,25 +1,24 @@
+import type { GitEffect } from "../findings";
 import { literal, textWord, type Word } from "../shell";
 import type { Scene } from "../types";
 
-/** git read as git reads its line: global options, subcommand, aliases, then DCG's git rules. */
+/** git read as git reads its line (global options, subcommand, aliases), and what it does that the guard keeps. */
 
-interface GitHit {
-  pack: "core.git" | "strict_git" | "room.guard";
-  rule: string;
-  detail: string;
-}
+/** What a git command does that the guard keeps: an effect on the repository it runs in, or a named rule. */
+type GitHit = { effect: GitEffect; detail: string } | { id: string; detail: string };
 
-/** What the git rules ask of the machine: an alias in git config, a `git-<name>` program, a rebase under way. */
+/** What the git reading asks of the machine: an alias in git config, a `git-<name>` program. */
 export interface GitTools {
   alias(name: string, cwd: string | null): Promise<string | null>;
   external(name: string): Promise<boolean>;
-  rebasing(cwd: string | null): Promise<boolean>;
 }
 
-/** The rules a git command trips; `shells` are the lines it runs through the shell (an alias, a program a `-c` option names), which are judged too; `changes` is the folder whose files it rewrites, null for none or a folder not known. */
+/** What a git command does; `repo` is the folder it runs in, null when not known; `shells` are the lines it runs through the shell (an alias, a program a `-c` option names), which are judged too; `changes` is the folder whose files it rewrites; `doubts` what the room could not read. */
 interface GitOutcome {
   hits: GitHit[];
+  doubts: string[];
   shells: string[];
+  repo: string | null;
   changes: string | null;
 }
 
@@ -68,20 +67,12 @@ const GLOBAL_VALUED = [
   "--config-env",
 ];
 const GLOBAL_EXITS = new Set(["-v", "--version", "-h", "--help", "--html-path", "--man-path", "--info-path", "help"]);
-const RECOVERY = new Set([
-  "checkout-discard",
-  "checkout-ref-discard",
-  "checkout-discard-cwd",
-  "restore-worktree",
-  "restore-worktree-explicit",
-]);
 const EXEC_KEYS =
   /^(core\.(fsmonitor|hookspath|sshcommand|pager|editor|askpass|gitproxy|attributesfile)|filter\..+|diff\.(external|.+\.(command|textconv|cachetextconv))|merge\..+\.(driver|recursivedriver)|(difftool|mergetool)\..+\.(cmd|path)|credential\.(.+\.)?helper|gpg\.(.+\.)?program|sequence\.editor|pager\..+|include\.path|includeif\..+\.path)$/;
 const PATH_KEYS = /^(core\.(hookspath|attributesfile)|include\.path|includeif\..+\.path)$/;
 const CONFIG_VALUED = new Set(["-f", "--file", "--blob", "--type", "--default", "--comment"]);
 const CONFIG_READS = new Set(["get", "list", "unset", "edit", "remove-section", "rename-section"]);
 const MAX_ALIAS = 64;
-const PROTECTED_BRANCHES = (["master", "main"] as const).map((b) => [b, new RegExp(`(^|[:/+])${b}$`)] as const);
 
 /** A git command after its global options: the subcommand, and what follows it. */
 interface Line {
@@ -91,8 +82,8 @@ interface Line {
   cwd: string | null;
 }
 
-/** The git rules for a command that runs git (or `git-<sub>`). */
-export async function gitRules(scene: Scene, tools: GitTools, strict: boolean): Promise<GitOutcome> {
+/** What a command that runs git (or `git-<sub>`) does. */
+export async function gitEffects(scene: Scene, tools: GitTools): Promise<GitOutcome> {
   const name = scene.call.name ?? "";
   let words = scene.call.args;
   if (name !== "git") {
@@ -101,7 +92,7 @@ export async function gitRules(scene: Scene, tools: GitTools, strict: boolean): 
     words = [textWord(sub), ...words];
   }
   const aliases = new Map<string, string>();
-  const given: GitOutcome = { hits: [], shells: [], changes: null };
+  const given: GitOutcome = { hits: [], doubts: [], shells: [], repo: scene.cwd, changes: null };
   let cwd = scene.cwd;
   const seen = new Set<string>();
   for (let depth = 0; depth <= MAX_ALIAS; depth += 1) {
@@ -110,11 +101,12 @@ export async function gitRules(scene: Scene, tools: GitTools, strict: boolean): 
     if (read === "dynamic")
       return unverified(given, "a word only known at run time stands where git reads its subcommand");
     cwd = read.cwd;
+    given.repo = cwd;
     words = read.rest;
     const sub = literal(words[0])!;
     if (BUILTIN.has(sub)) {
       const line: Line = { sub, args: words.slice(1), texts: words.slice(1).map(literal), cwd };
-      given.hits.push(...(await rules(line, scene, tools, strict)));
+      given.hits.push(...effects(line));
       if (changesTree(line)) given.changes = cwd;
       return given;
     }
@@ -140,11 +132,11 @@ export async function gitRules(scene: Scene, tools: GitTools, strict: boolean): 
   return unverified(given, "the alias goes deeper than the room reads");
 }
 
-const NOTHING: GitOutcome = { hits: [], shells: [], changes: null };
+const NOTHING: GitOutcome = { hits: [], doubts: [], shells: [], repo: null, changes: null };
 
 /** The outcome for a subcommand the room cannot read. */
 function unverified(given: GitOutcome, detail: string): GitOutcome {
-  given.hits.push({ pack: "core.git", rule: "git-alias-semantic-unverified", detail });
+  given.doubts.push(detail);
   return given;
 }
 
@@ -215,7 +207,7 @@ function programOf(setting: string, given: GitOutcome, dynamic = false): void {
   if (at < 0) return;
   const key = setting.slice(0, at);
   if (!givesProgram(key)) return;
-  if (dynamic) given.hits.push({ pack: "room.guard", rule: "git-config-exec", detail: key.slice(0, 80) });
+  if (dynamic) given.hits.push({ id: "room:git-config-exec", detail: key.slice(0, 80) });
   else given.shells.push(setting.slice(at + 1).replace(/^!/, ""));
 }
 
@@ -279,137 +271,92 @@ function skipsHooks(sub: string, texts: (string | null)[]): boolean {
   return skips;
 }
 
-/** The rules for one subcommand and its arguments; during a rebase the discard rules stand down. */
-async function rules(line: Line, scene: Scene, tools: GitTools, strict: boolean): Promise<GitHit[]> {
+/** What one subcommand does to the repository's work and history, to a remote, or to the room's controls. */
+function effects(line: Line): GitHit[] {
   const hits: GitHit[] = [];
-  const core = (rule: string, detail = `git ${line.sub}`) => hits.push({ pack: "core.git", rule, detail });
-  const tight = (rule: string, detail = `git ${line.sub}`) => strict && hits.push({ pack: "strict_git", rule, detail });
-  const room = (rule: string, detail: string) => hits.push({ pack: "room.guard", rule, detail });
+  const effect = (kind: GitEffect, detail = `git ${line.sub}`) => hits.push({ effect: kind, detail });
+  const named = (id: string, detail = `git ${line.sub}`) => hits.push({ id, detail });
   const t = line.texts;
   const opts = beforeEnd(t);
+  const short = (letter: string) => opts.some((x) => isCluster(x) && x.includes(letter));
+  const long = (full: string, min: number) => opts.some((x) => abbrev(x, full, min));
+  const dry = () => long("dry-run", 3) || short("n");
   switch (line.sub) {
     case "config": {
       const key = programKey(t);
-      if (key !== null) room("git-config-exec", key);
+      if (key !== null) named("room:git-config-exec", key);
       break;
     }
+    case "reset":
+      if (t.some((x) => abbrev(x, "hard", 1) || abbrev(x, "merge", 2))) effect("discard");
+      break;
     case "checkout": {
-      if (t[0] === "-b" || t[0] === "--orphan") break;
-      if (
-        opts.some(
-          (x) => ["--f", "--fo", "--for", "--forc", "--force"].includes(x ?? "") || (isCluster(x) && x.includes("f")),
-        )
-      )
-        core("checkout-force");
-      if (t[0] === "--" && t.length > 1) core("checkout-discard");
-      else if (t[1] === "--" && t.length > 2 && t[0] !== null) core("checkout-ref-discard");
-      if (t.slice(0, 2).some((x) => x === "." || (x !== null && x.startsWith("./")))) core("checkout-discard-cwd");
+      if (t[0] === "-b" || t[0] === "-B" || t[0] === "--orphan") break;
+      const words = operands(t, ["-b", "-B", "--orphan"]);
+      const paths = t.includes("--") ? t.slice(t.indexOf("--") + 1) : words.slice(1);
+      if (long("force", 1) || short("f") || paths.length || words.some((x) => x === "." || (x ?? "").startsWith("./")))
+        effect("discard");
       break;
     }
     case "switch":
-      if (t[0] === "-c") break;
-      if (opts.some((x) => x === "--force" || abbrev(x, "discard-changes", 2) || (isCluster(x) && x.includes("f"))))
-        core("switch-discard");
+      if (long("force", 1) || long("discard-changes", 2) || short("f")) effect("discard");
       break;
-    case "rm":
-      if (t.some((x) => x === "--cached" || x === "--dry-run" || (isCluster(x) && x.includes("n")))) break;
-      if (opts.some((x) => abbrev(x, "force", 1) || (isCluster(x) && x.includes("f")))) core("rm-force");
-      break;
-    case "update-ref":
-      if (t.some((x) => x === "-d" || x === "--delete")) core("update-ref-delete");
-      break;
-    case "read-tree":
-      if (t.some((x) => abbrev(x, "reset", 3)) && t.some((x) => isCluster(x) && x.includes("u")))
-        core("read-tree-reset");
-      break;
-    case "show": {
-      const source = t[0] && /^[^:]*:(.+)$/.exec(t[0]);
-      if (!source) break;
-      const path = source[1].replace(/^\.\//, "");
-      for (const r of scene.simple.redirects) {
-        if (r.op !== ">" && r.op !== ">>" && r.op !== ">|") continue;
-        const target = r.target ? literal(r.target) : null;
-        if (target && target.replace(/^\.\//, "") === path)
-          core("show-redirect-overwrite-source", `git show ${t[0]} > ${target}`);
-      }
-      break;
-    }
     case "restore":
-      if (t.some((x) => x === "--worktree" || x === "-W")) core("restore-worktree-explicit");
-      else if (!t.some((x) => x === "--staged" || x === "-S")) core("restore-worktree");
-      break;
-    case "reset":
-      if (t.some((x) => abbrev(x, "hard", 1))) core("reset-hard");
-      if (t.some((x) => abbrev(x, "merge", 2))) core("reset-merge");
+      if (t.some((x) => x === "--worktree" || x === "-W") || !t.some((x) => x === "--staged" || x === "-S"))
+        effect("discard");
       break;
     case "clean":
-      if (opts.some((x) => x === "--dry-run" || (isCluster(x) && /^-[a-z]*n/.test(x)))) break;
-      if (opts.some((x) => abbrev(x, "force", 1) || (isCluster(x) && x.includes("f")))) core("clean-force");
+    case "rm":
+      if ((long("force", 1) || short("f")) && !dry() && !t.includes("--cached")) effect("discard");
       break;
-    case "push":
-      pushRules(line, core, tight);
-      break;
-    case "branch": {
-      const verdict = branchVerdict(line.args);
-      if (verdict) core(verdict);
-      break;
-    }
     case "stash":
-      if (t[0] === "drop") core("stash-drop");
-      if (t[0] === "clear") core("stash-clear");
+      if (t[0] === "drop" || t[0] === "clear") effect("discard");
       break;
-    case "filter-branch":
-      core("filter-branch");
-      tight("filter-branch");
-      break;
-    case "reflog":
-      if (t[0] === "expire") {
-        tight("reflog-expire");
-        for (let i = 1; i < t.length; i += 1) {
-          const x = t[i] ?? "";
-          const m = /^--(expire(?:-u[a-z-]*)?)(?:=(.*))?$/.exec(x);
-          if (!m || (m[1] !== "expire" && !"expire-unreachable".startsWith(m[1]))) continue;
-          const value = m[2] ?? t[i + 1] ?? "";
-          if (["now", "all", "0"].includes(value)) core("reflog-expire-now");
-        }
-      }
-      break;
-    case "lfs":
-      if (t[0] === "migrate" && (t[1] === "import" || t[1] === "export")) core("lfs-migrate-rewrite");
-      if (t[0] === "prune" && !t.includes("--dry-run")) core("lfs-prune");
-      if (t[0] === "uninstall") core("lfs-uninstall");
-      break;
-    case "rebase":
-      tight("rebase");
-      break;
-    case "commit":
-      if (opts.some((x) => abbrev(x, "amend", 2))) tight("commit-amend");
-      break;
-    case "cherry-pick":
-      tight("cherry-pick");
-      break;
-    case "filter-repo":
-      tight("filter-repo");
-      break;
-    case "gc":
-      if (opts.some((x) => abbrev(x, "aggressive", 2) || (x !== null && /^--prune(=|$)/.test(x))))
-        tight("gc-aggressive");
+    case "read-tree":
+      if (long("reset", 3) && short("u")) effect("discard");
       break;
     case "worktree":
-      if (t[0] === "remove") tight("worktree-remove");
+      if (t[0] === "remove" && t.some((x) => x === "--force" || x === "-f")) effect("discard");
       break;
-    case "submodule":
-      if (t.includes("deinit")) tight("submodule-deinit");
+    case "branch":
+      if (forcesBranch(line.args)) effect("refs");
       break;
-    case "add":
-      if (t.some((x) => x === ".")) tight("add-all-dot");
-      if (opts.some((x) => x === "--all" || (isCluster(x) && x.includes("A")))) tight("add-all-flag");
+    case "tag":
+    case "update-ref":
+      if (t.some((x) => x === "-d" || x === "--delete")) effect("refs");
+      break;
+    case "reflog":
+      if (t[0] === "delete" || (t[0] === "expire" && expiresNow(t))) effect("erase");
+      break;
+    case "gc":
+      if (opts.some((x) => x !== null && /^--prune=(now|all)$/.test(x))) effect("erase");
+      break;
+    case "prune":
+      if (!dry()) effect("erase");
+      break;
+    case "filter-branch":
+    case "filter-repo":
+      effect("erase");
+      break;
+    case "lfs":
+      if (t[0] === "migrate" && (t[1] === "import" || t[1] === "export")) effect("erase");
+      break;
+    case "push":
+      if (!dry()) named(forcesPush(line) ? "remote:git-force" : "remote:git-push");
       break;
   }
-  if (HOOKED.has(line.sub) && skipsHooks(line.sub, t)) room("git-no-verify", `git ${line.sub} --no-verify`);
-  if (hits.some((h) => RECOVERY.has(h.rule)) && (await tools.rebasing(line.cwd)))
-    return hits.filter((h) => !RECOVERY.has(h.rule));
+  if (HOOKED.has(line.sub) && skipsHooks(line.sub, t)) named("room:no-verify", `git ${line.sub} --no-verify`);
   return hits;
+}
+
+/** Whether `reflog expire` drops every entry now, whatever its age. */
+function expiresNow(t: (string | null)[]): boolean {
+  for (let i = 1; i < t.length; i += 1) {
+    const m = /^--(expire(?:-u[a-z-]*)?)(?:=(.*))?$/.exec(t[i] ?? "");
+    if (!m || (m[1] !== "expire" && !"expire-unreachable".startsWith(m[1]))) continue;
+    if (["now", "all", "0"].includes(m[2] ?? t[i + 1] ?? "")) return true;
+  }
+  return false;
 }
 
 const STASH_WRITES = new Set(["push", "save", "pop", "apply", "branch"]);
@@ -496,36 +443,21 @@ function programKey(texts: (string | null)[]): string | null {
   return EXEC_KEYS.test(key.toLowerCase()) ? key.slice(0, 80) : null;
 }
 
-/** The rules for `git push`: force in its forms, mirror, delete, prune, and the protected branches. */
-function pushRules(
-  line: Line,
-  core: (rule: string, detail?: string) => void,
-  tight: (rule: string, detail?: string) => unknown,
-): void {
+/** Whether a push may drop commits on the remote: force in its forms, a mirror, a delete, a prune. */
+function forcesPush(line: Line): boolean {
   const t = line.texts;
   const opts = beforeEnd(t);
-  const forceLong = opts.some((x) => x === "--force" || (x !== null && x.startsWith("--force=")));
-  const forceShort = opts.some((x) => isCluster(x) && /[fF]/.test(x));
-  const refspec = t.some((x) => x !== null && x.startsWith("+"));
-  if (forceLong) core("push-force-long");
-  if (forceShort) core("push-force-short");
-  if (refspec) core("push-force-refspec");
-  if (forceLong || forceShort || refspec || opts.some((x) => x !== null && /^--force-(with-lease|if-includes)/.test(x)))
-    tight("push-force-any");
-  if (opts.includes("--mirror")) tight("push-mirror");
-  if (opts.some((x) => abbrev(x, "delete", 2) || (isCluster(x) && x.includes("d")))) tight("push-delete");
-  if (t.some((x) => x !== null && /^:.+/.test(x))) tight("push-delete-refspec");
-  if (opts.some((x) => abbrev(x, "prune", 3))) tight("push-prune");
-  if (
-    line.args.some(
-      (w) =>
-        literal(w) === null || w.parts.some((p) => p.kind === "text" && p.quote === "none" && /[*?[{}\\]/.test(p.text)),
-    )
-  )
-    tight("push-dynamic-argument");
-  const names = t.filter((x): x is string => x !== null && !x.startsWith("-"));
-  for (const [branch, test] of PROTECTED_BRANCHES)
-    if (names.slice(1).some((x) => test.test(x))) tight(`push-${branch}`);
+  return (
+    opts.some(
+      (x) =>
+        x !== null &&
+        (/^--force(-with-lease|-if-includes)?(=|$)/.test(x) ||
+          x === "--mirror" ||
+          abbrev(x, "delete", 2) ||
+          abbrev(x, "prune", 3) ||
+          (isCluster(x) && /[fd]/.test(x))),
+    ) || t.some((x) => x !== null && /^[+:]./.test(x))
+  );
 }
 
 const BRANCH_LONG: Record<string, "flag" | "glued" | "value" | "lastDefault"> = {
@@ -577,22 +509,13 @@ const NEGATABLE = new Set([
   "omit-empty",
 ]);
 
-/** `git branch` read flag by flag: a delete git checks for merging, a forced one, or neither. */
-function branchVerdict(args: Word[]): "branch-delete" | "branch-force-delete" | "branch-dynamic-token" | null {
-  let del = false;
-  let forceDel = false;
+/** Whether `git branch`, read flag by flag, deletes, moves or resets a branch by force, past git's check that its commits are merged. */
+function forcesBranch(args: Word[]): boolean {
   let force = false;
-  let moveCopy = false;
-  let forceMove = false;
   for (let i = 0; i < args.length; i += 1) {
     const word = args[i];
     const text = literal(word);
-    if (text === null) {
-      const unquoted = word.parts.some((p) => p.kind !== "text" && p.kind !== "tilde" && !("quoted" in p && p.quoted));
-      const asFlag = /^-/.test(word.parts[0]?.kind === "text" ? word.parts[0].text : "");
-      if (unquoted || asFlag) return "branch-dynamic-token";
-      continue;
-    }
+    if (text === null) continue;
     if (text === "--" || text === "--end-of-options") break;
     if (text.startsWith("--")) {
       const [raw, value] = text.slice(2).split(/=(.*)/s, 2) as [string, string | undefined];
@@ -604,13 +527,11 @@ function branchVerdict(args: Word[]): "branch-delete" | "branch-force-delete" | 
       }
       const options = Object.keys(BRANCH_LONG).filter((o) => o.startsWith(name));
       const full = name in BRANCH_LONG ? name : options.length === 1 ? options[0] : null;
-      if (!full || (negated && !NEGATABLE.has(full))) return null;
-      if (full === "help" || full === "help-all") return null;
+      if (!full || (negated && !NEGATABLE.has(full))) return false;
+      if (full === "help" || full === "help-all") return false;
       const kind = BRANCH_LONG[full];
-      if (kind === "flag" && value !== undefined) return null;
-      if (full === "delete") del = !negated;
-      else if (full === "force") force = !negated;
-      else if (full === "move" || full === "copy") moveCopy = !negated;
+      if (kind === "flag" && value !== undefined) return false;
+      if (full === "force") force = !negated;
       if (kind === "value" && value === undefined) i += 1;
       else if (
         kind === "lastDefault" &&
@@ -624,22 +545,16 @@ function branchVerdict(args: Word[]): "branch-delete" | "branch-force-delete" | 
     if (text.startsWith("-") && text.length > 1) {
       for (let j = 1; j < text.length; j += 1) {
         const c = text[j];
-        if (c === "d") del = true;
-        else if (c === "D") forceDel = true;
-        else if (c === "f") force = true;
-        else if (c === "M" || c === "C") forceMove = true;
-        else if (c === "m" || c === "c") moveCopy = true;
-        else if ("vqrali".includes(c)) continue;
-        else if (c === "h") return null;
+        if (c === "D" || c === "f" || c === "M" || c === "C") force = true;
+        else if ("dmcvqrali".includes(c)) continue;
+        else if (c === "h") return false;
         else if (c === "u") {
           if (j === text.length - 1) i += 1;
           break;
         } else if (c === "t") break;
-        else return null;
+        else return false;
       }
     }
   }
-  if (forceDel || forceMove || (moveCopy && force) || (del && force) || (force && !del)) return "branch-force-delete";
-  if (del) return "branch-delete";
-  return null;
+  return force;
 }

@@ -1,8 +1,8 @@
 import { evaluate, type Evaluation, type GateConfig, type Tools } from "./gate/evaluate";
-import { packsInForce, ruleOf } from "./gate/packs";
+import { effectFinding, namedFinding, worse } from "./gate/findings";
+import { valueOf } from "./gate/paths";
+import { throughLinks, whereOf, whereOfPath } from "./gate/places";
 import { ATTRIBUTES_FILE, namesDriver } from "./gate/rules/attributes";
-import { guardThroughLinks } from "./gate/rules/files";
-import { guardOf } from "./gate/rules/protected";
 import { secretAt } from "./gate/rules/secrets";
 import { textWord } from "./gate/shell";
 import { SEVERITY_RANK, type Finding, type Place } from "./gate/types";
@@ -10,12 +10,11 @@ import { redact } from "../redact";
 import type { SafetyStore } from "./store";
 import type { CouncilPolicy } from "./council/council";
 
-/** The command guard: reads each call of a seat by the packs in force and keeps what a rule held for; it stops nothing. */
+/** The command guard: reads each call of a seat and keeps what it did that the owner would want to see; it stops nothing. */
 
 /** The owner's settings for the guard, the council and the hand-in check, as the policy file holds them. */
 export interface SafetyPolicy {
   mode?: "on" | "off";
-  packs?: { add?: string[]; remove?: string[] };
   budgetMs?: number;
   maxBytes?: number;
   handin?: { mode: "block" | "warn" | "off" };
@@ -51,7 +50,7 @@ interface Call {
 const DEFAULTS = { budgetMs: 1000, maxBytes: 64 * 1024 };
 const SHOWN_CHARS = 4000;
 
-/** Reads each shell command, file write and file read of a seat by the packs in force, and keeps the calls a rule held for. */
+/** Reads each shell command, file write and file read of a seat, and keeps the calls that did something it grades. */
 export class Guard {
   constructor(private readonly deps: GuardDeps) {}
 
@@ -65,9 +64,8 @@ export class Guard {
   /** A file an editing tool is about to write (Write, Edit, apply_patch, a plugin's write), with the text it adds when the call shows it. */
   async checkWrite(seat: SeatRef | null, cli: string, path: string, cwd: string | null, text?: string): Promise<void> {
     const call = { seat, cli, command: `write ${path}`, cwd, began: process.hrtime.bigint() };
-    const real = (target: string) => this.deps.tools(seat).real(target);
     await this.read(call, async (place) => ({
-      findings: writeFindings(path, text, place, cwd, real),
+      findings: writeFindings(path, text, place, cwd, this.deps.tools(seat)),
       doubts: [],
       changes: false,
     }));
@@ -79,12 +77,14 @@ export class Guard {
     const real = (target: string) => this.deps.tools(seat).real(target);
     await this.read(call, async (place) => {
       const secrets = place.guard?.secrets ?? [];
-      const found = [path, real(path)].some((at) => at !== null && secretAt(at, secrets, whole));
-      return {
-        findings: found ? [findingOf("room.guard", "secret-read", `read ${path}`)] : [],
-        doubts: [],
-        changes: false,
-      };
+      const paths = [path, real(path)].filter((at): at is string => at !== null);
+      const where = paths.some((at) => secretAt(at, secrets, whole))
+        ? "room"
+        : paths.some((at) => at.startsWith("/") && whereOfPath(at, place) === "credentials")
+          ? "credentials"
+          : null;
+      const found = effectFinding("read", where, `read ${path}`);
+      return { findings: found ? [found] : [], doubts: [], changes: false };
     });
   }
 
@@ -92,23 +92,22 @@ export class Guard {
   gateConfig(): GateConfig {
     const policy = this.deps.policy() ?? {};
     return {
-      packs: packsInForce(policy.packs?.add ?? [], policy.packs?.remove ?? []),
       budgetMs: policy.budgetMs ?? DEFAULTS.budgetMs,
       maxBytes: policy.maxBytes ?? DEFAULTS.maxBytes,
     };
   }
 
-  /** Reads a call and keeps the gravest rule that held for it, or that the gate could not read it; true when the call writes the seat's tree. */
+  /** Reads a call and keeps the gravest thing it did, or that the gate could not read it; true when the call writes the seat's tree. */
   private async read(call: Call, look: (place: Place) => Promise<Evaluation>): Promise<boolean> {
     const found = await look(this.deps.place(call.seat));
     const top = [...found.findings].sort((a, b) => SEVERITY_RANK[b.severity] - SEVERITY_RANK[a.severity])[0] ?? null;
-    if (top) this.record(call, top.pack, top.rule, top.severity);
-    else if (found.doubts.length) this.record(call, "gate", "unverified", null);
+    if (top) this.record(call, top.effect, top.rule, top.severity);
+    else if (found.doubts.length) this.record(call, "unread", "command", null);
     return found.changes;
   }
 
-  /** Keeps a call a rule held for. */
-  private record(call: Call, pack: string, rule: string, severity: string | null): void {
+  /** Keeps a call, under its effect and rule. */
+  private record(call: Call, effect: string, rule: string, severity: string | null): void {
     const { seat } = call;
     this.deps.store().record({
       seat: seat?.id ?? null,
@@ -116,7 +115,7 @@ export class Guard {
       cli: call.cli,
       cwd: call.cwd,
       command: shownOf(call.command),
-      pack,
+      pack: effect,
       rule,
       severity,
       elapsedUs: Number(process.hrtime.bigint() - call.began) / 1000,
@@ -124,28 +123,24 @@ export class Guard {
   }
 }
 
-/** What the rules say of writing one path, straight or through a link, and of the text the call adds to an attributes file. */
+/** What writing one path does, straight or through a link, and the text the call adds to an attributes file; a new file outside the seat's tree takes nothing from the owner. */
 function writeFindings(
   path: string,
   text: string | undefined,
   place: Place,
   cwd: string | null,
-  real: (path: string) => string | null,
+  tools: Tools,
 ): Finding[] {
-  const word = textWord(path, "single");
-  const found =
-    guardOf({ text: path, prefix: path, quoted: true, glob: false, temp: false, word }, "write", { place, cwd }) ??
-    (path.startsWith("/") ? guardThroughLinks(path, "write", { place }, real) : null);
-  const hits: { pack: string; rule: string }[] = found ? [{ pack: found.pack, rule: found.rule }] : [];
+  const value = valueOf(textWord(path, "single"), { vars: new Map(), place, cwd });
+  let where = whereOf(value, { vars: new Map(), place, cwd });
+  const real = path.startsWith("/") ? throughLinks(path, (at) => tools.real(at)) : null;
+  if (real) where = worse("overwrite", where, whereOfPath(real, place));
+  const file = path.startsWith("/") ? tools.stat(path) : null;
+  if (where === "outside" && file && !file.exists) where = null;
+  const found = [effectFinding("overwrite", where, `write ${path}`)];
   if (text !== undefined && ATTRIBUTES_FILE.test(path) && namesDriver(text))
-    hits.push({ pack: "room.guard", rule: "git-attributes-driver" });
-  return hits.map((hit) => findingOf(hit.pack, hit.rule, `write ${path}`));
-}
-
-/** A finding of a pack's rule, as a file tool's call meets it. */
-function findingOf(pack: string, name: string, text: string): Finding {
-  const rule = ruleOf(pack, name)!;
-  return { pack, rule: name, severity: rule.severity, reason: rule.reason, text };
+    found.push(namedFinding("room:attributes-driver", `write ${path}`));
+  return found.filter((f): f is Finding => f !== null);
 }
 
 /** A command as the room keeps and shows it: its start, cut between words so no secret is cut in half, with secrets hidden. */

@@ -1,5 +1,5 @@
 import { posix } from "node:path";
-import table from "../../../../shared/safety/protected.json";
+import table from "../../../../shared/safety/places.json";
 import { within } from "../paths";
 
 /** The keys the daemon and the room hold, which no seat reads: with them a program is the daemon's owner or spends the room's keys. */

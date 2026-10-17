@@ -752,7 +752,7 @@ function scriptLines(change: Change, text: string): { line: number; command: str
   return commands.map((one) => ({ ...one, away }));
 }
 
-/** Shell lines added to scripts and CI files, run through the guard; the room's own packs keep this machine, so they pass over a line that runs elsewhere. */
+/** Shell lines added to scripts and CI files, read by the guard: a line that harms this machine or the owner's files when someone runs it later sends the candidate back; the rest goes up as a warning, and a line that runs elsewhere counts only for what it does to shared state. */
 async function scriptCommands(change: Change, text: string, cwd: string, gate: Gate): Promise<Found[]> {
   const out: Found[] = [];
   const read = new Map<string, Awaited<ReturnType<typeof evaluate>>>();
@@ -760,19 +760,22 @@ async function scriptCommands(change: Change, text: string, cwd: string, gate: G
     let found = read.get(command);
     if (!found) read.set(command, (found = await evaluate(command, cwd, gate.place, gate.config, gate.tools)));
     for (const f of found.findings) {
-      if (f.severity === "low" || (away && f.pack.startsWith("room."))) continue;
+      if (f.severity === "low" || (away && f.effect !== "remote")) continue;
       out.push({
         rule: "destructive-script",
-        level: f.severity === "medium" ? "warn" : "block",
+        level: f.severity === "critical" && !SHARED.has(f.effect) ? "block" : "warn",
         path: change.path,
         line,
         text: command,
-        hint: `${f.reason} (rule ${f.pack}:${f.rule}); a script runs this later, with nobody watching.`,
+        hint: `${f.reason} (${f.effect}:${f.rule}); a script runs this later, with nobody watching.`,
       });
     }
   }
   return out;
 }
+
+/** Effects a script is often written for: publishing, deploying, installing; they go up as warnings, never send a candidate back. */
+const SHARED = new Set(["remote", "install"]);
 
 function entropy(s: string): number {
   const counts = new Map<string, number>();

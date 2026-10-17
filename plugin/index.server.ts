@@ -32,7 +32,7 @@ import {
   setupState,
 } from "./shared/setup";
 
-const VERSION = "0.40.0";
+const VERSION = "0.41.0";
 const PLUGIN_ID = "seatwork";
 
 /** Seatwork on Paseo: the setup screen first; the room once it is set up, hooked to Paseo's events only while it runs. */

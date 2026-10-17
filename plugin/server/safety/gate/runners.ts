@@ -1,4 +1,5 @@
 import { posix } from "node:path";
+import { startingPoints } from "./effects";
 import { INLINE_FLAGS, languageOf, type Language } from "./embedded";
 import { baseName, programNames, valueWord } from "./normalize";
 import { valueOf } from "./paths";
@@ -200,9 +201,11 @@ async function xargs(rd: Reader, scene: Scene, state: State, ctx: Context): Prom
   await synthetic(rd, [...inner, ...tail], state, ctx);
 }
 
-/** The commands after `-exec`, `-execdir`, `-ok` and `-okdir`, each with `{}` unknown. */
+/** The commands after `-exec`, `-execdir`, `-ok` and `-okdir`, each with `{}` unknown but for the one folder find starts from. */
 async function findExec(rd: Reader, scene: Scene, state: State, ctx: Context): Promise<void> {
   const args = scene.call.args;
+  const starts = startingPoints(args).map((word) => valueOf(word, rd.known(state)).text);
+  const folder = starts.length === 0 ? "." : starts.length === 1 && starts[0] !== null ? starts[0] : undefined;
   for (let i = 0; i < args.length; i += 1) {
     if (!["-exec", "-execdir", "-ok", "-okdir"].includes(literal(args[i]) ?? "")) continue;
     const inner: Word[] = [];
@@ -210,7 +213,7 @@ async function findExec(rd: Reader, scene: Scene, state: State, ctx: Context): P
     for (; j < args.length; j += 1) {
       const t = literal(args[j]);
       if (t === ";" || t === "+") break;
-      inner.push(t === "{}" ? dynamicWord() : args[j]);
+      inner.push(t === "{}" ? dynamicWord(folder) : args[j]);
     }
     if (inner.length) await synthetic(rd, inner, state, ctx);
     i = j;
@@ -400,10 +403,10 @@ async function sedExec(rd: Reader, scene: Scene, state: State, ctx: Context): Pr
       const e = /^\s*e(?:\s+(.+))?$/.exec(line);
       if (e) {
         if (e[1]) await rd.text(e[1], fork(state), ctx.depth + 1);
-        else rd.out.add("core.filesystem", "sed-exec-unverified", scene.text);
+        else rd.out.doubt("sed runs the line it reads as a command", scene.text);
       }
       const s = /^\s*s(.)(?:(?!\1)[^\\]|\\.)*\1(?:(?!\1)[^\\]|\\.)*\1([gpiImMe0-9w]*)/.exec(line);
-      if (s && s[2].includes("e")) rd.out.add("core.filesystem", "sed-exec-unverified", scene.text);
+      if (s && s[2].includes("e")) rd.out.doubt("sed runs what a substitution gives as a command", scene.text);
     }
   }
 }
@@ -425,7 +428,7 @@ async function tarExec(rd: Reader, scene: Scene, state: State, ctx: Context): Pr
       arg = valueWord(arg, 5);
     }
     const text = valueOf(arg, known).text;
-    if (text === null) rd.out.add("core.filesystem", "tar-exec-unverified", scene.text);
+    if (text === null) rd.out.doubt("tar runs a program known only at run time", scene.text);
     else await rd.text(text, fork(state), ctx.depth + 1);
   }
 }

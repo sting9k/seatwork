@@ -24,7 +24,6 @@ const tools: Tools = {
   ignored: async (paths) => new Set(paths.filter((path) => /\/node_modules(\/|$)/.test(path))),
   alias: async () => null,
   external: async () => false,
-  rebasing: async () => false,
   stat: (path) => ({
     exists: [HOME, `${HOME}/.ssh`, `${HOME}/.vimrc`, `${HOME}/.zshrc`].includes(path),
     link: false,
@@ -39,7 +38,7 @@ const seat = { id: "peer", role: "peer", project: PROJECT, tmp: null, start: PRO
 
 const keptCount = () => store.kept("", 100_000).length;
 
-/** What the guard keeps of a command: whether a rule caught it, and which; a line it could not read is kept as gate:unverified. */
+/** What the guard keeps of a command: whether a rule caught it, and which; a line it could not read is kept as unread:command. */
 async function verdict(command: string): Promise<{ caught: boolean; rule: string | null }> {
   const before = keptCount();
   await guard.check(seat, "claude", command, PROJECT);
@@ -65,38 +64,38 @@ function unquoted(command: string): boolean {
 /** A way of writing a command that a shell runs the same: its name and how it rewrites one. */
 type Same = [name: string, write: (command: string) => string];
 
-/** A command a grave rule of the guard catches, and that rule. */
+/** A command the guard keeps at a grave level, and what it keeps it as. */
 type Caught = [command: string, rule: string];
 
 const CAUGHT: Caught[] = [
-  ["rm -rf /", "core.filesystem:rm-rf-root-home"],
-  ["rm -r -f /etc", "core.filesystem:rm-r-f-separate-root-home"],
-  ["rm -rf ./build", "core.filesystem:rm-rf-general"],
-  ["rm -rf ../..", "core.filesystem:rm-rf-root-home"],
-  ['rm -rf "$HOME"', "core.filesystem:rm-rf-root-home"],
-  ["rm ~/.ssh/id_rsa", "core.filesystem:rm-protected-file"],
-  ["sudo -u bob rm -rf /var/lib", "core.filesystem:rm-rf-root-home"],
-  ["ssh host 'rm -rf /var/www'", "core.filesystem:rm-rf-root-home"],
-  ["find / -name x -delete", "core.filesystem:find-delete-root-home"],
-  ["git reset --hard", "core.git:reset-hard"],
-  ["git push --force", "core.git:push-force-long"],
-  ["git push origin +main", "core.git:push-force-refspec"],
-  ["git clean -fdx", "core.git:clean-force"],
-  ["git checkout -- src/a.ts", "core.git:checkout-discard"],
-  ["git commit --no-verify -m wip", "room.guard:git-no-verify"],
-  ["git config --global alias.x '!rm -rf ~'", "room.guard:git-global-config"],
-  ["echo hi > ~/.vimrc", "core.filesystem:redirect-truncate-root-home"],
-  ["tee -a ~/.zshrc < snippet", "core.filesystem:credential-file-write"],
-  ["paseo send abc hi", "room.guard:paseo-cli"],
-  ["curl -s http://127.0.0.1:6767/api/status", "room.guard:paseo-daemon"],
-  ["brew install jq", "room.software:brew-install"],
+  ["rm -rf /", "delete:system"],
+  ["rm -r -f /etc", "delete:system"],
+  ["rm -rf ./build", "delete:seat"],
+  ["rm -rf ../..", "delete:system"],
+  ['rm -rf "$HOME"', "delete:system"],
+  ["rm ~/.ssh/id_rsa", "delete:credentials"],
+  ["sudo -u bob rm -rf /var/lib", "delete:system"],
+  ["ssh host 'rm -rf /var/www'", "delete:system"],
+  ["find / -name x -delete", "delete:system"],
+  ["git reset --hard", "discard:seat"],
+  ["git push --force", "remote:git-force"],
+  ["git push origin +main", "remote:git-force"],
+  ["git clean -fdx", "discard:seat"],
+  ["git checkout -- src/a.ts", "discard:seat"],
+  ["git commit --no-verify -m wip", "room:no-verify"],
+  ["git config --global alias.x '!rm -rf ~'", "room:git-global-config"],
+  ["echo hi > ~/.vimrc", "overwrite:outside"],
+  ["tee -a ~/.zshrc < snippet", "append:startup"],
+  ["paseo send abc hi", "room:paseo-cli"],
+  ["curl -s http://127.0.0.1:6767/api/status", "room:paseo-daemon"],
+  ["brew install jq", "install:brew"],
 ];
 
 const SAFE = [
   "git status",
   "ls -la src",
   "git reset --soft HEAD~1",
-  "git push --force-with-lease",
+  "git push origin feature",
   "git clean -n",
   "rm a.txt",
   "rm -rf /tmp/x",
@@ -137,7 +136,7 @@ async function staysCaught(forms: Same[]): Promise<void> {
     for (const [name, write] of forms) {
       const got = await verdict(write(command));
       assert.ok(
-        got.caught && (got.rule === rule || got.rule === "gate:unverified"),
+        got.caught && (got.rule === rule || got.rule === "unread:command"),
         `${name}: ${JSON.stringify(write(command))} -> ${JSON.stringify(got)}`,
       );
     }

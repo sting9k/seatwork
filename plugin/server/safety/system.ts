@@ -185,14 +185,6 @@ export function machineTools(since: () => number | null, baseOf?: (commonDir: st
       }
       return false;
     },
-    async rebasing(cwd) {
-      if (!cwd || !existsSync(cwd)) return false;
-      const done = await git(["rev-parse", "--git-dir"], cwd);
-      if (done.code !== 0) return false;
-      const gitDir = done.out.trim();
-      const abs = gitDir.startsWith("/") ? gitDir : join(cwd, gitDir);
-      return existsSync(join(abs, "rebase-merge")) || existsSync(join(abs, "rebase-apply"));
-    },
     stat(path) {
       try {
         const s = lstatSync(path);

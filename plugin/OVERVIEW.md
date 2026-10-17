@@ -40,7 +40,7 @@ Removing the plugin does not undo Init. Use "Remove the room" on the same screen
 | A sound when a seat waits on you | Chime, on the same screen |
 | Instructions every seat reads, on every agent CLI. Your own CLAUDE.md or AGENTS.md reaches no seat unless you list it. | `~/.config/seatwork/AGENTS.md`; `room.instructions` in the policy lists more files |
 | The decision model's key. Without one nothing leaves the host: the council's jurors and the read of a decision before it is kept are skipped, and the code checks still run. No cap stops a call; what each one costs is logged. | `~/.config/seatwork/jev/openrouter.key`, readable by your user only |
-| A project's daily spend cap, the guard's packs, the decision model's provider | `~/.config/seatwork/policy.json`. What you change there stays through Apply and plugin updates; a key you leave alone takes the new version's value. |
+| A project's daily spend cap, the guard's limits, the decision model's provider | `~/.config/seatwork/policy.json`. What you change there stays through Apply and plugin updates; a key you leave alone takes the new version's value. |
 
 ## What it touches
 

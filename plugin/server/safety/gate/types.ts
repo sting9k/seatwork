@@ -7,9 +7,9 @@ export type Severity = "critical" | "high" | "medium" | "low";
 
 export const SEVERITY_RANK: Record<Severity, number> = { low: 0, medium: 1, high: 2, critical: 3 };
 
-/** A rule that holds for a command, with its reason and the command text it was found in as written. */
+/** What a command did that the guard keeps: its effect and the place or name it is kept under (`effect:rule`), how grave it is, why, and the command text it was found in as written. */
 export interface Finding {
-  pack: string;
+  effect: string;
   rule: string;
   severity: Severity;
   reason: string;

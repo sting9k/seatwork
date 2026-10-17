@@ -76,10 +76,10 @@ test("a call a rule holds for runs and is kept: Claude and Codex read nothing, P
     "",
   );
   assert.deepEqual(keptRules(safety.store(), "peer"), [
-    "core.git:clean-force",
-    "core.filesystem:credential-file-write",
-    "core.filesystem:git-internals-write",
-    "core.filesystem:rm-rf-root-home",
+    "discard:seat",
+    "overwrite:startup",
+    "overwrite:git",
+    "delete:system",
   ]);
 });
 
@@ -96,9 +96,9 @@ test("what the guard kept reads back as its audit log: the calls each rule held 
   await verdictOf(safety, "ls");
   await verdictOf(safety, "git reset --hard HEAD~1");
   const [counts, ...newest] = safety.guardLines(1, 5);
-  assert.equal(counts, "guard, last 1 days: core.git:reset-hard 2");
+  assert.equal(counts, "guard, last 1 days: discard:outside 2");
   assert.equal(newest.length, 2);
-  assert.match(newest[0], /core\.git:reset-hard \(critical\): git reset --hard HEAD~1$/);
+  assert.match(newest[0], /discard:outside \(critical\): git reset --hard HEAD~1$/);
 });
 
 test("every statement the safety store runs uses an index", async () => {
@@ -142,14 +142,13 @@ test("a script the seat wrote after it started is read before it runs, in a repo
     safety.guard.check({ id: "peer", role: "peer", project: null, tmp: null, start: null }, "claude", command, dir);
   await check(`bash ${dir}/wipe.sh`);
   await check(`bash ${dir}/clean.sh`);
-  assert.deepEqual(keptRules(safety.store(), "peer"), ["core.filesystem:rm-rf-root-home"]);
+  assert.deepEqual(keptRules(safety.store(), "peer"), ["delete:system"]);
 });
 
 test("the guard's gate settings are the policy's", () => {
-  const plain = fresh({ packs: { add: ["containers"] } }).safety.guard.gateConfig();
-  assert.deepEqual([plain.packs.has("strict_git"), plain.packs.has("containers")], [false, true]);
+  const plain = fresh().safety.guard.gateConfig();
   assert.deepEqual([plain.budgetMs, plain.maxBytes], [1000, 65536]);
-  const set = fresh({ packs: { add: ["containers"] }, budgetMs: 300, maxBytes: 4096 }).safety.guard.gateConfig();
+  const set = fresh({ budgetMs: 300, maxBytes: 4096 }).safety.guard.gateConfig();
   assert.deepEqual([set.budgetMs, set.maxBytes], [300, 4096]);
 });
 

@@ -2,7 +2,7 @@ import { posix } from "node:path";
 import { literal, type Part, type Script, type Word } from "./shell";
 import type { Known, Value, Variable } from "./types";
 
-/** What a word names on disk, and the classes of path the file rules judge by. */
+/** What a word names on disk: its value, the folder it stands in, and whether it is temporary. */
 
 const GLOB = /[*?[]|[@!?*+]\(/;
 
@@ -110,7 +110,7 @@ export function absolute(value: Value, cwd: string | null): string | null {
 
 const TEMP_ROOTS = ["/tmp/", "/var/tmp/", "/private/tmp/", "/private/var/tmp/"];
 
-/** A path below a temp root, with a real name and no `..`: DCG's only safe target. */
+/** A path below one of the machine's temporary folders, with a real name and no `..`. */
 export function tempPath(path: string): boolean {
   const root = TEMP_ROOTS.find((r) => path.startsWith(r));
   if (!root) return false;
@@ -149,104 +149,4 @@ export function isTemp(value: Value, known: Known): boolean {
 export function within(path: string, root: string): boolean {
   const base = root.endsWith("/") ? root : `${root}/`;
   return path === root || path.startsWith(base);
-}
-
-export const SYSTEM_ROOTS = [
-  "/etc",
-  "/usr",
-  "/bin",
-  "/sbin",
-  "/root",
-  "/boot",
-  "/lib",
-  "/lib64",
-  "/var",
-  "/sys",
-  "/proc",
-  "/dev",
-  "/opt",
-  "/System",
-  "/Library",
-];
-
-const SYSTEM = new Set([
-  ...SYSTEM_ROOTS.map((root) => root.slice(1).toLowerCase()),
-  "applications",
-  "volumes",
-  "private",
-  "program files",
-  "program files (x86)",
-  "programdata",
-  "windows",
-  "cores",
-  "lib32",
-  "libx32",
-  "media",
-  "mnt",
-  "nix",
-  "snap",
-  "srv",
-]);
-
-const EXPANSION = /[$`*?[{~\\]/;
-
-/** How bad losing a path is, by DCG's rm rule: critical for a system folder at any depth, a home and its dotfiles. */
-export function lossOf(value: Value, known: Known, project: string | null): "critical" | "high" {
-  const text = value.text ?? value.prefix;
-  const unknownTail = value.text === null;
-  if (text.startsWith("~")) {
-    const slash = text.indexOf("/");
-    if (slash < 0) return "critical";
-    return deepUnder(text.slice(slash + 1), unknownTail) ? "high" : "critical";
-  }
-  if (!text.startsWith("/")) {
-    if (!known.cwd || unknownTail) return "high";
-    const path = posix.join(known.cwd, text);
-    // in the seat's project a relative target is ordinary; outside it the real place counts
-    if (project && within(path, project)) return "high";
-    return lossOfAbsolute(path, false, known.place.home);
-  }
-  return lossOfAbsolute(text, unknownTail, known.place.home);
-}
-
-/** `lossOf` for an absolute path. */
-function lossOfAbsolute(path: string, unknownTail: boolean, home: string): "critical" | "high" {
-  const parts = path.split("/").filter((c) => c && c !== ".");
-  if (parts.some((c) => c === ".." || EXPANSION.test(c))) return "critical";
-  if (/^[a-z]$/i.test(parts[0] ?? "")) parts.shift();
-  if (parts.length <= 1) return "critical";
-  if (SYSTEM.has(parts[0].toLowerCase())) return "critical";
-  const homeRoot = home.split("/").filter(Boolean);
-  if (parts[0] === "home" || parts[0] === "Users" || (homeRoot.length && parts[0] === homeRoot[0])) {
-    const rest = parts.slice(2);
-    if (rest.length < 2 || rest[0].startsWith(".")) return "critical";
-    return unknownTail && rest.length < 2 ? "critical" : "high";
-  }
-  return "high";
-}
-
-/** Two static names or more below a home, the first not a dotfile: DCG's "deep under home". */
-function deepUnder(rest: string, unknownTail: boolean): boolean {
-  const parts = rest.split("/").filter((c) => c && c !== ".");
-  if (parts.some((c) => c === ".." || EXPANSION.test(c))) return false;
-  if (unknownTail && parts.length < 2) return false;
-  return parts.length >= 2 && !parts[0].startsWith(".");
-}
-
-const SENSITIVE = [...SYSTEM_ROOTS, "/home", "/Users", "/Applications", "/Volumes", "/private/etc", "/private/var"];
-
-/** DCG's sensitive set for its file rules: `/`, the system's root folders, any home, and `~`. */
-export function sensitive(value: Value, known: Known, resolveRelative: boolean): boolean {
-  let text = value.text ?? value.prefix;
-  if (!text) return false;
-  if (text.startsWith("~")) return true;
-  if (!text.startsWith("/")) {
-    if (!resolveRelative || !known.cwd || value.text === null) return false;
-    text = posix.join(known.cwd, text);
-  }
-  const path = posix.normalize(text);
-  if (path === "/" || path === "//") return true;
-  if (within(path, known.place.home)) return true;
-  if (tempPath(path)) return path.startsWith("/var/") || path.startsWith("/private/var/");
-  return SENSITIVE.some((root) => within(path, root));
 }

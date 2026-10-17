@@ -1,18 +1,16 @@
 import { posix } from "node:path";
+import { deletesScannedKeys, dropsData, NAMED_PROGRAMS, namedHits } from "./commands";
+import { forkBomb, judgeFiles, type FileTools, writesOf } from "./effects";
 import { languageOf } from "./embedded";
 import { Findings } from "./findings";
 import { baseName, invocationOf, valueWord, type Invocation } from "./normalize";
-import { DECLARED_COMMANDS, declaredHits } from "./packs";
 import { absolute, homeOf, isTemp, substitution, valueOf, within } from "./paths";
+import { whereOfPath } from "./places";
 import { SHELLS, stdinText } from "./programs";
-import { CopyTrail } from "./rules/copies";
-import { databaseHits, scanDeletesKeys } from "./rules/databases";
-import { fileRules, forkBomb, guardedWrites, type FileTools, writesOf } from "./rules/files";
-import { gitRules, givesProgram, PROGRAM_VARIABLES, type GitTools } from "./rules/git";
+import { gitEffects, givesProgram, PROGRAM_VARIABLES, type GitTools } from "./rules/git";
 import { namesDriver, ATTRIBUTES_FILE } from "./rules/attributes";
 import { rewritesTree } from "./rules/rewriters";
 import { cliWords, namesPaseo, paseoCommand, reachesDaemon, startsPaseo } from "./rules/paseo";
-import { rmRules, wouldBlockAsRm, type RmTools } from "./rules/rm";
 import { namesSecret, readsFolders, secretAt } from "./rules/secrets";
 import { execFlags, runners } from "./runners";
 import { writtenTexts } from "./writes";
@@ -45,10 +43,10 @@ import {
 } from "./state";
 import type { Doubt, Finding, Known, Place, Scene, Value, Variable } from "./types";
 
-/** Walks a command line as the shell would; the rules are those of DCG, a destructive command guard, and the packs. */
+/** Walks a command line as the shell would, and keeps what each command it runs does. */
 
-/** What the rules ask of the machine: git, the file system, the files the room's seats changed, a small file as it stands, and the real file a command word runs. */
-export interface Tools extends RmTools, GitTools, FileTools {
+/** What the reading asks of the machine: git, the file system, the files the room's seats changed, a small file as it stands, and the real file a command word runs. */
+export interface Tools extends GitTools, FileTools {
   changed(path: string): Promise<string | null>;
   file?(path: string): string | null;
   folder?(path: string): boolean;
@@ -64,14 +62,13 @@ export interface Rc {
 
 const seededTables = new WeakMap<Rc, { aliases: Map<string, string[]>; funcs: Map<string, Defs> }>();
 
-/** The packs in force and the limits on a line. */
+/** The limits on reading a line: its time and its size. */
 export interface GateConfig {
-  packs: ReadonlySet<string>;
   budgetMs: number;
   maxBytes: number;
 }
 
-/** What a line holds for the rules, what the gate could not read, and whether the line writes or removes a file of the seat's tree. */
+/** What a line did that the guard keeps, what the gate could not read, and whether the line writes or removes a file of the seat's tree. */
 export interface Evaluation {
   findings: Finding[];
   doubts: Doubt[];
@@ -86,7 +83,7 @@ const NO_FILES: ReadonlyMap<string, string> = new Map();
 const RISKY =
   /\b(rm|git|dd|mkfs|diskutil|shred|truncate|find|mv|chmod|chown|curl|wget|sudo|eval|sh|bash|zsh|python\d*|node|perl|ruby|php|kubectl|terraform|docker)\b|>/;
 
-/** Every rule that holds for a command line, and every part of it the gate could not read. */
+/** Everything a command line does that the guard keeps, and every part of it the gate could not read. */
 export async function evaluate(
   command: string,
   cwd: string | null,
@@ -144,7 +141,6 @@ class Walk implements Reader {
   readonly out = new Findings();
   private readonly seenNames = new Set<string>();
   private readonly bombs = new Map<string, string>();
-  private readonly copies = new CopyTrail();
   private readonly frames: Map<string, Variable | undefined>[] = [];
   private readonly expanding = new Set<string>();
   private readonly running = new Set<string>();
@@ -220,8 +216,7 @@ class Walk implements Reader {
 
   /** What the whole line showed once it is read: a fork bomb that is defined and then called. */
   finish(): void {
-    for (const [name, text] of this.bombs)
-      if (this.seenNames.has(name)) this.out.add("core.filesystem", "fork-bomb", text);
+    for (const [name, text] of this.bombs) if (this.seenNames.has(name)) this.out.named("machine:fork-bomb", text);
   }
 
   private async script(script: Script, state: State, ctx: Context): Promise<void> {
@@ -284,8 +279,7 @@ class Walk implements Reader {
     if (stages > 1) {
       for (const shell of shells.slice(0, -1)) keepWrites(state, shell);
       meet(state, [shells[stages - 1]]);
-      if (this.config.packs.has("database.redis") && scanDeletesKeys(pipeline))
-        this.out.add("database.redis", "mass-delete", ctx.src.slice(0, 200));
+      if (deletesScannedKeys(pipeline)) this.out.named("remote:data", ctx.src.slice(0, 200));
     }
   }
 
@@ -511,7 +505,7 @@ class Walk implements Reader {
     }
   }
 
-  /** A command word only known at run time: read again when variables settle it, else taken for a possible rm. */
+  /** A command word only known at run time: read again when variables settle it, else read as the rm it may be. */
   private async dynamicCommand(simple: Simple, call: Invocation, state: State, ctx: Context): Promise<void> {
     const resolved = valueOf(call.command!, this.known(state));
     if (resolved.text !== null && resolved.text.trim()) {
@@ -523,8 +517,7 @@ class Walk implements Reader {
       }
     }
     const scene = this.scene(simple, call, state, ctx);
-    if (await wouldBlockAsRm(scene, this.rmTools()))
-      this.out.add("core.filesystem", "rm-recursive-unverified", scene.text);
+    await judgeFiles({ ...scene, call: { ...scene.call, name: "rm" } }, this.tools, this.out);
   }
 
   private assigned(value: Word | null, state: State): Variable {
@@ -644,7 +637,7 @@ class Walk implements Reader {
       const spelled = at.text ?? at.prefix;
       read.add(spelled);
       if (ATTRIBUTES_FILE.test(spelled) && namesDriver(text))
-        this.out.add("room.guard", "git-attributes-driver", scene.text, spelled);
+        this.out.named("room:attributes-driver", scene.text, spelled);
     }
     for (const write of writesOf(scene)) {
       this.noteChange(write.value, scene);
@@ -657,50 +650,36 @@ class Walk implements Reader {
     }
   }
 
-  /** Every rule for one command: rm, git, files, protected writes, databases, declared packs. */
+  /** Everything one command does that the guard keeps: to files, to git, to the room's controls, and by the named rules. */
   private async judge(scene: Scene, state: State, ctx: Context): Promise<void> {
     const name = scene.call.name;
-    if (name === "rm" || name === "rimraf" || name === "grm") {
+    if (name === "rm" || name === "rimraf" || name === "grm")
       for (const word of scene.call.args)
         if (!literal(word)?.startsWith("-")) this.noteChange(valueOf(word, scene), scene);
-      const found = await rmRules(
-        name === "grm" ? { ...scene, call: { ...scene.call, name: "rm" } } : scene,
-        this.rmTools(),
-      );
-      if (found) this.out.add("core.filesystem", found.rule, scene.text, found.detail);
-      else for (const copy of this.copies.removed(scene)) this.out.add("core.filesystem", copy.rule, copy.text);
-    }
     if (name === "git" || name?.startsWith("git-")) {
-      const outcome = await gitRules(scene, this.tools, this.config.packs.has("strict_git"));
+      const outcome = await gitEffects(scene, this.tools);
+      const repo = outcome.repo === null ? "outside" : whereOfPath(outcome.repo, this.place);
       for (const hit of outcome.hits)
-        if (hit.pack === "core.git" || this.config.packs.has(hit.pack))
-          this.out.add(hit.pack, hit.rule, scene.text, hit.detail);
+        if ("id" in hit) this.out.named(hit.id, scene.text, hit.detail);
+        else this.out.effect(hit.effect, repo, scene.text, hit.detail);
+      for (const doubt of outcome.doubts) this.out.doubt(doubt, scene.text);
       if (outcome.changes) this.noteChange(null, { ...this.known(state), cwd: outcome.changes });
       for (const shell of outcome.shells) await this.text(shell, fork(state), ctx.depth + 1);
       for (const shell of this.gitPrograms(scene, state)) await this.text(shell, fork(state), ctx.depth + 1);
     }
     if (rewritesTree(scene)) this.noteChange(null, scene);
-    const guarded = guardedWrites(scene, (path) => this.tools.real(path));
-    for (const { found, how } of guarded) this.out.add(found.pack, found.rule, scene.text, `${how} ${found.path}`);
-    // a write the credential table holds is not also a redirect finding (DCG's order)
-    const redirectsGuarded = guarded.some((g) => /^(>|>>|>\||&>|&>>)$/.test(g.how));
-    for (const hit of fileRules(scene, this.tools)) {
-      if (redirectsGuarded && hit.rule.startsWith("redirect-")) continue;
-      this.out.add(hit.pack, hit.rule, scene.text, hit.detail);
-    }
+    await judgeFiles(scene, this.tools, this.out);
     const cli = cliWords(scene);
     if (cli) this.startsCli(scene, cli);
     else if (name === "ln" && this.linksCli(scene, state))
-      this.out.add("room.guard", "paseo-cli", scene.text, "a link to the Paseo CLI");
+      this.out.named("room:paseo-cli", scene.text, "a link to the Paseo CLI");
     const reach = reachesDaemon(this.spelled(scene, state), this.place);
-    if (reach) this.out.add("room.guard", "paseo-daemon", scene.text, reach);
+    if (reach) this.out.named("room:paseo-daemon", scene.text, reach);
     const secret = this.secretRead(scene, state);
-    if (secret) this.out.add("room.guard", "secret-read", scene.text, secret);
-    this.copies.note(scene);
-    for (const hit of declaredHits(scene, this.config.packs)) this.out.add(hit.pack, hit.rule, scene.text);
-    // files written earlier on the line are not read for a client, so its input stays unverified
-    for (const hit of databaseHits(scene, this.config.packs, () => stdinText(scene, scene, NO_FILES)))
-      this.out.add(hit.pack, hit.rule, scene.text);
+    if (secret) this.out.effect("read", "room", scene.text, secret);
+    for (const id of namedHits(scene)) this.out.named(id, scene.text);
+    // files written earlier on the line are not read for a client, so only text the line shows counts
+    if (dropsData(scene, () => stdinText(scene, scene, NO_FILES))) this.out.named("remote:data", scene.text);
     await execFlags(this, scene, state, ctx);
   }
 
@@ -714,7 +693,7 @@ class Walk implements Reader {
     };
     const out: string[] = [];
     const take = (value: string | null | undefined, name: string) => {
-      if (value === null) this.out.add("room.guard", "git-config-exec", scene.text, name);
+      if (value === null) this.out.named("room:git-config-exec", scene.text, name);
       else if (value) out.push(value.replace(/^!/, ""));
     };
     for (const name of PROGRAM_VARIABLES) take(read(name), name);
@@ -769,7 +748,7 @@ class Walk implements Reader {
   /** A start of the Paseo CLI: caught when the words after it name a command. */
   private startsCli(scene: Scene, words: Word[]): void {
     const used = paseoCommand(words);
-    if (used !== null) this.out.add("room.guard", "paseo-cli", scene.text, used);
+    if (used !== null) this.out.named("room:paseo-cli", scene.text, used);
   }
 
   /** Whether an `ln` makes a link to the Paseo CLI, whichever way the operand names it. */
@@ -783,12 +762,6 @@ class Walk implements Reader {
         startsPaseo(value.text, absolute(value, state.cwd), (path) => this.tools.real(path))
       );
     });
-  }
-
-  private rmTools(): RmTools {
-    return {
-      ignored: (paths) => this.tools.ignored(paths),
-    };
   }
 }
 
@@ -854,7 +827,7 @@ function knownCommand(name: string): boolean {
     name === "git" ||
     name === "paseo" ||
     SHELLS.has(name) ||
-    DECLARED_COMMANDS.has(name) ||
+    NAMED_PROGRAMS.has(name) ||
     languageOf(name) !== null ||
     ["dd", "mv", "find", "unlink", "truncate", "shred", "tar", "rsync", "eval", "xargs"].includes(name)
   );

@@ -200,7 +200,7 @@ export class McpHttpServer {
             capabilities: { tools: { listChanged: false } },
             serverInfo: { name: this.serverName, version: this.version },
             instructions:
-              "Room mail. seatwork_mail writes to the Owner (the seat that launched you) or to a seat you launched; the room delivers it between the recipient's turns. seatwork_inbox reads the mail held for you.",
+              "The room's own tools, each named seatwork_*: mail and wake-ups between seats, the project's work store and its graph, the room's record and decisions, its checks on the work, and the seats under you.",
           });
         }
         case "ping":

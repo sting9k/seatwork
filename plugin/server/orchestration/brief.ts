@@ -1,0 +1,92 @@
+/** A brief as the room's template writes it: `Label: value` lines, read into fields. */
+
+type BriefField =
+  | "project"
+  | "outcome"
+  | "candidate"
+  | "context"
+  | "writeScope"
+  | "contract"
+  | "decide"
+  | "constraints"
+  | "output"
+  | "acceptance"
+  | "reopenWhen"
+  | "tried"
+  | "replyTo"
+  | "nonGoals"
+  | "authority"
+  | "openAssumptions"
+  | "decisions"
+  | "inputs"
+  | "lane";
+
+const LABELS: readonly [RegExp, BriefField][] = [
+  [/^project$/, "project"],
+  [/^outcome$/, "outcome"],
+  [/^(?:current )?candidate$/, "candidate"],
+  [/^context$/, "context"],
+  [/^write scope$/, "writeScope"],
+  [/^(?:contract(?: ?\/ ?invariants)?|invariants)$/, "contract"],
+  [/^yours to decide$/, "decide"],
+  [/^(?:verified )?constraints$/, "constraints"],
+  [/^output$/, "output"],
+  [/^acceptance(?: evidence)?$/, "acceptance"],
+  [/^reopen when$/, "reopenWhen"],
+  [/^what was tried$/, "tried"],
+  [/^reply with seatwork_mail to$/, "replyTo"],
+  [/^non-?goals$/, "nonGoals"],
+  [/^authority$/, "authority"],
+  [/^open assumptions$/, "openAssumptions"],
+  [/^decisions made$/, "decisions"],
+  [/^inputs$/, "inputs"],
+  [/^lane$/, "lane"],
+];
+const LABEL_LINE = /^\s*(?:[-*>]\s+)?[*_`"']*([a-z][a-z /_-]{0,40}?)[*_]*(?:\s*\([^()\n]{0,80}\))?[*_]*\s*:\s*(.*)$/i;
+
+/** The fields a brief holds; a label may carry a note in brackets, a value runs to the next label with its blank lines kept as one, and a later label of a field wins. */
+export function briefFields(text: string): Partial<Record<BriefField, string>> {
+  const lines: Partial<Record<BriefField, string[]>> = {};
+  let open: string[] | null = null;
+  for (const line of text.split("\n")) {
+    const match = LABEL_LINE.exec(line);
+    const label = match?.[1].trim().toLowerCase();
+    const field = label ? LABELS.find(([pattern]) => pattern.test(label))?.[1] : undefined;
+    if (field) open = lines[field] = match![2].trim() ? [match![2].trim()] : [];
+    else if (open && (line.trim() || open.at(-1))) open.push(line.trim());
+  }
+  return Object.fromEntries(Object.entries(lines).map(([field, own]) => [field, own.join("\n").trim()]));
+}
+
+/** Whether a prompt was written from the room's template: it holds at least three of its labels, not one stray one. */
+export const fromTemplate = (prompt: string): boolean => Object.keys(briefFields(prompt)).length >= 3;
+
+const PROGRAM = /^(?:\.{0,2}\/[\w./-]+|[a-z][\w.+-]*)$/i;
+
+/** The commands a brief quotes in backticks: a program first, not an expression or a file name. */
+export function quotedCommands(text: string): string[] {
+  return [...text.matchAll(/`([^`\n]+)`/g)]
+    .map((match) => match[1].trim())
+    .filter((command) => {
+      const [first, ...rest] = command.split(/\s+/);
+      return PROGRAM.test(first) && (rest.length > 0 || /^\.{0,2}\//.test(first) || !/\.\w+$/.test(first));
+    });
+}
+
+/** The globs of a write scope's first paragraph: its parts, split on commas, semicolons and new lines, each giving the paths it names before any word that turns it down (not, never, except, nothing). */
+export function scopeGlobs(writeScope: string): string[] {
+  const bare = (word: string) => word.replace(/^[`"'(]+|[`"'),.;:]+$/g, "");
+  return writeScope
+    .split(/\n\s*\n/)[0]
+    .split(/[,;\n]/)
+    .flatMap((part) => {
+      const words = part.trim().split(/\s+/).filter(Boolean);
+      if (words.length === 1) return bare(words[0]) ? [bare(words[0])] : [];
+      const paths: string[] = [];
+      for (const word of words) {
+        if (/^(not|never|except|nothing|no|don't|dont)$/i.test(bare(word))) break;
+        if (/[/*]|\.\w+$/.test(bare(word))) paths.push(bare(word));
+      }
+      return paths;
+    });
+}

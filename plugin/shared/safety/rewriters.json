@@ -1,0 +1,36 @@
+{
+  "$comment": "Programs that rewrite files of the folder they run in without naming them, so the guard counts the line as a change of the seat's tree. program: the command's name; sub: the first operand it needs (go fmt, ruff check); writes: the options that make it write, else it writes unless an option of keeps stands; keeps: the options that keep it read-only. An option with a space is that option and the word after it.",
+  "programs": [
+    { "program": "prettier", "writes": ["--write", "-w"] },
+    { "program": "eslint", "writes": ["--fix"] },
+    {
+      "program": "biome",
+      "sub": ["format", "check", "lint"],
+      "writes": ["--write", "--fix", "--apply", "--apply-unsafe"]
+    },
+    { "program": "black", "keeps": ["--check", "--diff", "-c", "--code"] },
+    { "program": "ruff", "sub": ["format"], "keeps": ["--check", "--diff"] },
+    { "program": "ruff", "sub": ["check"], "writes": ["--fix"], "keeps": ["--no-fix", "--diff"] },
+    { "program": "isort", "keeps": ["--check", "--check-only", "-c", "--diff", "--stdout", "-d"] },
+    { "program": "gofmt", "writes": ["-w"] },
+    { "program": "go", "sub": ["fmt"], "keeps": ["-n"] },
+    { "program": "goimports", "writes": ["-w"] },
+    { "program": "cargo", "sub": ["fmt"], "keeps": ["--check"] },
+    { "program": "rustfmt", "keeps": ["--check", "--emit=stdout", "--emit stdout"] },
+    { "program": "clang-format", "writes": ["-i"] },
+    { "program": "swiftformat", "keeps": ["--lint", "--dryrun"] },
+    { "program": "ktlint", "writes": ["-F", "--format"] },
+    {
+      "program": "rubocop",
+      "writes": ["-a", "-A", "--autocorrect", "--autocorrect-all", "--auto-correct", "--auto-correct-all", "-x"]
+    },
+    { "program": "mix", "sub": ["format"], "keeps": ["--check-formatted", "--dry-run"] },
+    {
+      "program": "dart",
+      "sub": ["format"],
+      "keeps": ["--output=none", "--output=show", "--output=json", "-o none", "-o show", "-o json"]
+    },
+    { "program": "terraform", "sub": ["fmt"], "keeps": ["-check", "-write=false"] },
+    { "program": "patch", "keeps": ["--dry-run", "-C", "--check"] }
+  ]
+}

@@ -1,67 +1,136 @@
 {
-  "$comment": "The room's own MCP tools, written once: the plugin serves them from here and the evals' stand-in shows the same text. A string may hold {{signals}} (the mail subjects of signals.json) and {{keep_log_days}} (settings.json). callers says whom the plugin does not refuse: \"any\" seat, \"spawners\" (a role the policy's spawn table lets create seats), or the roles listed. Every seat is listed every tool, so a description names no role above a project.",
+  "$comment": "The room's MCP tools, written once. Placeholders: {{signals}} (signals.json), {{keep_log_days}} (settings.json), {{rotate_k}} and {{mail_chars}} (policy room.params). callers: \"any\" seat, \"spawners\" (roles the workflow lets create seats) or \"room\" (roles the workflow puts at home in the room); a call from another role is refused, and a seat is listed only the tools its role may call.",
   "tools": {
     "seatwork_mail": {
       "callers": "any",
-      "description": "Write to another seat of your room. To answer a mail you received, pass reply_to: its id (the #id in its header) and no `to`; the answer goes to whoever sent it. To start a new thread, pass `to`: `owner` (the seat that launched you) or the id of a seat you launched. The plugin wraps it in an envelope and delivers it between the recipient's turns; it never interrupts anyone. A CANDIDATE, REVIEW or DONE to your owner is your turn's report: it is delivered when your turn ends, and your final message is not mailed a second time. Mail to an archived seat is refused.",
+      "description": "Mail seats of your room; it is delivered between a recipient's turns and kept in the project's mail store. Answer a mail with `reply_to`. Start a thread with `to`; a seat with no seat under it may leave `to` out and writes to its owner. A body past {{mail_chars}} characters is shown cut, with the path of the file that holds all of it. A CANDIDATE, REVIEW or DONE to your owner is your turn's report: it is delivered when your turn ends, and your final message is not mailed again. `STOP`, to one seat you launched or one below it, ends its running turn and every running turn under it at once, and each reads your text next; use it when the work must not go on. `action` `wake` has the room mail you a WAKE at a set time, which starts your turn though nobody writes: to look at a run again, to read a number later. Give `at` (an ISO time with its zone) or `in_minutes`, and a short `note`; `to` wakes a seat you may mail instead of you. `wakes` lists the wake-ups waiting for you or set by you, `unwake` with `id` cancels one. The room checks for due wake-ups each minute, so one can come a minute late. The answer is JSON; a refusal is {\"error\": {code, message, retryable, fix, next}}: `fix` the right arguments, `next` the call to make instead.",
       "inputSchema": {
         "type": "object",
         "properties": {
           "to": {
-            "type": "string",
-            "description": "New thread: `owner` (the seat that launched you) or the id of a seat you launched. Omit when reply_to is given."
+            "type": ["string", "array"],
+            "items": {
+              "type": "string"
+            },
+            "description": "`owner`, a seat you launched (its id, the start of its id, or its title), several of them, or `team`: every open seat under you, which reads it with its next mail. Omit with reply_to. With `wake`: the one seat to wake."
+          },
+          "cc": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Seats that get a copy to read; it starts no turn of theirs."
           },
           "reply_to": {
-            "type": "string",
-            "description": "Id of the mail you are answering (the #id in its header). The recipient is that mail's sender; use this for every answer so it reaches the right seat."
+            "type": ["string", "integer"],
+            "description": "The id of the mail you answer; the answer goes to its sender and joins its thread."
           },
           "subject": {
             "type": "string",
-            "description": "Short subject that opens with one of the room's signals: {{signals}}."
+            "description": "Short; opens with one of the room's signals: {{signals}}."
           },
           "body": {
             "type": "string",
-            "description": "The message. Self-contained: the recipient may read it hours later. Long text (a log, a full review) goes into a file the message names."
+            "description": "Self-contained: the recipient may read it hours later."
           },
           "needs": {
             "type": "string",
-            "enum": [
-              "reply",
-              "decision",
-              "nothing"
-            ],
-            "description": "What you need back."
+            "enum": ["reply", "decision", "nothing"],
+            "description": "What you need back; `decision` says you are stopped until it comes."
           },
-          "priority": {
+          "thread": {
             "type": "string",
-            "enum": [
-              "blocking",
-              "action",
-              "fyi"
-            ],
-            "description": "Suggested priority; the plugin may raise or lower it."
+            "description": "The work-store issue this mail is about; a reply keeps the thread of the mail it answers."
+          },
+          "files": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Paths the mail points at; each must exist."
+          },
+          "key": {
+            "type": "string",
+            "description": "Your own name for this mail: sent again with the same key and text, it stays one mail."
+          },
+          "action": {
+            "type": "string",
+            "enum": ["send", "wake", "wakes", "unwake"],
+            "description": "`send` is the default and needs `subject` and `body`; `wake`, `wakes` and `unwake` need neither."
+          },
+          "at": {
+            "type": "string",
+            "description": "wake: when, an ISO time with its zone, such as 2026-10-16T09:00:00Z."
+          },
+          "in_minutes": {
+            "type": "number",
+            "description": "wake: minutes from now, instead of `at`."
+          },
+          "note": {
+            "type": "string",
+            "description": "wake: what you do when it comes, short; it is the body of the WAKE mail."
+          },
+          "id": {
+            "type": ["string", "integer"],
+            "description": "unwake: the wake-up's id, from the answer that set it or from `wakes`."
           }
         },
-        "required": [
-          "subject",
-          "body"
-        ]
+        "required": []
       }
     },
     "seatwork_inbox": {
       "callers": "any",
-      "description": "Read the mail the plugin is holding for you: mail that arrived while you were busy, and mail that starts no turn of its own (the newest progress report of a seat you launched, acknowledgements). Returns and clears it.",
+      "description": "Your mailbox. With nothing given: the mail held for you (what arrived while you were busy, and what starts no turn of its own), marked read. `id`: one mail whole. `thread`: a thread's mails, a line each. `view`: all you received, what you sent and how each delivery stands, what is owed (asks waiting for your answer, and yours waiting for one), or a search with `q`. You read your own mail and that of the seats under you.",
       "inputSchema": {
         "type": "object",
-        "properties": {},
+        "properties": {
+          "view": {
+            "type": "string",
+            "enum": ["new", "all", "sent", "owed", "thread", "search"]
+          },
+          "id": {
+            "type": ["string", "integer"],
+            "description": "One mail, with its whole body."
+          },
+          "thread": {
+            "type": "string",
+            "description": "An issue id, or the thread a mail names."
+          },
+          "q": {
+            "type": "string",
+            "description": "search: the words to look for."
+          },
+          "signal": {
+            "type": "string",
+            "description": "all, search: only mail whose subject opens with this signal."
+          },
+          "since": {
+            "type": "string",
+            "description": "all, sent, search: only mail after this ISO time."
+          },
+          "limit": {
+            "type": "integer",
+            "description": "20 by default, 200 at most."
+          },
+          "bodies": {
+            "type": "boolean",
+            "description": "thread: the mails whole, not a line each."
+          },
+          "peek": {
+            "type": "boolean",
+            "description": "new: leave the mail unread."
+          },
+          "project": {
+            "type": "string",
+            "description": "search, thread: another project's mail, by its folder or name, or all; for a seat that reads every project."
+          }
+        },
         "required": []
       }
     },
     "seatwork_projects": {
-      "callers": [
-        "hq"
-      ],
-      "description": "The project registry, one line per project known to Paseo: registered or not, name, root, whether its mission and law exist, its model table (default or custom) and the Supervisor seat to use. Refused for seats that do not keep the registry.",
+      "callers": "room",
+      "description": "The project registry, one line per project Paseo knows: registered or not, name, root, whether its mission and law exist, and its model table (default or custom, with the seats of one model it names). Refused for seats that do not keep the registry.",
       "inputSchema": {
         "type": "object",
         "properties": {},
@@ -69,10 +138,8 @@
       }
     },
     "seatwork_register_project": {
-      "callers": [
-        "hq"
-      ],
-      "description": "Register a project that Paseo already has: writes its room marker, its mission and its own model table when given, and its registry line. A seat the table names that the room does not have yet is set up first. Repeat it with `mission` or `models` to replace them. Refused for seats that do not keep the registry.",
+      "callers": "room",
+      "description": "Register a project Paseo already has: writes its room marker and registry line, and its mission, law and model table when given; a seat the table names that the room lacks is set up first. Call again with `mission`, `law` or `models` to replace them. Refused for seats that do not keep the registry.",
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -88,20 +155,20 @@
             "type": "string",
             "description": "What the project is for and what done looks like, a few lines of markdown."
           },
+          "law": {
+            "type": "string",
+            "description": "The project's law, markdown: commits and pushes, compatibility, review depth, what needs a person, the test command, areas not to touch."
+          },
           "models": {
             "type": "object",
-            "description": "Only the differences from ROOM_DIR/models.json, same shape; objects merge, lists and values replace, null removes a key. Omit to use the room's table."
+            "description": "Only the differences from ROOM_DIR/models.json, same shape; objects merge, lists and values replace, null removes a key. Omit to leave the project's table as it is; {} takes its own table out."
           }
         },
-        "required": [
-          "path"
-        ]
+        "required": ["path"]
       }
     },
     "seatwork_unregister_project": {
-      "callers": [
-        "hq"
-      ],
+      "callers": "room",
       "description": "Take a project out of the registry: no seat of the room starts in it after that. Its `.seatwork/` files stay, and seatwork_register_project brings it back. Refused while a seat of the project is open, and for seats that do not keep the registry.",
       "inputSchema": {
         "type": "object",
@@ -111,41 +178,333 @@
             "description": "The project's registry name, or its root."
           }
         },
-        "required": [
-          "project"
-        ]
+        "required": ["project"]
       }
     },
-    "seatwork_room_stats": {
-      "callers": [
-        "hq"
-      ],
-      "description": "What the mail log says happened in the last N days, per project and per signal (candidates accepted or rejected, reopen requests conceded or held, decisions escalated, questions), then what each project's seats used, per role, as their agent CLIs report it. The logs keep {{keep_log_days}} days. Refused for seats that do not keep the registry.",
+    "seatwork_room": {
+      "callers": "room",
+      "description": "Run the room itself. `do` is the action. health: incidents of the last day by district, open traces, the readings there are. A reading by its name (budget, jev, knowledge, mail, safety, seats, host): that district's numbers now. log: the room's log, newest first, narrowed by `district`, `since`, `q`. incidents: troubles of the last `days`, each with its id, how often, how often in the last hour, and where it stands. ack, snooze (`hours`), resolve: set where incident `id` stands, with a `note` (for resolve, its cause). trace: open one on an `incident` with a `hypothesis`, or add to trace `id` a note of `kind` evidence, eliminated or hypothesis with its `text`; traces: the open ones; close: end trace `id` with its `conclusion`. policy: the keys you may tune, their values and ranges, the last changes. tune: set one key's `value`; it needs the key's district read and its log read in this turn, a `reason` and the `evidence` you measured, in English, and may name the `trace` it serves; a key reverted twice lately also needs `revisit` true. revert: undo change `id`, its district read in this turn. skill: `action` add (a `role`, a `name`, `files` as path to text with a SKILL.md, `source` with its `license`, own for yours, and its `repo` and `commit` when taken from elsewhere, and the `reason`), remove (`role`, `name`), or list; a role's seats get it at their next start. Refused for seats that do not run the room.",
       "inputSchema": {
         "type": "object",
         "properties": {
+          "do": {
+            "type": "string",
+            "description": "health, a reading's name, log, incidents, ack, snooze, resolve, trace, traces, close, policy, tune, revert or skill."
+          },
+          "district": {
+            "type": "string",
+            "description": "log: one district."
+          },
+          "since": {
+            "type": "string",
+            "description": "log: an ISO time."
+          },
+          "q": {
+            "type": "string",
+            "description": "log: words a line holds."
+          },
+          "limit": {
+            "type": "integer"
+          },
           "days": {
+            "type": "integer",
+            "description": "incidents: the window, a few days at most."
+          },
+          "id": {
+            "type": "integer",
+            "description": "ack, snooze, resolve: the incident; trace, close: the trace; revert: the change."
+          },
+          "note": {
+            "type": "string",
+            "description": "ack, snooze, resolve: why, in English."
+          },
+          "hours": {
             "type": "number",
-            "description": "Window in days, {{keep_log_days}} at most and by default."
+            "description": "snooze: how long, 72 at most."
+          },
+          "incident": {
+            "type": "integer",
+            "description": "trace: the incident it follows."
+          },
+          "hypothesis": {
+            "type": "string",
+            "description": "trace: what you think the cause is, in English."
+          },
+          "kind": {
+            "type": "string",
+            "enum": ["evidence", "eliminated", "hypothesis"],
+            "description": "trace: what the note is."
+          },
+          "text": {
+            "type": "string",
+            "description": "trace: the note, in English."
+          },
+          "conclusion": {
+            "type": "string",
+            "description": "close: what the trace found, in English."
+          },
+          "path": {
+            "type": "string",
+            "description": "tune: the key, as policy lists it."
+          },
+          "value": {
+            "description": "tune: the new value."
+          },
+          "trace": {
+            "type": "integer",
+            "description": "tune: the trace the change serves."
+          },
+          "action": { "type": "string", "enum": ["add", "remove", "list"], "description": "skill: what to do." },
+          "role": { "type": "string", "description": "skill: the role whose seats get it." },
+          "name": { "type": "string", "description": "skill: its name, lowercase words joined by dashes." },
+          "files": {
+            "type": "object",
+            "additionalProperties": { "type": "string" },
+            "description": "skill add: each file's path in the skill's folder, .md or .txt, to its text."
+          },
+          "source": {
+            "type": "object",
+            "properties": {
+              "license": { "type": "string" },
+              "repo": { "type": "string" },
+              "commit": { "type": "string" }
+            },
+            "required": ["license"],
+            "description": "skill add: where it came from."
+          },
+          "revisit": {
+            "type": "boolean",
+            "description": "tune: a key reverted twice lately, tuned again on new evidence."
+          },
+          "reason": {
+            "type": "string",
+            "description": "tune, revert, skill add: why, in English."
+          },
+          "evidence": {
+            "type": "string",
+            "description": "tune, revert: what you read and measured, in English."
           }
         },
-        "required": []
+        "required": ["do"]
       }
     },
-    "seatwork_watch_stats": {
-      "callers": [
-        "hq"
-      ],
-      "description": "What the watcher found and what it cost: this month's spending on its decision model, and per rule how often it spoke and how its findings compare with what the seat above did next. Refused for seats that do not keep the registry.",
+    "seatwork_work": {
+      "callers": "any",
+      "description": "The project's work store: issues, what each waits for, who holds it. `do` names the one thing a call does. create: one issue, or a whole plan in `issues`, written all or none; each may carry a `key` and name its `parent` and `deps` by another's key; one that looks like an open issue comes back with `duplicate_of` and a note, the two linked as related. ready: open issues nothing holds back (no open blocker, blocked parent or open child), highest priority first. claim: take an issue; refused when another seat holds it or an open blocker of its own waits; the room opens it again, with a comment, if the seat that holds it is gone. blocked_by: a bare id blocks; `:parent-blocked` and `:child-open` only hold back from ready. note: a dated line of progress. depend: `id` waits for `on`. close: with `reason`, once its blockers and children are closed; the seat that holds an issue does not close it, its Owner does. show: an issue with its newest comments and `older_comments`, the count of the rest; comments: the rest, `limit` of them after `skip` of the newest. Also list, update, comment, undepend, reopen. Answers are JSON; a refusal is {\"error\": {code, message, retryable, fix, next}}: `fix` the right arguments, `next` the call to make instead.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "do": {
+            "type": "string",
+            "enum": [
+              "create",
+              "show",
+              "comments",
+              "list",
+              "ready",
+              "claim",
+              "update",
+              "note",
+              "comment",
+              "depend",
+              "undepend",
+              "close",
+              "reopen"
+            ]
+          },
+          "id": {
+            "type": "string",
+            "description": "An issue id, or enough of it after the prefix to name one issue."
+          },
+          "issues": {
+            "type": "array",
+            "description": "create: several issues in one write. Each has title and may have key, description, design, acceptance_criteria, write_scope, priority, issue_type, labels, parent, deps.",
+            "items": {
+              "type": "object"
+            }
+          },
+          "title": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string",
+            "description": "What is to be done and why, enough for a seat that sees nothing else."
+          },
+          "design": {
+            "type": "string"
+          },
+          "acceptance_criteria": {
+            "type": "string",
+            "description": "The checks that show it is done, a line each."
+          },
+          "write_scope": {
+            "type": "string",
+            "description": "The files or folders this issue may change; the plan view names ready issues whose scopes collide."
+          },
+          "priority": {
+            "type": "integer",
+            "description": "0 critical, 1 high, 2 normal (default), 3 low, 4 backlog."
+          },
+          "issue_type": {
+            "type": "string",
+            "enum": ["task", "bug", "feature", "epic", "chore", "docs", "question"]
+          },
+          "labels": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "parent": {
+            "type": "string",
+            "description": "create: the issue this one is a child of. ready: only what is under this issue."
+          },
+          "deps": {
+            "type": "array",
+            "description": "create: what this issue waits for: ids or keys, or {id, type}.",
+            "items": {}
+          },
+          "on": {
+            "type": "string",
+            "description": "depend, undepend: the issue `id` waits for."
+          },
+          "type": {
+            "type": "string",
+            "enum": ["blocks", "parent-child", "discovered-from", "related"],
+            "description": "depend: blocks by default; discovered-from is for work found on the way."
+          },
+          "status": {
+            "type": "string",
+            "enum": ["open", "in_progress", "deferred", "closed"],
+            "description": "list: filter. update: open, in_progress or deferred; closing is `close`."
+          },
+          "assignee": {
+            "type": ["string", "null"],
+            "description": "list: a seat id, or `me`. update: a seat id, `me`, or null to free the issue."
+          },
+          "defer_until": {
+            "type": ["string", "null"],
+            "description": "update: an ISO time before which the issue is not ready."
+          },
+          "text": {
+            "type": "string",
+            "description": "note, comment: the line to add."
+          },
+          "reason": {
+            "type": "string",
+            "description": "close: what was done, and the commit or the evidence."
+          },
+          "if_revision": {
+            "type": "integer",
+            "description": "update: the revision you read; the write is refused when the issue has moved on."
+          },
+          "unassigned": {
+            "type": "boolean",
+            "description": "ready: only issues no seat holds."
+          },
+          "force": {
+            "type": "boolean",
+            "description": "close: close over open blockers or children."
+          },
+          "skip": {
+            "type": "integer",
+            "description": "comments: how many of the newest comments to pass over."
+          },
+          "limit": {
+            "type": "integer"
+          }
+        },
+        "required": ["do"]
+      }
+    },
+    "seatwork_graph": {
+      "callers": "any",
+      "description": "The project's open issues as a graph; `view` names the reading. triage: what to do first, scored with reasons (what much work rests on, what closing frees, priority), and the blockers worth clearing first. next: the one issue to take now; only a claim reserves it. plan: groups no dependency joins, which can run side by side, with each group's ready issues and the pairs whose write scopes collide, those sharing most paths first; `moreOverlaps` counts the pairs left out, a floor where `overlapsCut` is set. blockers: from `id` down to what must close first. alerts: an issue held and untouched for long, one holding many back.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "view": {
+            "type": "string",
+            "enum": ["triage", "next", "plan", "blockers", "alerts"]
+          },
+          "id": {
+            "type": "string",
+            "description": "blockers: the issue to start from."
+          },
+          "limit": {
+            "type": "integer",
+            "description": "triage: how many recommendations (10 by default)."
+          }
+        },
+        "required": ["view"]
+      }
+    },
+    "seatwork_safety": {
+      "callers": "any",
+      "description": "The room's safety. The guard reads every shell command and file write of yours and keeps those a rule holds for; it stops none. ack: when the room sends your candidate back after its hand-in check, keep one finding on purpose: its `id` and the `reason`; your Owner reads both. council: how each member of the room's council has read turns over the last `days`. label: say whether a `[council]` finding about a seat under you was right: its `id` (the number after the member), `value` right or wrong, and the `reason`. rule: only the room's own seat; rules on an APPEAL mail, its `id`, `send_back` true to return the candidate to its seat or false to leave it, and the `reason`. control: for the writer `seat` under you or beside you, a copy of its project at the commit it started on with only its candidate's tests laid in; a new test that passes there does not test the change.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "action": {
+            "type": "string",
+            "enum": ["ack", "council", "label", "rule", "control"]
+          },
+          "id": {
+            "type": "string",
+            "description": "ack: the finding's id from the returned candidate. label: the council finding's number. rule: the appeal's number."
+          },
+          "reason": {
+            "type": "string",
+            "description": "ack: why the finding stays. label: why the finding was right or wrong. rule: why the candidate goes back or stays."
+          },
+          "send_back": {
+            "type": "boolean",
+            "description": "rule: true returns the candidate to its seat."
+          },
+          "value": {
+            "type": "string",
+            "enum": ["right", "wrong"],
+            "description": "label: whether the finding was right."
+          },
+          "days": {
+            "type": "number",
+            "description": "council: how many days back; 30 when not given."
+          },
+          "seat": { "type": "string", "description": "control: the writer's id." }
+        },
+        "required": ["action"]
+      }
+    },
+    "seatwork_seats": {
+      "callers": "spawners",
+      "description": "The open seats under you, one line each: role, title, id; at work or at rest and for how long, waiting for a permission, failed, or waiting for the room's retry; context held and cost; the signal its last turn ended with; the rejections of its task since its last ACCEPT; mail held for it; the answers it owes. A seat past {{rotate_k}}K tokens of context is marked: each step rereads the whole context, so seatwork_rotate moves its work to a fresh seat.",
       "inputSchema": {
         "type": "object",
         "properties": {},
         "required": []
       }
     },
+    "seatwork_rotate": {
+      "callers": "spawners",
+      "description": "Replace a seat under you whose context has grown large (seatwork_seats marks it) with a fresh one that continues its work. At the seat's next rest the room asks it for a handoff, starts a successor on the same model with the brief in force, that handoff (exact strings the seat marked VERBATIM reach it as written), the decisions in force for the seat's task and where the old seat's record is read, hands it the seat's own open seats, and archives the old seat. You get one notice with the new seat's id; a seat that writes no usable handoff stays, and you are told.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "agent_id": {
+            "type": "string",
+            "description": "The seat to replace: one you launched, or one below it."
+          },
+          "why": {
+            "type": "string",
+            "description": "Optional: one clause the seat is told, such as its context size or the task ahead."
+          }
+        },
+        "required": ["agent_id"]
+      }
+    },
     "seatwork_adopt": {
       "callers": "spawners",
-      "description": "Take over a seat handed to you (a handoff): from now on it reports to you, its `to: owner` reaches you, and you may mail it. Allowed only for a role you may create, and only when its current owner is archived or sits in your own chain. Then mail it its brief and your disposition of its last signal.",
+      "description": "Take over a seat handed to you: it then reports to you, its `to: owner` reaches you, and you may mail it. Allowed only for a role you may create, and only when its current owner is archived or sits in your own chain. Then mail it its brief and your disposition of its last signal.",
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -154,9 +513,113 @@
             "description": "Id of the seat to adopt (from the handoff)."
           }
         },
-        "required": [
-          "agent_id"
-        ]
+        "required": ["agent_id"]
+      }
+    },
+    "seatwork_knowledge": {
+      "callers": "any",
+      "description": "The room's record and its decisions; `do` is the action. search: words in `q`, best first; other wordings in `also` find more; narrow by task, agent, kinds, since; you read what you or seats under you saw. view, expand: entries by `address`, in at most 30000 characters; the entries farthest from it are left out, and the answer says which. pack: a task's evidence. decide: a rule a person decided that later work follows, one English `statement` under a `topic`. `scope` room or project: the room's own seat records it, and it takes effect when your turn ends, on the person's words in it, or at once `from` their address. `scope` task: a seat that briefs records it, in force at once for 30 days unless `valid_until` says otherwise. Change: restate with `replaces_version`; withdraw: a `reason`. list: decisions in force for you. Answers are JSON, maybe with `notices`. A refusal is {\"error\": {code, message, retryable, fix, next}}: `fix` the right arguments, `next` the call to make instead.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "do": {
+            "type": "string",
+            "enum": ["search", "view", "expand", "pack", "decide", "withdraw", "list"]
+          },
+          "q": {
+            "type": "string",
+            "description": "search: English words."
+          },
+          "also": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "search: up to four other wordings."
+          },
+          "task": {
+            "type": "string",
+            "description": "search, pack: one task. decide with scope task: the task it binds."
+          },
+          "agent": {
+            "type": "string",
+            "description": "search: one seat."
+          },
+          "kinds": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": ["owner", "prompt", "say", "shell", "change", "read", "tool", "mail"]
+            },
+            "description": "search: entry kinds."
+          },
+          "since": {
+            "type": "string",
+            "description": "search: an ISO date, or a time with its zone."
+          },
+          "limit": {
+            "type": "integer",
+            "description": "search: how many hits (10 by default, 50 at most)."
+          },
+          "address": {
+            "type": "string",
+            "description": "view, expand: an entry's address."
+          },
+          "around": {
+            "type": "integer",
+            "description": "expand: entries on each side of the address (5 by default, 20 at most)."
+          },
+          "budget": {
+            "type": "integer",
+            "description": "pack: characters of evidence (6000 by default, 20000 at most)."
+          },
+          "project": {
+            "type": "string",
+            "description": "Another project by folder or name, or room; decide: the bound project."
+          },
+          "scope": {
+            "type": "string",
+            "enum": ["room", "project", "task"],
+            "description": "decide, withdraw: what it binds."
+          },
+          "topic": {
+            "type": "string",
+            "description": "decide, withdraw: a few English words; one decision per topic."
+          },
+          "statement": {
+            "type": "string",
+            "description": "decide: the whole decision, one English sentence."
+          },
+          "from": {
+            "type": "string",
+            "description": "decide, withdraw: the address of the person's words."
+          },
+          "replaces_version": {
+            "type": "integer",
+            "description": "decide, withdraw: the version in force."
+          },
+          "new_topic": {
+            "type": "boolean",
+            "description": "decide: not one of the near topics."
+          },
+          "valid_from": {
+            "type": "string",
+            "description": "decide: an ISO date or time with its zone, not ahead of now."
+          },
+          "valid_until": {
+            "type": "string",
+            "description": "decide: an ISO date or time with its zone; the replaced one returns."
+          },
+          "reason": {
+            "type": "string",
+            "description": "withdraw: why, in English."
+          },
+          "all": {
+            "type": "boolean",
+            "description": "list: every room and project decision, for the room's own seat."
+          }
+        },
+        "required": ["do"]
       }
     }
   }

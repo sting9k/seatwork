@@ -1,0 +1,9 @@
+{
+  "$comment": "How long the room waits, in seconds, on each kind of call to the app that runs its seats; a call past its time fails like one the app could not answer. readSeconds: a seat's state, one seat, the list of open seats, the projects. historySeconds: a seat's timeline. writeSeconds: a message to a seat, an archive. startSeconds: a seat's start. A message or start past its time goes again under its id or key, and the app hands it over once. projectRetryFirstSeconds, projectRetryMostSeconds: after the room's own project fails to open, the wait before a hook tries again, doubled per failure up to the most, so a failing open does not run on every hook.",
+  "readSeconds": 10,
+  "historySeconds": 30,
+  "writeSeconds": 30,
+  "startSeconds": 120,
+  "projectRetryFirstSeconds": 5,
+  "projectRetryMostSeconds": 300
+}

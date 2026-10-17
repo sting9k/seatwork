@@ -1,0 +1,73 @@
+{
+  "$comment": "The room's operations: when its operator seat is told of incidents and gets its digest; how long its log, closed traces and days of spend are kept, and how long an open trace nobody touched stays open (the log's days); how many new incidents the decision model reads in a minute and the heading of each kind it reads them as; how much of the spend the budget reading shows; how a change is weighed (its baseline, the reverts it must answer, the undone changes after which a trace goes to the owner); and the policy keys the seat may tune, each with its range. lowerOnly: the seat may lower the key and never revert a change to it. [*] in a key stands for one project's folder. A key not listed here is changed by the owner only. vitals: an event loop held past heldMs and a write-ahead log past walMb are trouble at once; each measure is also kept a minute at a time for keepMinutes, and one whose lowest value over the last lowPointMinutes of a windowMinutes window stands its kind's `rise` above the lowest at the window's start is trouble too: a level says little, a low point that keeps rising is a leak or a backlog.",
+  "incidentMinutes": 15,
+  "retellHours": 1,
+  "digestHours": 24,
+  "logKeepDays": 3,
+  "logMost": 100000,
+  "lineChars": 1000,
+  "evidenceChars": 2000,
+  "baselineChars": 4000,
+  "snoozeMostHours": 72,
+  "traceKeepDays": 30,
+  "spendKeepDays": 31,
+  "spendRecentDays": 7,
+  "spendProjectsShown": 20,
+  "labelMost": 8,
+  "incidentKinds": {
+    "tunable": "A setting may answer these",
+    "code": "A fault in the plugin's code",
+    "outside": "An outside service is down or refusing"
+  },
+  "standingDays": 7,
+  "revertWindowDays": 30,
+  "undoneMost": 3,
+  "tunables": {
+    "knowledge.keepDays": { "district": "knowledge", "type": "integer", "min": 7, "max": 365 },
+    "knowledge.maxEntries": { "district": "knowledge", "type": "integer", "min": 10000, "max": 2000000 },
+    "jev.forks": { "district": "jev", "type": "forks" },
+    "jev.sharpAt.report": { "district": "jev", "type": "number", "min": 0.5, "max": 0.99 },
+    "jev.sharpAt.wake": { "district": "jev", "type": "number", "min": 0.5, "max": 0.99 },
+    "jev.sharpAt.failure": { "district": "jev", "type": "number", "min": 0.5, "max": 0.99 },
+    "jev.sharpAt.answers": { "district": "jev", "type": "number", "min": 0.5, "max": 0.99 },
+    "jev.sharpAt.overlap": { "district": "jev", "type": "number", "min": 0.5, "max": 0.99 },
+    "jev.sharpAt.incident": { "district": "jev", "type": "number", "min": 0.5, "max": 0.99 },
+    "jev.sharpAt.tier": { "district": "jev", "type": "number", "min": 0.5, "max": 0.99 },
+    "jev.sharpAt.gaps": { "district": "jev", "type": "number", "min": 0.5, "max": 0.99 },
+    "jev.sharpAt.escalate": { "district": "jev", "type": "number", "min": 0.5, "max": 0.99 },
+    "jev.sharpAt.duplicate": { "district": "jev", "type": "number", "min": 0.5, "max": 0.99 },
+    "budget.default.dailyUsd": { "district": "budget", "type": "number", "min": 1, "max": 10000, "lowerOnly": true },
+    "budget.default.dailyTurns": {
+      "district": "budget",
+      "type": "integer",
+      "min": 10,
+      "max": 100000,
+      "lowerOnly": true
+    },
+    "budget.projects[*].dailyUsd": {
+      "district": "budget",
+      "type": "number",
+      "min": 1,
+      "max": 10000,
+      "lowerOnly": true
+    },
+    "budget.projects[*].dailyTurns": {
+      "district": "budget",
+      "type": "integer",
+      "min": 10,
+      "max": 100000,
+      "lowerOnly": true
+    },
+    "knowledge.gateAt": { "district": "knowledge", "type": "number", "min": 0.5, "max": 0.95 }
+  },
+  "vitals": {
+    "heldMs": 200,
+    "walMb": 64,
+    "trend": {
+      "keepMinutes": 1440,
+      "windowMinutes": 60,
+      "lowPointMinutes": 15,
+      "rise": { "heapMb": 50, "rssMb": 100, "walMb": 32, "fileMb": 100, "mail waiting": 20 }
+    }
+  }
+}

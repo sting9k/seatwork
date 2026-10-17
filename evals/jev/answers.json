@@ -1,0 +1,148 @@
+{
+  "$comment": "The answers fork: a reply that names none of the open questions it may settle. asks are listed oldest first as m1, m2, ...; expect is the one it answers, or none. A reply body may be {head, pad, tail}.",
+  "cases": [
+    {
+      "id": "delete-legacy",
+      "asks": [
+        {
+          "subject": "QUESTION: which port for the dev server?",
+          "body": "The config has 3000 and 8080 in two places. Which one is right?"
+        },
+        {
+          "subject": "QUESTION: keep the old CSV export?",
+          "body": "Can I delete legacy.ts once the streaming export lands?"
+        }
+      ],
+      "reply": {
+        "subject": "ANSWER: about the export",
+        "body": "Yes, delete legacy.ts once streaming lands; nobody uses it."
+      },
+      "expect": "m2"
+    },
+    {
+      "id": "port",
+      "asks": [
+        {
+          "subject": "QUESTION: which port for the dev server?",
+          "body": "The config has 3000 and 8080 in two places. Which one is right?"
+        },
+        {
+          "subject": "QUESTION: keep the old CSV export?",
+          "body": "Can I delete legacy.ts once the streaming export lands?"
+        }
+      ],
+      "reply": { "subject": "ANSWER", "body": "Use 8080 everywhere; 3000 was the old default." },
+      "expect": "m1"
+    },
+    {
+      "id": "unrelated",
+      "asks": [
+        {
+          "subject": "QUESTION: which port for the dev server?",
+          "body": "The config has 3000 and 8080 in two places. Which one is right?"
+        },
+        {
+          "subject": "QUESTION: keep the old CSV export?",
+          "body": "Can I delete legacy.ts once the streaming export lands?"
+        }
+      ],
+      "reply": { "subject": "ANSWER", "body": "Thanks for the update on the cache work; I will look at it tomorrow." },
+      "expect": "none"
+    },
+    {
+      "id": "410",
+      "asks": [
+        { "subject": "QUESTION: test database", "body": "SQLite or Postgres for the test suite?" },
+        { "subject": "QUESTION: deleted items", "body": "Should the API return 404 or 410 for deleted items?" },
+        { "subject": "QUESTION: date library", "body": "May I add the date-fns dependency?" }
+      ],
+      "reply": {
+        "subject": "ANSWER",
+        "body": "Go with 410 for anything that existed before; 404 for ids that never existed."
+      },
+      "expect": "m2"
+    },
+    {
+      "id": "no-deps",
+      "asks": [
+        { "subject": "QUESTION: test database", "body": "SQLite or Postgres for the test suite?" },
+        { "subject": "QUESTION: deleted items", "body": "Should the API return 404 or 410 for deleted items?" },
+        { "subject": "QUESTION: date library", "body": "May I add the date-fns dependency?" }
+      ],
+      "reply": { "subject": "ANSWER", "body": "No new dependencies this sprint; use the Intl API." },
+      "expect": "m3"
+    },
+    {
+      "id": "postgres",
+      "asks": [
+        { "subject": "QUESTION: test database", "body": "SQLite or Postgres for the test suite?" },
+        { "subject": "QUESTION: deleted items", "body": "Should the API return 404 or 410 for deleted items?" },
+        { "subject": "QUESTION: date library", "body": "May I add the date-fns dependency?" }
+      ],
+      "reply": { "subject": "ANSWER", "body": "Postgres, so the tests match production." },
+      "expect": "m1"
+    },
+    {
+      "id": "freeze",
+      "asks": [
+        { "subject": "QUESTION: code freeze", "body": "When does the code freeze start for the release?" },
+        { "subject": "QUESTION: auth review", "body": "Who should review the auth middleware change?" }
+      ],
+      "reply": { "subject": "ANSWER", "body": "The freeze starts Thursday at noon." },
+      "expect": "m1"
+    },
+    {
+      "id": "reviewer",
+      "asks": [
+        { "subject": "QUESTION: code freeze", "body": "When does the code freeze start for the release?" },
+        { "subject": "QUESTION: auth review", "body": "Who should review the auth middleware change?" }
+      ],
+      "reply": { "subject": "ANSWER", "body": "Send it to the Lead of the auth team; they know the middleware." },
+      "expect": "m2"
+    },
+    {
+      "id": "busy",
+      "asks": [
+        { "subject": "QUESTION: code freeze", "body": "When does the code freeze start for the release?" },
+        { "subject": "QUESTION: auth review", "body": "Who should review the auth middleware change?" }
+      ],
+      "reply": { "subject": "ANSWER", "body": "Busy today, I will get back to you." },
+      "expect": "none"
+    },
+    {
+      "id": "rebase",
+      "asks": [
+        { "subject": "QUESTION: squash?", "body": "Should I squash the commits before the hand-in?" },
+        { "subject": "QUESTION: rebase?", "body": "Should I rebase on main first?" }
+      ],
+      "reply": { "subject": "ANSWER", "body": "Rebase first, then we'll see." },
+      "expect": "m2"
+    },
+    {
+      "id": "long-rebase",
+      "asks": [
+        { "subject": "QUESTION: squash?", "body": "Should I squash the commits before the hand-in?" },
+        { "subject": "QUESTION: rebase?", "body": "Should I rebase on main first?" }
+      ],
+      "reply": {
+        "subject": "ANSWER",
+        "body": {
+          "head": "Long day here, some notes first.",
+          "pad": 1800,
+          "tail": "About your question: rebase on main first."
+        }
+      },
+      "expect": "m2",
+      "why": "the answer is in the tail"
+    },
+    {
+      "id": "audit-table",
+      "asks": [
+        { "subject": "QUESTION: users table", "body": "Can I rename the users table to accounts?" },
+        { "subject": "QUESTION: audit table", "body": "Can I drop the unused audit table?" }
+      ],
+      "reply": { "subject": "ANSWER", "body": "Dropping it is fine; nothing reads the audit table anymore." },
+      "expect": "m2"
+    }
+  ]
+}

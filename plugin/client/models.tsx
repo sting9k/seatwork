@@ -15,60 +15,26 @@ import {
   tierChoices,
   tierDiff,
   type ModelChoice,
-  type SeatRole,
   type Table,
-  type TierRole,
 } from "../shared/model-choices";
+import { childrenOf, ROOTS, traits } from "../shared/workflow";
 import type { setupState } from "../shared/setup";
-import { Btn, Chip, CLI_COLOR, Dot, IconTile, Seg, tint, type Colors, type Inside } from "./kit";
+import { Btn, Chip, CLI_COLOR, Dot, IconTile, MONO, Seg, tint, type Colors, type Inside } from "./kit";
 
 export type Harness = RpcOutput<typeof setupState>["harnesses"][number];
-type Role = SeatRole | TierRole;
+type Role = string;
 type Choices = Record<string, unknown>;
 
-export const ROLE_LABEL: Record<Role, string> = {
-  hq: "HQ",
-  supervisor: "Supervisor",
-  lead: "Lead",
-  peer: "Peer",
-  lens: "Lens",
-};
-const ROLE_ICON: Record<Role, string> = {
-  hq: "Building2",
-  supervisor: "Compass",
-  lead: "Flag",
-  peer: "Hammer",
-  lens: "Eye",
-};
-/** How many of each role a room has: the line under its name. */
-const ROLE_COUNT: Record<Role, string> = {
-  hq: "sees every project",
-  supervisor: "one per project",
-  lead: "one per workstream",
-  peer: "one per task",
-  lens: "one per hard question",
-};
-
-/** What each role is, for whoever opens it to choose its model. */
-const ROLE_JOB: Record<Role, string> = {
-  hq: "Sees every project and passes your instructions down. It runs on one model.",
-  supervisor: "Your counterpart in a project: it splits the work and reports to you. It runs on one model.",
-  lead: "Runs one workstream: plans, briefs Peers, accepts or rejects their results. It runs on one model.",
-  peer: "One role, several models. The Lead reads each name and what it is for, and picks one per task.",
-  lens: "One role, several models. The Lead picks by the question; two lenses are always two different models.",
-};
-
-const isTierRole = (role: Role): role is TierRole => role === "peer" || role === "lens";
-/** The host's modal; its type leans on React's, which this plugin does not install. */
-const Sheet = Modal as any;
-/** Paseo sets its own font on everything but what carries this mark. */
-const MONO = { dataSet: { pmono: "true" }, style: { fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace" } };
+const isTierRole = (role: Role): boolean => traits(role).models === "tiers";
+/** The roles below `roles` in the order the tree draws them, each before those it creates. */
+const inOrder = (roles: readonly Role[], seen = new Set<Role>()): Role[] =>
+  roles.flatMap((role) => (seen.has(role) ? [] : (seen.add(role), [role, ...inOrder(childrenOf(role), seen)])));
 
 /** A model as this host names it. */
 const modelName = (choice: ModelChoice, harnesses: Harness[]) =>
   harnesses.find((h) => h.id === choice.harness)?.models.find((m) => m.id === choice.model)?.label ?? choice.model;
 
-/** A seat's model as a chip. */
+/** A model as a chip, named the way this host lists it. */
 export function ModelChip(props: {
   choice: ModelChoice;
   harnesses: Harness[];
@@ -104,6 +70,8 @@ export function RoleTree(props: {
   colors: Colors;
 }) {
   const { mode, base, choices, running, harnesses, onChange, where, compact, colors: c } = props;
+  // the host's modal: its type leans on React's, which this plugin does not install
+  const Sheet = Modal as any;
   const [opened, setOpen] = useState(null as Role | null);
   const open = opened as Role | null;
   const [measured, setWidth] = useState(0);
@@ -126,6 +94,20 @@ export function RoleTree(props: {
       colors={c}
     />
   );
+  const drawn = new Set<Role>();
+  // each role once, under the first that creates it
+  const branch = (roles: readonly Role[]): Inside =>
+    roles
+      .filter((role) => !drawn.has(role) && drawn.add(role))
+      .map((role) => {
+        const below = childrenOf(role).filter((child) => !drawn.has(child));
+        return (
+          <View key={role} style={{ gap: 8 }}>
+            {node(role)}
+            {below.length > 0 ? kids(<>{branch(below)}</>) : null}
+          </View>
+        );
+      });
   // a role sits under the one that opens it, while the indent leaves room for the models
   const indent = width >= 620;
   const kids = (children: Inside) =>
@@ -149,38 +131,20 @@ export function RoleTree(props: {
       onLayout={(event: { nativeEvent: { layout: { width: number } } }) => setWidth(event.nativeEvent.layout.width)}
       style={{ gap: 8 }}
     >
-      {mode === "project" ? (
-        (["supervisor", "lead", "peer", "lens"] as const).map((role) => <View key={role}>{node(role)}</View>)
-      ) : (
-        <>
-          {node("hq")}
-          {kids(
-            <>
-              {node("supervisor")}
-              {kids(
-                <>
-                  {node("lead")}
-                  {kids(
-                    <>
-                      {node("peer")}
-                      {node("lens")}
-                    </>,
-                  )}
-                </>,
-              )}
-            </>,
-          )}
-        </>
-      )}
+      {mode === "project"
+        ? inOrder(ROOTS)
+            .filter((role) => traits(role).home !== "room")
+            .map((role) => <View key={role}>{node(role)}</View>)
+        : branch(ROOTS)}
       <Sheet
-        title={open ? `${ROLE_LABEL[open]} · ${where}` : ""}
+        title={open ? `${traits(open).label} · ${where}` : ""}
         open={open !== null}
         onOpenChange={(shown: boolean) => (shown ? undefined : setOpen(null))}
       >
         <Sheet.Content>
           {open ? (
             <View style={{ gap: 14 }}>
-              <Text style={{ color: c.foregroundMuted, fontSize: 13, lineHeight: 19 }}>{ROLE_JOB[open]}</Text>
+              <Text style={{ color: c.foregroundMuted, fontSize: 13, lineHeight: 19 }}>{traits(open).job}</Text>
               {isTierRole(open) ? (
                 <Tiers
                   role={open}
@@ -305,11 +269,13 @@ function RoleNode(props: {
   }
   const who = (
     <View style={{ flexDirection: "row", alignItems: "center", gap: 11, flex: 1, minWidth: 120 }}>
-      <IconTile icon={ROLE_ICON[role]} colors={c} />
+      <IconTile icon={traits(role).icon} colors={c} />
       <View style={{ flex: 1, gap: 1 }}>
-        <Text style={{ color: c.foreground, fontSize: 14, lineHeight: 19, fontWeight: "600" }}>{ROLE_LABEL[role]}</Text>
+        <Text style={{ color: c.foreground, fontSize: 14, lineHeight: 19, fontWeight: "600" }}>
+          {traits(role).label}
+        </Text>
         <Text numberOfLines={1} style={{ color: c.foregroundMuted, fontSize: 12, lineHeight: 16 }}>
-          {ROLE_COUNT[role]}
+          {traits(role).count}
         </Text>
       </View>
     </View>
@@ -334,7 +300,7 @@ function RoleNode(props: {
   return (
     <Pressable
       accessibilityRole="button"
-      accessibilityLabel={`${ROLE_LABEL[role]}: choose what it runs on`}
+      accessibilityLabel={`${traits(role).label}: choose what it runs on`}
       onPress={onPress}
       style={{
         borderRadius: 11,
@@ -504,7 +470,7 @@ function PickList(props: {
   );
 }
 
-/** One model of a role: the agent CLI, the model, its thinking level; a Peer's or a Lens's also has a name. */
+/** One model of a role: the agent CLI, the model, its thinking level; one of several also has a name. */
 function ModelCard(props: {
   choice: ModelChoice;
   harnesses: Harness[];
@@ -648,9 +614,9 @@ function ModelCard(props: {
   );
 }
 
-/** A Peer's or a Lens's models: a card each, by the name the Lead reads; then a place to add one more. */
+/** A role's several models: a card each, by the name its Owner reads; then a place to add one more. */
 function Tiers(props: {
-  role: TierRole;
+  role: Role;
   base: Table;
   table: Table;
   harnesses: Harness[];
@@ -717,7 +683,7 @@ function Tiers(props: {
           }}
         >
           <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 10 }}>
-            <Field name="Name, as the Lead reads it" width={190} colors={c}>
+            <Field name="Name, as its Owner reads it" width={190} colors={c}>
               <TextInput
                 accessibilityLabel="Name of the new model"
                 placeholder="high, extra…"
@@ -732,7 +698,7 @@ function Tiers(props: {
             </Field>
             <Field name="Use for" grow colors={c}>
               <TextInput
-                accessibilityLabel="What the Lead picks it for"
+                accessibilityLabel="What its Owner picks it for"
                 placeholder="the kind of work"
                 placeholderTextColor={c.foregroundMuted}
                 value={use}
@@ -788,7 +754,7 @@ function Tiers(props: {
           <Icon name="Plus" size={15} color={c.foregroundMuted} />
           <Text style={{ color: c.foreground, fontSize: 13, fontWeight: "500" }}>Add a model</Text>
           <Text numberOfLines={1} style={{ flex: 1, color: c.foregroundMuted, fontSize: 12 }}>
-            give it a name the Lead will read: high, extra…
+            give it a name its Owner will read: high, extra…
           </Text>
         </Pressable>
       )}

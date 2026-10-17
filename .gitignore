@@ -5,7 +5,7 @@ node_modules/
 paseo-slp/
 # local copy of the video transcript (source material, not part of the room)
 transcript-RBpdfjIFrRY.md
-# eval runs (prompts, events, costs): local only
-evals/results/
 # research notes: local only
 research/
+# eval runs: transcripts and outcomes, local only
+evals/results/

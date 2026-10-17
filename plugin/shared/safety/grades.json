@@ -1,0 +1,71 @@
+{
+  "$comment": "How hard the owner finds it to undo what a seat did to files and to git, by effect and place: critical when it is gone for good or reaches past the seat's work, high when getting it back takes work or luck, medium when git or a build brings it back, low when nothing is lost but the line is worth keeping. A place a row leaves out is not kept. A -tree row is a folder with what it holds, or a pattern that names everything in a folder. git places are the repository a command runs in.",
+  "files": {
+    "delete-tree": {
+      "seat": "medium",
+      "git": "high",
+      "room": "critical",
+      "startup": "critical",
+      "credentials": "critical",
+      "outside": "high",
+      "system": "critical",
+      "unknown": "high"
+    },
+    "delete": {
+      "git": "high",
+      "room": "critical",
+      "startup": "critical",
+      "credentials": "critical",
+      "outside": "high",
+      "system": "critical",
+      "unknown": "low"
+    },
+    "overwrite": {
+      "git": "high",
+      "room": "critical",
+      "startup": "critical",
+      "credentials": "critical",
+      "outside": "high",
+      "system": "critical",
+      "device": "critical",
+      "unknown": "low"
+    },
+    "append": { "room": "critical", "startup": "critical", "credentials": "critical", "system": "critical" },
+    "mode-tree": {
+      "room": "critical",
+      "startup": "high",
+      "credentials": "low",
+      "outside": "high",
+      "system": "critical",
+      "device": "critical"
+    },
+    "mode": { "room": "critical", "startup": "high", "credentials": "low", "system": "high", "device": "critical" },
+    "read": { "room": "critical", "credentials": "high" }
+  },
+  "git": {
+    "discard": { "seat": "high", "outside": "critical" },
+    "refs": { "seat": "medium", "outside": "high" },
+    "erase": { "seat": "critical", "outside": "critical" }
+  },
+  "effects": {
+    "delete": "removes",
+    "overwrite": "replaces what is in",
+    "append": "adds to",
+    "mode": "changes who may use",
+    "read": "reads",
+    "discard": "drops uncommitted work in",
+    "refs": "drops branches or refs of",
+    "erase": "erases commits for good from"
+  },
+  "places": {
+    "seat": "the seat's own tree",
+    "git": "a repository's .git",
+    "room": "the room's own files",
+    "startup": "a file that runs later by itself",
+    "credentials": "the owner's keys and tokens",
+    "outside": "the owner's files outside the seat's tree",
+    "system": "the machine's folders or a whole home",
+    "device": "a disk device",
+    "unknown": "a path known only at run time"
+  }
+}

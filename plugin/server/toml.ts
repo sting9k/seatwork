@@ -102,7 +102,6 @@ export function parseToml(text: string): TomlTable {
     }
     const start = at;
     if (text[at] === "[") {
-      // an array is kept as written; only where it ends matters
       let depth = 0;
       do {
         if (at >= end) fail("an array is not closed");

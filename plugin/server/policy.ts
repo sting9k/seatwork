@@ -1,17 +1,22 @@
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
+import type { RecoveryPolicy } from "./orchestration/recovery";
+import type { JevPolicy } from "./jev/index";
+import type { KnowledgePolicy } from "./knowledge/index";
+import type { BudgetPolicy } from "./operations/budget";
+import type { SafetyPolicy } from "./safety/guard";
+import type { WorkPolicy } from "./tasks/store";
 import { ROOM_HOME } from "./paths";
-import type { Harness, Role } from "./seats";
+import type { Harness } from "./orchestration/seats";
 
 /** Types and loader for policy.json: no defaults here, a broken file stops the plugin. */
 
-export interface ClaudeRuntimePolicy {
+interface ClaudeRuntimePolicy {
   deniedSkills: string[];
-  shareFiles: string[];
 }
 
 /** How a harness's seats start: `{runtime}` in an env value is the seat's home; `extraArgs` are launch flags. */
-export interface LaunchPolicy {
+interface LaunchPolicy {
   env: Record<string, string>;
   extraArgs?: Record<string, string | null>;
 }
@@ -24,22 +29,23 @@ export interface CodexRuntimePolicy {
   stripTables: string[];
   stripKeys: string[];
   featuresOff: string[];
+  toolsOff?: string[];
   multiAgentV2Off: boolean;
   agentsOff: boolean;
 }
 
 /** What the room does for the Owner in the app. */
-export interface OwnerPolicy {
+interface OwnerPolicy {
   chime: boolean;
 }
 
-export interface PiRuntimePolicy {
+interface PiRuntimePolicy {
   shareFiles: string[];
   shareDirs: string[];
   settings: Record<string, unknown>;
 }
 
-export interface OpenCodeRuntimePolicy {
+interface OpenCodeRuntimePolicy {
   shareEntries: string[];
   config: Record<string, unknown>;
 }
@@ -50,33 +56,35 @@ export type MidTurnDelivery = "steer" | "hold";
 export interface MailPolicy {
   port: number;
   holdFyiWhileRunning: boolean;
+  gatherReviews?: boolean;
   midTurn: Record<Harness, MidTurnDelivery>;
+  quietChars?: number;
+  dedupeSeconds?: number;
+  keepDays?: number;
+  expireUnreadDays?: number;
 }
-
-export type RoleName = Role;
 
 /** Knobs that role prompts quote; rendered into {{...}} placeholders at seat creation. */
 export interface RoomParams {
-  heartbeatCron: string;
-  peerStallMinutes: number;
-  reviewStallMinutes: number;
-  leadStallMinutes: number;
-  readBudgetTokens: number;
-  cheapReadBudgetTokens: number;
+  [name: string]: string | number | undefined;
   mailChars: number;
+  rotateAtTokens?: number;
 }
 
-/** Who may write to whom and create whom: `routes` keys are "<sender>><recipient>", `spawn` entries `role` or `role:spec`. */
-export interface RoomPolicy {
-  routes: Record<string, boolean>;
-  spawn: Record<RoleName, string[]>;
+/** How the room works beside its workflow (shared/workflow.json): its numbers, the instructions every seat reads, recovery, hand-ins, work store. */
+interface RoomPolicy {
   params: RoomParams;
+  instructions?: string[];
+  recovery: RecoveryPolicy;
+  rotation: { answerMinutes: number };
+  handin: { freshEyes: boolean };
+  work: WorkPolicy;
 }
 
 /** Garbage collection, see gc.ts. Hours of 0 mean "never archive that role". */
 export interface GcPolicy {
   everyMinutes: number;
-  idleHoursBeforeArchive: Record<RoleName, number>;
+  idleHoursBeforeArchive: Record<string, number>;
   deleteOrphanHeartbeats: boolean;
   tellParent: boolean;
   runtimes?: Partial<Record<Harness, RuntimeLeftovers>>;
@@ -88,47 +96,20 @@ export interface RuntimeLeftovers {
   sessions: string[];
 }
 
-/** The watcher (watch/watcher.ts): `off` does nothing, `shadow` scans and logs, `on` also mails the seat above. */
-export interface WatcherPolicy {
-  mode: "off" | "shadow" | "on";
-  watch: RoleName[];
-  pollSeconds: number;
-  historyEntries: number;
-  rules: Record<string, "raise" | "log" | "off">;
-  thresholds: {
-    sleepSeconds: number;
-    repeatRun: number;
-    cycleRepeats: number;
-    sameFailure: number;
-    inFlightFactor: number;
-  };
-  scores: Record<string, number>;
-  maxMailsPerSeat: number;
-  engine: {
-    url: string;
-    model: string;
-    keyFile: string;
-    keyEnv: string;
-    deadlineMs: number;
-    restAfterFailures: number;
-    restMinutes: number;
-  };
-  budget: { usdPerMillionTokens: number; monthlyPlanUsd: number; monthlyCapUsd: number };
-  state: { messageChars: number; briefLineChars: number };
-  calibration: { labelWindowMinutes: number; minLabels: number; minAuroc: number; maxFalseRaiseRate: number };
-}
-
 export interface RuntimePolicy {
   room: RoomPolicy;
   mail: MailPolicy;
   gc: GcPolicy;
   owner: OwnerPolicy;
-  watcher: WatcherPolicy;
   launch: Record<Harness, LaunchPolicy>;
   claude: ClaudeRuntimePolicy;
   codex: CodexRuntimePolicy;
   pi: PiRuntimePolicy;
   opencode: OpenCodeRuntimePolicy;
+  safety?: SafetyPolicy;
+  jev?: JevPolicy;
+  knowledge?: KnowledgePolicy;
+  budget?: BudgetPolicy;
 }
 
 export const POLICY_FILE = join(ROOM_HOME, "policy.json");
@@ -146,12 +127,14 @@ export function claudeDisallowed(raw: Record<string, any>, role: string): string
   });
 }
 
+/** A part of the policy that must be there; the message tells the owner to apply the room again. */
 function need<T>(value: T | undefined, where: string): T {
   if (value === undefined || value === null)
     throw new Error(`seatwork: ${POLICY_FILE} is missing "${where}" (set the room up again)`);
   return value;
 }
 
+/** The policy the room runs on, read from the room home; recovery, rotation, hand-in and work are absent until the room is applied again after the plugin updates. */
 export function loadPolicy(): RuntimePolicy {
   if (!existsSync(POLICY_FILE)) throw new Error(`seatwork: ${POLICY_FILE} not found; set the room up again`);
   const parsed = JSON.parse(readFileSync(POLICY_FILE, "utf8")) as Record<string, any>;
@@ -159,23 +142,53 @@ export function loadPolicy(): RuntimePolicy {
   const room = need(parsed.room, "room");
   return {
     room: {
-      routes: need(room.routes, "room.routes"),
-      spawn: need(room.spawn, "room.spawn"),
       params: need(room.params, "room.params"),
+      instructions: room.instructions,
+      recovery: need(room.recovery, "room.recovery"),
+      rotation: need(room.rotation, "room.rotation"),
+      handin: need(room.handin, "room.handin"),
+      work: need(room.work, "room.work"),
     },
     mail: need(parsed.mail, "mail"),
     gc: need(parsed.gc, "gc"),
     owner: need(parsed.owner, "owner"),
-    watcher: need(parsed.watcher, "watcher"),
     launch: {
       claude: need(claude.launch, "claude.launch"),
       codex: need(parsed.codex?.launch, "codex.launch"),
       pi: need(parsed.pi?.launch, "pi.launch"),
       opencode: need(parsed.opencode?.launch, "opencode.launch"),
     },
-    claude: { shareFiles: need(claude.shareFiles, "claude.shareFiles"), deniedSkills: claude.deniedSkills ?? [] },
+    claude: { deniedSkills: claude.deniedSkills ?? [] },
     codex: need(parsed.codex?.runtime, "codex.runtime"),
     pi: need(parsed.pi?.runtime, "pi.runtime"),
     opencode: need(parsed.opencode?.runtime, "opencode.runtime"),
+    safety: parsed.safety,
+    jev: parsed.jev,
+    knowledge: parsed.knowledge,
+    budget: parsed.budget,
+  };
+}
+
+const stampOf = (file: string): string => {
+  try {
+    const stat = statSync(file);
+    return `${stat.mtimeMs}:${stat.size}`;
+  } catch {
+    return "";
+  }
+};
+
+/** Keeps a running policy's budget as its file has it, read again when the file changes, so a cap the owner raised there holds without a restart. */
+export function followBudget(policy: RuntimePolicy): () => void {
+  let seen = stampOf(POLICY_FILE);
+  return () => {
+    const now = stampOf(POLICY_FILE);
+    if (now === seen) return;
+    try {
+      policy.budget = (JSON.parse(readFileSync(POLICY_FILE, "utf8")) as { budget?: BudgetPolicy }).budget;
+      seen = now;
+    } catch {
+      // a file half written, or no JSON: the budget read last stands until the file is whole
+    }
   };
 }

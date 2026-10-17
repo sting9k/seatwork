@@ -1,36 +1,23 @@
-import { installRoom, PROJECT, ROOM_HOME } from "./support/room";
+import { deferred, installRoom, PROJECT, ROOM_HOME } from "./support/room";
 import assert from "node:assert/strict";
-import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { beforeEach, test } from "node:test";
-import { registerProject, unregisterProject } from "../server/onboard";
-import { loadRegistry } from "../server/registry";
-import type { PaseoApi } from "../server/paseo";
+import { registerProject, unregisterProject } from "../server/orchestration/onboard";
+import { loadRegistry, projectBlock } from "../server/orchestration/registry";
+import { roleSkillNames } from "../server/orchestration/runtimes";
 
-const ROOM_SEATS = [
-  "claude-hq",
-  "claude-supervisor",
-  "claude-lead",
-  "claude-peer",
-  "claude-lens",
-  "codex-peer",
-  "codex-lens",
-];
+const ROOM_SEATS = ["claude-hq", "claude-supervisor", "claude-lead", "claude-peer", "codex-peer"];
 const seatsFile = join(ROOM_HOME, "seats.json");
 const marker = join(PROJECT, ".seatwork", "room.json");
-/** The seats the room was asked to set up; setting one up leaves it in seats.json. */
 let asked: string[][] = [];
+/** Stands in for setting seats up: keeps the providers asked for, and leaves them in seats.json. */
 const setUpSeats = async (providers: string[]) => {
   asked.push(providers);
   writeFileSync(seatsFile, JSON.stringify({ providers: [...ROOM_SEATS, ...providers] }));
 };
 
-// Paseo knows one project, the test's
-const paseo = {
-  projects: {
-    list: async () => ({ projects: [{ projectId: "p1", projectDisplayName: "demo", projectRootPath: PROJECT }] }),
-  },
-} as unknown as PaseoApi;
+const paseo = async () => [{ name: "demo", path: PROJECT }];
 
 beforeEach(() => {
   installRoom(ROOM_SEATS);
@@ -51,7 +38,6 @@ test("a project's table may put a role on a harness the room has no seat for: th
 });
 
 test("a table the room refuses sets up no seat and is not written", async () => {
-  // a Peer seat in the Supervisor's slot
   await assert.rejects(
     registerProject(
       paseo,
@@ -63,6 +49,15 @@ test("a table the room refuses sets up no seat and is not written", async () => 
 
   assert.deepEqual(asked, []);
   assert.ok(!existsSync(marker));
+});
+
+test("registering writes the project's law beside its mission, and a project with both is ready", async () => {
+  for (const file of ["mission.md", "demo-law.md"]) rmSync(join(PROJECT, ".seatwork", file), { force: true });
+  const first = await registerProject(paseo, { path: PROJECT, mission: "Parse durations." }, setUpSeats);
+  assert.match(first, /Still missing: law \(\.seatwork\/demo-law\.md: give `law`\)\./);
+  const second = await registerProject(paseo, { path: PROJECT, law: "## Policy\n- Commits: one per task" }, setUpSeats);
+  assert.equal(readFileSync(join(PROJECT, ".seatwork", "demo-law.md"), "utf8"), "## Policy\n- Commits: one per task\n");
+  assert.match(second, /Mission and law are in place\./);
 });
 
 test("a project leaves the registry only when none of its seats is open, and keeps its files", async () => {
@@ -80,4 +75,69 @@ test("a project leaves the registry only when none of its seats is open, and kee
   assert.match(result, /^unregistered: demo at .*no project, so no project seat can start/);
   assert.deepEqual(loadRegistry()?.projects, []);
   assert.ok(existsSync(join(PROJECT, ".seatwork", "mission.md")));
+});
+
+/** An app that knows two projects, the test's and another, and a registry that holds neither. */
+function twoProjects() {
+  const other = join(PROJECT, "..", "other-project");
+  mkdirSync(other, { recursive: true });
+  rmSync(join(ROOM_HOME, "projects.json"), { force: true });
+  const both = async () => [
+    { name: "demo", path: PROJECT },
+    { name: "other", path: other },
+  ];
+  return { other, both };
+}
+
+test("projects registered at the same moment all stay in the registry, however long one of them takes", async () => {
+  const { other, both } = twoProjects();
+  const release = deferred();
+  const slow = async (providers: string[]) => {
+    await release.promise;
+    await setUpSeats(providers);
+  };
+  // the first has a table that needs a seat set up, which takes a while
+  const models = { seats: { supervisor: { provider: "pi-supervisor/zai/glm-5" } } };
+  const first = registerProject(both, { path: PROJECT, models }, slow);
+  const second = registerProject(both, { path: other }, setUpSeats);
+  await new Promise((done) => setTimeout(done, 50));
+  release.resolve();
+  await Promise.all([first, second]);
+  assert.deepEqual(
+    loadRegistry()
+      ?.projects.map((entry) => entry.name)
+      .sort(),
+    ["demo", "other"],
+  );
+});
+
+test("a project leaves the registry without taking one registered at the same moment with it", async () => {
+  const { other, both } = twoProjects();
+  await registerProject(both, { path: PROJECT }, setUpSeats);
+  const release = deferred();
+  const slowList = async () => {
+    await release.promise;
+    return [];
+  };
+  const leaving = unregisterProject("demo", slowList);
+  const arriving = registerProject(both, { path: other }, setUpSeats);
+  await new Promise((done) => setTimeout(done, 50));
+  release.resolve();
+  await Promise.all([leaving, arriving]);
+  assert.deepEqual(
+    loadRegistry()?.projects.map((entry) => entry.name),
+    ["other"],
+  );
+});
+
+test("a project seat is told which of its own skills the project law names", () => {
+  const law = "## Policy\n- Tests: proof a regression would break (`test-audit` applies)";
+  const block = (role: string) => projectBlock("demo", PROJECT, null, law, roleSkillNames(role));
+  assert.match(block("peer"), /Skills of your seat this law names: `test-audit`\. Load each before your first edit\.$/);
+  // the law names a Peer's skill: a Lead has none of that name
+  assert.doesNotMatch(block("lead"), /Skills of your seat/);
+  assert.doesNotMatch(
+    projectBlock("demo", PROJECT, null, "- Review lane: two lenses", ["lenses"]),
+    /Skills of your seat/,
+  );
 });

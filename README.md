@@ -7,36 +7,37 @@ parts to other agents, checks what comes back and reports to you.
 ```text
 You ── daily work ──▶ Supervisor     one per project
  │                        │
- │                      Lead         one per workstream
- │                      ├─ Peer      one per task
- │                      └─ Lens      one per hard question
+ │                      Lead         one per request
+ │                        └─ Peer    one per task
  │
  └── management ───▶ HQ              one for all projects
 ```
 
 | Role | What it does |
 |---|---|
-| **Supervisor** | Takes your request, splits it into workstreams, reports to you. Writes no code. |
-| **Lead** | Runs one workstream: plans, briefs Peers, accepts or rejects their results. |
-| **Peer** | Writes the code for one task, inside the files its brief names. |
-| **Lens** | Reads only. Gives a Lead an independent answer to one hard question. |
-| **HQ** | Sees every project and passes your instructions down. |
+| **Supervisor** | Hands your request to a Lead, watches how the work goes and proposes the smallest correction. Brings you the decisions that are yours. Writes no code. |
+| **Lead** | Owns one request: plans, briefs Peers, integrates, accepts or sends work back. Writes no code. |
+| **Peer** | Does one task inside the scope its brief names. A spec in its title (`search`, `scout`, `review`, `arch`) makes it answer a question or judge a candidate, a plan or a design instead. |
+| **HQ** | Sees every project, adds new ones and runs the room: incidents, spend, the settings it may tune. |
 
 Each role runs on the agent CLI and model you choose: Claude Code, Codex, Pi
 or OpenCode.
 
 What the plugin adds to Paseo:
 
-- **Roles.** Each agent gets its role's prompt and skills, and the project's
-  mission and rules.
+- **Roles.** Each agent gets the room's law, its role's prompt and skills,
+  and the project's mission and law.
 - **Isolation.** An agent of the room does not load your personal skills,
   plugins, hooks, MCP servers or memory.
 - **Mail.** Agents write to each other without interrupting a running turn.
   The plugin checks who may mail whom and who may create whom.
-- **A watcher** (optional). It reads the turns of Leads and Peers and tells
-  the agent above when one goes wrong.
-
-Guide: [English](docs/GUIDE.en.md) · [Tiếng Việt](docs/GUIDE.vi.md)
+- **Checks in code.** A guard that records risky commands and file writes
+  (it stops none), a check of each hand-in's diff, a council that reads
+  turns for the room's law, leases on tasks, and a daily spend cap per
+  project.
+- **A decision model** (optional). With a key in
+  `~/.config/seatwork/jev/`, the council and the room's records ask it.
+  Without one nothing leaves your machine and the checks in code still run.
 
 ## Install
 
@@ -62,43 +63,26 @@ That is the whole setup. Nothing is left to run in a terminal.
 To change a choice later, change it on the same screen and press **Apply**:
 it reaches every project that has no models of its own, for the seats
 opened from then on. A project gets models of its own on the same screen,
-on its **Projects** tab. **Remove the room** undoes Init: the `hq-seatwork`
-project leaves Paseo, and the room's folder is moved aside together with
-what the room wrote in each project's `.seatwork/`. That folder is kept for
-30 days, then the plugin deletes it.
+on its **Projects** tab. **Remove the room** undoes Init: the room's seats,
+profiles, the `hq-seatwork` project and the records of its archived seats
+leave Paseo, the daemon-wide switches Init set go back to what they were,
+and the room's folder is moved aside together with what the room wrote in
+each project's `.seatwork/` and its seats' Claude sessions. That folder is
+kept for 30 days, then the plugin deletes it.
+
+Removing the plugin in **Settings → Plugins** does the same by itself, then
+puts the room's folder, and any an earlier Remove set aside, in the Trash.
+**Clean up now** on the Seatwork screen runs the clean-up the room does on
+its own schedule.
 
 ## First project
 
 1. Add your project's folder to Paseo.
 2. In the `hq-seatwork` project, open an agent on the **HQ Supervisor**
-   profile and write "set up project X". Answer its questions.
+   profile and write "set up project X". It asks for the project's mission
+   and law, then opens the project's Supervisor.
 3. From then on, open an agent on the **Supervisor** profile inside your
    project and say what you need.
-
-## From a terminal
-
-`install.sh` is a second way to do the same setup, in place of the three
-steps above. Pick one: a plugin installed from Paseo's settings is set up
-with Init, never with the script.
-
-Use the script on a machine without the app, or to work on the room's own
-files. It needs `node`, `npm` and `paseo`.
-
-```bash
-git clone https://github.com/sting9k/seatwork.git
-```
-
-```bash
-cd seatwork && ./install.sh
-```
-
-It installs the plugin from the clone's folder, does what Init does, and is
-safe to run again. The flags are in the guide.
-
-The script refuses to run over a plugin installed from Paseo's settings:
-Paseo would keep running its own copy while the room's folder was filled
-from the clone, two copies that can differ. To move a machine to a clone,
-run `paseo plugin remove seatwork` first, then the script.
 
 ## What it changes on your machine
 
@@ -106,46 +90,45 @@ run `paseo plugin remove seatwork` first, then the script.
   gives agents Paseo's tools.
 - Three switches for every agent on the machine, not only the room's:
   Paseo's browser tools off, terminal agent hooks off, Paseo's bundled
-  skills kept out of agents. `install.sh` also turns dictation and voice
-  mode off; Init only reports them.
+  skills kept out of agents. Dictation and voice mode are left as they are;
+  the Seatwork screen names them when they are on.
 - A mail server on `127.0.0.1` for the agents' mail tool.
-- `~/.config/seatwork`: mail, logs, copies of your agent CLI config and
-  each agent's temporary files, readable by your user only.
+- `~/.config/seatwork`: logs, copies of your agent CLI config and each
+  agent's temporary files, readable by your user only. Its `policy.json`
+  holds the guard's limits, spend caps and the decision model's settings:
+  what you change there stays through Apply and plugin updates.
+- In each project, `.seatwork/`: the mission, the law, and the stores of
+  mail, work and record. The stores keep themselves out of the project's
+  git.
 
-The room's rules guard against mistakes. They are not a security boundary:
-every agent runs under your account.
+The room's checks catch mistakes in the work. Nothing stops a command an
+agent runs: every agent runs under your account.
 
 ## Working on the room
 
 ```text
 seatwork/
-├── install.sh           the terminal setup
 ├── plugin/              the Paseo plugin (id seatwork)
-│   ├── room/            the system prompt per agent CLI, role prompts, skills, the model table
+│   ├── room/            what agents read: the room's law, role prompts, specs, skills, the model table
 │   ├── paseo/           what setup writes for a machine: policy.json, seats.json, profiles.json
-│   ├── shared/          what the plugin itself defines: tools.json, signals.json, settings.json
-│   ├── server/          setup, mail, cleanup, the watcher
+│   ├── shared/          what the plugin itself defines: workflow.json, tools.json, settings.json
+│   ├── server/          mail, tasks, safety, the decision model, knowledge, operations, orchestration
 │   ├── client/          the Seatwork screen and the Room screen
 │   └── test/
-├── evals/               prompt evals on real model sessions
-└── docs/                the guide, in English and Vietnamese
+└── AGENTS.md            the rules for changing the plugin
 ```
 
-- After an edit, run `./install.sh` at the top of the clone. It copies the
-  room's files into `~/.config/seatwork` and reloads the plugin. This needs
-  a room set up from this clone: see [From a terminal](#from-a-terminal).
-- A setting is written once, in a data file. A machine's policy is in
-  `plugin/paseo/policy.json`, which setup copies to the room home. What the
-  plugin itself defines (its tools, its signals, its retention days) is in
-  `plugin/shared/`, compiled into the plugin. The evals read the same files.
+- To run the room from a clone, install its folder in place of the Git
+  source: `paseo plugin install <clone>/plugin`, then Init on the Seatwork
+  screen. After an edit, run `paseo plugin reload seatwork`, then press
+  **Apply**: it lays the room's files into `~/.config/seatwork` again.
 - Tests: `npm test` in `plugin/` (Node 22.15 or later).
 - Format: `npm run format` in `plugin/` (Prettier, 120 columns; code only).
-- A prompt change: run `node evals/run.cjs --label <name>` at the top of
-  the clone, before and after. It opens real model sessions and costs
-  tokens; see [evals/README.md](evals/README.md).
 - Logs: `paseo plugin logs seatwork`.
 
 ## Sources
 
 The video "Giáo án của Quỷ Vương", the Quỷ Vương Codex Room toolkit,
-and vhlam.com on SLP and coding-agent anti-patterns.
+and vhlam.com on SLP and coding-agent anti-patterns. The room's skills
+adapt openclaw, pstack, piggery, Codex and pi-herdsman; see
+[plugin/room/skills/NOTICE.md](plugin/room/skills/NOTICE.md).

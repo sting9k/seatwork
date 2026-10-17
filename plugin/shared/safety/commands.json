@@ -1,0 +1,352 @@
+{
+  "$comment": "The guard's named rules, by id `effect:name`: what a seat did to the room's controls (room), the software on the machine (install), state kept off this machine (remote), and the machine itself (machine). severity: how hard the owner finds it to undo, as in grades.json. match: when a command is the rule's, any block holding: programs, its names (`name*` for a prefix); first, the first word that is not an option; words, sets met in this order among all its words (`word*` for a prefix); flags, any of these given (a one-letter flag also in a cluster such as -fv, a long one also as --flag=value); without, none of these given; arg, a pattern some word matches; noArg, one no word matches; words compare without case. A rule with no match is found by the code that reads its command. data: the database clients, the options that give them statements inline, the clients whose plain words are statements, and the patterns of a statement that drops data; a DELETE or UPDATE with no WHERE is one too.",
+  "rules": {
+    "room:guard-off": {
+      "severity": "critical",
+      "reason": "starts an agent the room's guard does not see",
+      "match": [
+        { "programs": ["claude", "cursor-agent", "gemini", "qwen", "droid"], "flags": ["-p", "--print", "--prompt"] },
+        { "programs": ["codex"], "first": ["exec", "e"] },
+        { "programs": ["pi"], "flags": ["-p", "--print"] },
+        { "programs": ["opencode", "crush", "goose", "amp"], "first": ["run"] },
+        { "programs": ["aider"], "flags": ["-m", "--message", "--message-file"] }
+      ]
+    },
+    "room:git-global-config": {
+      "severity": "critical",
+      "reason": "changes git for every repository on the machine",
+      "match": [
+        {
+          "programs": ["git"],
+          "words": [["config"]],
+          "flags": ["--global", "--system"],
+          "without": [
+            "--get",
+            "--get-all",
+            "--get-regexp",
+            "--get-urlmatch",
+            "--list",
+            "-l",
+            "--show-origin",
+            "--show-scope",
+            "--name-only"
+          ],
+          "noArg": "^(get|list)$"
+        }
+      ]
+    },
+    "room:paseo-cli": { "severity": "critical", "reason": "reaches other agents or the daemon through the Paseo CLI" },
+    "room:paseo-daemon": {
+      "severity": "critical",
+      "reason": "reaches the Paseo daemon by its address or its client library"
+    },
+    "room:git-config-exec": { "severity": "critical", "reason": "names a program git runs later" },
+    "room:no-verify": { "severity": "high", "reason": "tells git to skip the repository's hooks" },
+    "room:attributes-driver": {
+      "severity": "critical",
+      "reason": "writes a .gitattributes line that names a filter or driver of the repository's own"
+    },
+    "install:brew": {
+      "severity": "high",
+      "reason": "puts software on the machine with brew",
+      "match": [
+        {
+          "programs": ["brew"],
+          "first": ["install", "reinstall", "upgrade", "tap", "bundle", "link", "pin", "unpin", "migrate"]
+        }
+      ]
+    },
+    "install:global": {
+      "severity": "high",
+      "reason": "installs a package for the whole machine, not the project",
+      "match": [
+        {
+          "programs": ["npm"],
+          "first": [
+            "install",
+            "i",
+            "add",
+            "isntall",
+            "in",
+            "ins",
+            "inst",
+            "insta",
+            "instal",
+            "update",
+            "up",
+            "upgrade",
+            "link",
+            "ln"
+          ],
+          "flags": ["-g", "--global", "--location=global"]
+        },
+        { "programs": ["pnpm"], "first": ["add", "install", "i", "update", "up", "link"], "flags": ["-g", "--global"] },
+        { "programs": ["yarn"], "words": [["global"], ["add", "upgrade"]] },
+        { "programs": ["bun"], "first": ["add", "install", "i", "update", "link"], "flags": ["-g", "--global"] }
+      ]
+    },
+    "install:tool": {
+      "severity": "high",
+      "reason": "puts programs on the machine with a tool installer",
+      "match": [
+        {
+          "programs": ["pipx"],
+          "first": ["install", "upgrade", "upgrade-all", "reinstall", "reinstall-all", "inject", "ensurepath"]
+        },
+        { "programs": ["uv"], "words": [["tool"], ["install", "upgrade", "update-shell"]] },
+        { "programs": ["uv"], "words": [["python"], ["install"]] },
+        { "programs": ["cargo"], "first": ["install", "binstall"] },
+        { "programs": ["go"], "first": ["install"] },
+        { "programs": ["gem"], "first": ["install", "update"] },
+        {
+          "programs": ["pip", "pip3", "pip3.*"],
+          "first": ["install"],
+          "flags": ["--user", "--break-system-packages", "--system", "--target", "-t", "--prefix", "--root"]
+        },
+        {
+          "programs": ["python", "python3", "python3.*"],
+          "words": [["-m"], ["pip"], ["install"]],
+          "flags": ["--user", "--break-system-packages", "--system", "--target", "--prefix", "--root"]
+        },
+        { "programs": ["corepack"], "first": ["enable", "install", "prepare"] }
+      ]
+    },
+    "install:runtime": {
+      "severity": "high",
+      "reason": "downloads a runtime or toolchain with a version manager",
+      "match": [
+        {
+          "programs": ["nvm", "fnm", "volta", "pyenv", "rbenv", "nodenv", "goenv", "asdf", "sdk", "jenv"],
+          "first": ["install", "use"]
+        },
+        { "programs": ["rustup"], "first": ["install", "update", "default"] },
+        {
+          "programs": ["rustup"],
+          "words": [
+            ["toolchain", "target", "component"],
+            ["install", "add"]
+          ]
+        },
+        { "programs": ["mise", "rtx"], "first": ["install", "use", "upgrade", "i", "u"] },
+        { "programs": ["n"], "arg": "^(latest|lts|current|stable|\\d+(\\.\\d+)*)$" }
+      ]
+    },
+    "install:browser": {
+      "severity": "high",
+      "reason": "downloads browsers for a test tool",
+      "match": [
+        { "programs": ["playwright", "playwright-core"], "first": ["install", "install-deps"] },
+        { "programs": ["puppeteer"], "words": [["browsers"], ["install"]] },
+        { "programs": ["browsers"], "first": ["install"] },
+        { "programs": ["cypress"], "first": ["install"] }
+      ]
+    },
+    "install:system": {
+      "severity": "high",
+      "reason": "installs software with the system's package manager",
+      "match": [
+        {
+          "programs": ["apt", "apt-get", "yum", "dnf", "zypper", "apk", "port"],
+          "first": ["install", "reinstall", "upgrade", "dist-upgrade", "full-upgrade", "add", "update", "selfupdate"]
+        },
+        { "programs": ["pacman"], "flags": ["-S", "-U"] },
+        { "programs": ["mas"], "first": ["install", "upgrade", "purchase"] },
+        { "programs": ["softwareupdate"], "flags": ["-i", "--install", "-a", "--all"] },
+        { "programs": ["installer"], "flags": ["-pkg"] }
+      ]
+    },
+    "install:download-run": {
+      "severity": "critical",
+      "reason": "runs what it downloads straight in a shell or an interpreter"
+    },
+    "remote:git-push": {
+      "severity": "low",
+      "reason": "sends commits to a shared branch",
+      "match": [{ "programs": ["gh"], "words": [["pr"], ["merge"]] }]
+    },
+    "remote:git-force": {
+      "severity": "critical",
+      "reason": "rewrites or deletes a branch on a remote, which may drop commits others have"
+    },
+    "remote:publish": {
+      "severity": "high",
+      "reason": "publishes a package, an image or a release",
+      "match": [
+        { "programs": ["npm", "pnpm", "bun", "yarn"], "first": ["publish"] },
+        { "programs": ["yarn"], "words": [["npm"], ["publish"]] },
+        { "programs": ["cargo"], "first": ["publish"] },
+        { "programs": ["gem"], "first": ["push"] },
+        { "programs": ["twine"], "first": ["upload"] },
+        { "programs": ["poetry", "flit", "hatch", "uv"], "first": ["publish"] },
+        { "programs": ["mvn", "mvnw"], "words": [["deploy"]] },
+        { "programs": ["gradle", "gradlew"], "words": [["publish*"]] },
+        { "programs": ["dotnet"], "words": [["nuget"], ["push"]] },
+        { "programs": ["docker", "podman"], "first": ["push"] },
+        { "programs": ["gh"], "words": [["release"], ["create"]] }
+      ]
+    },
+    "remote:unpublish": {
+      "severity": "critical",
+      "reason": "takes back a published package",
+      "match": [
+        { "programs": ["npm", "pnpm"], "first": ["unpublish"] },
+        { "programs": ["cargo"], "first": ["yank"] },
+        { "programs": ["gem"], "first": ["yank"] },
+        { "programs": ["dotnet"], "words": [["nuget"], ["delete"]] }
+      ]
+    },
+    "remote:github": {
+      "severity": "critical",
+      "reason": "deletes something on GitHub",
+      "match": [
+        { "programs": ["gh"], "words": [["repo"], ["delete", "archive"]] },
+        { "programs": ["gh"], "words": [["release"], ["delete"]] },
+        {
+          "programs": ["gh"],
+          "words": [
+            ["secret", "variable"],
+            ["delete", "remove"]
+          ]
+        },
+        { "programs": ["gh"], "first": ["api"], "flags": ["-X", "--method"], "arg": "^(--method=)?delete$" }
+      ]
+    },
+    "remote:containers": {
+      "severity": "high",
+      "reason": "removes containers, images or volumes",
+      "match": [
+        { "programs": ["docker", "podman", "nerdctl"], "first": ["rm", "rmi"] },
+        { "programs": ["docker", "podman", "nerdctl"], "words": [["volume"], ["rm", "prune"]] },
+        { "programs": ["docker", "podman", "nerdctl"], "words": [["system"], ["prune", "reset"]] },
+        {
+          "programs": ["docker", "podman", "nerdctl"],
+          "words": [
+            ["container", "image", "network", "builder"],
+            ["prune", "rm"]
+          ]
+        },
+        { "programs": ["docker", "podman"], "words": [["compose"], ["down"]], "flags": ["-v", "--volumes"] },
+        { "programs": ["docker", "podman"], "words": [["compose"], ["rm"]] },
+        { "programs": ["docker-compose", "podman-compose"], "first": ["down"], "flags": ["-v", "--volumes"] },
+        { "programs": ["docker-compose", "podman-compose"], "first": ["rm"] }
+      ]
+    },
+    "remote:data": {
+      "severity": "high",
+      "reason": "drops data from a database",
+      "match": [{ "programs": ["dropdb"] }, { "programs": ["mongorestore"], "flags": ["--drop"] }]
+    },
+    "remote:infra": {
+      "severity": "critical",
+      "reason": "destroys or changes running infrastructure without a review",
+      "match": [
+        { "programs": ["terraform", "tofu", "terragrunt"], "first": ["destroy"] },
+        {
+          "programs": ["terraform", "tofu", "terragrunt"],
+          "first": ["apply"],
+          "flags": ["-auto-approve", "--auto-approve"]
+        },
+        { "programs": ["terraform", "tofu"], "words": [["state"], ["rm"]] },
+        { "programs": ["pulumi"], "first": ["destroy"] },
+        { "programs": ["pulumi"], "first": ["up"], "flags": ["--yes", "-y"] },
+        { "programs": ["cdk"], "first": ["destroy"] },
+        { "programs": ["kubectl", "oc"], "first": ["delete", "drain"] },
+        { "programs": ["helm"], "first": ["uninstall", "delete"] }
+      ]
+    },
+    "remote:cloud": {
+      "severity": "critical",
+      "reason": "deletes cloud resources",
+      "match": [
+        { "programs": ["aws"], "words": [["delete-*", "terminate-*", "remove-*", "rb", "rm"]] },
+        { "programs": ["gcloud", "az", "doctl"], "words": [["delete"]] },
+        { "programs": ["gsutil"], "first": ["rm", "rb"] },
+        { "programs": ["fly", "flyctl"], "words": [["destroy"]] },
+        { "programs": ["heroku"], "first": ["apps:destroy", "destroy"] },
+        { "programs": ["vercel"], "first": ["remove", "rm"] }
+      ]
+    },
+    "machine:disk": {
+      "severity": "critical",
+      "reason": "erases or repartitions a disk",
+      "match": [
+        {
+          "programs": ["diskutil"],
+          "first": [
+            "erasedisk",
+            "erasevolume",
+            "zerodisk",
+            "randomdisk",
+            "secureerase",
+            "partitiondisk",
+            "reformat",
+            "splitpartition",
+            "mergepartitions"
+          ]
+        },
+        {
+          "programs": ["diskutil"],
+          "words": [
+            ["apfs", "ap"],
+            ["delete*", "erase*"]
+          ]
+        },
+        { "programs": ["mkfs*", "newfs*", "wipefs", "blkdiscard", "lvremove", "vgremove", "pvremove"] },
+        {
+          "programs": ["fdisk", "gdisk", "sgdisk", "sfdisk", "parted"],
+          "without": ["-l", "--list", "-p", "--print", "-d", "--dump"],
+          "noArg": "^(print|p)$"
+        },
+        { "programs": ["zpool", "zfs"], "first": ["destroy"] },
+        { "programs": ["mdadm"], "flags": ["--zero-superblock", "--create", "-C"] },
+        { "programs": ["hdparm"], "flags": ["--security-erase", "--security-erase-enhanced"] }
+      ]
+    },
+    "machine:power": {
+      "severity": "critical",
+      "reason": "shuts down or restarts the machine",
+      "match": [
+        { "programs": ["shutdown", "reboot", "halt", "poweroff"] },
+        { "programs": ["systemctl"], "first": ["poweroff", "reboot", "halt", "suspend", "hibernate"] },
+        { "programs": ["init", "telinit"], "first": ["0", "6"] }
+      ]
+    },
+    "machine:service": {
+      "severity": "high",
+      "reason": "stops or removes a service of the machine",
+      "match": [
+        { "programs": ["launchctl"], "first": ["unload", "bootout", "remove", "disable", "kill"] },
+        { "programs": ["systemctl"], "first": ["stop", "disable", "mask", "kill"] },
+        { "programs": ["service"], "words": [["stop"]] }
+      ]
+    },
+    "machine:fork-bomb": {
+      "severity": "critical",
+      "reason": "defines a function that runs itself without end and calls it"
+    }
+  },
+  "data": {
+    "clients": [
+      "psql",
+      "mysql",
+      "mariadb",
+      "sqlite3",
+      "duckdb",
+      "mongosh",
+      "mongo",
+      "redis-cli",
+      "valkey-cli",
+      "keydb-cli"
+    ],
+    "inline": ["-c", "--command", "-e", "--execute", "--eval"],
+    "plain": ["sqlite3", "duckdb", "redis-cli", "valkey-cli", "keydb-cli"],
+    "drops": [
+      "\\bDROP\\s+(DATABASE|SCHEMA|TABLE|VIEW|COLLECTION|KEYSPACE)\\b",
+      "(^|;)\\s*TRUNCATE\\b",
+      "\\bDROP\\s+COLUMN\\b",
+      "\\bFLUSH(ALL|DB)\\b",
+      "\\.drop(Database)?\\s*\\(",
+      "\\.(deleteMany|remove)\\s*\\(\\s*\\{\\s*\\}\\s*\\)"
+    ]
+  }
+}

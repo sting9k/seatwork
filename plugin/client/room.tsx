@@ -1,12 +1,11 @@
-import type { PluginScreenProps, PluginSidebarItemProps } from "@getpaseo/plugin/client";
+import type { PluginScreenProps } from "@getpaseo/plugin/client";
 import { useRpc } from "@getpaseo/plugin/client";
 import { ScrollView } from "@getpaseo/plugin/client/react-native";
-import { SidebarRow } from "@getpaseo/plugin/client/ui";
 import { useQuery } from "@tanstack/react-query";
 import type { PluginTheme, RpcOutput } from "@getpaseo/plugin";
 import { useState } from "react";
 import { Pressable, Text, View } from "react-native";
-import { roomStatus, roomWaiting } from "../shared/room";
+import { roomStatus } from "../shared/room";
 
 type Room = RpcOutput<typeof roomStatus>;
 
@@ -17,20 +16,17 @@ function tone(status: string, colors: PluginTheme["colors"]): string {
   return status === "waiting" ? colors.statusWarning : colors.foregroundMuted;
 }
 
-/** A seat at rest says nothing: its dot is enough. */
 const AT_REST = new Set(["idle", "closed"]);
 
 /** Hour and minute on this device's clock. */
 const clock = (at: string) =>
   new Date(at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hour12: false });
 
-/** How many seat dots a project's row shows before it counts the rest. */
 const DOTS = 8;
 
 export function RoomScreen({ theme, layout, navigation }: PluginScreenProps) {
   const read = useRpc(roomStatus);
   const room = useQuery({ queryKey: ["seatwork", "room.status"], queryFn: () => read({}), refetchInterval: 10_000 });
-  // every project starts as one line; a press opens its seats
   const [opened, setOpened] = useState({} as Record<string, boolean>);
   const c = theme.colors;
   const pad = layout.compact ? 16 : 24;
@@ -149,27 +145,5 @@ export function RoomScreen({ theme, layout, navigation }: PluginScreenProps) {
         <Text style={muted}>No seat open: {empty.map((project) => project.name).join(", ")}</Text>
       )}
     </ScrollView>
-  );
-}
-
-/** The sidebar row: it opens the screen, and says how many turns wait on the Owner. */
-export function RoomItem({ theme, currentScreen, openScreen }: PluginSidebarItemProps) {
-  const read = useRpc(roomWaiting);
-  const waiting = useQuery({
-    queryKey: ["seatwork", "room.waiting"],
-    queryFn: () => read({}),
-    refetchInterval: 15_000,
-  });
-  const count = waiting.data?.waiting.length ?? 0;
-  return (
-    <SidebarRow
-      icon="Network"
-      label="Room"
-      active={currentScreen?.screenId === "room"}
-      onPress={() => openScreen({ screenId: "room" })}
-      trailing={
-        count > 0 ? <Text style={{ color: theme.colors.statusWarning, fontSize: 12 }}>{count} waiting</Text> : undefined
-      }
-    />
   );
 }

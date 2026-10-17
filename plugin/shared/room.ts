@@ -1,7 +1,8 @@
 import { defineRpc } from "@getpaseo/plugin";
 import { z } from "zod";
 
-/** What the app asks the room while open: the turns that wait on the Owner, and whether to chime. */
+/** What the open app asks the room: what waits on the Owner and whether to chime, the room's seats, its decisions, and the seats of each project. */
+
 export const roomWaiting = defineRpc({
   name: "room.waiting",
   input: z.object({}),
@@ -16,10 +17,34 @@ export const roomWaiting = defineRpc({
         at: z.string(),
       }),
     ),
+    seats: z.array(z.string()),
   }),
 });
 
-/** What the Room screen shows: what waits on the Owner, and the seats that exist, project by project. */
+const decision = z.object({
+  id: z.number(),
+  scope: z.enum(["room", "project"]),
+  topic: z.string(),
+  statement: z.string(),
+  version: z.number(),
+  since: z.string(),
+  until: z.string().nullable(),
+  toldTo: z.string().nullable(),
+  state: z.string(),
+});
+
+export const roomDecisions = defineRpc({
+  name: "room.decisions",
+  input: z.object({ folder: z.string().max(4096), earlier: z.boolean().default(false) }),
+  output: z.object({
+    project: z.string().nullable(),
+    inForce: z.array(decision),
+    pending: z.array(decision),
+    earlier: z.number(),
+    closed: z.array(decision),
+  }),
+});
+
 export const roomStatus = defineRpc({
   name: "room.status",
   input: z.object({}),
@@ -50,4 +75,10 @@ export const roomStatus = defineRpc({
       }),
     ),
   }),
+});
+
+export const roomClean = defineRpc({
+  name: "room.clean",
+  input: z.object({}),
+  output: z.object({ lines: z.array(z.string()), running: z.boolean() }),
 });

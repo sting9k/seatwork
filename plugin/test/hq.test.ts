@@ -3,7 +3,8 @@ import assert from "node:assert/strict";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { test } from "node:test";
-import { ensureHqProject, hqDir, removeHqProject } from "../server/hq";
+import { ensureRoomProject, removeRoomProject } from "../server/paseo/room-project";
+import { roomProjectDir } from "../server/orchestration/registry";
 
 test("the HQ project is opened once however many ask at the same moment; when the room goes it is deleted from Paseo, alone, or archived when the CLI cannot", async () => {
   let workspaces: { id: string; projectRootPath: string }[] = [{ id: "other", projectRootPath: "/somewhere/else" }];
@@ -19,10 +20,10 @@ test("the HQ project is opened once however many ask at the same moment; when th
     },
   };
 
-  await Promise.all([ensureHqProject(paseo as never, () => {}), ensureHqProject(paseo as never, () => {})]);
+  await Promise.all([ensureRoomProject(paseo as never, () => {}), ensureRoomProject(paseo as never, () => {})]);
   assert.deepEqual(
     workspaces.map((workspace) => workspace.projectRootPath),
-    ["/somewhere/else", hqDir()],
+    ["/somewhere/else", roomProjectDir()],
   );
 
   // a paseo CLI that lists the HQ project beside one of the user's, and notes what it is told to delete
@@ -31,7 +32,7 @@ test("the HQ project is opened once however many ask at the same moment; when th
   const cli = join(ROOM_HOME, "..", "paseo-lists-projects");
   const listed = JSON.stringify([
     { projectId: "prj_mine", path: "/somewhere/else" },
-    { projectId: "prj_hq", path: hqDir() },
+    { projectId: "prj_hq", path: roomProjectDir() },
   ]);
   writeFileSync(
     cli,
@@ -39,7 +40,7 @@ test("the HQ project is opened once however many ask at the same moment; when th
     { mode: 0o755 },
   );
   process.env.SEATWORK_PASEO_BIN = cli;
-  assert.equal(await removeHqProject(paseo as never), true);
+  assert.equal(await removeRoomProject(paseo as never), true);
   assert.deepEqual(
     [readFileSync(deleted, "utf8"), workspaces.length],
     ["prj_hq\n", 2],
@@ -47,7 +48,7 @@ test("the HQ project is opened once however many ask at the same moment; when th
   );
 
   process.env.SEATWORK_PASEO_BIN = failing;
-  assert.equal(await removeHqProject(paseo as never), false);
+  assert.equal(await removeRoomProject(paseo as never), false);
   assert.deepEqual(
     [workspaces.map((workspace) => workspace.id), existsSync(deleted) && readFileSync(deleted, "utf8")],
     [["other"], "prj_hq\n"],

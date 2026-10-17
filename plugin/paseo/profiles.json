@@ -4,27 +4,27 @@
     "name": "HQ Supervisor",
     "icon": "compass",
     "role": "hq",
-    "notes": "Management only: the state of every registered project, onboarding a project, an instruction sent down to a Supervisor. Day-to-day work goes to a project's Supervisor directly; projects do not know HQ and send nothing up to it. Never creates Leads or Peers. Open it in the hq-seatwork project, the only place it starts."
+    "notes": "The room's operator: every registered project, onboarding one, the room's incidents and settings. Opens a project's Supervisor; never creates Leads or Peers. Starts only in the hq-seatwork project."
   },
   {
     "id": "agent_profile_seatwork_supervisor",
     "name": "Supervisor",
     "icon": "compass",
     "role": "supervisor",
-    "notes": "One project's Supervisor and the user's counterpart for that project's daily work. Opened by the user (or by HQ) inside a registered project. Pins the intent, runs one Lead per workstream, watches for drift, leaves decisions in its report for the Owner. Never implements, validates or accepts; never mails upward. Models: room/models.json."
+    "notes": "One project's Supervisor, opened by the user or HQ inside a registered project. Starts a Lead per request, watches how the room works and proposes the smallest correction. Decides nothing for the project and never goes around a Lead."
   },
   {
     "id": "agent_profile_seatwork_lead",
     "name": "Lead",
     "icon": "compass",
     "role": "lead",
-    "notes": "Launched by a Supervisor, one per workstream. Owns the technical outcome: plans, dispatches Peers by tier (room/models.json), opens Lenses for hard questions, answers challenges, accepts or rejects candidates. Never implements."
+    "notes": "Started by a Supervisor, one per request. The root of its work: plans, opens Peers on models from room/models.json, integrates and accepts. Writes no code."
   },
   {
     "id": "agent_profile_seatwork_peer",
     "name": "Peer",
     "icon": "hammer",
     "role": "peer",
-    "notes": "Launched by a Lead. The full-stack default seat: one bounded outcome, one write scope. The Lead picks the provider per task from room/models.json (sonnet by default, a codex-peer for the cross-family review). Title [Peer:<spec>] adds a specialization sheet (research, review)."
+    "notes": "Started by a Lead: one outcome, one scope, on the model the Lead picks from room/models.json. A title [Peer:<spec>] adds a sheet from room/specs (search, scout, review, arch)."
   }
 ]

@@ -1,0 +1,4 @@
+{
+  "$comment": "Skills more than one role uses, by folder under skills/shared: each is given to the roles listed.",
+  "seat-law": ["hq", "supervisor", "lead"]
+}

@@ -1,0 +1,352 @@
+{
+  "$comment": "Hand-in rules on added lines. level: block sends the candidate back, warn rides up with it. in: the part of the line a pattern reads (code, comment, string, or the whole line). files: test, source or any. languages: ids from `languages`, or `*`. path: only the files whose path it matches. skip: paths never read. tests: paths of test files. checkConfig: files that decide what the checks run or how strict they are; checkKeys: the lines of a manifest that do. The command guard reads the attributes-driver rule too, by its id.",
+  "languages": {
+    "javascript": [".js", ".jsx", ".mjs", ".cjs", ".ts", ".tsx", ".mts", ".cts", ".vue", ".svelte"],
+    "python": [".py"],
+    "go": [".go"],
+    "rust": [".rs"],
+    "ruby": [".rb"],
+    "java": [".java", ".kt", ".kts", ".scala"],
+    "c": [".c", ".h", ".cc", ".cpp", ".hpp", ".cs", ".swift", ".m"],
+    "shell": [".sh", ".bash", ".zsh"],
+    "php": [".php"]
+  },
+  "skip": [
+    "(^|/)(node_modules|vendor|dist|build|out|target|coverage|\\.git|\\.next|\\.venv|venv|__pycache__)/",
+    "\\.(lock|min\\.js|min\\.css|map|snap)$",
+    "(^|/)(package-lock\\.json|pnpm-lock\\.yaml|yarn\\.lock|Cargo\\.lock|go\\.sum|poetry\\.lock|Gemfile\\.lock)$"
+  ],
+  "tests": [
+    "(^|/)(test|tests|__tests__|spec|specs|e2e)/",
+    "\\.(test|spec)\\.[cm]?[jt]sx?$",
+    "_test\\.(go|py)$",
+    "(^|/)test_[^/]*\\.py$",
+    "(Test|Tests|Spec)\\.(java|kt|swift|cs)$",
+    "_spec\\.rb$"
+  ],
+  "checkConfig": [
+    "(^|/)(jest|vitest|vite|playwright|karma|cypress|babel)\\.config\\.[cm]?[jt]s$",
+    "(^|/)\\.mocharc(\\.[a-z]+)?$",
+    "(^|/)(pytest\\.ini|tox\\.ini|setup\\.cfg|noxfile\\.py|\\.coveragerc|mypy\\.ini|ruff\\.toml|\\.flake8|pyrightconfig\\.json)$",
+    "(^|/)tsconfig[^/]*\\.json$",
+    "(^|/)(\\.eslintrc(\\.[a-z]+)?|eslint\\.config\\.[cm]?[jt]s|\\.golangci\\.ya?ml|clippy\\.toml)$",
+    "(^|/)\\.github/workflows/",
+    "(^|/)\\.gitlab-ci\\.ya?ml$",
+    "(^|/)\\.circleci/",
+    "(^|/)Jenkinsfile$",
+    "(^|/)\\.husky/",
+    "(^|/)(\\.pre-commit-config\\.ya?ml|lefthook\\.ya?ml)$"
+  ],
+  "checkKeys": "^\\s*\"(test|lint|check|typecheck|verify)[\\w:-]*\"\\s*:|^\\s*\\[tool\\.(pytest|mypy|ruff|coverage|pyright)|^\\s*(addopts|testpaths|python_files|omit|strict|deselect|ignore_missing_imports)\\s*=",
+  "rules": [
+    {
+      "id": "test-focused",
+      "level": "block",
+      "languages": ["javascript"],
+      "in": "code",
+      "files": "test",
+      "pattern": "\\b(it|test|describe|context|suite)\\.only\\s*\\(|\\b(fit|fdescribe|fcontext)\\s*\\(",
+      "hint": "Remove .only: it makes the runner skip every other test."
+    },
+    {
+      "id": "test-focused",
+      "level": "block",
+      "languages": ["python"],
+      "in": "code",
+      "files": "test",
+      "pattern": "@pytest\\.mark\\.only\\b",
+      "hint": "Remove the focus mark."
+    },
+    {
+      "id": "test-skipped",
+      "level": "block",
+      "languages": ["javascript"],
+      "in": "code",
+      "files": "test",
+      "pattern": "\\b(it|test|describe|context|suite)\\.(skip|todo)\\s*\\(|\\b(xit|xdescribe|xcontext|xtest)\\s*\\(",
+      "hint": "Make the test pass instead of skipping it, or acknowledge why it must wait."
+    },
+    {
+      "id": "test-skipped",
+      "level": "block",
+      "languages": ["python"],
+      "in": "code",
+      "files": "test",
+      "pattern": "@(pytest\\.mark\\.(skip|skipif|xfail)|unittest\\.(skip|skipIf|skipUnless|expectedFailure))\\b|\\bpytest\\.(skip|xfail)\\s*\\(|\\bself\\.skipTest\\s*\\(",
+      "hint": "Make the test pass instead of skipping it, or acknowledge why it must wait."
+    },
+    {
+      "id": "test-skipped",
+      "level": "block",
+      "languages": ["go"],
+      "in": "code",
+      "files": "test",
+      "pattern": "\\bt\\.(Skip|Skipf|SkipNow)\\s*\\(",
+      "hint": "Make the test pass instead of skipping it."
+    },
+    {
+      "id": "test-skipped",
+      "level": "block",
+      "languages": ["rust"],
+      "in": "code",
+      "files": "any",
+      "pattern": "#\\[ignore\\b",
+      "hint": "Make the test pass instead of ignoring it."
+    },
+    {
+      "id": "test-skipped",
+      "level": "block",
+      "languages": ["java"],
+      "in": "code",
+      "files": "test",
+      "pattern": "@(Disabled|Ignore)\\b",
+      "hint": "Make the test pass instead of disabling it."
+    },
+    {
+      "id": "test-skipped",
+      "level": "block",
+      "languages": ["ruby"],
+      "in": "code",
+      "files": "test",
+      "pattern": "\\b(xit|xdescribe|skip|pending)\\b",
+      "hint": "Make the spec pass instead of skipping it."
+    },
+    {
+      "id": "weak-assertion",
+      "level": "warn",
+      "languages": ["javascript"],
+      "in": "code",
+      "files": "test",
+      "pattern": "\\.(toBeTruthy|toBeDefined|toBeFalsy)\\s*\\(\\s*\\)|expect\\s*\\(\\s*(true|1)\\s*\\)",
+      "hint": "Assert the exact value the code must produce."
+    },
+    {
+      "id": "weak-assertion",
+      "level": "warn",
+      "languages": ["python"],
+      "in": "code",
+      "files": "test",
+      "pattern": "\\bassert\\s+(True|1)\\b",
+      "hint": "Assert the exact value the code must produce."
+    },
+    {
+      "id": "placeholder-body",
+      "level": "block",
+      "languages": ["rust"],
+      "in": "code",
+      "files": "source",
+      "pattern": "\\b(todo|unimplemented)!\\s*\\(",
+      "hint": "Finish the code; a placeholder in a candidate is not done."
+    },
+    {
+      "id": "placeholder-body",
+      "level": "block",
+      "languages": ["python"],
+      "in": "code",
+      "files": "source",
+      "pattern": "\\braise\\s+NotImplementedError\\b",
+      "hint": "Finish the code, or acknowledge an abstract method."
+    },
+    {
+      "id": "placeholder-body",
+      "level": "block",
+      "languages": ["javascript", "java", "c"],
+      "in": "line",
+      "files": "source",
+      "pattern": "throw\\s+new\\s+\\w*(Error|Exception)\\s*\\(\\s*['\"`](not\\s+implemented|todo|unimplemented)",
+      "flags": "i",
+      "hint": "Finish the code; a placeholder in a candidate is not done."
+    },
+    {
+      "id": "placeholder-body",
+      "level": "block",
+      "languages": ["go"],
+      "in": "line",
+      "files": "source",
+      "pattern": "panic\\s*\\(\\s*\"(todo|not implemented|unimplemented)",
+      "flags": "i",
+      "hint": "Finish the code."
+    },
+    {
+      "id": "debugger",
+      "level": "block",
+      "languages": ["javascript"],
+      "in": "code",
+      "files": "any",
+      "pattern": "^\\s*debugger\\s*;?\\s*$",
+      "hint": "Remove the debugger statement."
+    },
+    {
+      "id": "debugger",
+      "level": "block",
+      "languages": ["python"],
+      "in": "code",
+      "files": "any",
+      "pattern": "\\b(breakpoint\\s*\\(\\s*\\)|pdb\\.set_trace\\s*\\(|ipdb\\.set_trace\\s*\\()",
+      "hint": "Remove the breakpoint."
+    },
+    {
+      "id": "debugger",
+      "level": "block",
+      "languages": ["ruby"],
+      "in": "code",
+      "files": "any",
+      "pattern": "\\b(binding\\.(pry|irb)|byebug|debugger)\\b",
+      "hint": "Remove the breakpoint."
+    },
+    {
+      "id": "debug-output",
+      "level": "warn",
+      "languages": ["javascript"],
+      "in": "code",
+      "files": "source",
+      "pattern": "\\bconsole\\.(log|debug|trace|dir)\\s*\\(",
+      "hint": "Remove debug output, or use the project's logger."
+    },
+    {
+      "id": "debug-output",
+      "level": "warn",
+      "languages": ["rust"],
+      "in": "code",
+      "files": "source",
+      "pattern": "\\bdbg!\\s*\\(",
+      "hint": "Remove dbg!."
+    },
+    {
+      "id": "debug-output",
+      "level": "warn",
+      "languages": ["go"],
+      "in": "code",
+      "files": "source",
+      "pattern": "\\bfmt\\.Print(ln|f)?\\s*\\(",
+      "hint": "Remove debug output, or use the project's logger."
+    },
+    {
+      "id": "swallowed-error",
+      "level": "warn",
+      "languages": ["javascript", "java", "c", "php"],
+      "in": "code",
+      "files": "any",
+      "pattern": "catch\\s*(\\([^)]*\\))?\\s*\\{\\s*\\}",
+      "hint": "Handle the error or let it propagate; say why if it is safe to ignore."
+    },
+    {
+      "id": "swallowed-error",
+      "level": "warn",
+      "languages": ["python"],
+      "in": "code",
+      "files": "any",
+      "pattern": "except(\\s+[\\w.,() ]+)?(\\s+as\\s+\\w+)?\\s*:\\s*(pass|\\.\\.\\.)\\s*$",
+      "hint": "Handle the error or let it propagate."
+    },
+    {
+      "id": "swallowed-error",
+      "level": "warn",
+      "languages": ["go"],
+      "in": "code",
+      "files": "any",
+      "pattern": "^\\s*_\\s*(,\\s*_\\s*)?=\\s*[\\w.]+\\(.*\\)\\s*$|if\\s+err\\s*!=\\s*nil\\s*\\{\\s*\\}",
+      "hint": "Check the error."
+    },
+    {
+      "id": "new-todo",
+      "level": "warn",
+      "languages": ["*"],
+      "in": "comment",
+      "files": "any",
+      "pattern": "\\b(TODO|FIXME|XXX|HACK)\\b",
+      "hint": "Finish it, or file it in the work store and name the issue."
+    },
+    {
+      "id": "file-suppression",
+      "level": "block",
+      "languages": ["javascript"],
+      "in": "comment",
+      "files": "any",
+      "pattern": "@ts-nocheck|eslint-disable(?!-next-line|-line)\\b",
+      "hint": "Do not switch off type or lint checks for a whole file."
+    },
+    {
+      "id": "file-suppression",
+      "level": "block",
+      "languages": ["python"],
+      "in": "comment",
+      "files": "any",
+      "pattern": "mypy:\\s*ignore-errors|pylint:\\s*skip-file|ruff:\\s*noqa\\b|flake8:\\s*noqa\\b",
+      "hint": "Do not switch off checks for a whole file."
+    },
+    {
+      "id": "file-suppression",
+      "level": "block",
+      "languages": ["rust"],
+      "in": "code",
+      "files": "any",
+      "pattern": "#!\\[allow\\(",
+      "hint": "Do not switch off lints for a whole crate or module."
+    },
+    {
+      "id": "line-suppression",
+      "level": "warn",
+      "languages": ["javascript"],
+      "in": "comment",
+      "files": "any",
+      "pattern": "@ts-(ignore|expect-error)|eslint-disable-(next-)?line",
+      "hint": "Fix the type or lint error instead of hiding it."
+    },
+    {
+      "id": "line-suppression",
+      "level": "warn",
+      "languages": ["javascript"],
+      "in": "code",
+      "files": "source",
+      "pattern": "\\bas\\s+any\\b|:\\s*any\\b",
+      "hint": "Give it a real type."
+    },
+    {
+      "id": "line-suppression",
+      "level": "warn",
+      "languages": ["python"],
+      "in": "comment",
+      "files": "any",
+      "pattern": "type:\\s*ignore|\\bnoqa\\b|pylint:\\s*disable",
+      "hint": "Fix the error instead of hiding it."
+    },
+    {
+      "id": "line-suppression",
+      "level": "warn",
+      "languages": ["go"],
+      "in": "comment",
+      "files": "any",
+      "pattern": "nolint",
+      "hint": "Fix the lint instead of hiding it."
+    },
+    {
+      "id": "attributes-driver",
+      "level": "block",
+      "languages": ["*"],
+      "in": "line",
+      "files": "any",
+      "path": "(^|/)\\.gitattributes$",
+      "pattern": "(^|\\s)filter=(?!lfs(\\s|$))\\S|(^|\\s)(diff|merge)=(?!(lfs|union|text|binary|ada|bash|bibtex|cpp|csharp|css|dts|elixir|fortran|fountain|golang|html|ini|java|javascript|kotlin|markdown|matlab|objc|pascal|perl|php|python|ruby|rust|scheme|tex)(\\s|$))\\S",
+      "hint": "Name no filter or driver of your own in .gitattributes: git runs the program the repository's config gives it, on the room's calls too."
+    },
+    {
+      "id": "test-aware-source",
+      "level": "warn",
+      "languages": ["*"],
+      "in": "line",
+      "files": "source",
+      "pattern": "\\b(process\\.env\\.NODE_ENV|import\\.meta\\.env\\.MODE)\\s*[!=]==?\\s*['\"]test['\"]|\\b(JEST_WORKER_ID|VITEST|PYTEST_CURRENT_TEST)\\b|['\"]pytest['\"]\\s+in\\s+sys\\.modules|\\btesting\\.Testing\\(\\)",
+      "hint": "Code that acts differently under test passes tests it should fail; say why it must."
+    },
+    {
+      "id": "tls-off",
+      "level": "block",
+      "languages": ["*"],
+      "in": "line",
+      "files": "source",
+      "pattern": "rejectUnauthorized\\s*:\\s*false|NODE_TLS_REJECT_UNAUTHORIZED\\s*=\\s*['\"]?0|verify\\s*=\\s*False|InsecureSkipVerify\\s*:\\s*true|danger_accept_invalid_certs\\s*\\(\\s*true|CURLOPT_SSL_VERIFYPEER\\s*,\\s*(false|0)|\\bcurl\\b[^\\n]*\\s(-k|--insecure)\\b",
+      "hint": "Keep certificate checks on; fix the certificate instead."
+    }
+  ]
+}

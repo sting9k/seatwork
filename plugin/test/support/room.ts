@@ -1,46 +1,31 @@
-import { chmodSync, cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+/** Test room support: the throwaway homes test/isolate.cjs made for this process (a run without it would reach the real ones), and the plugin folder whose room files and policy ship into them. */
+import { cpSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { PaseoHost } from "../../server/paseo/host";
 
-/** A throwaway room home and harness homes; import this first: server/paths.ts reads the environment as it loads. */
-const base = mkdtempSync(join(tmpdir(), "seatwork-test-"));
-process.on("exit", () => rmSync(base, { recursive: true, force: true }));
+const base = process.env.SEATWORK_TEST_BASE;
+if (!base) throw new Error("run the tests with npm test: test/isolate.cjs gives them homes of their own");
 
 export const ROOM_HOME = join(base, "room-home");
 export const USER_CODEX = join(base, "codex");
 export const USER_PI = join(base, "pi");
 export const PROJECT = join(base, "project");
+export const USER_HOME = join(base, "home");
 
-for (const dir of [ROOM_HOME, USER_CODEX, USER_PI, PROJECT]) mkdirSync(dir);
-// a paseo CLI that always fails: the plugin shells out for projects, labels and schedules
-const cli = join(base, "paseo");
-writeFileSync(cli, "#!/bin/sh\nexit 1\n");
-chmodSync(cli, 0o755);
-
-Object.assign(process.env, {
-  SEATWORK_ROOM_HOME: ROOM_HOME,
-  SEATWORK_PASEO_BIN: cli,
-  PASEO_HOME: join(base, "paseo-home"),
-  CODEX_HOME: USER_CODEX,
-  CLAUDE_CONFIG_DIR: join(base, "claude"),
-  PI_CODING_AGENT_DIR: USER_PI,
-  OPENCODE_CONFIG_DIR: join(base, "opencode"),
-});
-
-/** The plugin folder: the room files and the policy ship inside it. */
 export const PLUGIN_DIR = join(__dirname, "..", "..");
 
+/** Puts the stores' layout scripts where a store looks for them: they ship with the room files. */
+export function shipSql(): void {
+  cpSync(join(PLUGIN_DIR, "room", "sql"), join(ROOM_HOME, "room", "sql"), { recursive: true });
+}
+
 /** A room home as setting the room up leaves it: the room files, the policy and the enabled seats. */
-export function installRoom(
-  providers: string[],
-  adjust: (policy: { watcher: { mode: string } }) => void = () => {},
-): void {
+export function installRoom(providers: string[]): void {
   cpSync(join(PLUGIN_DIR, "room"), join(ROOM_HOME, "room"), { recursive: true });
   const policy = JSON.parse(readFileSync(join(PLUGIN_DIR, "paseo", "policy.json"), "utf8"));
   policy.mail.port = 0; // any free port
-  adjust(policy);
   writeFileSync(join(ROOM_HOME, "policy.json"), JSON.stringify(policy));
-  writeFileSync(join(ROOM_HOME, "seats.json"), JSON.stringify({ providers }));
+  writeFileSync(join(ROOM_HOME, "seats.json"), JSON.stringify({ providers, source: PLUGIN_DIR }));
   // set up by the plugin version under test: a room from another version is asked to apply again first
   writeFileSync(
     join(ROOM_HOME, "setup.json"),
@@ -48,9 +33,17 @@ export function installRoom(
   );
 }
 
+/** The room's Host over a stand-in Paseo client. */
+export function hostOf(paseo: unknown): PaseoHost {
+  const host = new PaseoHost();
+  host.use(paseo as never);
+  return host;
+}
+
 export const MAIL_POLICY = {
   port: 0,
   holdFyiWhileRunning: true,
+  gatherReviews: true,
   midTurn: { claude: "hold", codex: "hold", pi: "hold", opencode: "hold" },
 } as const;
 

@@ -1,0 +1,49 @@
+{
+  "$comment": "The failure fork: what an agent's program reported when a turn failed. expect: limited (lifts with time), fatal (trying again changes nothing) or service (a passing fault).",
+  "cases": [
+    {
+      "id": "rpm",
+      "error": "Error: 429 Too Many Requests: rate limit reached for requests per minute. Retry after 32s.",
+      "expect": "limited"
+    },
+    { "id": "usage-reset", "error": "You've hit your usage limit. Your limit resets at 3:00 PM.", "expect": "limited" },
+    {
+      "id": "overloaded",
+      "error": "API Error: 529 {\"type\":\"error\",\"error\":{\"type\":\"overloaded_error\",\"message\":\"Overloaded\"}}",
+      "expect": "service"
+    },
+    { "id": "bad-key", "error": "Error: 401 Unauthorized: invalid x-api-key", "expect": "fatal" },
+    {
+      "id": "no-credit",
+      "error": "Your credit balance is too low to access the API. Please go to Plans & Billing to upgrade or purchase credits.",
+      "expect": "fatal"
+    },
+    { "id": "too-long", "error": "prompt is too long: 214312 tokens > 200000 maximum", "expect": "fatal" },
+    { "id": "reset", "error": "Error: socket hang up (ECONNRESET)", "expect": "service" },
+    { "id": "500", "error": "API Error: 500 Internal server error", "expect": "service" },
+    { "id": "timeout", "error": "Request timed out after 600000ms", "expect": "service" },
+    {
+      "id": "daily-quota",
+      "error": "Error: 429 You exceeded your current quota of requests per day for this model. The quota resets at 00:00 UTC.",
+      "expect": "limited"
+    },
+    { "id": "org-disabled", "error": "Error: 403 Forbidden: this organization has been disabled.", "expect": "fatal" },
+    { "id": "dns", "error": "getaddrinfo ENOTFOUND api.anthropic.com", "expect": "service" },
+    {
+      "id": "claude-limit",
+      "error": "Claude usage limit reached. Your limit will reset at 7pm (Europe/Berlin).",
+      "expect": "limited"
+    },
+    {
+      "id": "no-model",
+      "error": "Error: 404 The model 'gpt-6-sol-max' does not exist or you do not have access to it.",
+      "expect": "fatal"
+    },
+    { "id": "502", "error": "stream ended unexpectedly: 502 Bad Gateway", "expect": "service" },
+    {
+      "id": "tpm",
+      "error": "Error: 429 rate_limit_error: This request would exceed the rate limit for your organization of 400,000 input tokens per minute.",
+      "expect": "limited"
+    }
+  ]
+}

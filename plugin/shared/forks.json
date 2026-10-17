@@ -1,0 +1,173 @@
+{
+  "$comment": "Small choices about mail, work, seats and incidents put to the decision model: a label at sharpAt or more, the same with the labels listed either way round, is acted on, anything less keeps the room's own rule. deadlineMs: how long a call may take. Empty criteria: the labels come with the call. A label's words may be fields: what it covers, what it is not for, examples, for labels the model would otherwise mix up. escalate.signals: the subjects it reads. policy.jev.forks lists the forks that are on; a required fork is on whatever it lists, since the room needs it. label and about: how the Seatwork screen names a fork.",
+  "forks": {
+    "report": {
+      "label": "Reports with nothing new",
+      "about": "Spares the Owner a turn for a report that asks nothing.",
+      "version": 1,
+      "sharpAt": 0.9,
+      "deadlineMs": 5000,
+      "question": {
+        "type": "choice",
+        "instructions": "`report` is the last message a software agent wrote when its turn of work ended, with no protocol word on its first line; `woke_by` are the subjects of the mail that started that turn. The agent's owner reads it. Say what the report brings its owner.",
+        "criteria": {
+          "result": "a result, a finding, a finished piece of work or a change of plan the owner should act on",
+          "question": "a question, a request, a problem or a blocker that needs the owner",
+          "nothing_new": "an acknowledgement, a repeat, or progress with nothing for the owner to act on"
+        }
+      }
+    },
+    "wake": {
+      "label": "Mail that can wait",
+      "about": "Lets an idle seat sleep through mail that only informs.",
+      "version": 3,
+      "sharpAt": 0.8,
+      "deadlineMs": 5000,
+      "question": {
+        "type": "choice",
+        "instructions": "`subject` and `body` are a mail one software agent sent another that is idle. Does the mail ask its reader for something, or point to a problem in the reader's own work? Say what the mail asks of its reader.",
+        "criteria": {
+          "act": "to do, change, check, decide or answer something, or to fix a problem the mail finds in the reader's own work",
+          "nothing": "nothing: it only informs, and nothing in it is the reader's to fix or answer"
+        }
+      }
+    },
+    "failure": {
+      "label": "The kind of a failure",
+      "about": "Tells a limit that lifts with time from a refused key, after a turn fails.",
+      "version": 1,
+      "sharpAt": 0.9,
+      "deadlineMs": 5000,
+      "question": {
+        "type": "choice",
+        "instructions": "`error` is what an AI coding agent's program reported when a turn of its work failed. Say what kind of failure it is.",
+        "criteria": {
+          "limited": "a rate limit, a quota, or a usage or spending limit that lifts with time",
+          "fatal": "a refused account or key, billing, or a prompt too long for the model: trying again changes nothing",
+          "service": "a passing fault of the service or the network: trying again soon may work"
+        }
+      }
+    },
+    "answers": {
+      "label": "The question a reply answers",
+      "about": "Closes the open question a reply settles. Without it the oldest question is closed, right or not.",
+      "required": true,
+      "version": 1,
+      "sharpAt": 0.9,
+      "deadlineMs": 5000,
+      "question": {
+        "type": "choice",
+        "instructions": "`reply` is a mail that answers one of the questions in `asks`, sent by the agent the questions were asked of; it names none of them. Say which one it answers.",
+        "criteria": {}
+      }
+    },
+    "overlap": {
+      "label": "Tasks that touch the same code",
+      "about": "Reads write scopes said in words. Without it only paths are compared, and two seats may edit the same files.",
+      "required": true,
+      "version": 1,
+      "sharpAt": 0.75,
+      "deadlineMs": 8000,
+      "question": {
+        "type": "noul",
+        "instructions": "`pairs.{{id}}.a` and `pairs.{{id}}.b` are the write scopes of two tasks in one code base: what each task may change, said in words. Would doing both tasks at once change the same files?",
+        "criteria": {
+          "true": "they name the same files, module or feature",
+          "false": "they touch different parts of the code"
+        }
+      }
+    },
+    "tier": {
+      "label": "The model for a new seat",
+      "about": "Picks among a role's models for the work a seat starts on.",
+      "version": 1,
+      "sharpAt": 0.85,
+      "deadlineMs": 5000,
+      "question": {
+        "type": "choice",
+        "instructions": "`title`, `spec` and `brief` say what a software agent is about to be started on. The labels are the models it may run on, each with what it is for. Say which model fits the work.",
+        "criteria": {}
+      }
+    },
+    "gaps": {
+      "label": "Gaps in an issue",
+      "about": "Says what a new issue lacks before a seat builds it.",
+      "version": 1,
+      "sharpAt": 0.85,
+      "deadlineMs": 5000,
+      "question": {
+        "type": "choice",
+        "instructions": "`issue` is a piece of work a software agent has just taken: its title, description, acceptance criteria and write scope. Say what it lacks before the agent can build it.",
+        "criteria": {
+          "ready": "nothing: it says what is wanted and what the result must satisfy",
+          "unclear": "what is wanted can be read more than one way, or rests on facts the agent must find out first",
+          "no-acceptance": "what is wanted is clear, but nothing says how to tell it is done",
+          "needs-decision": "someone with authority must choose between ways before any work can start",
+          "too-big": "it holds several independent pieces of work, more than one agent should carry"
+        }
+      }
+    },
+    "escalate": {
+      "label": "Who answers a question",
+      "about": "Sends a question past the Owner when only a seat above can settle it.",
+      "version": 2,
+      "sharpAt": 0.9,
+      "deadlineMs": 5000,
+      "signals": ["BLOCKED", "QUESTION", "DECISION_NEEDED"],
+      "question": {
+        "type": "choice",
+        "instructions": "`message` is a mail a software agent (`sender`) sent its Owner (`owner`), the seat directly above it, because it is blocked, has a question or needs a decision. `above` is the seat above the Owner. A seat's title names its work. Say who must answer `message`.",
+        "criteria": {
+          "owner": {
+            "covers": "a choice or a fact inside the work `owner`'s title names",
+            "not_for": "money, licenses, access, the room's own tools, or work another team owns",
+            "examples": ["whether a helper belongs in utils or in its module", "which of two error messages to show"]
+          },
+          "above": {
+            "covers": "something outside the work `owner`'s title names: another team's code or data, two Owners at odds, a plan set above `owner`",
+            "not_for": "a choice inside `owner`'s own work",
+            "examples": ["a change to an API another team owns", "two teams editing one service at once"]
+          },
+          "room": {
+            "covers": "a tool of the room that runs the agents (seatwork_mail, seatwork_work and the other seatwork_ tools), or one of its leases, limits or settings, failing or stopping the sender",
+            "not_for": "a failing test, a bug, or a choice in the project's own code",
+            "examples": ["the room's search tool times out on every call", "the room stops every turn after a minute"]
+          },
+          "person": {
+            "covers": "money, a license or legal approval, an access or a secret no seat holds, or a change customers or users would notice, such as a breaking change to a public API",
+            "not_for": "a choice the seats may make themselves",
+            "examples": ["a paid plan for a mapping service", "an account on a vendor's site"]
+          }
+        }
+      }
+    },
+    "duplicate": {
+      "label": "Duplicate issues",
+      "about": "Finds an open issue that asks for the same work.",
+      "version": 2,
+      "sharpAt": 0.85,
+      "deadlineMs": 5000,
+      "question": {
+        "type": "choice",
+        "instructions": "`new` holds issues just made and `open` issues still open, each by id; the labels name the open ones. Say which open issue asks for the same work as the new issue {{id}}, or none.",
+        "criteria": {}
+      }
+    },
+    "incident": {
+      "label": "Incidents for HQ",
+      "about": "Says whether a log line wants a setting changed or a code fix.",
+      "version": 1,
+      "sharpAt": 0.85,
+      "deadlineMs": 8000,
+      "question": {
+        "type": "choice",
+        "instructions": "`incidents.{{id}}` is a line from the log of a program that runs software agents: `district` is the part of the program that wrote it, `seen` how often. Say what would answer it.",
+        "criteria": {
+          "tunable": "a number or switch in the program's settings: a limit too low, a keep too short, a wait too small, a threshold too tight",
+          "code": "a fault in the program's own code: an error it should not make, a case it does not handle, a state it cannot recover from",
+          "outside": "a service or machine outside the program is down, slow or refusing: the network, a model provider, the agent app, the disk"
+        }
+      }
+    }
+  }
+}

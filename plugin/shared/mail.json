@@ -1,0 +1,21 @@
+{
+  "$comment": "The mail store's vocabulary and limits. subjectChars: the longest subject kept. bodyChars: the longest body a seat may send; more goes in a file the mail names. searchWords: how many words of a search count. namedMost: how many entries `to`, `cc` or `files` may name. settled: the states of a delivery that is never delivered again. owner, team: the words `to` takes besides a seat.",
+  "subjectChars": 200,
+  "bodyChars": 100000,
+  "searchWords": 24,
+  "namedMost": 50,
+  "settled": ["delivered", "read", "bounced", "replaced", "withdrawn"],
+  "owner": ["owner", "parent", "human"],
+  "team": ["team"],
+  "$comment_wake": "Timed wake-ups. minMinutes: the soonest one may be set, as a pass runs each minute. maxDays: the farthest ahead. perSeat: how many a seat may keep waiting for itself, and how many all other seats together may keep waiting for it. perSetter: how many one other seat may keep waiting for a seat. sameWithinMinutes: a wake-up of the same setter, seat and note whose time is this close to one waiting is a repeat of it. noteChars: the longest note. perPass: how many that fell due one pass of one store reads. turnsPerPass: how many of those it sends, each a turn started; the rest go in the next pass.",
+  "wake": {
+    "minMinutes": 1,
+    "maxDays": 7,
+    "perSeat": 8,
+    "perSetter": 4,
+    "sameWithinMinutes": 2,
+    "noteChars": 300,
+    "perPass": 50,
+    "turnsPerPass": 6
+  }
+}

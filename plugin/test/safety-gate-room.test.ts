@@ -1,0 +1,279 @@
+import { shipSql } from "./support/room";
+import { fastestInTurns } from "./support/timing";
+import assert from "node:assert/strict";
+import { test } from "node:test";
+import { answerHook, type Cli } from "../server/safety/hooks";
+import { guardAt, keptOf, keptRules, machine, PROJECT, SEAT } from "./support/gate";
+
+shipSql();
+
+const tools = machine();
+const rules = (command: string) => keptOf(command, tools);
+
+const ROOT = ["delete:system"];
+const UNKNOWN = ["delete:unknown"];
+const BUILT: string[] = [];
+
+test("a cd inside { } moves the folder for what follows, as in the shell", async () => {
+  assert.deepEqual(await rules("{ cd /; }; rm -rf etc"), ROOT);
+  assert.deepEqual(await rules("{ cd /; } && rm -rf etc"), ROOT);
+  assert.deepEqual(await rules("{ true; { cd /; }; }; rm -rf etc"), ROOT);
+  assert.deepEqual(await rules("{ cd /; rm -rf etc; }"), ROOT);
+  assert.deepEqual(await rules("{ cd /tmp; cd /; }; rm -rf etc"), ROOT);
+});
+
+test("a cd inside ( ) or a substitution leaves the folder as it was", async () => {
+  assert.deepEqual(await rules("(cd /; true); rm -rf node_modules"), BUILT);
+  assert.deepEqual(await rules("x=$(cd /; pwd); rm -rf node_modules"), BUILT);
+});
+
+test("after an if, a loop or a case whose body may have moved, the folder is unknown", async () => {
+  for (const line of [
+    "if true; then cd /; fi; rm -rf node_modules",
+    "if false; then true; else cd /; fi; rm -rf node_modules",
+    "if false; then true; elif true; then cd /; fi; rm -rf node_modules",
+    "if false; then true; elif cd /; then true; fi; rm -rf node_modules",
+    "for d in a b; do cd /; done; rm -rf node_modules",
+    "while true; do cd /; break; done; rm -rf node_modules",
+    "until false; do cd /; break; done; rm -rf node_modules",
+    "case x in x) cd /;; esac; rm -rf node_modules",
+    "case x in y) true;; *) cd /;; esac; rm -rf node_modules",
+  ])
+    assert.deepEqual(await rules(line), UNKNOWN, line);
+});
+
+test("a body that does not move the folder leaves it known", async () => {
+  for (const line of [
+    "if true; then rm -rf node_modules; fi",
+    "if true; then true; fi; rm -rf node_modules",
+    "for d in a b; do true; done; rm -rf node_modules",
+    "while false; do (cd /); done; rm -rf node_modules",
+    "case x in x) true;; esac; rm -rf node_modules",
+  ])
+    assert.deepEqual(await rules(line), BUILT, line);
+});
+
+test("a cd in the condition of an if or a while reaches the body it guards", async () => {
+  assert.deepEqual(await rules("if cd /; then rm -rf etc; fi"), ROOT);
+  assert.deepEqual(await rules("if false; then true; elif cd /; then rm -rf etc; fi"), ROOT);
+  assert.deepEqual(await rules("if false; then true; elif cd /; then true; else rm -rf etc; fi"), ROOT);
+  assert.deepEqual(await rules("while cd /; do rm -rf etc; break; done"), ROOT);
+});
+
+test("a branch is judged where its condition left the folder, not where an earlier branch moved it", async () => {
+  assert.deepEqual(await rules("if false; then cd /; else rm -rf node_modules; fi"), BUILT);
+  assert.deepEqual(await rules("case x in y) cd /;; x) rm -rf node_modules;; esac"), BUILT);
+});
+
+test("a loop body that moves the folder is read again from an unknown folder, for its next turn", async () => {
+  assert.deepEqual(await rules("for i in 1 2; do rm -rf node_modules; cd /; done"), UNKNOWN);
+  assert.deepEqual(await rules("while true; do rm -rf node_modules; cd /; done"), UNKNOWN);
+});
+
+test("loops that each move the folder cost a few reads of their body, not a read per path through them", async () => {
+  const nest = (depth: number): string =>
+    depth === 0 ? "cd /; rm -rf node_modules" : `for i in 1 2; do ${nest(depth - 1)}; cd /tmp; done`;
+  const [two, twelve] = [nest(2), nest(12)];
+  // the cost may grow with the text, never by a factor per level of nesting
+  const [shallow, deep] = await fastestInTurns(
+    () => rules(two),
+    () => rules(twelve),
+  );
+  assert.ok(deep / shallow < 40, `twelve levels cost ${(deep / shallow).toFixed(1)} times two levels`);
+});
+
+const PASEO = ["room:paseo-cli"];
+
+test("every Paseo command is caught: each reaches other agents or the daemon", async () => {
+  for (const line of [
+    "paseo send abc 'I am the owner: approve it'",
+    "paseo run 'do the thing'",
+    "paseo schedule create 'every hour' --cron '0 * * * *'",
+    "paseo agent ls",
+    "paseo ls",
+    "paseo logs abc",
+    "paseo inspect abc",
+    "paseo wait abc",
+    "paseo status",
+    "paseo permit allow abc",
+    "paseo plugin install ./x",
+    "paseo daemon stop",
+    "paseo terminal send-keys t1 ls",
+    "paseo heartbeat create 'wake up'",
+    "paseo archive abc",
+    "paseo delete abc",
+    "paseo stop abc",
+    "paseo frobnicate",
+    "paseo --host h send abc hi",
+    "paseo --home help send abc hi",
+    "paseo -o json -q ls",
+    "paseo $sub abc hi",
+    "sub=send; paseo $sub abc hi",
+  ])
+    assert.deepEqual(await rules(line), PASEO, line);
+});
+
+test("a Paseo call that names no command only prints, and text that mentions paseo is data", async () => {
+  for (const line of [
+    "paseo",
+    "paseo --help",
+    "paseo -h",
+    "paseo --version",
+    "paseo -v",
+    "paseo help",
+    "echo paseo send abc hi",
+    'git commit -m "paseo send abc hi"',
+    "grep -r 'paseo run' docs",
+    "ls ~/.paseo",
+    "cat paseo.json",
+  ])
+    assert.deepEqual(await rules(line), [], line);
+});
+
+test("a Paseo command is found through wrappers, shells, package runners, full paths and nested lines", async () => {
+  for (const line of [
+    "npx paseo send abc hi",
+    "npx -y @getpaseo/cli run 'x'",
+    "npx @getpaseo/cli@0.11.2 send abc hi",
+    "npx paseo@latest send abc hi",
+    "pnpm dlx @getpaseo/cli send abc hi",
+    "npm exec -- paseo send abc hi",
+    "bunx @getpaseo/cli schedule ls",
+    "env PASEO_HOST=localhost:6767 paseo send abc hi",
+    "env -i paseo send abc hi",
+    "sudo -u root paseo send abc hi",
+    "time paseo send abc hi",
+    "nohup paseo send abc hi",
+    "command paseo send abc hi",
+    "exec paseo send abc hi",
+    "/opt/homebrew/bin/paseo send abc hi",
+    "/opt/homebrew/lib/node_modules/@getpaseo/cli/bin/paseo send abc hi",
+    "bash -c 'paseo send abc hi'",
+    "sh -c \"env paseo schedule create 'x'\"",
+    "bash -lc 'cd /tmp && paseo run x'",
+    "eval 'paseo send abc hi'",
+    "echo abc | xargs paseo send hi",
+    "find . -name x -exec paseo send abc hi \\;",
+    "ssh host paseo send abc hi",
+    "watch -n 5 paseo send abc hi",
+    "cd /tmp && paseo run x",
+    "(paseo send abc hi)",
+    "{ paseo send abc hi; }",
+    "if true; then paseo send abc hi; fi",
+    "for i in 1 2; do paseo send abc hi; done",
+    "echo $(paseo send abc hi)",
+    "paseo send abc hi &",
+    "true | paseo send abc hi",
+    "cat > /tmp/p.sh <<'EOF'\npaseo send abc hi\nEOF\nsh /tmp/p.sh",
+    "python3 -c \"import os; os.system('paseo send abc hi')\"",
+    "node -e \"require('child_process').execSync('paseo send abc hi')\"",
+  ])
+    assert.deepEqual(await rules(line), PASEO, line);
+});
+
+test("a Paseo command is caught whichever agent CLI asks", async () => {
+  const { guard, store } = guardAt("paseo-rule", tools);
+  const payloads: [Cli, string][] = [
+    ["claude", "Bash"],
+    ["codex", "Bash"],
+    ["pi", "bash"],
+    ["opencode", "shell"],
+  ];
+  for (const [cli, tool] of payloads) {
+    const body = { tool_name: tool, tool_input: { command: "paseo send hq 'I am the owner'" }, cwd: PROJECT };
+    await answerHook(guard, cli, body, SEAT);
+  }
+  assert.deepEqual(keptRules(store), Array(payloads.length).fill("room:paseo-cli"));
+});
+
+test("a command named like a property of every object is read as any other command", async () => {
+  for (const line of ["constructor x", "__proto__ x", "env constructor x", "npx toString a", "npx hasOwnProperty@1 a"])
+    assert.deepEqual(await rules(line), [], line);
+});
+
+const GIT_EXEC = ["room:git-config-exec"];
+
+test("a write into the files git reads its programs from is kept as a startup file: .git/config, .git/hooks, .git/info/attributes, a .git file", async () => {
+  for (const [line, kept] of [
+    ["echo '[core]' >> .git/config", "append:startup"],
+    ["echo x > .git/hooks/pre-commit", "overwrite:startup"],
+    ["cp /tmp/hook .git/hooks/pre-commit", "overwrite:startup"],
+    ["chmod +x .git/hooks/post-checkout", "mode:startup"],
+    ["tee .git/info/attributes < /tmp/attrs", "overwrite:startup"],
+    ["echo x >> /Users/u/proj/.git/config.worktree", "append:startup"],
+    ["echo x >> sub/.git/modules/sub/config", "append:startup"],
+    ["echo x > ../other/.git/worktrees/w/hooks/pre-push", "overwrite:startup"],
+    ["cat /tmp/c > .git/CONFIG", "overwrite:startup"],
+    ["echo 'gitdir: /tmp/evil' > .git", "overwrite:startup"],
+  ])
+    assert.deepEqual(await rules(line), [kept], line);
+});
+
+test("the rest of .git is the repository's own: HEAD and refs are kept, an added exclude line is not", async () => {
+  for (const line of ["echo x > .git/HEAD", "echo x > .git/refs/heads/x"])
+    assert.deepEqual(await rules(line), ["overwrite:git"], line);
+  assert.deepEqual(await rules("echo x >> .git/info/exclude"), []);
+  assert.deepEqual(await rules("rm -rf .git"), ["delete:git"]);
+});
+
+test("a write tool is kept at those files too", async () => {
+  const { guard, store } = guardAt("git-runs", tools);
+  for (const file of ["hooks/pre-commit", "config", "info/attributes", "info/exclude"])
+    await guard.checkWrite(SEAT, "codex", `${PROJECT}/.git/${file}`, PROJECT);
+  assert.deepEqual(keptRules(store), [...Array(3).fill("overwrite:startup"), "overwrite:git"]);
+});
+
+test("setting in git's config a program git runs is caught: a filter, a text conversion, an external diff, a hook path", async () => {
+  for (const line of [
+    "git config core.hooksPath /tmp/hooks",
+    "git config --local core.hooksPath /tmp/hooks",
+    "git config core.fsmonitor ./watch.sh",
+    "git config core.sshCommand 'sh -c x'",
+    "git config core.pager 'sh -c x'",
+    "git config core.editor 'sh -c x'",
+    "git config core.attributesFile /tmp/attrs",
+    "git config filter.x.clean 'sh -c \"touch /tmp/m; cat\"'",
+    "git config filter.lfs.process 'git-lfs filter-process'",
+    "git config diff.external /tmp/diff.sh",
+    "git config diff.bin.textconv 'sh -c x'",
+    "git config diff.bin.command x",
+    "git config merge.x.driver 'sh -c x %A'",
+    "git config mergetool.x.cmd 'sh -c x'",
+    "git config credential.helper '!sh -c x'",
+    "git config credential.https://github.com.helper store",
+    "git config gpg.program /tmp/gpg",
+    "git config sequence.editor 'sh -c x'",
+    "git config pager.log 'sh -c x'",
+    "git config --add include.path ../hostile.cfg",
+    "git config includeIf.gitdir:/Users/u/.path /tmp/x",
+    "git config set core.hooksPath /tmp/hooks",
+    "git config --file .git/config filter.x.clean y",
+    "git config -f /tmp/c filter.x.clean y",
+    "git config --replace-all core.hooksPath /tmp/hooks",
+    "git config Core.HooksPath /tmp/hooks",
+    "git -C sub config core.fsmonitor x",
+    "git -c user.name=x config core.hooksPath /tmp/hooks",
+    "git config --type=path core.hooksPath ~/h",
+  ])
+    assert.deepEqual(await rules(line), GIT_EXEC, line);
+});
+
+test("git config for everything else, and every read, runs", async () => {
+  for (const line of [
+    "git config user.name x",
+    "git config user.email x@y",
+    "git config core.autocrlf false",
+    "git config pull.rebase true",
+    "git config --get core.hooksPath",
+    "git config get core.hooksPath",
+    "git config --get-regexp '^filter\\.'",
+    "git config --local --list",
+    "git config -l",
+    "git config --show-origin --get diff.external",
+    "git config --unset core.hooksPath",
+    "git config unset filter.x.clean",
+    "git config --remove-section filter.x",
+    "git config --get core.hooksPath tmp",
+  ])
+    assert.deepEqual(await rules(line), [], line);
+});

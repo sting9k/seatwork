@@ -1,61 +1,27 @@
-import { hostOf, MAIL_POLICY, shipSql } from "./support/room";
+import { shipSql } from "./support/room";
 import forkCatalog from "../shared/forks.json";
 import { forksWith, modelSaying } from "./forks-support";
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { MailEngine, type SeatRecord } from "../server/coordination/engine";
-import type { LiveSeat } from "../server/host";
+import type { MailEngine } from "../server/coordination/engine";
 import type { Forks } from "../server/orchestration/forks";
-import type { RoomContext } from "../server/room/context";
 import { sendMail } from "../server/room/mail-tools";
+import { engineOver, IDLE, mailRoom, namesOf, openList, seatRecord } from "./support/mail";
 
 shipSql();
 
-const idle = { refresh: async () => {}, current: () => ({ status: "idle" }), send: async () => {} };
-const gone = { refresh: async () => null, current: () => null };
-
-let cases = 0;
-const names = () => {
-  cases += 1;
-  return Object.fromEntries(["hq", "boss", "lead", "peer"].map((role) => [role, `${role}-esc-${cases}`]));
-};
-
-const seat = (agentId: string, role: string, parent: string | null): SeatRecord => ({
-  agentId,
-  parentAgentId: parent,
-  role,
-  provider: `claude-${role}`,
-  title: `[${role}] ${agentId}`,
-});
-
 /** The room's seats hq > boss (a supervisor) > lead > peer, with `forks` deciding where a question goes; the roles in `away` are archived. */
 function roomOf(forks: Pick<Forks, "take">, away: string[] = []) {
-  const id = names();
-  const handles = Object.fromEntries(
-    Object.entries(id)
-      .filter(([role]) => !away.includes(role))
-      .map(([, one]) => [one, idle]),
-  );
-  const paseo = { agents: { ref: (agent: string) => handles[agent] ?? gone } };
-  const engine = new MailEngine(hostOf(paseo), MAIL_POLICY, () => {}, {});
-  engine.rememberSeat(seat(id.hq, "hq", null));
-  engine.rememberSeat(seat(id.boss, "supervisor", id.hq));
-  engine.rememberSeat(seat(id.lead, "lead", id.boss));
-  engine.rememberSeat(seat(id.peer, "peer", id.lead));
-  const room = {
-    engine,
-    host: {
-      live: async () =>
-        new Map(Object.keys(handles).map((one) => [one, { id: one, status: "idle", waiting: false } as LiveSeat])),
-    },
-    mailedUp: new Map(),
-    lastSignal: new Map(),
-    rounds: { rejected: () => 0, answered: () => 0 },
-    works: { existing: () => null },
-    taskKeys: { of: (one: string) => one },
-    forks,
-  } as unknown as RoomContext;
-  return { room, engine, id };
+  const id = namesOf("esc", "hq", "boss", "lead", "peer");
+  const open = Object.entries(id)
+    .filter(([role]) => !away.includes(role))
+    .map(([, one]) => one);
+  const engine = engineOver(Object.fromEntries(open.map((one) => [one, IDLE])));
+  engine.rememberSeat(seatRecord(id.hq, "hq"));
+  engine.rememberSeat(seatRecord(id.boss, "supervisor", id.hq));
+  engine.rememberSeat(seatRecord(id.lead, "lead", id.boss));
+  engine.rememberSeat(seatRecord(id.peer, "peer", id.lead));
+  return { room: mailRoom(engine, { host: { live: openList(open) }, forks }), engine, id };
 }
 
 const ask = {

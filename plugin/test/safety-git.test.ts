@@ -1,12 +1,13 @@
 import { ROOM_HOME, shipSql } from "./support/room";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { test } from "node:test";
 import { inspectHandIn } from "../server/safety/handin";
 import { SafetyStore } from "../server/safety/store";
 import { machineTools } from "../server/safety/system";
+import { git as gitIn, repoWith } from "./support/git";
 
 shipSql();
 
@@ -19,27 +20,11 @@ const attrSource = major > 2 || (major === 2 && minor >= 40);
 let repos = 0;
 /** A repository with `a.txt` committed, `.store` ignored and `ignore` besides, and the hand-in gate that reads it. */
 function committed(ignore = "") {
-  const dir = join(ROOM_HOME, `git-repo-${(repos += 1)}`);
-  rmSync(dir, { recursive: true, force: true });
-  mkdirSync(dir, { recursive: true });
-  const git = (...args: string[]) =>
-    execFileSync("git", args, {
-      cwd: dir,
-      encoding: "utf8",
-      env: {
-        ...process.env,
-        GIT_CONFIG_GLOBAL: "/dev/null",
-        GIT_AUTHOR_NAME: "t",
-        GIT_AUTHOR_EMAIL: "t@t",
-        GIT_COMMITTER_NAME: "t",
-        GIT_COMMITTER_EMAIL: "t@t",
-      },
-    }).trim();
-  git("init", "-q");
-  writeFileSync(join(dir, "a.txt"), "one\n");
-  writeFileSync(join(dir, ".gitignore"), `.store/\n${ignore}`);
-  git("add", "-A");
-  git("commit", "-qm", "start");
+  const dir = repoWith(join(ROOM_HOME, `git-repo-${(repos += 1)}`), {
+    "a.txt": "one\n",
+    ".gitignore": `.store/\n${ignore}`,
+  });
+  const git = (...args: string[]) => gitIn(dir, ...args);
   const head = git("rev-parse", "HEAD");
   const store = new SafetyStore(join(dir, ".store"), 1000);
   store.noteStart("seat", dir, head);

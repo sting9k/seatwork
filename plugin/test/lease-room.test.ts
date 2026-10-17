@@ -1,33 +1,14 @@
-import { installRoom } from "./support/room";
 import assert from "node:assert/strict";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
-import { after, before, mock, test } from "node:test";
-import contribute from "../index.server";
-import { fakeServer } from "./support/server";
-import { projectFolder, roomSeats } from "./room-seats";
+import { mock, test } from "node:test";
+import vocabulary from "../shared/work.json";
+import { projectFolder } from "./support/seats";
+import { pluginRoom } from "./support/plugin";
 
-const paseoSide = fakeServer();
-const { call } = paseoSide;
-const output = { log: console.log, error: console.error };
-let dispose: () => Promise<void>;
+const { agents, seat } = pluginRoom(["claude-lead", "claude-peer"], { timers: "clock" });
 
-before(() => {
-  installRoom(["claude-lead", "claude-peer"]);
-  console.log = console.error = () => {};
-  mock.timers.enable({ apis: ["setInterval"] });
-  dispose = contribute(paseoSide.server);
-});
-
-after(async () => {
-  mock.timers.reset();
-  await dispose();
-  Object.assign(console, output);
-});
-
-const { agents, seat } = roomSeats(call);
-
-test("a minute after a seat vanishes from the app's list, its claimed issue is open again and its Owner is told; a seat still listed keeps its claim", async () => {
+test("once a claim's lease runs out, the issue of a seat gone from the app's list is open again and its Owner is told; a seat still listed keeps its claim", async () => {
   const project = projectFolder("lease-project");
   const lead = await seat("lead-lease", "claude-lead", null, "[Lead] store", project);
   const gone = await seat("peer-lease-gone", "claude-peer", "lead-lease", "[Peer] schema", project);
@@ -39,15 +20,12 @@ test("a minute after a seat vanishes from the app's list, its claimed issue is o
   await here.call("seatwork_work", { do: "claim", id: second });
 
   // the time passes for both claims; the seat that is listed will be pushed on, the other will not
-  const db = new DatabaseSync(join(project, ".seatwork", ".work", "work.db"));
-  db.exec("PRAGMA busy_timeout = 2000");
-  db.exec("UPDATE issues SET lease_until = '2000-01-01T00:00:00.000Z'");
   delete agents["peer-lease-gone"];
-
-  mock.timers.tick(60_000);
+  for (let minute = 0; minute <= vocabulary.leaseMinutes; minute += 1) mock.timers.tick(60_000);
   for (let waited = 0; lead.inbox.length === 0 && waited < 200; waited += 1)
     await new Promise((resolve) => setTimeout(resolve, 10));
 
+  const db = new DatabaseSync(join(project, ".seatwork", ".work", "work.db"), { readOnly: true });
   const rows = db.prepare("SELECT id, status, assignee, lease_until FROM issues").all() as {
     id: string;
     status: string;

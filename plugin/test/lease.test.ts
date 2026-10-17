@@ -292,16 +292,15 @@ test("a pass reads the leases that are due by their index, so a store of 10,000 
   large.close();
 });
 
-/** Moves a lease into the past from outside the store, as the time passing would. */
-function lapse(root: string, id: string): void {
-  const db = new DatabaseSync(join(root, WORK_DIR, "work.db"));
-  db.exec("PRAGMA busy_timeout = 2000");
-  db.prepare("UPDATE issues SET lease_until = ? WHERE id = ?").run(LONG_AGO, id);
-  db.close();
+/** The room's stores on a clock that stands still until `lapse` moves it past a lease. */
+function storesOn(policy = RULES, log: (line: string) => void = () => {}, leased = isSeat) {
+  const clock = { at: START };
+  const stores = new WorkStores(policy, log, leased, () => new Date(clock.at));
+  return { stores, clock, lapse: () => void (clock.at += (LEASE + 1) * 60_000) };
 }
 
 test("the room's stores read the list of seats only when a lease is due, and act on it only when it could be read", async () => {
-  const stores = new WorkStores(RULES, () => {}, isSeat);
+  const { stores, lapse } = storesOn();
   const [one, two, none] = ["one", "two", "none"].map((name) => join(ROOM_HOME, `leases-${(made += 1)}-${name}`));
   const [a, b] = [one, two].map((root) => {
     const { store } = stores.of(root);
@@ -315,8 +314,7 @@ test("the room's stores read the list of seats only when a lease is due, and act
 
   assert.deepEqual(await stores.leases([one, two, none], reading(seating())), []);
   assert.equal(read, 0, "nothing is due: the app is not asked");
-  lapse(one, a);
-  lapse(two, b);
+  lapse();
   assert.deepEqual(await stores.leases([one, two, none], reading(null)), []);
   assert.equal(read, 1);
   assert.equal(stores.of(one).store.get(a).assignee, "peer-gone", "a list that could not be read leaves every lease");
@@ -336,14 +334,14 @@ test("the room's stores read the list of seats only when a lease is due, and act
 
 test("a store that cannot be written does not stop the others, and two passes do not overlap", async () => {
   const logs: string[] = [];
-  const stores = new WorkStores({ ...RULES, busyTimeoutMs: 50 }, (line) => logs.push(line), isSeat);
+  const { stores, lapse } = storesOn({ ...RULES, busyTimeoutMs: 50 }, (line) => logs.push(line));
   const [one, two] = ["one", "two"].map((name) => join(ROOM_HOME, `leases-${(made += 1)}-${name}`));
   const ids = [one, two].map((root) => {
     const id = stores.of(root).store.create({ title: "schema" }, "lead-1").id;
     stores.of(root).store.claim(id, "peer-gone");
-    lapse(root, id);
     return id;
   });
+  lapse();
   const other = new DatabaseSync(join(one, WORK_DIR, "work.db"));
   other.exec("BEGIN IMMEDIATE");
 
@@ -401,7 +399,11 @@ function roomOf(open: () => Map<string, Partial<LiveSeat>>, host?: PaseoHost) {
   seat("peer-c", "peer", "lead-2", "[Peer] routes");
   seat("peer-d", "peer", "lead-2", "[Peer] auth");
   for (const peer of ["peer-e", "peer-f", "peer-g"]) seat(peer, "peer", "lead-1", peer);
-  const works = new WorkStores(
+  const {
+    stores: works,
+    clock,
+    lapse,
+  } = storesOn(
     RULES,
     (line) => logs.push(line),
     (id) => engine.seat(id) !== undefined,
@@ -419,10 +421,10 @@ function roomOf(open: () => Map<string, Partial<LiveSeat>>, host?: PaseoHost) {
     const { store } = works.of(root);
     const id = store.create({ title }, "lead-1").id;
     store.claim(id, seatId);
-    lapse(root, id);
+    lapse();
     return id;
   };
-  return { room, root, works, sent, logs, hold, engine };
+  return { room, root, works, sent, logs, hold, engine, clock };
 }
 
 test("the minute's pass gives back the issues of a seat the app no longer lists, and its Owner gets one mail with what to do", async () => {
@@ -433,7 +435,7 @@ test("the minute's pass gives back the issues of a seat the app no longer lists,
     ["peer-b", { status: "running" }],
     ["peer-d", { status: "closed" }],
   ]);
-  const { room, root, works, sent, hold } = roomOf(() => listed);
+  const { room, root, works, sent, hold, clock } = roomOf(() => listed);
   const first = hold("peer-a", "schema");
   const second = hold("peer-a", "migrations");
   const here = hold("peer-b", "views");
@@ -448,7 +450,7 @@ test("the minute's pass gives back the issues of a seat the app no longer lists,
   }
   for (const id of [here, closed]) {
     assert.equal(store.get(id).status, "in_progress", "a seat at work or at rest keeps its issue");
-    assert.ok(Date.parse(store.get(id).lease_until!) > Date.now(), "and its lease is pushed forward");
+    assert.ok(Date.parse(store.get(id).lease_until!) > clock.at, "and its lease is pushed forward");
   }
   assert.deepEqual(sent.map((mail) => mail.to).sort(), ["lead-1", "lead-2"], "one mail to each seat's Owner");
   const lead = sent.find((mail) => mail.to === "lead-1")!.text;
@@ -474,21 +476,23 @@ test("a seat whose state the app cannot tell, or a list it cannot give, leaves e
     if (listed instanceof Error) throw listed;
     return listed;
   });
+  const { store } = works.of(root);
   const waiting = hold("peer-b", "views");
   const gone = hold("peer-a", "schema");
+  const lapsed = lease(store, waiting);
 
   await sweepLeases(room);
-  const { store } = works.of(root);
   assert.equal(store.get(waiting).assignee, "peer-b", "listed but still starting: neither renewed nor given back");
-  assert.equal(store.get(waiting).lease_until, LONG_AGO);
+  assert.equal(lease(store, waiting), lapsed);
   assert.equal(store.get(gone).assignee, null, "while the seat that is not listed is given back");
   sent.length = 0;
 
   const kept = hold("peer-a", "migrations");
+  const keptUntil = lease(store, kept);
   listed = new Error("Paseo has handed the room no client yet");
   await sweepLeases(room);
   assert.equal(store.get(kept).assignee, "peer-a");
-  assert.equal(store.get(kept).lease_until, LONG_AGO);
+  assert.equal(lease(store, kept), keptUntil);
   assert.deepEqual(sent, []);
   assert.match(logs.join("\n"), /seats could not be listed.*no client yet/);
   works.close();
@@ -526,7 +530,7 @@ test("a seat the app shows closed or failed for longer than the set time, or sti
     ["peer-f", { status: "initializing", state: "unknown", updatedAt: hoursAgo((LEASE + 5) / 60) }],
     ["peer-g", { status: "initializing", state: "unknown", updatedAt: hoursAgo(2 / 60) }],
   ]);
-  const { room, root, works, sent, hold } = roomOf(() => listed);
+  const { room, root, works, sent, hold, clock } = roomOf(() => listed);
   const closed = hold("peer-a", "schema");
   const failed = hold("peer-b", "views");
   const lately = hold("peer-c", "routes");
@@ -548,7 +552,7 @@ test("a seat the app shows closed or failed for longer than the set time, or sti
   assert.equal(store.get(opening).assignee, "peer-g", "a seat lately opening keeps its claim");
   for (const id of [lately, resting, undated]) {
     assert.equal(store.get(id).status, "in_progress", "kept");
-    assert.ok(Date.parse(lease(store, id)!) > Date.now(), "and its lease is pushed on");
+    assert.ok(Date.parse(lease(store, id)!) > clock.at, "and its lease is pushed on");
   }
   assert.equal(sent.length, 1, "its Owner is told once");
   assert.match(sent[0].text, /subject="LEASE: 3 claimed issues went back to the board"/);
@@ -563,13 +567,14 @@ test("a seat's state is the adapter's own reading of its status: the pass uses i
     ["peer-a", { status: "dozing", state: "idle" }],
     ["peer-b", { status: "idle", state: "unknown" }],
   ]);
-  const { room, root, works, hold } = roomOf(() => listed);
+  const { room, root, works, hold, clock } = roomOf(() => listed);
+  const { store } = works.of(root);
   const a = hold("peer-a", "one");
   const b = hold("peer-b", "two");
+  const lapsed = lease(store, b);
   await sweepLeases(room);
-  const { store } = works.of(root);
-  assert.ok(Date.parse(lease(store, a)!) > Date.now(), "known: pushed on");
-  assert.equal(lease(store, b), LONG_AGO, "not known: neither pushed on nor given back");
+  assert.ok(Date.parse(lease(store, a)!) > clock.at, "known: pushed on");
+  assert.equal(lease(store, b), lapsed, "not known: neither pushed on nor given back");
   assert.equal(store.get(b).assignee, "peer-b");
   works.close();
 });

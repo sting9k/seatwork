@@ -12,7 +12,7 @@ interface Passed {
   lapsed: Lapsed[];
 }
 
-/** One open work store per project, made on first use. */
+/** One open work store per project, made on first use, all on one clock. */
 export class WorkStores {
   private readonly open = new Map<string, WorkStore>();
   private sweeping = false;
@@ -21,6 +21,7 @@ export class WorkStores {
     private readonly policy: WorkPolicy,
     private readonly log: (message: string) => void,
     private readonly leased: (holder: string) => boolean = () => true,
+    private readonly now: () => Date = () => new Date(),
   ) {}
 
   /** A project's store and the rules in force there. */
@@ -28,7 +29,7 @@ export class WorkStores {
     const rules = projectPolicy(root, this.policy);
     let store = this.open.get(root);
     if (!store) {
-      store = new WorkStore(join(root, WORK_DIR), rules, undefined, this.leased);
+      store = new WorkStore(join(root, WORK_DIR), rules, this.now, this.leased);
       this.open.set(root, store);
       if (store.startedOver) this.log(`work: the store of ${root} was damaged; it was set aside and starts empty`);
     }

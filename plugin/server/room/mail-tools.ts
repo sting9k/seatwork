@@ -246,6 +246,23 @@ async function wakeUps(room: RoomContext, me: string, action: string, args: Reco
 const replay = (mail: Mail) =>
   JSON.stringify({ sent: mail.id, thread: mail.thread, replayed: true, state: mail.state });
 
+/** Who a mail goes to and is copied to, each a seat the routes let the sender write to and still there, with the state the app gives each; the thread it joins, and whether it goes to the team. */
+interface Recipients {
+  to: string[];
+  cc: string[];
+  team: boolean;
+  thread: string | undefined;
+  states: Map<string, string>;
+}
+
+/** A mail as a seat's arguments make it, checked, with the signal its subject opens with and whether it is a stop order or the next step of the seat doing the work. */
+interface Drafted {
+  draft: NewMail;
+  opening: string;
+  stops: boolean;
+  toWorker: boolean;
+}
+
 /** seatwork_mail: checks a seat's mail against the routes, posts it, returns a receipt; with `action` wake, wakes or unwake, a timed wake-up instead. */
 export async function sendMail(room: RoomContext, from: string, args: Record<string, unknown>): Promise<string> {
   const eng = room.engine;
@@ -259,19 +276,67 @@ export async function sendMail(room: RoomContext, from: string, args: Record<str
   }
   if (typeof args.body !== "string") throw new MailError("INVALID_ARGUMENT", "a mail gives a `body`: what it says");
   const seats = openSeats(room, from);
+  const where = await recipients(room, from, args, seats);
+  const { draft, opening, stops, toWorker } = drafted(eng, sender, args, where);
+  const again = stops ? null : eng.repeatOf(draft);
+  if (again) return replay(again);
+  const signal = subjectSignal(draft.subject);
+  const kept = keptUp(room, from, draft, signal);
+  if (kept) return kept;
+  // a question for the Owner may be one a seat above, or a person, must answer
+  const routed = await routeUp(room, from, draft, signal);
+  const outgoing = routed?.draft ?? draft;
+  const repeated = routed ? eng.repeatOf(outgoing) : null;
+  if (repeated) return replay(repeated);
+  const waits = await startsNoTurn(room, draft, where, toWorker);
+  const mail = await eng.post({
+    ...outgoing,
+    priority: stops ? "blocking" : waits ? "fyi" : draft.priority,
+    ...(where.team ? { kind: "team" as const } : {}),
+    ...(stops ? { why: "the seat above you stopped this work; the turn you were in was ended to bring you this" } : {}),
+    quiet: waits,
+    urgent: stops,
+  });
+  const sentTo = [outgoing.to]
+    .flat()
+    .map((seat) => (eng.isAncestor(seat, from) && !routed ? "owner" : `${eng.seat(seat)?.role ?? "seat"} ${seat}`));
+  const to = where.to[0];
+  if (stops) return stopBelow(room, mail, to, draft.subject, where.states.get(to), sentTo, await seats.live());
+  const held = mail.state === "queued" || mail.state === "sending";
+  const round = await roundNote(room, from, where.to, opening);
+  return JSON.stringify({
+    sent: mail.id,
+    to: sentTo,
+    thread: mail.thread,
+    state: waits ? "read with the recipient's next mail" : held ? "held until the recipient can take it" : "delivered",
+    ...(round || routed ? { note: [round, routed?.note].filter(Boolean).join("; ") } : {}),
+  });
+}
+
+/** The seats a mail goes to and is copied to, each one the routes let the sender write to and the app still has. */
+async function recipients(
+  room: RoomContext,
+  from: string,
+  args: Record<string, unknown>,
+  seats: OpenSeats,
+): Promise<Recipients> {
+  const eng = room.engine;
   const { to, viaReply, team, thread } = await addressed(room, from, args, seats);
-  const replyTo = replyOf(args);
   const cc = (await resolved(room, from, words("cc", args.cc), seats)).filter((seat) => !to.includes(seat));
-  for (const seat of [...to, ...cc]) {
+  const everyone = [...to, ...cc];
+  for (const seat of everyone) {
     const check = eng.canWrite(from, seat, viaReply);
     if (!check.ok) throw new MailError("ROUTE_REFUSED", check.reason, await seats.whom());
   }
-  const everyone = [...to, ...cc];
   const states = await Promise.all(everyone.map((seat) => eng.recipientStatus(seat)));
-  const found = new Map(everyone.map((seat, index) => [seat, states[index]]));
-  for (const seat of everyone)
-    if (found.get(seat) === "gone")
-      throw new MailError("RECIPIENT_GONE", `${seat} is archived or gone; nothing was sent`, await seats.whom());
+  const gone = everyone.find((_, index) => states[index] === "gone");
+  if (gone) throw new MailError("RECIPIENT_GONE", `${gone} is archived or gone; nothing was sent`, await seats.whom());
+  return { to, cc, team, thread, states: new Map(everyone.map((seat, index) => [seat, states[index]])) };
+}
+
+/** The mail a seat's arguments make: a subject that opens with a signal, a STOP that goes down to one seat, a body within its size, a team mail that asks nothing, and files that exist. */
+function drafted(eng: MailEngine, sender: SeatRecord, args: Record<string, unknown>, where: Recipients): Drafted {
+  const { to, cc, team, thread } = where;
   const subject = String(args.subject ?? "").trim() || "(no subject)";
   const opening = subjectOpening(subject);
   if (!opening)
@@ -282,7 +347,7 @@ export async function sendMail(room: RoomContext, from: string, args: Record<str
     );
   // a stop order ends running turns: it travels down only
   const stops = opening === "STOP";
-  if (stops && (to.length !== 1 || team || !eng.isAncestor(from, to[0])))
+  if (stops && (to.length !== 1 || team || !eng.isAncestor(sender.agentId, to[0])))
     throw new MailError(
       "STOP_GOES_DOWN",
       "STOP goes to one seat you launched or one below it; to your Owner, write what must stop and why under BLOCKED or QUESTION",
@@ -302,10 +367,10 @@ export async function sendMail(room: RoomContext, from: string, args: Record<str
     );
   const files = filesOf(sender, args);
   // a seat that owns none is the one doing the work: what comes down to it is its next step
-  const toWorker = to.length === 1 && eng.isAncestor(from, to[0]) && !owns(eng.seat(to[0])?.role);
-  const signal = subjectSignal(subject);
+  const toWorker = to.length === 1 && eng.isAncestor(sender.agentId, to[0]) && !owns(eng.seat(to[0])?.role);
+  const replyTo = replyOf(args);
   const draft: NewMail = {
-    from: { agentId: from, role: sender.role },
+    from: { agentId: sender.agentId, role: sender.role },
     to,
     cc,
     priority: priorityOf(subject, needs, toWorker),
@@ -317,65 +382,57 @@ export async function sendMail(room: RoomContext, from: string, args: Record<str
     ...(files.length > 0 ? { files } : {}),
     ...(typeof args.key === "string" && args.key.trim() ? { key: args.key.trim().slice(0, 255) } : {}),
   };
-  const again = stops ? null : eng.repeatOf(draft);
-  if (again) return replay(again);
-  if (signal && to.length === 1 && eng.parentOf(from) === to[0]) {
-    room.mailedUp.set(from, (room.mailedUp.get(from) ?? new Set()).add(signal));
-    // "my work is finished" is true only once the turn has ended: the report is kept until then
-    if (CLOSES_WORK.has(signal)) {
-      const kept = eng.keepReport({
-        ...draft,
-        cc: [],
-        needs: needs === "nothing" ? "reply" : needs,
-        why: `the seat ended its turn with ${signal}`,
-      });
-      return JSON.stringify({
-        kept: kept.id,
-        thread: kept.thread,
-        note: `your report to owner: it is delivered once, when your turn ends. End your turn with ${signal} on the first line; do not send it again.`,
-      });
-    }
-  }
-  // a question for the Owner may be one a seat above, or a person, must answer
-  const routed = await routeUp(room, from, draft, signal);
-  const outgoing = routed?.draft ?? draft;
-  const repeated = routed ? eng.repeatOf(outgoing) : null;
-  if (repeated) return replay(repeated);
-  // an ACK, or a receipt for work under review, asks nothing of anyone: neither starts a turn
-  const waits =
+  return { draft, opening, stops, toWorker };
+}
+
+/** A report to the seat's own parent is noted for its turn's end; one that says the work is finished is kept until then, and its receipt is the answer. */
+function keptUp(room: RoomContext, from: string, draft: NewMail, signal: string | undefined): string | null {
+  const eng = room.engine;
+  const to = [draft.to].flat();
+  if (!signal || to.length !== 1 || eng.parentOf(from) !== to[0]) return null;
+  room.mailedUp.set(from, (room.mailedUp.get(from) ?? new Set()).add(signal));
+  // "my work is finished" is true only once the turn has ended
+  if (!CLOSES_WORK.has(signal)) return null;
+  const kept = eng.keepReport({
+    ...draft,
+    cc: [],
+    needs: draft.needs === "nothing" ? "reply" : draft.needs,
+    why: `the seat ended its turn with ${signal}`,
+  });
+  return JSON.stringify({
+    kept: kept.id,
+    thread: kept.thread,
+    note: `your report to owner: it is delivered once, when your turn ends. End your turn with ${signal} on the first line; do not send it again.`,
+  });
+}
+
+/** Whether a mail asks nothing of anyone, so it starts no turn: a team mail, an ACK, a receipt for work under review, or what the decision model reads as informing only. */
+async function startsNoTurn(room: RoomContext, draft: NewMail, where: Recipients, toWorker: boolean): Promise<boolean> {
+  const { to, cc, team, states } = where;
+  const signal = subjectSignal(draft.subject);
+  return (
     team ||
     signal === "ACK" ||
-    (to.length === 1 && isReceipt(subject, needs, toWorker, room.lastSignal.get(to[0]))) ||
-    (await informsOnly(room, draft, found.get(to[0]), cc.length));
-  const mail = await eng.post({
-    ...outgoing,
-    priority: stops ? "blocking" : waits ? "fyi" : draft.priority,
-    ...(team ? { kind: "team" as const } : {}),
-    ...(stops ? { why: "the seat above you stopped this work; the turn you were in was ended to bring you this" } : {}),
-    quiet: waits,
-    urgent: stops,
-  });
-  const sentTo = [outgoing.to]
-    .flat()
-    .map((seat) => (eng.isAncestor(seat, from) && !routed ? "owner" : `${eng.seat(seat)?.role ?? "seat"} ${seat}`));
-  if (stops) return stopBelow(room, mail, to[0], subject, found.get(to[0]), sentTo, await seats.live());
-  const held = mail.state === "queued" || mail.state === "sending";
-  // the rounds of repair a task allows: the one past them is said where its Owner sends it
-  let round: string | undefined;
-  if (to.length === 1 && eng.parentOf(to[0]) === from) {
-    const task = taskOf(room, to[0]);
-    const before = room.rounds.rejected(task);
-    const count = room.rounds.answered(task, opening, to[0]);
-    if (count > before && count >= 3) round = note("pastLastRound", { rejected: count });
-    else if (count > before && count === 2) round = (await tierUpNote(room.host, eng.seat(to[0])!)) ?? undefined;
-  }
-  return JSON.stringify({
-    sent: mail.id,
-    to: sentTo,
-    thread: mail.thread,
-    state: waits ? "read with the recipient's next mail" : held ? "held until the recipient can take it" : "delivered",
-    ...(round || routed ? { note: [round, routed?.note].filter(Boolean).join("; ") } : {}),
-  });
+    (to.length === 1 && isReceipt(draft.subject, draft.needs, toWorker, room.lastSignal.get(to[0]))) ||
+    (await informsOnly(room, draft, states.get(to[0]), cc.length))
+  );
+}
+
+/** The rounds of repair a task allows, when a mail answers a seat the sender launched: the second offers a tier up, the one past the last is said where its Owner sends it. */
+async function roundNote(
+  room: RoomContext,
+  from: string,
+  to: readonly string[],
+  opening: string,
+): Promise<string | undefined> {
+  if (to.length !== 1 || room.engine.parentOf(to[0]) !== from) return undefined;
+  const task = taskOf(room, to[0]);
+  const before = room.rounds.rejected(task);
+  const count = room.rounds.answered(task, opening, to[0]);
+  if (count <= before) return undefined;
+  if (count >= 3) return note("pastLastRound", { rejected: count });
+  if (count === 2) return (await tierUpNote(room.host, room.engine.seat(to[0])!)) ?? undefined;
+  return undefined;
 }
 
 /** An FYI or a HANDOFF to one idle seat that the decision model is sure asks it nothing: it waits for that seat's next mail. */

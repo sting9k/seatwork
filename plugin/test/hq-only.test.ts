@@ -1,29 +1,12 @@
-import { installRoom, ROOM_HOME } from "./support/room";
+import { ROOM_HOME } from "./support/room";
 import assert from "node:assert/strict";
 import { join } from "node:path";
-import { after, before, test } from "node:test";
-import contribute from "../index.server";
-import { fakeServer } from "./support/server";
-import { roomSeats } from "./room-seats";
+import { test } from "node:test";
+import { pluginRoom } from "./support/plugin";
 
 /** A room set up with its own seat alone: every district must run with no worker seat. */
 
-const paseoSide = fakeServer();
-const { call } = paseoSide;
-const output = { log: console.log, error: console.error };
-const { context, seat } = roomSeats(call);
-let dispose: () => Promise<void>;
-
-before(() => {
-  installRoom(["claude-hq"]);
-  console.log = console.error = () => {};
-  dispose = contribute(paseoSide.server);
-});
-
-after(async () => {
-  await dispose();
-  Object.assign(console, output);
-});
+const { call, context, seat } = pluginRoom(["claude-hq"]);
 
 test("with its own seat alone the room starts, the seat runs it, records the room's decisions, and lists projects", async () => {
   const hq = await seat("hq-alone", "claude-hq", null, "HQ", join(ROOM_HOME, "hq-seatwork"));

@@ -12,14 +12,17 @@ import {
   writeFileSync,
 } from "node:fs";
 import { basename, dirname, join } from "node:path";
-import { after, before, test } from "node:test";
-import contribute from "../index.server";
-import { fakeServer } from "./support/server";
+import { test } from "node:test";
+import { pluginRoom } from "./support/plugin";
 
-const paseoSide = fakeServer();
-const { call } = paseoSide;
-const output = { log: console.log, error: console.error };
-let dispose: () => Promise<void>;
+const { call, names, restart, stop } = pluginRoom(null, {
+  before: () => {
+    // this machine keeps the room's mail server off the port the policy names
+    writeFileSync(join(ROOM_HOME, "setup.json"), JSON.stringify({ mailPort: 0 }));
+    // a folder Remove set aside long ago: the plugin deletes it as it starts, room or no room
+    mkdirSync(`${ROOM_HOME}.removed-20260101-000000`);
+  },
+});
 
 const daemon = {
   config: {
@@ -117,24 +120,9 @@ const stamp = () => JSON.parse(readFileSync(setupFile, "utf8")).version as strin
 /** The plugin as it starts after an update: the room's files are still an earlier version's. */
 async function updated(): Promise<void> {
   writeFileSync(setupFile, JSON.stringify({ ...JSON.parse(readFileSync(setupFile, "utf8")), version: "0.1.0" }));
-  await dispose();
-  dispose = contribute(paseoSide.server);
+  await restart();
   daemon.patches.length = 0;
 }
-
-before(() => {
-  // this machine keeps the room's mail server off the port the policy names
-  writeFileSync(join(ROOM_HOME, "setup.json"), JSON.stringify({ mailPort: 0 }));
-  console.log = console.error = () => {};
-  // a folder Remove set aside long ago: the plugin deletes it as it starts, room or no room
-  mkdirSync(`${ROOM_HOME}.removed-20260101-000000`);
-  dispose = contribute(paseoSide.server);
-});
-
-after(async () => {
-  await dispose();
-  Object.assign(console, output);
-});
 
 test("a daemon that only downloaded the plugin: nothing is created, a room seat is refused, the app is told there is no room", async () => {
   assert.equal(existsSync(`${ROOM_HOME}.removed-20260101-000000`), false);
@@ -188,7 +176,7 @@ test("Init sets the room up and starts it without a reload; Apply restarts it on
   await init({ models: { seats: { lead: { provider: "pi-lead/m", thinking: "high" } } }, chime: true });
   assert.ok("pi-lead" in daemon.config.providers);
   assert.equal(policy().owner.chime, true);
-  const hooks = paseoSide.names();
+  const hooks = names();
   assert.deepEqual(hooks.filter((name) => name === "on agent.turn_ended").length, 1);
   assert.deepEqual(daemon.workspaces.length, 1, "the HQ project was opened a second time");
 
@@ -249,7 +237,7 @@ test("an update of the plugin finishes itself: the next seat starts on this vers
   assert.ok("claude-peer" in daemon.config.providers && "pi-lead" in daemon.config.providers);
   assert.ok(!daemon.patches.some((patch) => "browserTools" in patch), "a switch of the daemon was set with no click");
   assert.ok(!(await state()).checks.some((check) => check.id === "version"));
-  assert.deepEqual(paseoSide.names().filter((name) => name === "on agent.turn_ended").length, 1);
+  assert.deepEqual(names().filter((name) => name === "on agent.turn_ended").length, 1);
 
   // with the app open its own question is enough: no seat has to be created first
   await updated();
@@ -303,8 +291,7 @@ test("a seat opened by an earlier version of the plugin is named on the screen u
   const opened = (agentId: string, version?: string) =>
     `${JSON.stringify({ agentId, parentAgentId: null, provider: "claude-lead", role: "lead", title: null, version })}\n`;
   appendFileSync(join(ROOM_HOME, "registry-log.jsonl"), opened("before-1", "0.1.0") + opened("before-2"));
-  await dispose();
-  dispose = contribute(paseoSide.server);
+  await restart();
   const created = { id: "now-1", provider: "claude-peer", cwd: PROJECT, title: "[Peer] new", parentAgentId: null };
   await call("on agent.created", { agent: created }, context);
   daemon.open = [
@@ -441,7 +428,7 @@ test("removing the room waits for its seats, then takes it out of Paseo and out 
   );
   await assert.rejects(createPeer(), /no room is set up on this daemon/);
   assert.deepEqual(
-    paseoSide.names().filter((name) => name.startsWith("on ")),
+    names().filter((name) => name.startsWith("on ")),
     [],
   );
 });
@@ -456,8 +443,7 @@ test("removing the plugin takes the room out of Paseo by itself, and puts its ho
   await init();
   assert.ok("claude-hq" in daemon.config.providers);
   daemon.config.plugins = {};
-  await dispose();
-  dispose = async () => {};
+  await stop();
 
   assert.deepEqual([Object.keys(daemon.config.providers), daemon.config.agentProfiles], [["my-own"], [{ id: "mine" }]]);
   assert.deepEqual(

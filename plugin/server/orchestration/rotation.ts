@@ -2,7 +2,7 @@ import { writeFileSync } from "node:fs";
 import { readJson, writeJson } from "../persisted";
 import { join } from "node:path";
 import type { MailEngine, SeatRecord } from "../coordination/engine";
-import type { Host } from "../host";
+import type { Host, LiveSeat } from "../host";
 import { keptOutOfGit } from "../sqlite";
 import { fromTemplate } from "./brief";
 import type { SeatFit } from "./models";
@@ -231,20 +231,10 @@ export async function rotate(
   const { host, engine } = deps;
   const now = await host.seat(old.agentId);
   if (!now) throw new Error("the app no longer has the seat");
-  // the old seat's model while the table still lists it, else the table's
-  const fit = deps.fit(now.cwd, old.role, old.provider, now.model ?? undefined);
-  if (!fit.ok)
-    throw new Error(`the table in force lists for ${old.role} only ${fit.listed.join(", ")}, none on ${old.provider}`);
-  const same = fit.model ?? now.model ?? "";
-  const higher =
-    rejected >= RAISE_AFTER_REJECTIONS && same ? deps.up(now.cwd, old.role, old.provider, same) : undefined;
-  const model = higher ?? same;
-  const thinking = fit.model ? (fit.thinking === "default" ? undefined : fit.thinking) : now.thinking;
+  const { model, thinking, raised } = successorModel(deps, old, now, rejected);
   const received = await host.prompts(old.agentId, 4000);
   const stamp = new Date().toISOString().slice(0, 16).replace(/[T:]/g, "-");
-  const file = join(keptOutOfGit(join(now.cwd, ROOM_FOLDER, "handoffs")), `${stamp}_${old.agentId.slice(0, 8)}.md`);
-  const exact = handoff.verbatim.text ? `\n${exactBlock(handoff.verbatim).join("\n")}` : "";
-  writeFileSync(file, `# Handoff of ${old.title ?? old.agentId}\n\n${handoff.text}\n${exact}`);
+  const file = writeHandoff(now.cwd, old, handoff, stamp);
   const owner = engine.parentOf(old.agentId);
   const title = nextTitle(old.title);
   const id = await host.create({
@@ -268,9 +258,40 @@ export async function rotate(
   // the successor must be a seat of the room before anything is handed to it
   engine.rememberSeat({ ...old, agentId: id, parentAgentId: owner, title, version: deps.version });
   // the successor stands: failures are said; the old seat goes only when nothing is left on it
+  const left = await moveOver(deps, old, id);
+  if (left.length === 0) await host.archive(old.agentId).catch(failedTo(left, "the old seat's archive"));
+  return { id, file, model: model || "its provider's default", raised, left };
+}
+
+/** The successor's model and thinking: the old seat's while the table in force still lists it, else the table's, a tier up for a task sent back twice where the table lists one. */
+function successorModel(
+  deps: RotateDeps,
+  old: SeatRecord,
+  now: LiveSeat,
+  rejected: number,
+): { model: string; thinking: string | null | undefined; raised: boolean } {
+  const fit = deps.fit(now.cwd, old.role, old.provider, now.model ?? undefined);
+  if (!fit.ok)
+    throw new Error(`the table in force lists for ${old.role} only ${fit.listed.join(", ")}, none on ${old.provider}`);
+  const same = fit.model ?? now.model ?? "";
+  const higher =
+    rejected >= RAISE_AFTER_REJECTIONS && same ? deps.up(now.cwd, old.role, old.provider, same) : undefined;
+  const thinking = fit.model ? (fit.thinking === "default" ? undefined : fit.thinking) : now.thinking;
+  return { model: higher ?? same, thinking, raised: higher !== undefined };
+}
+
+/** Writes the handoff where the successor and the seats above read it, with its exact strings fenced; its path. */
+function writeHandoff(cwd: string, old: SeatRecord, handoff: Handoff, stamp: string): string {
+  const file = join(keptOutOfGit(join(cwd, ROOM_FOLDER, "handoffs")), `${stamp}_${old.agentId.slice(0, 8)}.md`);
+  const exact = handoff.verbatim.text ? `\n${exactBlock(handoff.verbatim).join("\n")}` : "";
+  writeFileSync(file, `# Handoff of ${old.title ?? old.agentId}\n\n${handoff.text}\n${exact}`);
+  return file;
+}
+
+/** Moves what hangs on the old seat to its successor `id`: the seats it launched, each told, its held mail, and what the room keeps for it; what did not move, said. */
+async function moveOver(deps: RotateDeps, old: SeatRecord, id: string): Promise<string[]> {
+  const { engine } = deps;
   const left: string[] = [];
-  const failed = (what: string) => (error: unknown) =>
-    left.push(`${what} (${error instanceof Error ? error.message : String(error)})`);
   for (const child of engine.allSeats().filter((seat) => engine.parentOf(seat.agentId) === old.agentId)) {
     const adopted = await engine
       .adopt(id, child.agentId)
@@ -287,14 +308,17 @@ export async function rotate(
         needs: "nothing",
         why: "the seat that launched you was rotated out",
       })
-      .catch(failed(`the notice to ${child.role} ${child.title ?? child.agentId}`));
+      .catch(failedTo(left, `the notice to ${child.role} ${child.title ?? child.agentId}`));
   }
-  await engine.move(old.agentId, id).catch(failed("its held mail"));
+  await engine.move(old.agentId, id).catch(failedTo(left, "its held mail"));
   try {
     deps.handOver(old.agentId, id);
   } catch (error) {
-    failed("its claimed work")(error);
+    failedTo(left, "its claimed work")(error);
   }
-  if (left.length === 0) await host.archive(old.agentId).catch(failed("the old seat's archive"));
-  return { id, file, model: model || "its provider's default", raised: higher !== undefined, left };
+  return left;
 }
+
+/** Notes in `left` what failed to move, with its error. */
+const failedTo = (left: string[], what: string) => (error: unknown) =>
+  void left.push(`${what} (${error instanceof Error ? error.message : String(error)})`);

@@ -1,19 +1,12 @@
 import { ROOM_HOME, shipSql } from "./support/room";
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
 import { mkdirSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { test } from "node:test";
 import { traits } from "../shared/workflow";
 import { briefFields, quotedCommands, scopeGlobs } from "../server/orchestration/brief";
 import type { TurnEvent } from "../server/host";
-import {
-  Council,
-  type CouncilPolicy,
-  type Decider,
-  type HandInDiff,
-  type TurnInput,
-} from "../server/safety/council/council";
+import { Council, type CouncilPolicy, type HandInDiff, type TurnInput } from "../server/safety/council/council";
 import { counted, hiFor, levelFor, type Label } from "../server/safety/council/calibration";
 import { lowerBound, upperBound } from "../server/bounds";
 import {
@@ -26,7 +19,9 @@ import {
   unborneIn,
 } from "../server/safety/council/facts";
 import { snapshot } from "../server/safety/council/git";
-import { SafetyStore, type ReadingRow } from "../server/safety/store";
+import type { ReadingRow } from "../server/safety/store";
+import { standIn, storeIn } from "./support/council";
+import { repoWith } from "./support/git";
 
 shipSql();
 
@@ -230,23 +225,11 @@ function councilWith(
   diffOf?: (seat: string) => HandInDiff | null,
   jurors?: CouncilPolicy["jurors"],
 ) {
-  const dir = join(ROOM_HOME, `council-${(homes += 1)}`);
-  rmSync(dir, { recursive: true, force: true });
-  const store = new SafetyStore(dir, 2000);
-  const asked: Record<string, unknown>[] = [];
-  const decider: Decider | null = answer
-    ? {
-        why: () => null,
-        decide: async (_caller, state, questions) => {
-          asked.push(state);
-          const id = Object.keys(questions)[0];
-          return { answers: { [id]: { type: "noul", noul: answer(state) } }, asks: { [id]: asked.length } };
-        },
-      }
-    : null;
+  const store = storeIn(`council-${(homes += 1)}`);
+  const { decider, asked } = standIn(answer ?? (() => 0));
   const council = new Council({
     store: () => store,
-    decider,
+    decider: answer ? decider : null,
     policy: () => ({ mode: "on", keepDays: 90, tickSeconds: 60, levels, ...(jurors ? { jurors } : {}) }),
     log: () => {},
     snapshot,
@@ -644,15 +627,7 @@ test("an Owner's run of the work's own check labels the claim it answers; the la
 });
 
 test("scope sees every file a turn changed, a shell's edits included, by git", async () => {
-  const repo = join(ROOM_HOME, "council-repo");
-  rmSync(repo, { recursive: true, force: true });
-  mkdirSync(join(repo, "src"), { recursive: true });
-  const run = (...args: string[]) => execFileSync("git", ["-C", repo, ...args], { stdio: "ignore" });
-  run("init", "-q");
-  writeFileSync(join(repo, "src", "duration.js"), "1\n");
-  writeFileSync(join(repo, "README.md"), "x\n");
-  run("add", "-A");
-  run("-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qm", "base");
+  const repo = repoWith(join(ROOM_HOME, "council-repo"), { "src/duration.js": "1\n", "README.md": "x\n" });
 
   const { council } = councilWith({ scope: 1 });
   const seat = { id: "peer-git", role: "peer", traits: traits("peer"), root: repo, task: "peer-git" };

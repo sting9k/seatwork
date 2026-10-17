@@ -1,42 +1,30 @@
-import { installRoom, PROJECT, ROOM_HOME } from "./support/room";
+import { PROJECT } from "./support/room";
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
-import { readFileSync, realpathSync, writeFileSync } from "node:fs";
+import { realpathSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { after, before, mock, test } from "node:test";
-import contribute from "../index.server";
+import { mock, test } from "node:test";
 import { roomProjectDir } from "../server/orchestration/registry";
-import { fakeServer } from "./support/server";
-import { projectFolder, roomSeats } from "./room-seats";
-
-const paseoSide = fakeServer();
-const { call } = paseoSide;
-const output = { log: console.log, error: console.error };
-let dispose: () => Promise<void>;
+import { git } from "./support/git";
+import { editPolicy, pluginRoom } from "./support/plugin";
+import { projectFolder } from "./support/seats";
 
 const project = (name: string) => realpathSync(projectFolder(name));
 const capped = project("budget-capped");
 const free = project("budget-free");
 
-before(() => {
-  installRoom(["claude-hq", "claude-lead", "claude-peer"]);
-  const file = join(ROOM_HOME, "policy.json");
-  const policy = JSON.parse(readFileSync(file, "utf8"));
+const {
+  call,
+  agents,
+  context,
+  seat: open,
+  turnEnds,
+} = pluginRoom(["claude-hq", "claude-lead", "claude-peer"], {
   // the owner's spelling of the folder, not the registry's: a trailing slash, the path before its links
-  policy.budget = { projects: { [`${join(PROJECT, "..", "budget-capped")}/`]: { dailyUsd: 1 } } };
-  writeFileSync(file, JSON.stringify(policy));
-  console.log = console.error = () => {};
-  mock.timers.enable({ apis: ["setInterval"] });
-  dispose = contribute(paseoSide.server);
+  policy: (policy) =>
+    void (policy.budget = { projects: { [`${join(PROJECT, "..", "budget-capped")}/`]: { dailyUsd: 1 } } }),
+  timers: "minute",
 });
 
-after(async () => {
-  mock.timers.reset();
-  await dispose();
-  Object.assign(console, output);
-});
-
-const { agents, context, seat: open, turnEnds } = roomSeats(call);
 const costs: Record<string, number> = {};
 
 /** A seat the room knows, whose turns the app reports with what they cost so far. */
@@ -96,32 +84,18 @@ test("a project past its cap takes no mail and no new seat; the room's operator 
 });
 
 test("a worktree of a held project outside its folder starts no seat; a cap the owner raises in the policy file lifts the hold with no restart", async () => {
-  const git = (...args: string[]) =>
-    execFileSync("git", ["-C", capped, ...args], {
-      env: {
-        ...process.env,
-        GIT_AUTHOR_NAME: "t",
-        GIT_AUTHOR_EMAIL: "t@t",
-        GIT_COMMITTER_NAME: "t",
-        GIT_COMMITTER_EMAIL: "t@t",
-      },
-      stdio: "ignore",
-    });
-  git("init", "-q");
+  git(capped, "init", "-q");
   writeFileSync(join(capped, "README.md"), "capped\n");
-  git("add", "README.md");
-  git("commit", "-qm", "base");
+  git(capped, "add", "README.md");
+  git(capped, "commit", "-qm", "base");
   const outside = join(PROJECT, "..", "budget-capped-wt");
-  git("worktree", "add", "-q", outside);
+  git(capped, "worktree", "add", "-q", outside);
   await assert.rejects(
     async () => call("before agent.create", createRequest("claude-peer", outside), context),
     /claude-peer refused: .*budget-capped is held by the room's budget/,
   );
 
-  const file = join(ROOM_HOME, "policy.json");
-  const policy = JSON.parse(readFileSync(file, "utf8"));
-  policy.budget.projects = { [capped]: { dailyUsd: 10 } };
-  writeFileSync(file, JSON.stringify(policy));
+  editPolicy((policy) => void (policy.budget.projects = { [capped]: { dailyUsd: 10 } }));
   mock.timers.tick(60_000);
   await settle();
   await call("before agent.create", createRequest("claude-peer", capped), context);

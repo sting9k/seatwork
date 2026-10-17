@@ -1,34 +1,15 @@
-import { installRoom, ROOM_HOME } from "./support/room";
+import { ROOM_HOME } from "./support/room";
 import assert from "node:assert/strict";
-import { appendFileSync, readFileSync, writeFileSync } from "node:fs";
+import { appendFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
-import { after, before, test } from "node:test";
-import contribute from "../index.server";
-import { fakeServer } from "./support/server";
-import { parserRepo, roomSeats, type TestSeat } from "./room-seats";
+import { test } from "node:test";
+import { parserRepo, type TestSeat } from "./support/seats";
+import { pluginRoom } from "./support/plugin";
 
-const paseoSide = fakeServer();
-const { call } = paseoSide;
-const output = { log: console.log, error: console.error };
-let dispose: () => Promise<void>;
-
-before(() => {
-  installRoom(["claude-supervisor", "claude-lead", "claude-peer"]);
-  const file = join(ROOM_HOME, "policy.json");
-  const policy = JSON.parse(readFileSync(file, "utf8"));
-  policy.safety.council.levels = { report: 1 };
-  writeFileSync(file, JSON.stringify(policy));
-  console.log = console.error = () => {};
-  dispose = contribute(paseoSide.server);
+const { call, context, seat, turnEnds, rotatable } = pluginRoom(["claude-supervisor", "claude-lead", "claude-peer"], {
+  policy: (policy) => void (policy.safety.council.levels = { report: 1 }),
 });
-
-after(async () => {
-  await dispose();
-  Object.assign(console, output);
-});
-
-const { context, seat, turnEnds, rotatable } = roomSeats(call);
 
 const MESSAGE = "CANDIDATE: parser fixed\nthe bug was at src/parse.js:400";
 const COUNCIL = /\[council\] report #\d+: cites &quot;src\/parse\.js:400&quot;, the file has 9 lines/;

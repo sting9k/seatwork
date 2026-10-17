@@ -3,16 +3,13 @@ import assert from "node:assert/strict";
 import { mock, test } from "node:test";
 import { chime } from "../client/chime";
 import { watchWaiting } from "../client/waiting";
-import contribute from "../index.server";
 import { MailEngine } from "../server/coordination/engine";
-import { fakeServer } from "./support/server";
+import { withPlugin } from "./support/plugin";
 
 shipSql();
 
 test("mail that was held when the daemon stopped moves once the app is open, before any agent runs", async () => {
   installRoom(["claude-lead"]);
-  const output = { log: console.log, error: console.error };
-  console.log = console.error = () => {};
   // before the restart the Lead was in a turn, so its mail waited on disk
   const busy = { agents: { ref: () => ({ refresh: async () => {}, current: () => ({ status: "running" }) }) } };
   const held = await new MailEngine(hostOf(busy), MAIL_POLICY, () => {}).post({
@@ -37,16 +34,11 @@ test("mail that was held when the daemon stopped moves once the app is open, bef
       }),
     },
   };
-  const paseoSide = fakeServer();
-  const dispose = contribute(paseoSide.server);
-  try {
-    await paseoSide.call("rpc room.waiting", {}, { paseo });
+  await withPlugin(async ({ call }) => {
+    await call("rpc room.waiting", {}, { paseo });
     for (let waited = 0; inbox.length === 0 && waited < 100; waited += 1)
       await new Promise((resolve) => setTimeout(resolve, 10));
-  } finally {
-    await dispose();
-    Object.assign(console, output);
-  }
+  });
 
   assert.equal(inbox.length, 1);
   assert.ok(inbox[0].includes(`<mail id="${held.id}"`));

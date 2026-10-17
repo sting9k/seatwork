@@ -4,6 +4,7 @@ import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, wr
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
+import { GIT_ENV } from "./support/git";
 
 // a git first on the path that logs each call, set before the module under test reads the environment
 const REAL = execFileSync("which", ["git"], { encoding: "utf8" }).trim();
@@ -25,20 +26,8 @@ let repos = 0;
 function repo() {
   const dir = join(base, `repo-${(repos += 1)}`);
   mkdirSync(dir);
-  const git = (...args: string[]) =>
-    execFileSync(REAL, args, {
-      cwd: dir,
-      encoding: "utf8",
-      env: {
-        ...process.env,
-        GIT_CONFIG_GLOBAL: "/dev/null",
-        GIT_CONFIG_NOSYSTEM: "1",
-        GIT_AUTHOR_NAME: "t",
-        GIT_AUTHOR_EMAIL: "t@t",
-        GIT_COMMITTER_NAME: "t",
-        GIT_COMMITTER_EMAIL: "t@t",
-      },
-    }).trim();
+  // the real git, past the one that logs: making the repository is no call of the room's
+  const git = (...args: string[]) => execFileSync(REAL, args, { cwd: dir, encoding: "utf8", env: GIT_ENV }).trim();
   git("init", "-q");
   writeFileSync(join(dir, "a.txt"), "one\n");
   writeFileSync(join(dir, "b.bin"), "one\n");

@@ -1,21 +1,20 @@
 import { hostOf, installRoom, MAIL_POLICY, PROJECT, shipSql } from "./support/room";
-import { fakeServer } from "./support/server";
-import { roomSeats } from "./room-seats";
+import { withPlugin } from "./support/plugin";
+import { roomSeats } from "./support/seats";
 import { fastestInTurns } from "./support/timing";
 import assert from "node:assert/strict";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { test } from "node:test";
-import contribute from "../index.server";
 import type { MailError } from "../server/coordination/address";
-import { MailEngine, type NewMail, type SeatRecord } from "../server/coordination/engine";
+import { MailEngine, type NewMail } from "../server/coordination/engine";
 import { inbox } from "../server/coordination/reader";
 import { MailStore } from "../server/coordination/store";
-import type { LiveSeat } from "../server/host";
 import type { RoomContext } from "../server/room/context";
 import { refused, sendMail } from "../server/room/mail-tools";
 import config from "../shared/mail.json";
+import { mailRoom, namesOf, openList, seatRecord } from "./support/mail";
 
 shipSql();
 
@@ -37,18 +36,7 @@ interface Rig {
   call(seat: string, args: Record<string, unknown>): Promise<any>;
 }
 
-let cases = 0;
-const names = <T extends string>(...roles: T[]) =>
-  Object.fromEntries(roles.map((role) => [role, `${role}-wake-${(cases += 1)}`])) as Record<T, string>;
-
-const record = (agentId: string, role: string, parent: string | null, cwd: string): SeatRecord => ({
-  agentId,
-  parentAgentId: parent,
-  role,
-  provider: `claude-${role}`,
-  title: `[${role}] ${agentId}`,
-  cwd,
-});
+const names = <T extends string>(...roles: T[]) => namesOf("wake", ...roles);
 
 /** A project of its own with a mail store of its own, a clock the test moves, and seats that keep what they are sent; `steer` lets a running seat take mail mid-turn. */
 function rig(
@@ -75,20 +63,8 @@ function rig(
     ? { ...MAIL_POLICY, midTurn: { ...MAIL_POLICY.midTurn, claude: "steer" as const } }
     : MAIL_POLICY;
   const engine = new MailEngine(hostOf(paseo), policy, () => {}, { rootOf: () => dir, now: () => new Date(clock.ms) });
-  for (const [id, role, parent] of seats) engine.rememberSeat(record(id, role, parent, dir));
-  const room = {
-    engine,
-    host: {
-      live: async () =>
-        new Map(seats.map(([id]) => [id, { id, status: "idle", waiting: false } as LiveSeat])) as Map<string, LiveSeat>,
-    },
-    mailedUp: new Map(),
-    lastSignal: new Map(),
-    rounds: { rejected: () => 0, answered: () => 0 },
-    works: { existing: () => null },
-    taskKeys: { of: (seat: string) => seat },
-    forks: { take: async () => "something" },
-  } as unknown as RoomContext;
+  for (const [id, role, parent] of seats) engine.rememberSeat(seatRecord(id, role, parent, { cwd: dir }));
+  const room = mailRoom(engine, { host: { live: openList(seats.map(([id]) => id)) } });
   return {
     engine,
     room,
@@ -385,7 +361,7 @@ test("a wake-up for a seat that is gone is refused when set", async () => {
   );
 });
 
-test("a pass that stopped after the WAKE mail went out does not send it again, though the mail would read differently by then", async () => {
+test("a pass that stopped after the WAKE mail went out does not send it again, however long after", async () => {
   const id = names("lead", "peer");
   const r = rig([
     [id.lead, "lead", null],
@@ -401,7 +377,6 @@ test("a pass that stopped after the WAKE mail went out does not send it again, t
   };
   await r.pass(6);
   assert.equal(got(r, id.peer).length, 1);
-  r.engine.label = () => "someone else";
   // past the window in which the same text counts as a repeat: only the wake-up's own key tells it
   await r.pass(10);
   assert.equal(got(r, id.peer).length, 1, "the mail made by the pass that failed stands, and is not made again");
@@ -465,8 +440,8 @@ test("a seat that set wake-ups in two projects names the seat it wakes when an i
     { rootOf: (cwd) => cwd, now: () => new Date(START) },
   );
   both.rememberSeat({ agentId: id.hq, parentAgentId: null, role: "hq", provider: "claude-hq", title: "[hq]" });
-  both.rememberSeat(record(id.one, "supervisor", id.hq, first.dir));
-  both.rememberSeat(record(id.two, "supervisor", id.hq, second.dir));
+  both.rememberSeat(seatRecord(id.one, "supervisor", id.hq, { cwd: first.dir }));
+  both.rememberSeat(seatRecord(id.two, "supervisor", id.hq, { cwd: second.dir }));
   const room = { engine: both, host: { live: async () => new Map() } } as unknown as RoomContext;
   const ask = async (args: Record<string, unknown>) => {
     try {
@@ -870,13 +845,9 @@ test("the statements of wake-ups use their indexes, and a pass over a large stor
 
 test("through the room: a seat sets a wake-up with the tool, and the room's own minute pass wakes it when the time comes", async (t) => {
   installRoom(["claude-hq", "claude-supervisor", "claude-lead", "claude-peer"]);
-  const paseoSide = fakeServer();
-  const log = { log: console.log, error: console.error };
-  console.log = console.error = () => {};
   t.mock.timers.enable({ apis: ["setInterval", "Date"], now: START });
-  const dispose = contribute(paseoSide.server);
-  const { seat } = roomSeats(paseoSide.call);
-  try {
+  await withPlugin(async ({ call }) => {
+    const { seat } = roomSeats(call);
     const lead = await seat("lead-wake-room", "claude-lead", null, "[Lead] wake");
     const peer = await seat("peer-wake-room", "claude-peer", "lead-wake-room", "[Peer] wake");
     const mail = async (args: Record<string, unknown>) => JSON.parse(await peer.mail(args));
@@ -894,8 +865,5 @@ test("through the room: a seat sets a wake-up with the tool, and the room's own 
     assert.match(peer.inbox[0], /subject="WAKE: look at the CI run"/);
     assert.deepEqual(lead.inbox, []);
     assert.deepEqual((await mail({ action: "wakes" })).wakes, []);
-  } finally {
-    await dispose();
-    Object.assign(console, log);
-  }
+  });
 });

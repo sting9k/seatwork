@@ -1,21 +1,12 @@
-import { ROOM_HOME, shipSql } from "./support/room";
+import { shipSql } from "./support/room";
 import { fastestInTurns } from "./support/timing";
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { join } from "node:path";
-import { evaluate, type Tools } from "../server/safety/gate/evaluate";
 import { namesDriver } from "../server/safety/gate/rules/attributes";
-import type { Place } from "../server/safety/gate/types";
-import { Guard } from "../server/safety/guard";
 import { answerHook, type Cli } from "../server/safety/hooks";
-import { SafetyStore } from "../server/safety/store";
-import { keptRules } from "./support/kept";
+import { guardAt as guardOver, keptOf, keptRules, machine, PLACE, PROJECT, SEAT } from "./support/gate";
 
 shipSql();
-
-const HOME = "/Users/u";
-const PROJECT = "/Users/u/proj";
-const place: Place = { home: HOME, project: PROJECT, tmp: null, start: PROJECT, guard: null, roomFolder: ".seatwork" };
 
 const CLI = "/opt/homebrew/lib/node_modules/@getpaseo/cli/bin/paseo";
 const LINKS: Record<string, string> = {
@@ -29,28 +20,14 @@ const LINKS: Record<string, string> = {
   "/Users/u/proj/cred": "/Users/u/.paseo/local-credential",
 };
 
-const tools: Tools = {
-  ignored: async (paths) => new Set(paths.filter((path) => /\/node_modules(\/|$)/.test(path))),
-  alias: async () => null,
-  external: async () => false,
-  stat: () => ({ exists: false, link: false, dir: false }),
-  real: (path) => LINKS[path] ?? null,
-  changed: async () => null,
-};
+const tools = machine({ real: (path) => LINKS[path] ?? null });
 
 /** What the guard keeps of a command, as `effect:rule`, sorted, with `doubt` for each thing the gate could not read. */
-async function rules(command: string, cwd: string | null = PROJECT): Promise<string[]> {
-  const found = await evaluate(command, cwd, place, { budgetMs: 1000, maxBytes: 65536 }, tools);
-  return [...found.findings.map((f) => `${f.effect}:${f.rule}`), ...found.doubts.map(() => "doubt")].sort();
-}
+const rules = (command: string, cwd: string | null = PROJECT) => keptOf(command, tools, { cwd });
 
-/** A guard over these tools with a store of its own. */
-function guardAt(name: string, secrets: readonly string[] = []): { guard: Guard; store: SafetyStore } {
-  const store = new SafetyStore(join(ROOM_HOME, name), 1000);
-  const at = { ...place, guard: { paths: [], except: [], secrets } };
-  return { guard: new Guard({ store: () => store, policy: () => ({}), tools: () => tools, place: () => at }), store };
-}
-const seat = { id: "peer", role: "peer", project: PROJECT, tmp: null, start: PROJECT };
+/** A guard over these tools with a store of its own, and the room's secrets. */
+const guardAt = (name: string, secrets: readonly string[] = []) =>
+  guardOver(name, tools, { ...PLACE, guard: { paths: [], except: [], secrets } });
 
 const PASEO = ["room:paseo-cli"];
 
@@ -270,8 +247,8 @@ test("the guard reads .gitattributes by the rule of the hand-in check", async ()
     [false, false, false, false, false, false, false, true, true, true, false],
   );
   const { guard, store } = guardAt("holes-attributes");
-  await guard.check(seat, "claude", "echo '* filter=x' >> .gitattributes", PROJECT);
-  await guard.check(seat, "claude", "echo '*.png binary' >> .gitattributes", PROJECT);
+  await guard.check(SEAT, "claude", "echo '* filter=x' >> .gitattributes", PROJECT);
+  await guard.check(SEAT, "claude", "echo '*.png binary' >> .gitattributes", PROJECT);
   assert.deepEqual(keptRules(store), ["room:attributes-driver"]);
 });
 
@@ -510,8 +487,8 @@ test("a write or a read through a link that leads into a protected place is a wr
   ])
     assert.deepEqual(await rules(line), [], line);
   const { guard, store } = guardAt("holes-links");
-  await guard.checkWrite(seat, "claude", `${PROJECT}/cfg/gh/hosts.yml`, PROJECT);
-  await guard.checkWrite(seat, "claude", `${PROJECT}/out/a.txt`, PROJECT);
+  await guard.checkWrite(SEAT, "claude", `${PROJECT}/cfg/gh/hosts.yml`, PROJECT);
+  await guard.checkWrite(SEAT, "claude", `${PROJECT}/out/a.txt`, PROJECT);
   assert.deepEqual(keptRules(store), ["overwrite:credentials"]);
 });
 
@@ -573,7 +550,7 @@ test("a file tool that adds a filter or driver to .gitattributes is kept, by the
   ];
   for (const [cli, body, caught] of payloads) {
     const before = keptRules(store).length;
-    await answerHook(guard, cli, { ...body, cwd: PROJECT }, seat);
+    await answerHook(guard, cli, { ...body, cwd: PROJECT }, SEAT);
     assert.equal(keptRules(store).length > before, caught, `${cli} ${JSON.stringify(body)}`);
   }
 });
@@ -593,11 +570,11 @@ test("a reading tool meets the daemon's and the room's secrets as a shell does, 
   ];
   for (const [cli, body, caught] of payloads) {
     const before = keptRules(store).length;
-    await answerHook(guard, cli, { ...body, cwd: PROJECT }, seat);
+    await answerHook(guard, cli, { ...body, cwd: PROJECT }, SEAT);
     assert.equal(keptRules(store).length > before, caught, `${cli} ${JSON.stringify(body)}`);
   }
-  const later = await answerHook(guard, "codex", { tool_name: "request_user_input_async", tool_input: {} }, seat);
+  const later = await answerHook(guard, "codex", { tool_name: "request_user_input_async", tool_input: {} }, SEAT);
   assert.match(later.text, /"deny"/);
-  const asked = await answerHook(guard, "codex", { tool_name: "request_user_input", tool_input: {} }, seat);
+  const asked = await answerHook(guard, "codex", { tool_name: "request_user_input", tool_input: {} }, SEAT);
   assert.match(asked.text, /seatwork_mail/);
 });

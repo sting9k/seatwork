@@ -6,26 +6,22 @@ import { test } from "node:test";
 import { evaluate, type Tools } from "../server/safety/gate/evaluate";
 import type { Place } from "../server/safety/gate/types";
 import { claudeRc, machineTools } from "../server/safety/system";
+import { HOME, keptOf, machine, PLACE, PROJECT } from "./support/gate";
 
-const HOME = "/Users/u";
-const PROJECT = "/Users/u/proj";
 const place: Place = {
-  home: HOME,
-  project: PROJECT,
+  ...PLACE,
   tmp: "/Users/u/.config/room/tmp/abcd1234",
-  start: PROJECT,
   guard: {
     paths: ["/Users/u/.config/room"],
     except: ["/Users/u/.config/room/tmp"],
     secrets: ["/Users/u/.paseo/local-credential", "/Users/u/.paseo/config.json", "/Users/u/.config/room/jev/"],
   },
-  roomFolder: ".seatwork",
   daemon: "127.0.0.1:6767",
 };
 
 /** The machine as the gate sees it here: dist and node_modules are ignored, two git aliases exist. */
-function tools(over: Partial<Tools> = {}): Tools {
-  return {
+const tools = (over: Partial<Tools> = {}): Tools =>
+  machine({
     ignored: async (paths) => new Set(paths.filter((path) => /\/(dist|node_modules)(\/|$)/.test(path))),
     alias: async (name) => ({ st: "status", nuke: "!git reset --hard && git clean -fdx" })[name] ?? null,
     external: async (name) => name === "absorb",
@@ -34,19 +30,14 @@ function tools(over: Partial<Tools> = {}): Tools {
       link: false,
       dir: path === HOME || path === `${HOME}/.ssh`,
     }),
-    real: () => null,
-    changed: async () => null,
     ...over,
-  };
-}
+  });
 
 const config = () => ({ budgetMs: 1000, maxBytes: 64 * 1024 });
 
 /** What the guard keeps of a command, as `effect:rule`, and `doubt` for what the gate could not read. */
-async function hits(command: string, over: Partial<Tools> = {}, cwd = PROJECT): Promise<string[]> {
-  const found = await evaluate(command, cwd, place, config(), tools(over));
-  return [...found.findings.map((f) => `${f.effect}:${f.rule}`), ...found.doubts.map(() => "doubt")].sort();
-}
+const hits = (command: string, over: Partial<Tools> = {}, cwd = PROJECT) =>
+  keptOf(command, tools(over), { cwd, place });
 
 const cases: [string, string[]][] = [
   // git: read the way git reads its own options, kept by what it loses and in whose repository

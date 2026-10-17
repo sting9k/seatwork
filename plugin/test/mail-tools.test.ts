@@ -1,58 +1,33 @@
-import { deferred, hostOf, MAIL_POLICY, shipSql } from "./support/room";
+import { deferred, shipSql } from "./support/room";
 import assert from "node:assert/strict";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { test } from "node:test";
 import type { MailError } from "../server/coordination/address";
-import { MailEngine, type EngineOptions, type SeatRecord } from "../server/coordination/engine";
+import type { EngineOptions, MailEngine } from "../server/coordination/engine";
 import { Collector, KEEP_LOG_DAYS } from "../server/gc";
-import type { LiveSeat } from "../server/host";
-import type { RoomContext } from "../server/room/context";
 import { sendMail } from "../server/room/mail-tools";
 import mailConfig from "../shared/mail.json";
+import { engineOver, IDLE, mailRoom, namesOf, openList, seatRecord } from "./support/mail";
 
 shipSql();
 
-const idle = { refresh: async () => {}, current: () => ({ status: "idle" }), send: async () => {} };
-
-let cases = 0;
 /** Seat ids no other test of this file uses: every engine here shares the room home's store. */
-function names<T extends string>(...roles: T[]): Record<T, string> {
-  cases += 1;
-  return Object.fromEntries(roles.map((role) => [role, `${role}-tools-${cases}`])) as Record<T, string>;
-}
+const names = <T extends string>(...roles: T[]) => namesOf("tools", ...roles);
 
-const seat = (agentId: string, role: string, parent: string | null, title = `[${role}] ${agentId}`): SeatRecord => ({
-  agentId,
-  parentAgentId: parent,
-  role,
-  provider: `claude-${role}`,
-  title,
-});
+const seat = (agentId: string, role: string, parent: string | null, title?: string) =>
+  seatRecord(agentId, role, parent, title ? { title } : {});
 
 /** A room with a mail engine over these agents; its host lists `open` (or fails) and counts the lists it gives. */
 function roomOf(handles: Record<string, object>, open: string[] | Error, options: EngineOptions = {}) {
-  const missing = { refresh: async () => null, current: () => null };
-  const paseo = { agents: { ref: (id: string) => handles[id] ?? missing } };
-  const engine = new MailEngine(hostOf(paseo), MAIL_POLICY, () => {}, options);
+  const engine = engineOver(handles, options);
   const asked = { live: 0 };
-  const room = {
-    engine,
-    host: {
-      live: async () => {
-        asked.live += 1;
-        if (open instanceof Error) throw open;
-        return new Map(open.map((id) => [id, { id, status: "idle", waiting: false } as LiveSeat]));
-      },
-    },
-    mailedUp: new Map(),
-    lastSignal: new Map(),
-    rounds: { rejected: () => 0, answered: () => 0 },
-    works: { existing: () => null },
-    taskKeys: { of: (seat: string) => seat },
-    forks: { take: async () => "something" },
-  } as unknown as RoomContext;
-  return { room, engine, asked };
+  const live = async () => {
+    asked.live += 1;
+    if (open instanceof Error) throw open;
+    return openList(open)();
+  };
+  return { room: mailRoom(engine, { host: { live } }), engine, asked };
 }
 
 /** A supervisor, its lead and the lead's peers, the seats all registered. */
@@ -72,7 +47,7 @@ const label = (agentId: string, role: string, title: string) => `${agentId} (${r
 
 test("a mail by a whole id, to the owner, as an answer, or without `to` from a seat with none under it needs no list of open seats", async () => {
   const id = names("lead", "peer", "boss");
-  const { room, engine, asked } = roomOf({ [id.lead]: idle, [id.peer]: idle, [id.boss]: idle }, [
+  const { room, engine, asked } = roomOf({ [id.lead]: IDLE, [id.peer]: IDLE, [id.boss]: IDLE }, [
     id.boss,
     id.lead,
     id.peer,
@@ -89,7 +64,7 @@ test("a mail by a whole id, to the owner, as an answer, or without `to` from a s
 
 test("a mail that gives no body is refused before anything is sent; only the wake-up actions go without one", async () => {
   const id = names("lead", "peer", "boss");
-  const { room, engine, asked } = roomOf({ [id.lead]: idle, [id.peer]: idle, [id.boss]: idle }, [id.lead, id.peer]);
+  const { room, engine, asked } = roomOf({ [id.lead]: IDLE, [id.peer]: IDLE, [id.boss]: IDLE }, [id.lead, id.peer]);
   tree(engine, id, [[id.peer]]);
   const bodiless = await refusedWith(sendMail(room, id.lead, { subject: "INSTRUCTION: start", to: id.peer }));
   assert.equal(bodiless.code, "INVALID_ARGUMENT");
@@ -100,8 +75,8 @@ test("a mail that gives no body is refused before anything is sent; only the wak
 
 test("the receipt says whether the mail was delivered or is held until the recipient can take it", async () => {
   const id = names("lead", "busy", "boss");
-  const running = { ...idle, current: () => ({ status: "running" }) };
-  const { room, engine } = roomOf({ [id.lead]: idle, [id.busy]: running }, [id.busy]);
+  const running = { ...IDLE, current: () => ({ status: "running" }) };
+  const { room, engine } = roomOf({ [id.lead]: IDLE, [id.busy]: running }, [id.busy]);
   tree(engine, id, [[id.busy]]);
   const sent = JSON.parse(await sendMail(room, id.lead, { ...note, to: id.busy }));
   assert.equal(sent.state, "held until the recipient can take it");
@@ -110,7 +85,7 @@ test("the receipt says whether the mail was delivered or is held until the recip
 
 test("the open seats are asked for once when a title, the team or an empty `to` must be resolved", async () => {
   const id = names("lead", "peer", "old", "boss");
-  const { room, engine, asked } = roomOf({ [id.boss]: idle, [id.lead]: idle, [id.peer]: idle, [id.old]: idle }, [
+  const { room, engine, asked } = roomOf({ [id.boss]: IDLE, [id.lead]: IDLE, [id.peer]: IDLE, [id.old]: IDLE }, [
     id.boss,
     id.lead,
     id.peer,
@@ -146,7 +121,7 @@ test("the open seats are asked for once when a title, the team or an empty `to` 
 
 test("a refusal that lists the seats one may write to asks the app for the open ones, once", async () => {
   const id = names("lead", "peer", "other", "gone", "boss");
-  const { room, engine, asked } = roomOf({ [id.boss]: idle, [id.lead]: idle, [id.peer]: idle, [id.other]: idle }, [
+  const { room, engine, asked } = roomOf({ [id.boss]: IDLE, [id.lead]: IDLE, [id.peer]: IDLE, [id.other]: IDLE }, [
     id.boss,
     id.lead,
     id.peer,
@@ -184,7 +159,7 @@ test("a refusal that lists the seats one may write to asks the app for the open 
 test("a mail to a seat the room has forgotten is refused with a message, as one to a seat the app lost is", async () => {
   const id = names("lead", "peer", "boss");
   let at = Date.now();
-  const { room, engine } = roomOf({ [id.boss]: idle, [id.lead]: idle }, [id.boss, id.lead], {
+  const { room, engine } = roomOf({ [id.boss]: IDLE, [id.lead]: IDLE }, [id.boss, id.lead], {
     now: () => new Date(at),
   });
   tree(engine, id, [[id.peer, "[Peer] indexer"]]);
@@ -211,7 +186,7 @@ test("a mail to a seat the room has forgotten is refused with a message, as one 
 test("when the app lists no seats, or cannot, every seat of the room counts as open", async () => {
   const id = names("lead", "peer", "boss");
   for (const open of [[], new Error("the daemon is busy")]) {
-    const { room, engine } = roomOf({ [id.lead]: idle, [id.peer]: idle }, open);
+    const { room, engine } = roomOf({ [id.lead]: IDLE, [id.peer]: IDLE }, open);
     tree(engine, id, [[id.peer, "[Peer] indexer"]]);
     const sent = JSON.parse(await sendMail(room, id.lead, { ...note, to: "indexer" }));
     assert.equal(sent.state, "delivered");
@@ -223,13 +198,13 @@ test("the recipients' statuses are read together, not one after another", async 
   const gate = deferred();
   const started: string[] = [];
   const slow = (agent: string) => ({
-    ...idle,
+    ...IDLE,
     refresh: async () => {
       started.push(agent);
       if (started.length <= 3) await gate.promise;
     },
   });
-  const { room, engine } = roomOf({ [id.lead]: idle, [id.a]: slow(id.a), [id.b]: slow(id.b), [id.c]: slow(id.c) }, [
+  const { room, engine } = roomOf({ [id.lead]: IDLE, [id.a]: slow(id.a), [id.b]: slow(id.b), [id.c]: slow(id.c) }, [
     id.a,
     id.b,
     id.c,
@@ -247,9 +222,9 @@ test("a stop order asks the app which seats under the stopped one are running, o
   const heard: string[] = [];
   const { room, engine, asked } = roomOf(
     {
-      [id.lead]: idle,
-      [id.peer]: idle,
-      [id.deep]: { ...idle, send: async (text: string) => void heard.push(text) },
+      [id.lead]: IDLE,
+      [id.peer]: IDLE,
+      [id.deep]: { ...IDLE, send: async (text: string) => void heard.push(text) },
     },
     [id.peer, id.deep],
   );
@@ -264,7 +239,7 @@ test("a stop order asks the app which seats under the stopped one are running, o
 
 test("a mail names at most the number of entries shared/mail.json allows in `to`, `cc` and `files`", async () => {
   const id = names("lead", "peer", "boss");
-  const { room, engine } = roomOf({ [id.lead]: idle, [id.peer]: idle }, [id.peer]);
+  const { room, engine } = roomOf({ [id.lead]: IDLE, [id.peer]: IDLE }, [id.peer]);
   tree(engine, id, [[id.peer]]);
   const most = (mailConfig as { namedMost: number }).namedMost;
   for (const field of ["to", "cc", "files"] as const) {
@@ -277,7 +252,7 @@ test("a mail names at most the number of entries shared/mail.json allows in `to`
 
 test("a mail posted again for the same id puts its entry in its thread's file once", async () => {
   const id = names("lead", "peer", "boss");
-  const { engine } = roomOf({ [id.lead]: idle, [id.peer]: idle }, [id.peer]);
+  const { engine } = roomOf({ [id.lead]: IDLE, [id.peer]: IDLE }, [id.peer]);
   tree(engine, id, [[id.peer]]);
   const kept = engine.keepReport({
     from: { agentId: id.peer, role: "peer" },

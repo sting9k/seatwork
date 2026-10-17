@@ -1,21 +1,16 @@
 import { ROOM_HOME, shipSql } from "./support/room";
-import assert from "node:assert/strict";
-import { rmSync } from "node:fs";
+import { copyFileSync, mkdirSync, readdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
+import assert from "node:assert/strict";
 import { test } from "node:test";
 import councilCatalog from "../shared/safety/council.json";
 import { traits } from "../shared/workflow";
 import type { TurnEvent } from "../server/host";
 import { Chair, type ChairDeps } from "../server/safety/council/chair";
-import {
-  Council,
-  type CouncilPolicy,
-  type Decider,
-  type HandInDiff,
-  type TurnInput,
-} from "../server/safety/council/council";
+import { Council, type CouncilPolicy, type HandInDiff, type TurnInput } from "../server/safety/council/council";
 import { gamingOf, type GamingFile } from "../server/safety/council/gaming";
 import { SafetyStore } from "../server/safety/store";
+import { earnLevel3, found, standIn, storeIn } from "./support/council";
 
 shipSql();
 
@@ -116,10 +111,8 @@ function harness(
     diff?: HandInDiff | null;
   } = {},
 ) {
-  const dir = join(ROOM_HOME, `chair-${(homes += 1)}`);
-  rmSync(dir, { recursive: true, force: true });
   const clock = { at: Date.parse("2026-03-01T10:00:00Z") };
-  const store = new SafetyStore(dir, 2000, () => new Date(clock.at));
+  const store = storeIn(`chair-${(homes += 1)}`, () => new Date(clock.at));
   const mails = ((sent.length = 0), sent);
   const logs: string[] = [];
   const room: ChairDeps = {
@@ -131,33 +124,12 @@ function harness(
   };
   const chair = new Chair({ room, store: () => store, minutes: () => undefined, log: (line) => logs.push(line) });
   const answers = [...(options.answers ?? [])];
-  const asked: Record<string, unknown>[] = [];
-  const phrased: string[] = [];
   // as the decision district does, the same question about the same state is answered from memory
-  const memory = new Map<string, Awaited<ReturnType<Decider["decide"]>>>();
-  const decider: Decider | null = options.answers
-    ? {
-        why: () => null,
-        decide: async (_caller, state, questions) => {
-          const key = JSON.stringify([state, questions]);
-          const kept = memory.get(key);
-          if (kept) return kept;
-          asked.push(state);
-          const id = Object.keys(questions)[0];
-          phrased.push(String((questions[id] as { instructions: unknown }).instructions));
-          const decided = {
-            answers: { [id]: { type: "noul", noul: answers.shift() ?? 0 } },
-            asks: { [id]: asked.length },
-          };
-          memory.set(key, decided);
-          return decided;
-        },
-      }
-    : null;
+  const { decider, asked, phrased } = standIn(() => answers.shift() ?? 0, true);
   let diff = options.diff === undefined ? null : options.diff;
   const council = new Council({
     store: () => store,
-    decider,
+    decider: options.answers ? decider : null,
     policy: () => ({ mode: "on", keepDays: 90, tickSeconds: 60, levels: options.levels ?? {} }),
     log: (line) => logs.push(line),
     now: () => clock.at,
@@ -184,27 +156,14 @@ function harness(
 type Harness = ReturnType<typeof harness>;
 
 /** Right findings of a member over eight tasks, labelled by the seat above: sixty earn level 3. */
-function earnLevel3(h: Harness, member: string, labels = 60): void {
-  for (let i = 0; i < labels; i += 1) {
-    const id = h.store.read({
-      member,
-      version: (councilCatalog.members as Record<string, { version: number }>)[member].version,
-      seat: `s${i % 8}`,
-      role: "peer",
-      task: `task-${i % 8}`,
-      turn: `t${i}`,
-      tier: "fact",
-      zone: "found",
-      score: null,
-      askId: null,
-      level: 0,
-      shown: false,
-      fingerprint: `f${i}`,
-      evidence: null,
-    });
-    h.council.label(id, "seat:lead-1", "right", "the finding was right");
-  }
-}
+const earn = (h: Harness, member: keyof typeof councilCatalog.members, labels = 60) =>
+  earnLevel3(
+    h.store,
+    member,
+    (id) => h.council.label(id, "seat:lead-1", "right", "the finding was right"),
+    undefined,
+    labels,
+  );
 
 const BENT: HandInDiff = {
   gaming: gamingOf([sourceFile, testFile([ASSERT("parse('1h')", "3600000"), ASSERT("parse('2h')", "7200000")], [])], 0),
@@ -304,19 +263,19 @@ test("softer signs are put to a juror; its grey band keeps it quiet and a high s
   assert.equal(h.mails.length, 0, "below level 3 the chair is not asked");
 });
 
-test("the level that sends work back comes only from labels, and only to a member that may send it", () => {
+test("the level that sends work back comes only from labels, and only to a member that may send it", async () => {
   const pinned = harness({ levels: { gaming: 3, stuck: 3, claims: 2 } });
   assert.deepEqual(
     [pinned.council.level("gaming"), pinned.council.level("stuck"), pinned.council.level("claims")],
     [2, 2, 2],
   );
   const h = harness();
-  earnLevel3(h, "gaming", 59);
+  await earn(h, "gaming", 59);
   assert.equal(h.council.level("gaming"), 2, "59 labels are not 60");
-  earnLevel3(h, "claims");
-  earnLevel3(h, "scope");
-  earnLevel3(h, "stuck");
-  earnLevel3(h, "gaming");
+  await earn(h, "claims");
+  await earn(h, "scope");
+  await earn(h, "stuck");
+  await earn(h, "gaming");
   assert.deepEqual(
     ["claims", "scope", "gaming", "stuck"].map((member) => h.council.level(member as "claims")),
     [3, 3, 3, 2],
@@ -326,7 +285,7 @@ test("the level that sends work back comes only from labels, and only to a membe
 
 test("a member at the level that sends work back asks the chair, with the evidence, and the seat does not wait", async () => {
   const h = harness({ diff: BENT });
-  earnLevel3(h, "gaming");
+  await earn(h, "gaming");
   const shown = gaming(
     await h.council.endOfTurn(candidate("CANDIDATE: hours added", [shell("npm test", 1), shell("git diff")])),
   );
@@ -363,31 +322,31 @@ test("a member at the level that sends work back asks the chair, with the eviden
 test("no appeal without a candidate, a chair, a hand-in left standing, or the level; and one finding is asked once", async () => {
   const wait = () => new Promise((resolve) => setImmediate(resolve));
   const status = harness({ diff: BENT });
-  earnLevel3(status, "gaming");
+  await earn(status, "gaming");
   await status.council.endOfTurn(candidate("STATUS: still working"));
   await wait();
   assert.equal(status.mails.length, 0, "a turn that hands in no candidate has nothing to send back");
 
   const returned = harness({ diff: { ...BENT, returned: true } });
-  earnLevel3(returned, "gaming");
+  await earn(returned, "gaming");
   await returned.council.endOfTurn(candidate());
   await wait();
   assert.equal(returned.mails.length, 0, "the room sent it back already");
 
   const nobody = harness({ diff: BENT, chairSeat: null });
-  earnLevel3(nobody, "gaming");
+  await earn(nobody, "gaming");
   await nobody.council.endOfTurn(candidate());
   await wait();
   assert.equal(nobody.mails.length, 0);
 
   const low = harness({ diff: BENT, levels: { gaming: 2 } });
-  earnLevel3(low, "gaming");
+  await earn(low, "gaming");
   await low.council.endOfTurn(candidate());
   await wait();
   assert.equal(low.mails.length, 0, "a level pinned under 3 does not ask");
 
   const once = harness({ diff: BENT });
-  earnLevel3(once, "gaming");
+  await earn(once, "gaming");
   await once.council.endOfTurn(candidate());
   once.setDiff(BENT);
   await once.council.endOfTurn({ ...candidate(), turn: "t2" });
@@ -405,7 +364,7 @@ test("no appeal without a candidate, a chair, a hand-in left standing, or the le
 
 test("at most a set number of appeals wait at once; the rest are left, and the room hears of it", async () => {
   const h = harness();
-  earnLevel3(h, "gaming");
+  await earn(h, "gaming");
   for (let i = 0; i < 8; i += 1) {
     h.setDiff({ returned: false, gaming: gamingOf([sourceFile, testFile([ASSERT(`parse('${i}h')`, `${i}`)], [])], 0) });
     await h.council.endOfTurn({ ...candidate(), seat: { ...candidate().seat, id: `peer-${i}` }, turn: `t${i}` });
@@ -418,7 +377,7 @@ test("at most a set number of appeals wait at once; the rest are left, and the r
 
 test("the chair sends a candidate back with its reason, to the seat and to its Owner; only the room's seat may rule, once", async () => {
   const h = harness({ diff: BENT });
-  earnLevel3(h, "gaming");
+  await earn(h, "gaming");
   await h.council.endOfTurn(candidate());
   await new Promise((resolve) => setImmediate(resolve));
   h.mails.length = 0;
@@ -455,7 +414,7 @@ test("the chair sends a candidate back with its reason, to the seat and to its O
 
 test("a chair that does not rule in time sends nothing back, and the finding may be asked again", async () => {
   const h = harness({ diff: BENT });
-  earnLevel3(h, "gaming");
+  await earn(h, "gaming");
   await h.council.endOfTurn(candidate());
   await new Promise((resolve) => setImmediate(resolve));
   h.mails.length = 0;
@@ -473,6 +432,27 @@ test("a chair that does not rule in time sends nothing back, and the finding may
   assert.match(h.mails[0].subject, /^APPEAL #2:/);
 });
 
+test("a store made before appeals named their readings keeps those whose reading stands and drops the rest", () => {
+  const dir = join(ROOM_HOME, "appeals-migrate");
+  const scripts = join(ROOM_HOME, "appeals-migrate-scripts");
+  rmSync(dir, { recursive: true, force: true });
+  rmSync(scripts, { recursive: true, force: true });
+  mkdirSync(scripts, { recursive: true });
+  const shipped = join(ROOM_HOME, "room", "sql", "safety");
+  for (const name of readdirSync(shipped).filter((script) => !/^V10__/.test(script)))
+    copyFileSync(join(shipped, name), join(scripts, name));
+  const before = new SafetyStore(dir, 1000, () => new Date("2026-02-01T00:00:00Z"), scripts);
+  const appeal = (readingId: number, finding: string) =>
+    before.addAppeal({ readingId, member: "gaming", seat: "s", finding, chair: "hq", packet: "{}", dueInMs: 60_000 });
+  const stands = appeal(before.read(found("gaming", "s")), "kept");
+  const orphan = appeal(999, "its reading is gone");
+  before.close();
+  const after = new SafetyStore(dir, 1000, () => new Date("2026-02-02T00:00:00Z"));
+  assert.equal(after.appeal(stands)?.finding, "kept");
+  assert.equal(after.appeal(orphan), null);
+  after.close();
+});
+
 test("the time to answer is the policy's when it sets one", async () => {
   const h = harness({ diff: BENT });
   const slow = new Chair({
@@ -482,7 +462,7 @@ test("the time to answer is the policy's when it sets one", async () => {
     log: () => {},
   });
   const id = await slow.appeal({
-    reading: 1,
+    reading: h.store.read(found("gaming", "s")),
     member: "gaming",
     seat: "s",
     finding: "f",
@@ -495,7 +475,7 @@ test("an unsure juror, a juror that answers differently the second time, or one 
   const wait = () => new Promise((resolve) => setImmediate(resolve));
   // firm signs and a juror that finds nothing in the excerpt: contradiction
   const contradicted = harness({ diff: BENT, answers: [0.03] });
-  earnLevel3(contradicted, "gaming");
+  await earn(contradicted, "gaming");
   await contradicted.council.endOfTurn(candidate());
   await wait();
   assert.equal(contradicted.asked.length, 1);
@@ -507,7 +487,7 @@ test("an unsure juror, a juror that answers differently the second time, or one 
 
   // soft signs: asked twice, the answers part company
   const split = harness({ diff: SOFT, answers: [0.95, 0.04] });
-  earnLevel3(split, "gaming");
+  await earn(split, "gaming");
   await split.council.endOfTurn(candidate());
   await wait();
   assert.equal(split.asked.length, 2);
@@ -521,21 +501,21 @@ test("an unsure juror, a juror that answers differently the second time, or one 
 
   // soft signs, both answers on the found side: a plain finding
   const sure = harness({ diff: SOFT, answers: [0.95, 0.97] });
-  earnLevel3(sure, "gaming");
+  await earn(sure, "gaming");
   await sure.council.endOfTurn(candidate());
   await wait();
   assert.match(sure.mails[0].body, /Why you are asked: the member found it/);
 
   // an answer inside the grey band: unsure
   const unsure = harness({ diff: SOFT, answers: [0.5, 0.5] });
-  earnLevel3(unsure, "gaming");
+  await earn(unsure, "gaming");
   await unsure.council.endOfTurn(candidate());
   await wait();
   assert.match(unsure.mails[0].body, /Why you are asked: the member's reading fell between sure and clear/);
 
   // a clear first answer is not asked twice, and nothing goes to the chair
   const clear = harness({ diff: SOFT, answers: [0.02, 0.9] });
-  earnLevel3(clear, "gaming");
+  await earn(clear, "gaming");
   await clear.council.endOfTurn(candidate());
   await wait();
   assert.deepEqual([clear.asked.length, clear.mails.length], [1, 0]);
@@ -543,29 +523,44 @@ test("an unsure juror, a juror that answers differently the second time, or one 
 
 test("the council's log keeps appeals a season and lets older ones go; an appeal whose time is up is marked lapsed first", () => {
   const h = harness();
-  const keep = h.store.addAppeal({
-    readingId: 1,
-    member: "gaming",
-    seat: "s",
-    finding: "a",
-    chair: "hq",
-    packet: "{}",
-    dueInMs: 30 * 60_000,
-  });
+  const appeal = (finding: string) =>
+    h.store.addAppeal({
+      readingId: h.store.read(found("gaming", "s")),
+      member: "gaming",
+      seat: "s",
+      finding,
+      chair: "hq",
+      packet: "{}",
+      dueInMs: 30 * 60_000,
+    });
+  const keep = appeal("a");
   h.clock.at += 40 * 86_400_000;
-  const late = h.store.addAppeal({
-    readingId: 2,
-    member: "gaming",
-    seat: "s",
-    finding: "b",
-    chair: "hq",
-    packet: "{}",
-    dueInMs: 30 * 60_000,
-  });
+  const late = appeal("b");
   h.clock.at += 60 * 86_400_000;
-  assert.equal(h.council.expire(), 1, "the one older than the 90 days goes");
+  assert.equal(h.council.expire(), 2, "the one older than the 90 days goes, with its reading");
   assert.equal(h.store.appeal(keep), null);
   assert.equal(h.store.appeal(late)?.status, "lapsed");
+});
+
+test("an appeal names a reading the council kept: one that names none is refused, and a reading that goes takes its appeals", () => {
+  const h = harness();
+  const appeal = (readingId: number) =>
+    h.store.addAppeal({
+      readingId,
+      member: "gaming",
+      seat: "s",
+      finding: "f",
+      chair: "hq",
+      packet: "{}",
+      dueInMs: 60_000,
+    });
+  const reading = h.store.read(found("gaming", "s"));
+  assert.throws(() => appeal(reading + 1), /FOREIGN KEY/);
+  h.clock.at += 2 * 86_400_000;
+  const id = appeal(reading);
+  h.clock.at += 90 * 86_400_000 - 86_400_000;
+  h.council.expire();
+  assert.equal(h.store.appeal(id), null, "its reading went by age, unlabelled, and the appeal with it");
 });
 
 test("a seat that starts a turn is noted as seen, whether or not the council reads it, and a failure to note it is no failure of the turn", () => {
@@ -604,7 +599,7 @@ test("an appeal's evidence is kept whole and bounded, however much the turn ran 
       returned: false,
     },
   });
-  earnLevel3(h, "gaming");
+  await earn(h, "gaming");
   const long = "x".repeat(100_000);
   const events = Array.from({ length: 40 }, (_, i) => shell(`run ${i} ${long}`, 1));
   const input = {
@@ -638,7 +633,7 @@ test("a packet past the limit loses its diff, then its commands, and stays whole
     store: () => h.store,
     minutes: () => undefined,
     log: () => {},
-  }).appeal({ reading: 1, member: "gaming", seat: "s", finding: "f", packet: big });
+  }).appeal({ reading: h.store.read(found("gaming", "s")), member: "gaming", seat: "s", finding: "f", packet: big });
   const kept = JSON.parse(h.store.appeal(id!)!.packet);
   assert.deepEqual([kept.diff, kept.commands.length], [undefined, 0]);
 });

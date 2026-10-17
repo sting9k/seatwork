@@ -1,31 +1,13 @@
-import { installRoom, PROJECT, ROOM_HOME } from "./support/room";
+import { PROJECT, ROOM_HOME } from "./support/room";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
-import { after, before, test } from "node:test";
-import contribute from "../index.server";
+import { test } from "node:test";
 import { SAFETY_DIR } from "../server/paths";
-import { fakeServer } from "./support/server";
-import { roomSeats } from "./room-seats";
+import { pluginRoom } from "./support/plugin";
 
-const paseoSide = fakeServer();
-const { call } = paseoSide;
-const output = { log: console.log, error: console.error };
-let dispose: () => Promise<void>;
-
-before(() => {
-  installRoom(["claude-supervisor", "claude-lead", "claude-peer"]);
-  console.log = console.error = () => {};
-  dispose = contribute(paseoSide.server);
-});
-
-after(async () => {
-  await dispose();
-  Object.assign(console, output);
-});
-
-const { context, seat } = roomSeats(call);
+const { call, context, seat } = pluginRoom(["claude-supervisor", "claude-lead", "claude-peer"]);
 
 test("a seat's command a grave rule holds for runs and is kept, nothing waits on the person, and the app is told the room's seats", async () => {
   const peer = await seat("peer-kept", "claude-peer", null, "[Peer] kept", PROJECT);

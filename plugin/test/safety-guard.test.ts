@@ -1,13 +1,13 @@
 import { ROOM_HOME, shipSql } from "./support/room";
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
 import { mkdirSync, utimesSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { test } from "node:test";
 import { Safety, type SafetyDeps } from "../server/safety/index";
 import type { SafetyPolicy } from "../server/safety/guard";
 import { GATE_ENV } from "../server/safety/hooks";
-import { keptRules } from "./support/kept";
+import { keptRules } from "./support/gate";
+import { git } from "./support/git";
 import { machineTools } from "../server/safety/system";
 
 const gitModule = require("../server/git") as typeof import("../server/git");
@@ -155,22 +155,10 @@ test("the guard's gate settings are the policy's", () => {
 test("a script git says is unchanged is asked about once in a while, not at every run", async () => {
   const dir = join(ROOM_HOME, "unchanged-room");
   mkdirSync(dir, { recursive: true });
-  const git = (...args: string[]) =>
-    execFileSync("git", args, {
-      cwd: dir,
-      env: {
-        ...process.env,
-        GIT_CONFIG_GLOBAL: "/dev/null",
-        GIT_AUTHOR_NAME: "t",
-        GIT_AUTHOR_EMAIL: "t@t",
-        GIT_COMMITTER_NAME: "t",
-        GIT_COMMITTER_EMAIL: "t@t",
-      },
-    });
-  git("init", "-q");
+  git(dir, "init", "-q");
   writeFileSync(join(dir, "ok.sh"), "echo ok\n");
-  git("add", "-A");
-  git("commit", "-qm", "base");
+  git(dir, "add", "-A");
+  git(dir, "commit", "-qm", "base");
   const tools = machineTools(() => null);
   const real = gitModule.runGit;
   let asked = 0;
@@ -193,27 +181,15 @@ test("a script git says is unchanged is asked about once in a while, not at ever
 test("a script a seat committed is read when another seat runs it; one the repository had before the room is its own", async () => {
   const repo = join(ROOM_HOME, "based-repo");
   mkdirSync(repo, { recursive: true });
-  const git = (...args: string[]) =>
-    execFileSync("git", args, {
-      cwd: repo,
-      env: {
-        ...process.env,
-        GIT_CONFIG_GLOBAL: "/dev/null",
-        GIT_AUTHOR_NAME: "t",
-        GIT_AUTHOR_EMAIL: "t@t",
-        GIT_COMMITTER_NAME: "t",
-        GIT_COMMITTER_EMAIL: "t@t",
-      },
-    });
-  git("init", "-q");
+  git(repo, "init", "-q");
   writeFileSync(join(repo, "tidy.sh"), "rm -rf ~/Documents\n");
-  git("add", "-A");
-  git("commit", "-qm", "the owner's");
+  git(repo, "add", "-A");
+  git(repo, "commit", "-qm", "the owner's");
   const { safety } = fresh();
   await safety.started("peer", repo);
   writeFileSync(join(repo, "wipe.sh"), "rm -rf ~/Documents\n");
-  git("add", "-A");
-  git("commit", "-qm", "a seat's");
+  git(repo, "add", "-A");
+  git(repo, "commit", "-qm", "a seat's");
   const past = new Date(Date.now() - 60_000);
   utimesSync(join(repo, "wipe.sh"), past, past);
   await safety.started("peer2", repo);

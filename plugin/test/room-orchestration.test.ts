@@ -1,9 +1,8 @@
-import { installRoom, PROJECT, ROOM_HOME } from "./support/room";
+import { PROJECT, ROOM_HOME } from "./support/room";
 import assert from "node:assert/strict";
 import { mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { after, before, test } from "node:test";
-import contribute from "../index.server";
+import { test } from "node:test";
 import { briefFields } from "../server/orchestration/brief";
 import { parseHandoff } from "../server/orchestration/rotation";
 import { Rounds } from "../server/orchestration/rounds";
@@ -14,27 +13,16 @@ import { lookAtRunningTurns } from "../server/room/council";
 import type { RoomContext } from "../server/room/context";
 import { Safety } from "../server/safety/index";
 import { WorkStore } from "../server/tasks/store";
-import { fakeServer } from "./support/server";
 import { fastestInTurns } from "./support/timing";
-import { projectFolder, roomSeats, type TestSeat } from "./room-seats";
+import { projectFolder, type TestSeat } from "./support/seats";
+import { pluginRoom } from "./support/plugin";
 
-const paseoSide = fakeServer();
-const { call } = paseoSide;
-const output = { log: console.log, error: console.error };
-let dispose: () => Promise<void>;
-
-before(() => {
-  installRoom(["claude-hq", "claude-supervisor", "claude-lead", "claude-peer"]);
-  console.log = console.error = () => {};
-  dispose = contribute(paseoSide.server);
-});
-
-after(async () => {
-  await dispose();
-  Object.assign(console, output);
-});
-
-const { agents, context, seat, turnEnds } = roomSeats(call);
+const { call, agents, context, seat, turnEnds } = pluginRoom([
+  "claude-hq",
+  "claude-supervisor",
+  "claude-lead",
+  "claude-peer",
+]);
 
 test("an ended turn asks the work store which task the seat holds once, not once for each thing that wants to know", async () => {
   const project = join(PROJECT, "..", "taskof-project");

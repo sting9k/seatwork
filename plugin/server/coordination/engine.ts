@@ -96,6 +96,23 @@ interface MailHost {
   reparent(child: string, parent: string): Promise<void>;
 }
 
+/** A text handed to a seat: its id, the mails it carries, its words, and whether it ends a running turn. */
+interface Handed {
+  id: string;
+  ids: number[];
+  text: string;
+  interrupt: boolean;
+}
+
+/** What a delivery pass hands over: the message, what it is made of (`made`, its id before any retry), the mails it carries, whether it goes again as it was, and what another district added to it. */
+interface Attempt {
+  message: Handed;
+  made: string;
+  mails: Mail[];
+  retried: boolean;
+  extra: { text: string; told(): void } | null;
+}
+
 const MAIL_DIR = join(ROOM_FOLDER, ".mail");
 export const ROOM_MAIL = join(ROOM_HOME, "mail");
 const ADOPTIONS_FILE = join(ROOM_MAIL, "adoptions.json");
@@ -115,6 +132,7 @@ const heldAt = (mail: { heldUntil?: string | null }, now: number) =>
 
 const sum = (counts: readonly number[]) => counts.reduce((total, count) => total + count, 0);
 const errorText = (error: unknown) => (error instanceof Error ? error.message : String(error));
+const hashOf = (value: unknown) => createHash("sha256").update(JSON.stringify(value)).digest("hex").slice(0, 32);
 
 /** The word a subject opens with: one of the room's signals, or a notice's own name. */
 const signalFor = (subject: string) =>
@@ -133,7 +151,7 @@ export class MailEngine implements Directory {
   private readonly again = new Set<string>();
   private readonly firing = new Set<MailStore>();
   private readonly woke = new Map<string, Mail[]>();
-  private readonly unsure = new Map<string, { id: string; ids: number[]; text: string; interrupt: boolean }>();
+  private readonly unsure = new Map<string, Handed>();
   private readonly spent = new Map<string, { made: string; times: number }>();
   private readonly roots = new Map<string, string | null>();
   private readonly listedAt = new Map<string, number>();
@@ -861,86 +879,104 @@ export class MailEngine implements Directory {
     if (held && !store.queued(agentId).some((mail) => mail.urgent)) return;
     this.delivering.add(agentId);
     try {
-      if (this.deliverable(store, agentId, store.queued(agentId), this.now().getTime()).length === 0) return;
-      const status = await this.host.state(agentId);
-      // read after the wait: mail posted meanwhile is in the store now
-      const queue = store.queued(agentId);
-      if (status === "gone") return await this.bounce(store, agentId, queue);
-      const ready = this.deliverable(store, agentId, queue, this.now().getTime());
-      // a stop order does not wait for the turn, or the permission prompt, it finds
-      const stops = status !== "idle" && ready.some((mail) => mail.urgent);
-      if (status === "unknown" || (status === "permission" && !stops)) return;
-      let send: Mail[];
-      if (held) send = stops ? ready.filter((mail) => mail.urgent) : [];
-      else if (status === "idle" || stops) {
-        // quiet mail starts no turn; it goes out with the first mail that does
-        send = ready.some((mail) => !mail.quiet) ? ready : [];
-      } else {
-        // running: only a CLI whose steer waits for the current tool call gets mail mid-turn; a seat's provider is `<agent CLI>-<role>`
-        const provider = this.seats.get(agentId)?.provider ?? "";
-        const midTurn: Partial<Record<string, MidTurnDelivery>> = this.policy.midTurn;
-        const mode = midTurn[provider.split("-")[0]] ?? "hold";
-        send = mode === "steer" ? ready.filter((m) => m.priority !== "fyi" || !this.policy.holdFyiWhileRunning) : [];
-      }
-      if (send.length === 0) return;
-      // a message that failed goes again as it was, alone; a held seat's stop order does not wait behind it
-      const retry = this.unsure.get(agentId);
-      const retried =
-        retry && (!held || retry.interrupt) && retry.ids.every((id) => queue.some((mail) => mail.id === id))
-          ? retry
-          : undefined;
-      if (retry && !retried) this.unsure.delete(agentId);
-      const extra = retried ? null : (this.appendix?.(agentId) ?? null);
-      const text =
-        retried?.text ??
-        [digest(send.map((mail) => this.shown(mail, agentId))), extra?.text].filter(Boolean).join("\n\n");
-      const ids = retried?.ids ?? send.map((mail) => mail.id);
-      const interrupt = retried?.interrupt ?? stops;
-      // the id is what the message is: the same mail in the same words, after a restart too, is handed over once
-      const hash = (value: unknown) => createHash("sha256").update(JSON.stringify(value)).digest("hex").slice(0, 32);
-      const made = hash([agentId, ids, text, interrupt]);
-      const spent = this.spent.get(agentId);
-      const attempt = { id: spent?.made === made ? hash([made, spent.times]) : made, ids, text, interrupt };
-      if (retried) send = queue.filter((mail) => retried.ids.includes(mail.id));
-      // marked in the store until the daemon has it: a process that dies here loses nothing
-      store.mark(agentId, attempt.ids, "sending");
-      const opensTurn = status === "idle" || attempt.interrupt;
-      if (opensTurn) this.woke.set(agentId, send);
-      try {
-        await this.host.send(agentId, attempt.text, attempt.interrupt, attempt.id);
-      } catch (error) {
-        if (opensTurn) this.woke.delete(agentId);
-        // the app lost track of it: it goes again under a new id, still marked sending, so the seat knows it may repeat
-        if (/agent_request_(outcome_unknown|key_conflict)/.test(String(error))) {
-          this.unsure.delete(agentId);
-          this.spent.set(agentId, { made, times: spent?.made === made ? spent.times + 1 : 1 });
-        } else {
-          store.mark(agentId, attempt.ids, "queued", "delivery-failed");
-          this.unsure.set(agentId, attempt);
-        }
-        this.log(`mail: delivery to ${agentId} failed: ${errorText(error)}`);
-        return;
-      }
-      this.unsure.delete(agentId);
-      this.spent.delete(agentId);
-      if (retried) this.again.add(agentId);
-      store.mark(
-        agentId,
-        attempt.ids,
-        "delivered",
-        status === "idle" ? "idle" : attempt.interrupt ? "interrupt" : "steer",
-      );
-      try {
-        extra?.told();
-      } catch (error) {
-        this.log(`mail: what went out with the mail of ${agentId} was not marked: ${String(error)}`);
-      }
+      await this.pass(store, agentId, held);
     } finally {
       this.delivering.delete(agentId);
       if (this.again.delete(agentId))
         void this.deliver(agentId).catch((error) =>
           this.log(`mail: a second pass for ${agentId} failed: ${String(error)}`),
         );
+    }
+  }
+
+  /** One delivery pass: the seat's state is read, the mail it can take now chosen, and handed over. */
+  private async pass(store: MailStore, agentId: string, held: boolean): Promise<void> {
+    if (this.deliverable(store, agentId, store.queued(agentId), this.now().getTime()).length === 0) return;
+    const status = await this.host.state(agentId);
+    // read after the wait: mail posted meanwhile is in the store now
+    const queue = store.queued(agentId);
+    if (status === "gone") return this.bounce(store, agentId, queue);
+    const ready = this.deliverable(store, agentId, queue, this.now().getTime());
+    // a stop order does not wait for the turn, or the permission prompt, it finds
+    const stops = status !== "idle" && ready.some((mail) => mail.urgent);
+    if (status === "unknown" || (status === "permission" && !stops)) return;
+    const send = this.takes(agentId, status, held, stops, ready);
+    if (send.length === 0) return;
+    await this.handOver(store, agentId, status, this.attemptOf(agentId, send, queue, held, stops));
+  }
+
+  /** Of the mail ready for a seat, what it takes as it is: a held seat only a stop order, a seat at rest or stopped all of it once one mail starts a turn, a running one what its CLI's steer lets in. */
+  private takes(agentId: string, status: Status, held: boolean, stops: boolean, ready: Mail[]): Mail[] {
+    if (held) return stops ? ready.filter((mail) => mail.urgent) : [];
+    // quiet mail starts no turn; it goes out with the first mail that does
+    if (status === "idle" || stops) return ready.some((mail) => !mail.quiet) ? ready : [];
+    // running: only a CLI whose steer waits for the current tool call gets mail mid-turn; a seat's provider is `<agent CLI>-<role>`
+    const provider = this.seats.get(agentId)?.provider ?? "";
+    const midTurn: Partial<Record<string, MidTurnDelivery>> = this.policy.midTurn;
+    const mode = midTurn[provider.split("-")[0]] ?? "hold";
+    return mode === "steer" ? ready.filter((m) => m.priority !== "fyi" || !this.policy.holdFyiWhileRunning) : [];
+  }
+
+  /** The message a pass hands over: one that failed goes again as it was, alone, unless a held seat's stop order would wait behind it; its id is what it says, so the same mail in the same words is handed over once, after a restart too. */
+  private attemptOf(agentId: string, send: Mail[], queue: readonly Mail[], held: boolean, stops: boolean): Attempt {
+    const retry = this.unsure.get(agentId);
+    const retried =
+      retry && (!held || retry.interrupt) && retry.ids.every((id) => queue.some((mail) => mail.id === id))
+        ? retry
+        : undefined;
+    if (retry && !retried) this.unsure.delete(agentId);
+    const extra = retried ? null : (this.appendix?.(agentId) ?? null);
+    const text =
+      retried?.text ??
+      [digest(send.map((mail) => this.shown(mail, agentId))), extra?.text].filter(Boolean).join("\n\n");
+    const ids = retried?.ids ?? send.map((mail) => mail.id);
+    const interrupt = retried?.interrupt ?? stops;
+    const made = hashOf([agentId, ids, text, interrupt]);
+    const spent = this.spent.get(agentId);
+    return {
+      message: { id: spent?.made === made ? hashOf([made, spent.times]) : made, ids, text, interrupt },
+      made,
+      mails: retried ? queue.filter((mail) => retried.ids.includes(mail.id)) : send,
+      retried: retried !== undefined,
+      extra,
+    };
+  }
+
+  /** Hands a message to the seat, marked sending in the store until the daemon has it, so a process that dies there loses nothing; one the app lost track of goes again under a new id. */
+  private async handOver(store: MailStore, agentId: string, status: Status, attempt: Attempt): Promise<void> {
+    const { message, made, mails, retried, extra } = attempt;
+    store.mark(agentId, message.ids, "sending");
+    const opensTurn = status === "idle" || message.interrupt;
+    if (opensTurn) this.woke.set(agentId, mails);
+    try {
+      await this.host.send(agentId, message.text, message.interrupt, message.id);
+    } catch (error) {
+      if (opensTurn) this.woke.delete(agentId);
+      // still marked sending, so the seat knows it may repeat
+      if (/agent_request_(outcome_unknown|key_conflict)/.test(String(error))) {
+        const spent = this.spent.get(agentId);
+        this.unsure.delete(agentId);
+        this.spent.set(agentId, { made, times: spent?.made === made ? spent.times + 1 : 1 });
+      } else {
+        store.mark(agentId, message.ids, "queued", "delivery-failed");
+        this.unsure.set(agentId, message);
+      }
+      this.log(`mail: delivery to ${agentId} failed: ${errorText(error)}`);
+      return;
+    }
+    this.unsure.delete(agentId);
+    this.spent.delete(agentId);
+    if (retried) this.again.add(agentId);
+    store.mark(
+      agentId,
+      message.ids,
+      "delivered",
+      status === "idle" ? "idle" : message.interrupt ? "interrupt" : "steer",
+    );
+    try {
+      extra?.told();
+    } catch (error) {
+      this.log(`mail: what went out with the mail of ${agentId} was not marked: ${String(error)}`);
     }
   }
 

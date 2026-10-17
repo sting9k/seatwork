@@ -7,7 +7,7 @@ import { DatabaseSync } from "node:sqlite";
 import { basename, dirname, join } from "node:path";
 import { test } from "node:test";
 import vocabulary from "../shared/work.json";
-import { Sqlite, keptOutOfGit } from "../server/sqlite";
+import { Sqlite, keptOutOfGit, storeStats } from "../server/sqlite";
 import { WorkError, WorkStore } from "../server/tasks/store";
 import { WorkStores } from "../server/tasks/stores";
 import { work } from "../server/tasks/tools";
@@ -587,31 +587,20 @@ test("the stores of the projects a room names expire their closed issues; a proj
 });
 
 test("a list counts the issues that match only when its page is full", () => {
-  const { store } = fresh();
+  const { store, dir } = fresh();
   for (const title of ["a", "b", "c"]) store.create({ title }, "lead");
-  const counted: string[] = [];
-  const row = (store as unknown as { row: (sql: string, ...params: unknown[]) => unknown }).row.bind(store);
-  (store as unknown as { row: unknown }).row = (sql: string, ...params: unknown[]) => (
-    sql.includes("COUNT(*)") && counted.push(sql),
-    row(sql, ...params)
-  );
-  assert.deepEqual(
-    [store.list({ limit: 50 }), store.list()].map(({ issues, total }) => [issues.length, total]),
-    [
-      [3, 3],
-      [3, 3],
-    ],
-  );
-  assert.deepEqual(counted, [], "a page with room to spare is the whole answer");
-  assert.deepEqual(
-    [store.list({ limit: 2 })].map(({ issues, total }) => [issues.length, total]),
-    [[2, 3]],
-  );
-  assert.deepEqual(
-    [store.list({ limit: 3 })].map(({ issues, total }) => [issues.length, total]),
-    [[3, 3]],
-  );
-  assert.equal(counted.length, 2);
+  const statements = () => storeStats().find((one) => one.file === join(dir, "work.db"))!.calls;
+  /** What a list gives, and the statements it cost the store. */
+  const listed = (options?: Parameters<WorkStore["list"]>[0]) => {
+    const before = statements();
+    const { issues, total } = store.list(options);
+    return [issues.length, total, statements() - before];
+  };
+  const roomy = listed({ limit: 50 });
+  assert.deepEqual(roomy.slice(0, 2), [3, 3]);
+  assert.deepEqual(listed(), roomy, "a page with room to spare is the whole answer");
+  assert.deepEqual(listed({ limit: 2 }), [2, 3, roomy[2] + 1], "a full page counts what matches");
+  assert.deepEqual(listed({ limit: 3 }), [3, 3, roomy[2] + 1]);
 });
 
 test("a list of the issues with no filter, or of one status, is read in index order, not sorted", () => {

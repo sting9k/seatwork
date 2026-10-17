@@ -6,27 +6,15 @@ import { copyFileSync, mkdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { test } from "node:test";
 import { McpHttpServer } from "../server/mcp-http";
-import { Guard } from "../server/safety/guard";
 import { answerHook } from "../server/safety/hooks";
 import { SafetyStore } from "../server/safety/store";
+import { guardAt, machine, PROJECT, SEAT } from "./support/gate";
 
 shipSql();
 
 const redactModule = require("../server/redact") as typeof import("../server/redact");
 
-const PROJECT = "/Users/u/proj";
-const place = { home: "/Users/u", project: PROJECT, tmp: null, start: PROJECT, guard: null, roomFolder: ".seatwork" };
-const tools = {
-  ignored: async () => new Set<string>(),
-  alias: async () => null,
-  external: async () => false,
-  stat: () => ({ exists: false, link: false, dir: false }),
-  real: () => null,
-  changed: async () => null,
-};
-const store = new SafetyStore(join(ROOM_HOME, "limits"), 1000);
-const guard = new Guard({ store: () => store, policy: () => ({}), tools: () => tools, place: () => place });
-const seat = { id: "peer", role: "peer", project: PROJECT, tmp: null, start: PROJECT };
+const { guard, store } = guardAt("limits", machine({ ignored: async () => new Set<string>() }));
 
 const patchOf = (files: number): string =>
   [
@@ -37,9 +25,9 @@ const patchOf = (files: number): string =>
 const applyPatch = (command: string) => ({ tool_name: "apply_patch", tool_input: { command }, cwd: PROJECT });
 
 test("a patch of any number of files runs, the guard reading a fixed number of them", async () => {
-  assert.equal((await answerHook(guard, "codex", applyPatch(patchOf(150)), seat)).text, "");
-  assert.equal((await answerHook(guard, "codex", applyPatch(patchOf(100_000)), seat)).text, "");
-  const pi = await answerHook(guard, "pi", { tool: "patch", input: { patchText: patchOf(5000) }, cwd: PROJECT }, seat);
+  assert.equal((await answerHook(guard, "codex", applyPatch(patchOf(150)), SEAT)).text, "");
+  assert.equal((await answerHook(guard, "codex", applyPatch(patchOf(100_000)), SEAT)).text, "");
+  const pi = await answerHook(guard, "pi", { tool: "patch", input: { patchText: patchOf(5000) }, cwd: PROJECT }, SEAT);
   assert.equal(pi.text, "");
 });
 
@@ -48,8 +36,8 @@ test("what the guard costs for a patch does not grow with the number of files it
   const many = applyPatch(patchOf(50_000));
   assert.ok(many.tool_input.command.length > 40 * few.tool_input.command.length);
   const [small, large] = await fastestInTurns(
-    () => answerHook(guard, "codex", few, seat),
-    () => answerHook(guard, "codex", many, seat),
+    () => answerHook(guard, "codex", few, SEAT),
+    () => answerHook(guard, "codex", many, SEAT),
   );
   // fifty times the files cost the patch read up to the cap, not a check per file
   assert.ok(large / small < 8, `50000 files cost ${(large / small).toFixed(1)} times 1000 files`);
@@ -57,15 +45,15 @@ test("what the guard costs for a patch does not grow with the number of files it
 
 test("a patch longer than the guard reads whole, a path longer than a path can be, or a long file runs", async () => {
   const long = applyPatch(`*** Begin Patch\n*** Add File: a.ts\n${"+x\n".repeat(900_000)}*** End Patch`);
-  assert.equal((await answerHook(guard, "codex", long, seat)).text, "");
+  assert.equal((await answerHook(guard, "codex", long, SEAT)).text, "");
   const path = { file_path: `/Users/u/proj/${"a".repeat(10_000)}`, content: "x" };
   assert.equal(
-    (await answerHook(guard, "claude", { tool_name: "Write", tool_input: path, cwd: PROJECT }, seat)).text,
+    (await answerHook(guard, "claude", { tool_name: "Write", tool_input: path, cwd: PROJECT }, SEAT)).text,
     "",
   );
   const file = { file_path: `${PROJECT}/a.ts`, content: "x".repeat(3_000_000) };
   assert.equal(
-    (await answerHook(guard, "claude", { tool_name: "Write", tool_input: file, cwd: PROJECT }, seat)).text,
+    (await answerHook(guard, "claude", { tool_name: "Write", tool_input: file, cwd: PROJECT }, SEAT)).text,
     "",
   );
 });
@@ -77,7 +65,7 @@ test("a command too long to read is kept as unread from its start, whatever its 
   try {
     const secret = ["sk", "proj", "Abcdefghijklmnopqrstuvwx12"].join("-");
     const long = `echo ${"x ".repeat(1990)}${secret} ${"y".repeat(4_000_000)}`;
-    await guard.check(seat, "claude", long, PROJECT);
+    await guard.check(SEAT, "claude", long, PROJECT);
     assert.ok(Math.max(...lengths) <= 4000, `redaction read ${Math.max(...lengths)} characters`);
     const kept = store.kept("", 1)[0];
     assert.equal(`${kept.pack}:${kept.rule}`, "unread:command");

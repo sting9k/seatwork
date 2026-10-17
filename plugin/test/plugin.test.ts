@@ -1,7 +1,6 @@
-import { deferred, installRoom, PROJECT, ROOM_HOME } from "./support/room";
+import { deferred, PROJECT, ROOM_HOME } from "./support/room";
 import { BRIEF, prompt } from "./support/timeline";
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
 import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { incidentOf } from "../server/operations/lines";
@@ -10,51 +9,36 @@ import { projectBlock } from "../server/orchestration/registry";
 import { roleSkillNames } from "../server/orchestration/runtimes";
 import { rolePrompt } from "../server/orchestration/seats";
 import { sinceMark } from "../server/paseo/timeline";
-import { after, before, test } from "node:test";
-import contribute from "../index.server";
-import { fakeServer } from "./support/server";
-import { roomSeats, type TestSeat } from "./room-seats";
+import { test } from "node:test";
+import { repoWith } from "./support/git";
+import { earnLevel3 } from "./support/council";
+import { pluginRoom, withPlugin } from "./support/plugin";
+import { SafetyStore } from "../server/safety/store";
+import type { TestSeat } from "./support/seats";
 import { DatabaseSync } from "node:sqlite";
-import councilCatalog from "../shared/safety/council.json";
-
-const paseoSide = fakeServer();
-const { call } = paseoSide;
 
 const runtimes = join(ROOM_HOME, "runtimes");
-const output = { log: console.log, error: console.error };
-let dispose: () => Promise<void>;
 
-before(() => {
-  installRoom([
-    "claude-hq",
-    "claude-supervisor",
-    "claude-lead",
-    "claude-peer",
-    "pi-peer",
-    "codex-peer",
-    "opencode-peer",
-  ]);
-  chmodSync(ROOM_HOME, 0o755); // as a room home made under the usual umask
-  // this room's owner gave the Peer one more model, on Pi and OpenCode
-  const table = join(ROOM_HOME, "room", "models.json");
-  const models = JSON.parse(readFileSync(table, "utf8"));
-  models.peer.tiers.long = {
-    providers: ["pi-peer/m-one", "opencode-peer/m-one"],
-    thinking: "default",
-    use: "the long jobs",
-    never: "—",
-  };
-  writeFileSync(table, JSON.stringify(models));
-  mkdirSync(runtimes);
-  writeFileSync(join(runtimes, "pi"), ""); // no Pi runtime can be built while this file is in the way
-  console.log = console.error = () => {};
-  dispose = contribute(paseoSide.server);
-});
-
-after(async () => {
-  await dispose();
-  Object.assign(console, output);
-});
+const { call, agents, context, seat } = pluginRoom(
+  ["claude-hq", "claude-supervisor", "claude-lead", "claude-peer", "pi-peer", "codex-peer", "opencode-peer"],
+  {
+    before: () => {
+      chmodSync(ROOM_HOME, 0o755); // as a room home made under the usual umask
+      // this room's owner gave the Peer one more model, on Pi and OpenCode
+      const table = join(ROOM_HOME, "room", "models.json");
+      const models = JSON.parse(readFileSync(table, "utf8"));
+      models.peer.tiers.long = {
+        providers: ["pi-peer/m-one", "opencode-peer/m-one"],
+        thinking: "default",
+        use: "the long jobs",
+        never: "—",
+      };
+      writeFileSync(table, JSON.stringify(models));
+      mkdirSync(runtimes);
+      writeFileSync(join(runtimes, "pi"), ""); // no Pi runtime can be built while this file is in the way
+    },
+  },
+);
 
 function createRequest(provider: string) {
   return { request: { config: { provider, cwd: PROJECT, title: "[Peer] task" }, env: {} } };
@@ -217,8 +201,6 @@ test("a seat's session opens with the seat's own environment every time, not onl
   assert.ok(existsSync(tmp("claude-peer").TMPDIR));
   assert.deepEqual(await opened("claude", "resume", { MINE: "1" }), { MINE: "1" });
 });
-
-const { agents, context, seat } = roomSeats(call);
 
 const deleted = { refresh: async () => null, current: () => null };
 const archived = { refresh: async () => {}, current: () => ({ status: "idle", archivedAt: "2026-10-01T00:00:00Z" }) };
@@ -622,10 +604,9 @@ test("what a turn leaves for the Owner is listed for the app until that seat wor
   await turnEnds(supervisor, "DECISION_NEEDED\nkeep or break the old behavior?");
   await call("on agent.closed", { agent: supervisor.agent }, context);
   assert.deepEqual(await waiting(), ["supervisor-owed DECISION_NEEDED"]);
-  const again = fakeServer();
-  const stop = contribute(again.server);
-  const afterRestart = (await again.call("rpc room.waiting", {}, context)) as { waiting: { agentId: string }[] };
-  await stop();
+  const afterRestart = await withPlugin(
+    async (again) => (await again.call("rpc room.waiting", {}, context)) as { waiting: { agentId: string }[] },
+  );
   assert.ok(
     afterRestart.waiting.some((item) => item.agentId === "supervisor-owed"),
     "a plugin restart forgot what waits on the Owner",
@@ -1136,29 +1117,7 @@ test("a writing Peer's candidate goes back to it once for a pass with fresh eyes
 });
 
 /** A git repository beside the project with `files` committed: where a seat starts. */
-function gitRepo(name: string, files: Record<string, string>): string {
-  const repo = join(PROJECT, "..", name);
-  rmSync(repo, { recursive: true, force: true });
-  for (const [path, text] of Object.entries(files)) {
-    mkdirSync(join(repo, path, ".."), { recursive: true });
-    writeFileSync(join(repo, path), text);
-  }
-  const env = {
-    ...process.env,
-    GIT_CONFIG_GLOBAL: "/dev/null",
-    GIT_AUTHOR_NAME: "t",
-    GIT_AUTHOR_EMAIL: "t@t",
-    GIT_COMMITTER_NAME: "t",
-    GIT_COMMITTER_EMAIL: "t@t",
-  };
-  for (const args of [
-    ["init", "-q"],
-    ["add", "-A"],
-    ["commit", "-qm", "start"],
-  ])
-    execFileSync("git", args, { cwd: repo, env });
-  return repo;
-}
+const gitRepo = (name: string, files: Record<string, string>): string => repoWith(join(PROJECT, "..", name), files);
 
 test("a focused test sends the candidate back until acknowledged, and its reason rides up with it", async () => {
   const repo = gitRepo("guarded", { "test/a.test.ts": 'test("a", () => expect(1).toBe(1));\n' });
@@ -1250,11 +1209,21 @@ test("a council member that has earned the level that sends work back asks the r
   const lead = await seat("lead-chair", "claude-lead", null, "[Lead] stream", repo);
   const peer = await seat("peer-chair", "claude-peer", lead.agent.id, "[Peer] chair", repo);
   await new Promise((resolve) => setTimeout(resolve, 300));
-  const db = new DatabaseSync(join(ROOM_HOME, "safety", "safety.db"));
-  db.prepare(
-    "INSERT OR REPLACE INTO council_members (member, version, level, hi, labels, moved_at) VALUES ('gaming', ?, 3, 0.9, 60, ?)",
-  ).run(councilCatalog.members.gaming.version, new Date().toISOString());
-  db.close();
+  // the Lead has said sixty of gaming's findings on this Peer were right: the level that sends work back
+  const readings = new SafetyStore(join(ROOM_HOME, "safety"), 1000);
+  await earnLevel3(
+    readings,
+    "gaming",
+    (reading) =>
+      lead.call("seatwork_safety", {
+        action: "label",
+        id: `#${reading}`,
+        value: "right",
+        reason: "the tests were bent",
+      }),
+    () => peer.agent.id,
+  );
+  readings.close();
 
   // the Peer bends its tests: the room's own check returns the hand-in, the Peer keeps the finding on purpose
   writeFileSync(join(repo, "src", "sum.ts"), "export const sum = (a: number, b: number) => a + b + 0;\n");

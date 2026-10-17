@@ -1,8 +1,8 @@
-import { execFileSync } from "node:child_process";
-import { mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { PROJECT } from "./support/room";
-import type { fakeServer } from "./support/server";
+import { repoWith } from "./git";
+import { PROJECT } from "./room";
+import type { fakeServer } from "./server";
 
 /** A seat made through the plugin's hooks: its inbox and prompt, a caller of the room's tools over its own MCP server and the tools it is listed, what seatwork_inbox hands it, and its Claude hook's question to the guard. */
 export interface TestSeat {
@@ -129,28 +129,8 @@ export function projectFolder(name: string): string {
 
 /** A git repository beside the project with a nine-line source file and a test, committed: where the seats start. */
 export function parserRepo(name: string): string {
-  const dir = join(PROJECT, "..", name);
-  rmSync(dir, { recursive: true, force: true });
-  mkdirSync(join(dir, "src"), { recursive: true });
-  mkdirSync(join(dir, "test"), { recursive: true });
-  writeFileSync(
-    join(dir, "src", "parse.js"),
-    Array.from({ length: 9 }, (_, i) => `const n${i} = ${i};`).join("\n") + "\n",
-  );
-  writeFileSync(join(dir, "test", "a.test.ts"), 'test("a", () => expect(1).toBe(1));\n');
-  const env = {
-    ...process.env,
-    GIT_CONFIG_GLOBAL: "/dev/null",
-    GIT_AUTHOR_NAME: "t",
-    GIT_AUTHOR_EMAIL: "t@t",
-    GIT_COMMITTER_NAME: "t",
-    GIT_COMMITTER_EMAIL: "t@t",
-  };
-  for (const args of [
-    ["init", "-q"],
-    ["add", "-A"],
-    ["commit", "-qm", "start"],
-  ])
-    execFileSync("git", args, { cwd: dir, env });
-  return dir;
+  return repoWith(join(PROJECT, "..", name), {
+    "src/parse.js": Array.from({ length: 9 }, (_, i) => `const n${i} = ${i};`).join("\n") + "\n",
+    "test/a.test.ts": 'test("a", () => expect(1).toBe(1));\n',
+  });
 }

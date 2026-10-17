@@ -1,6 +1,5 @@
 import { ROOM_HOME, shipSql } from "./support/room";
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
 import fs, {
   existsSync,
   lstatSync,
@@ -18,47 +17,25 @@ import { changedSince, snapshot } from "../server/safety/council/git";
 import { buildControl } from "../server/safety/control";
 import { SafetyStore } from "../server/safety/store";
 import { claudeRc, machineTools } from "../server/safety/system";
+import { git, repoWith, writeFiles } from "./support/git";
 
 shipSql();
 
 let repos = 0;
 /** A git repository with one commit of a small project, and a store that knows a seat started in `start`, a folder of it. */
 function project(files: Record<string, string>, start = "") {
-  const dir = join(ROOM_HOME, `handin-${(repos += 1)}`);
-  rmSync(dir, { recursive: true, force: true });
-  mkdirSync(dir, { recursive: true });
-  const git = (...args: string[]) =>
-    execFileSync("git", args, {
-      cwd: dir,
-      encoding: "utf8",
-      env: {
-        ...process.env,
-        GIT_CONFIG_GLOBAL: "/dev/null",
-        GIT_AUTHOR_NAME: "t",
-        GIT_AUTHOR_EMAIL: "t@t",
-        GIT_COMMITTER_NAME: "t",
-        GIT_COMMITTER_EMAIL: "t@t",
-      },
-    }).trim();
-  git("init", "-q");
-  write(dir, { ...files, ".gitignore": ".store/\nnode_modules/\ndist/\n" });
-  git("add", "-A");
-  git("commit", "-qm", "start");
+  const dir = repoWith(join(ROOM_HOME, `handin-${(repos += 1)}`), {
+    ...files,
+    ".gitignore": ".store/\nnode_modules/\ndist/\n",
+  });
   const store = new SafetyStore(join(dir, ".store"), 1000);
-  store.noteStart("seat", join(dir, start), git("rev-parse", "HEAD"));
+  store.noteStart("seat", join(dir, start), git(dir, "rev-parse", "HEAD"));
   const gate = {
     place: { home: "/Users/u", project: dir, tmp: null, start: join(dir, start), guard: null, roomFolder: ".seatwork" },
     config: { budgetMs: 1000, maxBytes: 65536 },
     tools: machineTools(() => null),
   };
-  return { dir, store, git, check: () => inspectHandIn("seat", store, gate) };
-}
-
-function write(dir: string, files: Record<string, string>): void {
-  for (const [path, text] of Object.entries(files)) {
-    mkdirSync(join(dir, path, ".."), { recursive: true });
-    writeFileSync(join(dir, path), text);
-  }
+  return { dir, store, git: (...args: string[]) => git(dir, ...args), check: () => inspectHandIn("seat", store, gate) };
 }
 
 const START = {
@@ -71,7 +48,7 @@ const START = {
 
 test("the check reads what the seat changed since it started, committed or not, new files included", async () => {
   const { dir, check, git } = project(START);
-  write(dir, {
+  writeFiles(dir, {
     "test/sum.test.ts":
       'import { sum } from "../src/sum";\ntest.only("sum", () => {\n  expect(sum(1, 2)).toBeTruthy();\n});\n',
     "src/sum.ts":
@@ -113,7 +90,7 @@ test("the tests no change touched that name a changed source file ride up with t
     "docs/duration.md": "duration\n",
     "test/fixtures/duration.json": '{ "duration": 1 }\n',
   });
-  write(dir, {
+  writeFiles(dir, {
     "src/duration.ts": "export const parse = (s: string) => Number(s) * 1000;\n",
     "src/index.ts": 'export * from "./duration";\nexport const v = 1;\n',
   });
@@ -144,7 +121,7 @@ test("the hand-in counts test lines, names what decides the checks, a test's ans
       '<Project>\n  <ItemGroup>\n    <PackageReference Include="Serilog" Version="4.0.0" />\n  </ItemGroup>\n</Project>\n',
     "Package.swift": 'let package = Package(name: "App", dependencies: [\n])\n',
   });
-  write(dir, {
+  writeFiles(dir, {
     "package.json":
       JSON.stringify(
         { scripts: { test: "jest --passWithNoTests" }, dependencies: { lodash: "^4", "left-pad-x": "1.0.0" } },
@@ -206,7 +183,7 @@ test("a package added to NuGet's central package file is a new dependency", asyn
   const props = (...names: string[]) =>
     `<Project>\n  <ItemGroup>\n${names.map((name) => `    <PackageVersion Include="${name}" Version="1.0.0" />\n`).join("")}  </ItemGroup>\n</Project>\n`;
   const { dir, check } = project({ "Directory.Packages.props": props("Serilog") });
-  write(dir, { "Directory.Packages.props": props("Serilog", "Dapper") });
+  writeFiles(dir, { "Directory.Packages.props": props("Serilog", "Dapper") });
   assert.deepEqual(
     (await check()).dependencies?.map(({ name }) => name),
     ["Dapper"],
@@ -217,7 +194,7 @@ test("a control is the project at the writer's start with only its tests laid in
   const { dir, git } = project(START);
   const head = git("rev-parse", "HEAD");
   mkdirSync(join(dir, "node_modules", "jest"), { recursive: true });
-  write(dir, {
+  writeFiles(dir, {
     "src/sum.ts": "export const sum = (a: number, b: number) => a + b + 0;\n",
     "test/sum.test.ts": 'import { sum } from "../src/sum";\ntest("sum", () => expect(sum(2, 2)).toBe(4));\n',
     "test/new.test.ts": 'test("new", () => expect(1).toBe(1));\n',
@@ -239,7 +216,7 @@ test("a control is the project at the writer's start with only its tests laid in
   assert.equal(git("status", "--porcelain"), status, "the project's index and tree are its own");
 
   const { dir: plain, git: plainGit } = project(START);
-  write(plain, { "src/sum.ts": "export const sum = (a: number, b: number) => b + a;\n" });
+  writeFiles(plain, { "src/sum.ts": "export const sum = (a: number, b: number) => b + a;\n" });
   assert.match(
     String(await buildControl(plain, plainGit("rev-parse", "HEAD"), join(ROOM_HOME, "controls-test", "two"))),
     /changed no test/,
@@ -253,7 +230,7 @@ test("a control of a writer that started in a folder of its repository is the wh
   });
   const head = git("rev-parse", "HEAD");
   mkdirSync(join(dir, "app", "node_modules", "jest"), { recursive: true });
-  write(dir, { "app/test/new.test.ts": 'test("new", () => expect(1).toBe(1));\n' });
+  writeFiles(dir, { "app/test/new.test.ts": 'test("new", () => expect(1).toBe(1));\n' });
   const to = join(ROOM_HOME, "controls-test", "below");
   const made = await buildControl(join(dir, "app"), head, to);
   assert.deepEqual(made, { path: join(to, "app"), base: head, tests: ["app/test/new.test.ts"], sources: [] });
@@ -263,16 +240,16 @@ test("a control of a writer that started in a folder of its repository is the wh
 
 test("the room's own folder, and work another seat left in the tree, are no change of a seat's turn", async () => {
   const { dir, check } = project(START);
-  write(dir, {
+  writeFiles(dir, {
     ".seatwork/mission.md": "the mission\n",
     ".seatwork/room.json": "{}\n",
     "src/new.ts": "export const n = 1;\n",
   });
   assert.equal((await check()).files, 1);
   const found = await snapshot(dir);
-  write(dir, { ".seatwork/law.md": "the law\n" });
+  writeFiles(dir, { ".seatwork/law.md": "the law\n" });
   assert.deepEqual(await changedSince(found!), [], "what was there before the turn is no change of it");
-  write(dir, { "src/new.ts": "export const n = 2;\n", "src/other.ts": "export const o = 1;\n" });
+  writeFiles(dir, { "src/new.ts": "export const n = 2;\n", "src/other.ts": "export const o = 1;\n" });
   assert.deepEqual((await changedSince(found!))?.sort(), ["src/new.ts", "src/other.ts"], "what the turn changed is");
 });
 
@@ -307,11 +284,11 @@ test("a hand-in that goes up with blocking findings, as when the check only warn
 
 test("the work a seat hands in keeps its digest: the same work reads the same, a change reads another, a verdict keeps its own", async () => {
   const { dir, store, check } = project(START);
-  write(dir, { "src/sum.ts": "export const sum = (a: number, b: number) => b + a;\n" });
+  writeFiles(dir, { "src/sum.ts": "export const sum = (a: number, b: number) => b + a;\n" });
   await check();
   const handed = await workDigest("seat", store);
   assert.deepEqual(store.noteVerdict("seat", "returned", handed), { handed, verdict: null, verdictDigest: null });
-  write(dir, { "src/sum.ts": "export const sum = (a: number, b: number) => a + b + 0;\n" });
+  writeFiles(dir, { "src/sum.ts": "export const sum = (a: number, b: number) => a + b + 0;\n" });
   const changed = await workDigest("seat", store);
   assert.ok(handed && changed && changed !== handed);
   assert.deepEqual(store.noteVerdict("seat", "accepted", changed), {
@@ -324,7 +301,7 @@ test("the work a seat hands in keeps its digest: the same work reads the same, a
 
 test("a finding the seat acknowledges rides up with its reason; the same finding keeps its id across hand-ins", async () => {
   const { dir, check, store } = project(START);
-  write(dir, { "test/sum.test.ts": START["test/sum.test.ts"].replace('test("sum"', 'test.skip("sum"') });
+  writeFiles(dir, { "test/sum.test.ts": START["test/sum.test.ts"].replace('test("sum"', 'test.skip("sum"') });
   const first = await check();
   assert.deepEqual(
     first.open.map((r) => r.rule),
@@ -359,7 +336,7 @@ test("no change is said, a seat the room never saw start is not verified, and ne
 test("vendored, generated and lock files are not read", async () => {
   const { dir, check } = project(START);
   // ignored folders never reach the diff; a lock file and a minified file do, and are skipped
-  write(dir, {
+  writeFiles(dir, {
     "node_modules/x/index.js": "debugger;\n",
     "vendor/lib.js": "debugger;\n",
     "package-lock.json": '{"x":"sk-proj-Abcdefghijklmnopqrstuvwx12"}\n',
@@ -374,7 +351,7 @@ test("a file with a name git would quote is read under its own name, and costs t
     "tést.ts": "export const t = 0;\n",
     "z.ts": "export const z = 0;\n",
   });
-  write(dir, { "a.ts": "export const a = 1;\n", "tést.ts": "debugger;\n", "z.ts": "export const z = 1;\n" });
+  writeFiles(dir, { "a.ts": "export const a = 1;\n", "tést.ts": "debugger;\n", "z.ts": "export const z = 1;\n" });
   const result = await check();
   assert.deepEqual(
     result.open.map((r) => `${r.rule} ${r.path}:${r.line}`),
@@ -394,7 +371,7 @@ test("a seat started below the repository root is read at the paths git names: t
     },
     "app",
   );
-  write(dir, {
+  writeFiles(dir, {
     "app/a.ts": "export const a = 1;\nconst x = 2; // TODO real\n",
     "app/src/sum.ts": "export const sum = 2;\n",
     "app/test/other.test.ts": 'import { sum } from "../src/sum";\ntest("o", () => expect(sum).toBe(2));\n',
@@ -427,7 +404,7 @@ test("a seat started below the repository root is read at the paths git names: t
 
 test("a line that runs on another machine, in CI or a container, counts only for what it does to state kept off it", async () => {
   const { dir, check } = project(START);
-  write(dir, {
+  writeFiles(dir, {
     Dockerfile: "FROM node:22\nRUN npm install -g typescript\nRUN rm -rf /\n",
     ".github/workflows/ci.yml":
       "jobs:\n  test:\n    steps:\n      - run: git config --global user.name ci\n      - run: npm publish\n",
@@ -446,7 +423,7 @@ test("a line that runs on another machine, in CI or a container, counts only for
 
 test("a script that publishes, deploys or installs goes up as a warning; one that harms this machine sends the candidate back", async () => {
   const { dir, check } = project(START);
-  write(dir, {
+  writeFiles(dir, {
     "package.json":
       '{"name":"x","scripts":{"test":"jest","release":"npm publish","down":"terraform destroy","tools":"npm i -g tsx","wipe":"rm -rf ~"}}\n',
   });
@@ -490,7 +467,7 @@ test("a hand-in reads each changed file once, a manifest and a script included",
     ...START,
     "package.json": JSON.stringify({ scripts: { test: "jest" }, dependencies: { a: "1" } }) + "\n",
   });
-  write(dir, {
+  writeFiles(dir, {
     "src/sum.ts": "export const sum = (a: number, b: number) => b + a;\n",
     "src/new.ts": "export const fresh = 1;\n",
     "package.json": JSON.stringify({ scripts: { test: "jest" }, dependencies: { a: "1", b: "2" } }) + "\n",
@@ -501,7 +478,7 @@ test("a hand-in reads each changed file once, a manifest and a script included",
 
 test("a hand-in with more new files than the check reads is not verified, and none of them is read", async () => {
   const { dir, check } = project(START);
-  write(dir, Object.fromEntries(Array.from({ length: 2100 }, (_, i) => [`gen/file${i}.txt`, "x\n"])));
+  writeFiles(dir, Object.fromEntries(Array.from({ length: 2100 }, (_, i) => [`gen/file${i}.txt`, "x\n"])));
   const read = await pathsAsked("readFileSync", dir, async () => {
     const result = await check();
     assert.equal(result.state, "partial");
@@ -512,7 +489,7 @@ test("a hand-in with more new files than the check reads is not verified, and no
 
 test("one pass keeps a bounded number of findings and says how many it left out; blocking ones left out are not read as clean", async () => {
   const { dir, check, store } = project(START);
-  write(dir, { "src/noisy.ts": "debugger;\n".repeat(5000), "src/notes.ts": "// TODO later\n".repeat(5000) });
+  writeFiles(dir, { "src/noisy.ts": "debugger;\n".repeat(5000), "src/notes.ts": "// TODO later\n".repeat(5000) });
   const first = await check();
   const [kept, noted] = [first.open.length, first.warnings.length];
   assert.equal(first.state, "blocked");
@@ -558,7 +535,7 @@ test("the shell snapshot folder is listed once while it stands, and again when a
 
 test("an added line that begins with ++ is a line like any other, and the lines after it keep their numbers", async () => {
   const { dir, check } = project({ "a.ts": "const i = 0;\n" });
-  write(dir, { "a.ts": "const i = 0;\n++i;\ndebugger;\n" });
+  writeFiles(dir, { "a.ts": "const i = 0;\n++i;\ndebugger;\n" });
   assert.deepEqual(
     (await check()).open.map((r) => `${r.rule}:${r.line}`),
     ["debugger:3"],
@@ -567,7 +544,7 @@ test("an added line that begins with ++ is a line like any other, and the lines 
 
 test("a rule reads the part of a line its language says it is: code, comment or string", async () => {
   const { dir, check } = project({});
-  write(dir, {
+  writeFiles(dir, {
     "a.py": 's = "breakpoint()"  # breakpoint()\n"""\nbreakpoint()\n"""\nbreakpoint()  # TODO real\n',
     "b.ts": "const t = `\ndebugger;\n`;\n// debugger;\ndebugger; // TODO real\n",
     "c.rs": "fn f<'a>(x: &'a str) { todo!() }\nlet s = \"todo!()\";\n",

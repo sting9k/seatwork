@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { test } from "node:test";
 import { Operations, OperationsRefused } from "../server/operations/index";
+import { operationsAt } from "./support/operations";
 import { districtOf, incidentOf } from "../server/operations/lines";
 import { OperationsStore } from "../server/operations/store";
 import { Vitals } from "../server/operations/vitals";
@@ -13,32 +14,16 @@ import { storeStats, type StoreStat } from "../server/sqlite";
 shipSql();
 let homes = 0;
 
-/** An operations district over its own folder, a policy object, a clock and a mailbox it can be read from. */
+/** An operations district over its own folder, a policy object, a clock, a mailbox it can be read from, and the decision model's spend of the day. */
 function operations(operators: string[] = ["hq-1"]) {
-  const dir = join(ROOM_HOME, `operations-${(homes += 1)}`);
-  rmSync(dir, { recursive: true, force: true });
-  let now = new Date("2026-10-15T00:00:00.000Z");
-  const policy: Record<string, unknown> = {
-    jev: { forks: ["report"], sharpAt: { wake: 0.8 } },
-    knowledge: { keepDays: 60 },
-  };
   const spent = { today: 0.01 };
-  const persisted: [string, unknown][] = [];
-  const mailed: { to: string; subject: string; body: string }[] = [];
-  const echoed: string[] = [];
-  const ops = new Operations({
-    dir,
-    busyTimeoutMs: 1000,
-    policy: () => policy,
-    persist: (path, value) => persisted.push([path, value]),
-    operators: () => operators,
-    mail: async (to, subject, body) => mailed.push({ to, subject, body }),
-    readings: { jev: () => ({ spentToday: spent.today }), knowledge: () => ({ gateNoise: 2 }) },
-    echo: (line) => echoed.push(line),
-    now: () => now,
+  const rig = operationsAt(`operations-${(homes += 1)}`, {
+    start: "2026-10-15T00:00:00.000Z",
+    policy: { jev: { forks: ["report"], sharpAt: { wake: 0.8 } }, knowledge: { keepDays: 60 } },
+    operators,
+    deps: { readings: { jev: () => ({ spentToday: spent.today }), knowledge: () => ({ gateNoise: 2 }) } },
   });
-  const at = (iso: string) => (now = new Date(iso));
-  return { ops, dir, policy, persisted, mailed, echoed, at, spent };
+  return { ...rig, spent };
 }
 
 const GROUNDS = {

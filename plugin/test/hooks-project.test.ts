@@ -1,24 +1,9 @@
-import { installRoom } from "./support/room";
 import assert from "node:assert/strict";
-import { after, before, test } from "node:test";
-import contribute from "../index.server";
+import { test } from "node:test";
 import limits from "../shared/host.json";
-import { fakeServer } from "./support/server";
+import { pluginRoom } from "./support/plugin";
 
-const paseoSide = fakeServer();
-const output = { log: console.log, error: console.error };
-let dispose: () => Promise<void>;
-
-before(() => {
-  installRoom(["claude-hq"]);
-  console.log = console.error = () => {};
-  dispose = contribute(paseoSide.server);
-});
-
-after(async () => {
-  await dispose();
-  Object.assign(console, output);
-});
+const { call } = pluginRoom(["claude-hq"]);
 
 const settled = () => new Promise((done) => setImmediate(done));
 
@@ -39,7 +24,7 @@ test("the room's own project that could not be opened is tried again only after 
     },
   };
   const hook = async () => {
-    await paseoSide.call("on agent.permission_resolved", { agent: { id: "a", provider: "claude-hq" } }, context);
+    await call("on agent.permission_resolved", { agent: { id: "a", provider: "claude-hq" } }, context);
     await settled();
   };
   const first = limits.projectRetryFirstSeconds * 1000;

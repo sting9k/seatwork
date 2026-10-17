@@ -85,7 +85,7 @@
   ],
   "secrets": {
     "paseoHome": ["local-credential", "config.json", "daemon-keypair.json", "cli-client-id", "server-id"],
-    "roomHome": ["jev", "watch"],
+    "roomHome": ["jev"],
     "named": ["local-credential", "daemon-keypair.json"]
   }
 }

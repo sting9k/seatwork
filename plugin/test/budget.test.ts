@@ -6,7 +6,8 @@ import { test } from "node:test";
 import settings from "../shared/operations.json";
 import forkCatalog from "../shared/forks.json";
 import { MailEngine } from "../server/coordination/engine";
-import { Operations } from "../server/operations/index";
+import type { Operations } from "../server/operations/index";
+import { operationsAt } from "./support/operations";
 import { OperationsStore } from "../server/operations/store";
 import { storeStats } from "../server/sqlite";
 
@@ -16,27 +17,13 @@ let homes = 0;
 const A = "/work/alpha";
 const B = "/work/beta";
 
-interface Mailed {
-  to: string;
-  subject: string;
-  body: string;
-  quiet?: boolean;
-  key?: string;
-}
-
 /** An operations district over its own folder, with seats placed in projects, a clock, and a mailbox. */
 function rig(options: { dir?: string; policy?: Record<string, unknown>; operators?: string[] } = {}) {
-  const dir = options.dir ?? join(ROOM_HOME, `budget-${(homes += 1)}`);
-  if (!options.dir) rmSync(dir, { recursive: true, force: true });
   const state = {
-    now: new Date("2026-10-15T10:00:00.000Z"),
     projects: { a1: A, a2: A, b1: B, hq: null } as Record<string, string | null>,
     tops: { [A]: "a1", [B]: "b1" } as Record<string, string>,
   };
-  const policy: Record<string, unknown> = options.policy ?? { budget: {} };
-  const mailed: Mailed[] = [];
   const lifted: string[] = [];
-  const persisted: [string, unknown][] = [];
   const labeled: { ids: string[]; state: Record<string, unknown> }[] = [];
   const labeler = {
     answers: new Map<string, string | null>(),
@@ -47,22 +34,18 @@ function rig(options: { dir?: string; policy?: Record<string, unknown>; operator
       return ids.map((id) => labeler.answers.get(id) ?? null);
     },
   };
-  const ops = new Operations({
-    dir,
-    busyTimeoutMs: 1000,
-    policy: () => policy,
-    persist: (path, value) => persisted.push([path, value]),
-    operators: () => options.operators ?? ["hq-1"],
-    mail: async (to, subject, body, more) => void mailed.push({ to, subject, body, ...more }),
-    readings: {},
-    echo: () => {},
-    now: () => state.now,
-    projectOf: (seat) => state.projects[seat] ?? null,
-    topSeat: (project) => state.tops[project] ?? null,
-    lifted: async (project) => void lifted.push(project),
-    labeler,
+  const { ops, dir, policy, mailed, persisted, at } = operationsAt(`budget-${(homes += 1)}`, {
+    start: "2026-10-15T10:00:00.000Z",
+    policy: options.policy ?? { budget: {} },
+    dir: options.dir,
+    operators: options.operators,
+    deps: {
+      projectOf: (seat) => state.projects[seat] ?? null,
+      topSeat: (project) => state.tops[project] ?? null,
+      lifted: async (project) => void lifted.push(project),
+      labeler,
+    },
   });
-  const at = (iso: string) => (state.now = new Date(iso));
   const budget = () =>
     (
       ops.act("hq-1", { do: "budget" }) as {

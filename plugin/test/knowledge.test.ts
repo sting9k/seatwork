@@ -2,7 +2,7 @@ import { ROOM_HOME, shipSql } from "./support/room";
 import assert from "node:assert/strict";
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import type { DatabaseSync } from "node:sqlite";
+import { DatabaseSync } from "node:sqlite";
 import { test } from "node:test";
 import type { Message } from "../server/coordination/store";
 import type { TurnEvent } from "../server/host";
@@ -138,6 +138,34 @@ const says = (count: number, word: string) =>
     text: `${word} ${ordinal}`,
     exitCode: null,
   }));
+
+/** `total` entries of `word` in turns of `per` entries at most, as a turn's record keeps them, the turns an hour apart from `at`, their refs `<ref>-<n>`. */
+function addTurns(
+  store: KnowledgeStore,
+  ref: string,
+  at: string,
+  total: number,
+  word: string,
+  per: number = RECORD_LIMITS.entries,
+): void {
+  for (let n = 0; n * per < total; n += 1)
+    store.add(
+      sourceAt(`${ref}-${n}`, new Date(Date.parse(at) + n * 3_600_000).toISOString()),
+      says(Math.min(per, total - n * per), word),
+    );
+}
+
+/** The pages `work` writes to a store's file, as its write-ahead log counts them: another connection empties the log first. */
+function pagesWritten(file: string, work: () => void): number {
+  const other = new DatabaseSync(file);
+  try {
+    assert.equal((other.prepare("PRAGMA wal_checkpoint(TRUNCATE)").get() as { busy: number }).busy, 0);
+    work();
+    return (other.prepare("PRAGMA wal_checkpoint(PASSIVE)").get() as { log: number }).log;
+  } finally {
+    other.close();
+  }
+}
 
 test("a turn is kept once as entries: typed words, the start brief, mail taken out, secrets hidden", () => {
   const events: TurnEvent[] = [
@@ -357,7 +385,7 @@ test("mail is read once from where the reader stopped, each mail kept for its se
 
 test("old entries go in slices with their sources, the full-text index follows, and freed pages go back", () => {
   const store = storeIn("expire");
-  store.add(sourceAt("old", "2026-01-01T00:00:00.000Z"), says(4500, "old word"));
+  addTurns(store, "old", "2026-01-01T00:00:00.000Z", 4500, "old word");
   store.add(sourceAt("new", "2026-10-01T00:00:00.000Z"), says(1, "new word"));
   const cut = new Date("2026-06-01T00:00:00Z");
   assert.equal(store.expire(cut), 4500);
@@ -399,15 +427,18 @@ test("a seat reads what it and the seats under it saw: a reviewer does not read 
 
 test("past its entry cap a store gives up its oldest entries first, and no more than it is over", () => {
   const store = storeIn("cap");
-  store.add(sourceAt("older", "2026-10-01T00:00:00.000Z"), says(4500, "w"));
-  store.add(sourceAt("newer", "2026-10-02T00:00:00.000Z"), says(1, "kept"));
+  addTurns(store, "older", "2026-10-01T00:00:00.000Z", 4500, "w", 150);
+  store.add(sourceAt("newer", "2026-10-03T00:00:00.000Z"), says(1, "kept"));
   const longAgo = new Date("2026-01-01T00:00:00Z");
   assert.equal(store.expire(longAgo, 3000), 1501);
   const db = dbOf(store);
-  const older = db
-    .prepare("SELECT min(e.ordinal) AS n FROM entries e JOIN sources s ON s.id = e.source_id WHERE s.ref = 'older'")
-    .get() as { n: number };
-  assert.equal(older.n, 1501, "the oldest went first");
+  const oldest = db
+    .prepare(
+      `SELECT s.ref, min(e.ordinal) AS n FROM entries e JOIN sources s ON s.id = e.source_id
+         GROUP BY s.id ORDER BY s.started_at LIMIT 1`,
+    )
+    .get() as { ref: string; n: number };
+  assert.deepEqual({ ...oldest }, { ref: "older-10", n: 1 }, "the oldest went first: ten turns whole, then one entry");
   assert.equal((db.prepare("SELECT count(*) AS n FROM entries").get() as { n: number }).n, 3000, "no more than over");
   assert.equal(store.slice("turn", "newer", 0, 0)[0].text, "kept 0");
   store.close();
@@ -1506,10 +1537,8 @@ test("a seat archived with a decision pending leaves it dropped, and nothing wai
 
 test("a pass takes at most forty thousand old entries, then leaves the rest for the next one", () => {
   const store = storeIn("pass");
-  store.add(sourceAt("old", "2026-01-01T00:00:00.000Z"), []);
+  addTurns(store, "old", "2026-01-01T00:00:00.000Z", 41_000, "word");
   const db = dbOf(store);
-  db.exec(`WITH RECURSIVE n(i) AS (SELECT 0 UNION ALL SELECT i + 1 FROM n WHERE i < 40999)
-    INSERT INTO entries (source_id, ordinal, kind, text) SELECT 1, i, 'say', 'word ' || i FROM n`);
   const cut = new Date("2026-06-01T00:00:00Z");
   assert.equal(store.expire(cut), 40_000);
   assert.equal(store.expire(cut), 1000);
@@ -1534,6 +1563,9 @@ test("a search phrase and an address a seat sends are held to a size in the answ
 test("decisions that come due end in one write, each giving its topic back", () => {
   let now = new Date("2026-10-14T10:00:00Z");
   const store = storeIn("due", () => now);
+  let said = 0;
+  /** The person's words a decision of the room rests on: one source to a decision. */
+  const words = (text: string) => ({ address: `turn:hq:t${(said += 1)}#0`, saidAt: now.toISOString(), text });
   for (let i = 0; i < 50; i += 1) {
     const draft = (statement: string, validUntil: string | null) =>
       store.addDecision({
@@ -1547,21 +1579,18 @@ test("decisions that come due end in one write, each giving its topic back", () 
         validUntil,
         reason: "",
       });
-    store.settle(draft("Use the first way.", null).id, null);
-    store.settle(draft("Use the second way until the release.", "2026-10-16T00:00:00.000Z").id, null);
+    store.settle(draft("Use the first way.", null).id, words("use the first way"));
+    store.settle(
+      draft("Use the second way until the release.", "2026-10-16T00:00:00.000Z").id,
+      words("the second way, until the release"),
+    );
   }
   now = new Date("2026-10-17T00:00:00Z");
-  const db = dbOf(store);
-  const exec = db.exec.bind(db);
-  let commits = 0;
-  db.exec = (sql: string) => {
-    if (sql === "COMMIT") commits += 1;
-    return exec(sql);
-  };
-  const ended = store.expireDue();
+  let ended: ReturnType<KnowledgeStore["expireDue"]> = [];
+  const pages = pagesWritten(join(ROOM_HOME, "knowledge-due", "knowledge.db"), () => (ended = store.expireDue()));
   assert.equal(ended.length, 50);
   assert.ok(ended.every((one) => one.restored?.statement === "Use the first way."));
-  assert.equal(commits, 1);
+  assert.ok(pages < ended.length, `${pages} pages were written: a write of its own for each decision`);
   store.close();
 });
 

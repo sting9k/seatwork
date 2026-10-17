@@ -1,37 +1,15 @@
-import { installRoom, PROJECT, ROOM_HOME } from "./support/room";
+import { PROJECT } from "./support/room";
 import assert from "node:assert/strict";
-import { readFileSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
-import { after, before, mock, test } from "node:test";
-import contribute from "../index.server";
+import { mock, test } from "node:test";
 import { roomProjectDir } from "../server/orchestration/registry";
-import { fakeServer } from "./support/server";
-import { roomSeats } from "./room-seats";
+import { pluginRoom } from "./support/plugin";
 
-const paseoSide = fakeServer();
-const { call } = paseoSide;
-const output = { log: console.log, error: console.error };
-let dispose: () => Promise<void>;
-
-before(() => {
-  installRoom(["claude-hq", "claude-lead", "claude-peer"]);
-  const file = join(ROOM_HOME, "policy.json");
-  const policy = JSON.parse(readFileSync(file, "utf8"));
+const { seat, fails } = pluginRoom(["claude-hq", "claude-lead", "claude-peer"], {
   // a service error is tried again at the next minute's sweep
-  policy.room.recovery.delaysSeconds = [0, 0, 0];
-  writeFileSync(file, JSON.stringify(policy));
-  console.log = console.error = () => {};
-  mock.timers.enable({ apis: ["setInterval"] });
-  dispose = contribute(paseoSide.server);
+  policy: (policy) => void (policy.room.recovery.delaysSeconds = [0, 0, 0]),
+  timers: "minute",
 });
 
-after(async () => {
-  mock.timers.reset();
-  await dispose();
-  Object.assign(console, output);
-});
-
-const { seat, fails } = roomSeats(call);
 const settle = () => new Promise((resolve) => setTimeout(resolve, 20));
 
 test("a seat whose turn failed on the service is still resumed after the operator read how many wait", async () => {

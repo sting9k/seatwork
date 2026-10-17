@@ -1,6 +1,6 @@
 import { REVIEW_STALL, routeOpen, traits } from "../../shared/workflow";
 import type { Mail, NewMail, Needs, Priority, SeatRecord } from "../coordination/engine";
-import type { TurnEvent, TurnOutcome } from "../host";
+import type { SeatUsage, TurnEvent, TurnOutcome } from "../host";
 import { contextFell } from "../orchestration/compaction";
 
 import { classify, type FailureKind } from "../orchestration/recovery";
@@ -38,16 +38,82 @@ export interface TurnEnd {
   events: TurnEvent[];
 }
 
-/** What the room gathered about a turn before it decides what goes up. */
+/** A room seat's turn as the room read it before it decides what goes up: its task, who reads it by mail, the mail it ended with, a failure being mended, and the context it filled. */
 interface Gathered {
+  end: TurnEnd;
   role: string;
-  reportsTo: string;
+  task: string;
+  reportsTo: string | null;
   wake: readonly Mail[];
   mailed: ReadonlySet<string>;
   kept: NewMail | null;
-  failure: ReturnType<RoomContext["recovery"]["failed"]> | null;
-  nothingNew: boolean;
+  failure: Failure | null;
+  contextTokens: number | null;
 }
+
+type Failure = ReturnType<RoomContext["recovery"]["failed"]>;
+
+/** What a turn's end sends: the report the seat kept and the one the room wrote, the mail that returns a candidate in their place, and the council's findings with whether a line of theirs rides up. */
+interface Outgoing {
+  kept: NewMail | null;
+  report: NewMail | null;
+  returned: NewMail | null;
+  findings: Finding[];
+  lined: boolean;
+}
+
+/** The kinds of report a turn's end sends up. */
+type ReportKind = "failed" | "asks" | "again" | "progress" | "ack" | "nothing-new" | "said";
+
+/** How each kind of report reads to the seat above: how loud it is, what it asks, and why it came after `tries` of the room's. */
+const REPORTS: Record<
+  ReportKind,
+  {
+    priority: Priority;
+    needs: Needs;
+    quiet?: true;
+    progress?: true;
+    why(signal: string | undefined, tries: number): string;
+  }
+> = {
+  failed: {
+    priority: "blocking",
+    needs: "decision",
+    why: (_, tries) =>
+      `the seat's turn failed${tries > 0 ? `, and again after the room's ${tries} tries` : ""}; its work is stopped: a mail to it starts it again, or archive it and brief a new seat`,
+  },
+  asks: { priority: "action", needs: "reply", why: (signal) => `the seat ended its turn with ${signal}` },
+  again: {
+    priority: "fyi",
+    needs: "nothing",
+    quiet: true,
+    why: () => "nothing new: the seat ended its turn with DONE again, after mail that asked nothing",
+  },
+  progress: {
+    priority: "fyi",
+    needs: "nothing",
+    quiet: true,
+    progress: true,
+    why: () => "progress only: the seat ended its turn with STATUS and asks nothing of you",
+  },
+  ack: {
+    priority: "fyi",
+    needs: "nothing",
+    quiet: true,
+    why: () => "nothing new: the seat ended its turn with an acknowledgement",
+  },
+  "nothing-new": {
+    priority: "fyi",
+    needs: "nothing",
+    quiet: true,
+    why: () => "nothing new: the decision model read the report as nothing for you to act on",
+  },
+  said: {
+    priority: "fyi",
+    needs: "nothing",
+    why: (signal) => `the seat ended its turn with ${signal ?? "a progress message"}`,
+  },
+};
 
 const ALIKE_SHARE = 0.6;
 
@@ -66,60 +132,57 @@ function readerOf(room: RoomContext, seat: SeatEvent, role: string): string | nu
   return parent && routeOpen(role, parent.role) ? parent.agentId : null;
 }
 
-/** The report a turn's end sends up; null when the seat's own mail already carried it. */
-function reportOf(room: RoomContext, end: TurnEnd, about: Gathered): NewMail | null {
-  const { role, reportsTo: to, wake, mailed, kept, failure, nothingNew } = about;
-  const { seat, outcome, text } = end;
-  const name = `${role} ${seat.title ?? seat.id}`;
-  const signal = signalOf(text);
-  const repeats = signal !== undefined && room.lastSignal.get(seat.id) === signal;
+/** Which kind of report a turn sends up, read against the signal its seat ended its last turn with; `retried` and `carried` send none. */
+function kindOf(
+  turn: Gathered,
+  signal: string | undefined,
+  before: string | undefined,
+  nothingNew: boolean,
+): ReportKind | "retried" | "carried" {
+  const { end, role, wake, mailed, kept, failure } = turn;
+  if (end.outcome.kind === "failed") return failure && "retry" in failure ? "retried" : "failed";
+  if (signal ? mailed.has(signal) : kept) return "carried";
+  // DONE again, in a turn started only by mail that asked nothing: the parent has it already
+  if (signal === "DONE" && before === signal && askedNothing(wake)) return "again";
+  if (signal && signal !== "STATUS" && signal !== "ACK") return "asks";
   // a first report carries the plan; a STATUS after it asks nothing of the seat above
-  let progress = signal === "STATUS" && traits(role).progress === true && room.lastSignal.has(seat.id);
+  if (signal === "STATUS" && traits(role).progress === true && before !== undefined) return "progress";
+  if (signal === "ACK") return "ack";
+  return nothingNew ? "nothing-new" : "said";
+}
+
+/** The report a turn's end sends up to `to`; null when the room tries the turn again, or the seat's own mail already carried it. */
+function reportOf(room: RoomContext, turn: Gathered, to: string, nothingNew: boolean): NewMail | null {
+  const { end, role, failure } = turn;
+  const { seat, outcome, text } = end;
+  const signal = signalOf(text);
+  const before = room.lastSignal.get(seat.id);
   if (signal) room.lastSignal.set(seat.id, signal);
-  let priority: Priority = "fyi";
-  let subject = `${signal ?? "turn ended"}: ${name}`;
-  let needs: Needs = "nothing";
-  let quiet = signal === "ACK" || progress;
-  if (outcome.kind === "failed") {
-    if (failure && "retry" in failure) return null;
-    priority = "blocking";
-    subject = `FAILED: ${outcome.error.slice(0, 120)}`;
-    needs = "decision";
-    quiet = progress = false;
-  } else if (signal ? mailed.has(signal) : kept) {
+  const kind = kindOf(turn, signal, before, nothingNew);
+  if (kind === "retried") return null;
+  if (kind === "carried") {
     room.log(
       `turn end of ${seat.id}: the seat mailed ${signal ?? "its report"} to its parent itself, so nothing more goes up`,
     );
     return null;
-  } else if (signal && signal !== "STATUS" && signal !== "ACK") {
-    priority = "action";
-    subject = `${signal} from ${name}`;
-    needs = DECIDES.has(signal) ? "decision" : "reply";
-    // DONE again, in a turn started only by mail that asked nothing: the parent has it already
-    if (signal === "DONE" && repeats && askedNothing(wake)) {
-      priority = "fyi";
-      needs = "nothing";
-      quiet = true;
-    }
-  } else if (nothingNew) quiet = true;
-  const tries = failure && "gaveUpAfter" in failure && failure.gaveUpAfter > 0;
+  }
+  const shape = REPORTS[kind];
+  const name = `${role} ${seat.title ?? seat.id}`;
   return {
     from: { agentId: seat.id, role },
     to,
-    priority,
-    subject,
-    body: text || `(no final message; outcome ${outcome.kind})`,
-    needs,
-    why:
+    priority: shape.priority,
+    subject:
       outcome.kind === "failed"
-        ? `the seat's turn failed${tries ? `, and again after the room's ${failure.gaveUpAfter} tries` : ""}; its work is stopped: a mail to it starts it again, or archive it and brief a new seat`
-        : progress
-          ? "progress only: the seat ended its turn with STATUS and asks nothing of you"
-          : quiet
-            ? `nothing new: ${nothingNew ? "the decision model read the report as nothing for you to act on" : `the seat ended its turn with ${signal === "ACK" ? "an acknowledgement" : "DONE again, after mail that asked nothing"}`}`
-            : `the seat ended its turn with ${signal ?? "a progress message"}`,
-    ...(quiet ? { quiet: true as const } : {}),
-    ...(progress ? { progress: true as const } : {}),
+        ? `FAILED: ${outcome.error.slice(0, 120)}`
+        : kind === "asks" || kind === "again"
+          ? `${signal} from ${name}`
+          : `${signal ?? "turn ended"}: ${name}`,
+    body: text || `(no final message; outcome ${outcome.kind})`,
+    needs: kind === "asks" && DECIDES.has(signal!) ? "decision" : shape.needs,
+    why: shape.why(signal, failure && "gaveUpAfter" in failure ? failure.gaveUpAfter : 0),
+    ...(shape.quiet ? { quiet: true as const } : {}),
+    ...(shape.progress ? { progress: true as const } : {}),
   };
 }
 
@@ -130,13 +193,8 @@ async function failureRead(room: RoomContext, error: string): Promise<FailureKin
 }
 
 /** Whether a report with no protocol word, from a turn whose mail asked nothing, brings its reader nothing to act on. */
-async function nothingNew(
-  room: RoomContext,
-  end: TurnEnd,
-  wake: readonly Mail[],
-  kept: NewMail | null,
-  mailed: ReadonlySet<string>,
-): Promise<boolean> {
+async function nothingNew(room: RoomContext, turn: Gathered): Promise<boolean> {
+  const { end, wake, kept, mailed } = turn;
   if (end.outcome.kind !== "completed" || kept || mailed.size > 0 || !end.text.trim() || signalOf(end.text))
     return false;
   if (!wake.every((mail) => mail.needs === "nothing")) return false;
@@ -268,16 +326,11 @@ async function findingsOf(room: RoomContext, end: TurnEnd, role: string, task: s
 function addRoomLines(
   room: RoomContext,
   up: NewMail,
-  about: {
-    role: string;
-    id: string;
-    task: string;
-    contextTokens: number | null;
-    check: HandIn | null;
-    findings: readonly Finding[];
-  },
+  turn: Gathered,
+  check: HandIn | null,
+  findings: readonly Finding[],
 ): boolean {
-  const { role, id, task, contextTokens, check, findings } = about;
+  const { role, task, contextTokens } = turn;
   let lined = false;
   try {
     const guarded = [check ? handInLine(check) : null, councilLine(findings)].filter((line): line is string => !!line);
@@ -293,7 +346,7 @@ function addRoomLines(
     });
     if (line) up.why = [up.why, line.replace(/\s*\n\s*/g, " ")].filter(Boolean).join("; ");
   } catch (error) {
-    room.log(`the room's own lines under the report of ${id} were not all added: ${errorText(error)}`);
+    room.log(`the room's own lines under the report of ${turn.end.seat.id} were not all added: ${errorText(error)}`);
   }
   return lined;
 }
@@ -380,125 +433,192 @@ async function oneFamily(room: RoomContext, members: readonly string[]): Promise
 
 /** What a turn's end sets going: the report up, a hand-in sent back once, a review round, a rotation. */
 export async function turnEnded(room: RoomContext, end: TurnEnd): Promise<void> {
-  const eng = room.engine;
-  const { seat, outcome } = end;
-  const id = seat.id;
-  const role = parseSeat(seat.provider)?.role;
+  const role = parseSeat(end.seat.provider)?.role;
+  // only the room's own seats are read: the council's and the decision model's calls are no seats
+  if (!role) return passOn(room, end.seat.id);
+  const turn = await gather(room, end, role);
+  if (!turn.reportsTo) oweOwner(room, turn);
+  const out = await outgoing(room, turn);
+  if (await rotationAnswered(room, turn, out)) return;
+  await sendOut(room, turn, out);
+}
+
+/** The end of a turn of an agent the room did not set up: what it left with the room is dropped, and mail held for it goes on. */
+async function passOn(room: RoomContext, id: string): Promise<void> {
+  room.engine.takeWake(id);
+  room.engine.takeReport(id);
+  room.mailedUp.delete(id);
+  await room.engine.deliver(id);
+}
+
+/** Reads a room seat's turn: the districts that keep turns are handed it, the mail it ended with is taken, its spend counted and a failure mended. */
+async function gather(room: RoomContext, end: TurnEnd, role: string): Promise<Gathered> {
+  const id = end.seat.id;
   // the task is read once, so every part of this turn's end speaks of the same one
-  const task = role ? taskOf(room, id) : id;
-  if (role)
-    try {
-      room.operations.skillsLoaded(role, skillsLoaded(end.events));
-    } catch (error) {
-      room.log(`the skills ${id} loaded were not counted: ${errorText(error)}`);
-    }
-  // only the room's own seats are kept: the council's and the decision model's calls are no seats
-  if (role)
-    room.knowledge.turnEnded({
-      agent: id,
-      parentId: seat.parentId,
-      role,
-      task,
-      turnId: end.turnId,
-      outcome: outcome.kind,
-      events: end.events,
-    });
+  const task = taskOf(room, id);
+  noteTurn(room, end, role, task);
   // read before any wait: a delivery in that gap would be taken for this turn's
-  const wake = eng.takeWake(id);
-  let kept = eng.takeReport(id);
+  const wake = room.engine.takeWake(id);
+  const kept = room.engine.takeReport(id);
   const mailed = room.mailedUp.get(id) ?? new Set<string>();
   room.mailedUp.delete(id);
-  const usage = role ? ((await room.host.seat(id).catch(() => null))?.usage ?? null) : null;
-  if (role) room.operations.spent(id, usage?.totalCostUsd, role, usage?.outputTokens);
-  if (usage) {
-    const before = room.lastUsage.get(id);
-    room.lastUsage.set(id, { ...usage });
-    // a compaction the timeline did not show is read from the seat's context falling; one it showed is not told twice
-    if (contextFell(before, usage) && !end.events.some((event) => event.kind === "compaction"))
-      room.knowledge.compacted(id);
+  const usage = await spent(room, end, role);
+  const reportsTo = readerOf(room, end.seat, role);
+  const failure = await mend(room, end);
+  const contextTokens = usage?.contextWindowUsedTokens ?? null;
+  return { end, role, task, reportsTo, wake, mailed, kept, failure, contextTokens };
+}
+
+/** Hands a turn to the districts that keep turns: the skills it loaded are counted and its record kept. */
+function noteTurn(room: RoomContext, end: TurnEnd, role: string, task: string): void {
+  try {
+    room.operations.skillsLoaded(role, skillsLoaded(end.events));
+  } catch (error) {
+    room.log(`the skills ${end.seat.id} loaded were not counted: ${errorText(error)}`);
   }
-  const reportsTo = role ? readerOf(room, seat, role) : null;
-  const canceled = outcome.kind === "canceled";
-  // a failed turn is the room's to mend first: a quota is waited out, a service error tried again
-  const failure =
-    role && outcome.kind === "failed"
-      ? room.recovery.failed(id, outcome.error, Date.now(), await failureRead(room, outcome.error))
-      : null;
-  const retried = failure !== null && "retry" in failure;
-  if (retried) room.log(`turn of ${id} failed (${failure.retry.kind}); the room resumes it, nobody is told`);
-  // a stopped turn is the Owner's word: no retry planned before it starts the seat again
-  if (role && outcome.kind !== "failed") room.recovery.forget(id);
-  // a seat nobody above reads by mail: the Owner reads its final message, and the app is told
-  if (role && !reportsTo && !canceled && !retried) {
-    const what = outcome.kind === "failed" ? "FAILED" : asksOwner(end.text);
-    if (what)
-      room.owed.set({ key: `${id}:${Date.now()}`, agentId: id, title: seat.title, what, at: new Date().toISOString() });
+  room.knowledge.turnEnded({
+    agent: end.seat.id,
+    parentId: end.seat.parentId,
+    role,
+    task,
+    turnId: end.turnId,
+    outcome: end.outcome.kind,
+    events: end.events,
+  });
+}
+
+/** Counts what a turn cost and reads a compaction the timeline did not show from the seat's context falling; the seat's usage, null when the app has none. */
+async function spent(room: RoomContext, end: TurnEnd, role: string): Promise<SeatUsage | null> {
+  const id = end.seat.id;
+  const usage = (await room.host.seat(id).catch(() => null))?.usage ?? null;
+  room.operations.spent(id, usage?.totalCostUsd, role, usage?.outputTokens);
+  if (!usage) return null;
+  const before = room.lastUsage.get(id);
+  room.lastUsage.set(id, { ...usage });
+  // one the timeline showed is not told twice
+  if (contextFell(before, usage) && !end.events.some((event) => event.kind === "compaction"))
+    room.knowledge.compacted(id);
+  return usage;
+}
+
+/** A failed turn is the room's to mend first: a quota is waited out, a service error tried again; any other end is the Owner's word, and no retry stays planned. */
+async function mend(room: RoomContext, end: TurnEnd): Promise<Failure | null> {
+  const id = end.seat.id;
+  const { outcome } = end;
+  if (outcome.kind !== "failed") {
+    room.recovery.forget(id);
+    return null;
   }
-  let report =
-    role && reportsTo && !canceled
-      ? reportOf(room, end, {
-          role,
-          reportsTo,
-          wake,
-          mailed,
-          kept,
-          failure,
-          nothingNew: await nothingNew(room, end, wake, kept, mailed),
-        })
-      : null;
-  const handIn = kept ?? report;
+  const failure = room.recovery.failed(id, outcome.error, Date.now(), await failureRead(room, outcome.error));
+  if ("retry" in failure) room.log(`turn of ${id} failed (${failure.retry.kind}); the room resumes it, nobody is told`);
+  return failure;
+}
+
+/** A seat nobody above reads by mail: the Owner reads its final message, and the app is told what it asks of them. */
+function oweOwner(room: RoomContext, turn: Gathered): void {
+  const { end, failure } = turn;
+  if (end.outcome.kind === "canceled" || (failure && "retry" in failure)) return;
+  const what = end.outcome.kind === "failed" ? "FAILED" : asksOwner(end.text);
+  if (what)
+    room.owed.set({
+      key: `${end.seat.id}:${Date.now()}`,
+      agentId: end.seat.id,
+      title: end.seat.title,
+      what,
+      at: new Date().toISOString(),
+    });
+}
+
+/** What a turn sends: the reports up with the room's lines under them, or the mail that returns a candidate to its seat in their place. */
+async function outgoing(room: RoomContext, turn: Gathered): Promise<Outgoing> {
+  const { end, role, task, reportsTo } = turn;
+  const canceled = end.outcome.kind === "canceled";
+  let kept = turn.kept;
+  let report = reportsTo && !canceled ? reportOf(room, turn, reportsTo, await nothingNew(room, turn)) : null;
+  const { check, returned } = await readHandIn(room, turn, kept ?? report);
+  const findings = canceled ? [] : await findingsOf(room, end, role, task);
+  if (returned) kept = report = null;
+  const up = kept ?? report;
+  const lined = up ? addRoomLines(room, up, turn, check, findings) : false;
+  if (up && subjectSignal(up.subject) === "REVIEW") await holdForRound(room, up, end.seat.id);
+  return { kept, report, returned, findings, lined };
+}
+
+/** The room's read of a candidate before its Owner's: one pass with fresh eyes first, then the hand-in check, whose blocking findings return it; the check, and the mail that returns the candidate. */
+async function readHandIn(
+  room: RoomContext,
+  turn: Gathered,
+  handIn: NewMail | null,
+): Promise<{ check: HandIn | null; returned: NewMail | null }> {
+  const { end, role, task } = turn;
+  const id = end.seat.id;
   const candidate =
     traits(role).writes === true &&
-    outcome.kind === "completed" &&
+    end.outcome.kind === "completed" &&
     !!handIn &&
     subjectSignal(handIn.subject) === "CANDIDATE";
-  const rereads = candidate && room.policy.room.handin.freshEyes && room.rounds.owesFreshEyes(task);
-  if (rereads) kept = report = null;
-  const check = candidate && !rereads ? await checkHandIn(room, id) : null;
-  const sendBack = check?.state === "blocked" && room.safety.handInBlocks;
-  const findings = role && !canceled ? await findingsOf(room, end, role, task) : [];
-  if (sendBack) kept = report = null;
-  const up = kept ?? report;
-  const contextTokens = usage?.contextWindowUsedTokens ?? null;
-  const lined = role && up ? addRoomLines(room, up, { role, id, task, contextTokens, check, findings }) : false;
-  if (up && subjectSignal(up.subject) === "REVIEW") await holdForRound(room, up, id);
+  if (!candidate) return { check: null, returned: null };
+  if (room.policy.room.handin.freshEyes && room.rounds.owesFreshEyes(task))
+    return {
+      check: null,
+      returned: returnOf(
+        id,
+        "HAND-IN RETURNED: one pass with fresh eyes, then hand in again",
+        FRESH_EYES,
+        "the room returns a first hand-in once before the Owner reads it",
+      ),
+    };
+  const check = await checkHandIn(room, id);
+  if (check?.state !== "blocked" || !room.safety.handInBlocks) return { check, returned: null };
+  return {
+    check,
+    returned: returnOf(
+      id,
+      `HAND-IN RETURNED: ${check.open.length} finding(s) from the room's check`,
+      handInReturn(check),
+      "the room reads a candidate before its Owner does",
+    ),
+  };
+}
+
+/** The room's mail that returns a candidate to its seat, and waits for its reply. */
+const returnOf = (to: string, subject: string, body: string, why: string): NewMail => ({
+  from: fromRoom,
+  to,
+  priority: "action",
+  subject,
+  body,
+  needs: "reply",
+  why,
+});
+
+/** Answers the rotation asked of a seat whose handoff this turn is, the council's findings going with it; true when its successor started. */
+async function rotationAnswered(room: RoomContext, turn: Gathered, out: Outgoing): Promise<boolean> {
+  const { end, wake, reportsTo } = turn;
+  const id = end.seat.id;
   const asked = room.rotations.get(id);
-  const record = eng.seat(id);
-  if (asked && record && wake.some((mail) => mail.id === asked.mailId)) {
-    // the handoff is the old seat's last word: only the report it kept goes up, with the room's lines under it; with none kept, the council's line goes with the word of the rotation
-    const carried = kept ? null : councilLine(findings);
-    if (await answerRotation(room, end, record, kept, reportsTo, carried)) {
-      await mailCouncil(room, findings, reportsTo, seat.title ?? id);
-      if (reportsTo && (kept ? lined : carried)) noteShown(room, findings);
-      return;
-    }
-  }
-  if (rereads)
-    await eng.post({
-      from: fromRoom,
-      to: id,
-      priority: "action",
-      subject: "HAND-IN RETURNED: one pass with fresh eyes, then hand in again",
-      body: FRESH_EYES,
-      needs: "reply",
-      why: "the room returns a first hand-in once before the Owner reads it",
-    });
-  if (sendBack && check)
-    await eng.post({
-      from: fromRoom,
-      to: id,
-      priority: "action",
-      subject: `HAND-IN RETURNED: ${check.open.length} finding(s) from the room's check`,
-      body: handInReturn(check),
-      needs: "reply",
-      why: "the room reads a candidate before its Owner does",
-    });
-  await mailCouncil(room, findings, reportsTo, seat.title ?? id);
+  const record = room.engine.seat(id);
+  if (!asked || !record || !wake.some((mail) => mail.id === asked.mailId)) return false;
+  // the handoff is the old seat's last word: only the report it kept goes up, with the room's lines under it; with none kept, the council's line goes with the word of the rotation
+  const carried = out.kept ? null : councilLine(out.findings);
+  if (!(await answerRotation(room, end, record, out.kept, reportsTo, carried))) return false;
+  await mailCouncil(room, out.findings, reportsTo, end.seat.title ?? id);
+  if (reportsTo && (out.kept ? out.lined : carried)) noteShown(room, out.findings);
+  return true;
+}
+
+/** Sends what a turn's end owes: the mail that returns a candidate, the council's word to the seat above, the mail held for the seat, and the reports up. */
+async function sendOut(room: RoomContext, turn: Gathered, out: Outgoing): Promise<void> {
+  const eng = room.engine;
+  const { end, reportsTo } = turn;
+  const id = end.seat.id;
+  if (out.returned) await eng.post(out.returned);
+  await mailCouncil(room, out.findings, reportsTo, end.seat.title ?? id);
   await eng.deliver(id);
   if (!reportsTo) return;
-  if (kept || report) eng.dropProgress(id, reportsTo);
+  if (out.kept || out.report) eng.dropProgress(id, reportsTo);
   // the report the seat mailed before its turn ended goes out now, however the turn ended
-  if (kept) await eng.postReport({ ...kept, to: reportsTo });
-  if (report) await eng.post(report);
-  if (lined) noteShown(room, findings);
+  if (out.kept) await eng.postReport({ ...out.kept, to: reportsTo });
+  if (out.report) await eng.post(out.report);
+  if (out.lined) noteShown(room, out.findings);
 }

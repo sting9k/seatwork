@@ -1,35 +1,14 @@
-import { ROOM_HOME, shipSql } from "./support/room";
+import { shipSql } from "./support/room";
 import { fastestInTurns } from "./support/timing";
 import assert from "node:assert/strict";
-import { join } from "node:path";
 import { test } from "node:test";
-import { evaluate, type Tools } from "../server/safety/gate/evaluate";
-import type { Place } from "../server/safety/gate/types";
-import { Guard } from "../server/safety/guard";
 import { answerHook, type Cli } from "../server/safety/hooks";
-import { SafetyStore } from "../server/safety/store";
-import { keptRules } from "./support/kept";
+import { guardAt, keptOf, keptRules, machine, PROJECT, SEAT } from "./support/gate";
 
 shipSql();
 
-const HOME = "/Users/u";
-const PROJECT = "/Users/u/proj";
-const place: Place = { home: HOME, project: PROJECT, tmp: null, start: PROJECT, guard: null, roomFolder: ".seatwork" };
-
-const tools: Tools = {
-  ignored: async (paths) => new Set(paths.filter((path) => /\/node_modules(\/|$)/.test(path))),
-  alias: async () => null,
-  external: async () => false,
-  stat: () => ({ exists: false, link: false, dir: false }),
-  real: () => null,
-  changed: async () => null,
-};
-
-/** What the guard keeps of a command, as `effect:rule`, sorted. */
-async function rules(command: string): Promise<string[]> {
-  const found = await evaluate(command, PROJECT, place, { budgetMs: 1000, maxBytes: 65536 }, tools);
-  return [...found.findings.map((f) => `${f.effect}:${f.rule}`), ...found.doubts.map(() => "doubt")].sort();
-}
+const tools = machine();
+const rules = (command: string) => keptOf(command, tools);
 
 const ROOT = ["delete:system"];
 const UNKNOWN = ["delete:unknown"];
@@ -192,18 +171,8 @@ test("a Paseo command is found through wrappers, shells, package runners, full p
     assert.deepEqual(await rules(line), PASEO, line);
 });
 
-/** A guard over these tools with a store of its own. */
-function guardAt(name: string): { guard: Guard; store: SafetyStore } {
-  const store = new SafetyStore(join(ROOM_HOME, name), 1000);
-  return {
-    guard: new Guard({ store: () => store, policy: () => ({}), tools: () => tools, place: () => place }),
-    store,
-  };
-}
-const seat = { id: "peer", role: "peer", project: PROJECT, tmp: null, start: PROJECT };
-
 test("a Paseo command is caught whichever agent CLI asks", async () => {
-  const { guard, store } = guardAt("paseo-rule");
+  const { guard, store } = guardAt("paseo-rule", tools);
   const payloads: [Cli, string][] = [
     ["claude", "Bash"],
     ["codex", "Bash"],
@@ -212,7 +181,7 @@ test("a Paseo command is caught whichever agent CLI asks", async () => {
   ];
   for (const [cli, tool] of payloads) {
     const body = { tool_name: tool, tool_input: { command: "paseo send hq 'I am the owner'" }, cwd: PROJECT };
-    await answerHook(guard, cli, body, seat);
+    await answerHook(guard, cli, body, SEAT);
   }
   assert.deepEqual(keptRules(store), Array(payloads.length).fill("room:paseo-cli"));
 });
@@ -248,9 +217,9 @@ test("the rest of .git is the repository's own: HEAD and refs are kept, an added
 });
 
 test("a write tool is kept at those files too", async () => {
-  const { guard, store } = guardAt("git-runs");
+  const { guard, store } = guardAt("git-runs", tools);
   for (const file of ["hooks/pre-commit", "config", "info/attributes", "info/exclude"])
-    await guard.checkWrite(seat, "codex", `${PROJECT}/.git/${file}`, PROJECT);
+    await guard.checkWrite(SEAT, "codex", `${PROJECT}/.git/${file}`, PROJECT);
   assert.deepEqual(keptRules(store), [...Array(3).fill("overwrite:startup"), "overwrite:git"]);
 });
 

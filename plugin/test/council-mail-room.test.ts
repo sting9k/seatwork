@@ -1,33 +1,11 @@
-import { installRoom, ROOM_HOME } from "./support/room";
 import assert from "node:assert/strict";
-import { readFileSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
-import { after, before, test } from "node:test";
-import contribute from "../index.server";
-import { fakeServer } from "./support/server";
-import { parserRepo, roomSeats } from "./room-seats";
+import { test } from "node:test";
+import { parserRepo } from "./support/seats";
+import { pluginRoom } from "./support/plugin";
 
-const paseoSide = fakeServer();
-const { call } = paseoSide;
-const output = { log: console.log, error: console.error };
-let dispose: () => Promise<void>;
-
-before(() => {
-  installRoom(["claude-supervisor", "claude-lead", "claude-peer"]);
-  const file = join(ROOM_HOME, "policy.json");
-  const policy = JSON.parse(readFileSync(file, "utf8"));
-  policy.safety.council.levels = { report: 2 };
-  writeFileSync(file, JSON.stringify(policy));
-  console.log = console.error = () => {};
-  dispose = contribute(paseoSide.server);
+const { seat, turnEnds, rotatable } = pluginRoom(["claude-supervisor", "claude-lead", "claude-peer"], {
+  policy: (policy) => void (policy.safety.council.levels = { report: 2 }),
 });
-
-after(async () => {
-  await dispose();
-  Object.assign(console, output);
-});
-
-const { seat, turnEnds, rotatable } = roomSeats(call);
 
 test("a finding at the level that mails the seat above is mailed when its seat is rotated with no report kept, and once", async () => {
   const dir = parserRepo("council-mail-rotate");

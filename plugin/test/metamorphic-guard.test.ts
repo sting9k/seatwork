@@ -1,47 +1,28 @@
-import { ROOM_HOME, shipSql } from "./support/room";
+import { shipSql } from "./support/room";
 import assert from "node:assert/strict";
-import { join } from "node:path";
 import { test } from "node:test";
-import type { Tools } from "../server/safety/gate/evaluate";
-import type { Place } from "../server/safety/gate/types";
-import { Guard } from "../server/safety/guard";
-import { SafetyStore } from "../server/safety/store";
+import { guardAt, HOME, machine, PLACE, PROJECT, SEAT } from "./support/gate";
 
 shipSql();
 
-const HOME = "/Users/u";
-const PROJECT = "/Users/u/proj";
-const place: Place = {
-  home: HOME,
-  project: PROJECT,
-  tmp: null,
-  start: PROJECT,
-  guard: null,
-  roomFolder: ".seatwork",
-  daemon: "127.0.0.1:6767",
-};
-const tools: Tools = {
-  ignored: async (paths) => new Set(paths.filter((path) => /\/node_modules(\/|$)/.test(path))),
-  alias: async () => null,
-  external: async () => false,
-  stat: (path) => ({
-    exists: [HOME, `${HOME}/.ssh`, `${HOME}/.vimrc`, `${HOME}/.zshrc`].includes(path),
-    link: false,
-    dir: path === HOME || path === `${HOME}/.ssh`,
+const { guard, store } = guardAt(
+  "metamorphic-guard",
+  machine({
+    stat: (path) => ({
+      exists: [HOME, `${HOME}/.ssh`, `${HOME}/.vimrc`, `${HOME}/.zshrc`].includes(path),
+      link: false,
+      dir: path === HOME || path === `${HOME}/.ssh`,
+    }),
   }),
-  real: () => null,
-  changed: async () => null,
-};
-const store = new SafetyStore(join(ROOM_HOME, "metamorphic-guard"), 1000);
-const guard = new Guard({ store: () => store, policy: () => ({}), tools: () => tools, place: () => place });
-const seat = { id: "peer", role: "peer", project: PROJECT, tmp: null, start: PROJECT };
+  { ...PLACE, daemon: "127.0.0.1:6767" },
+);
 
 const keptCount = () => store.kept("", 100_000).length;
 
 /** What the guard keeps of a command: whether a rule caught it, and which; a line it could not read is kept as unread:command. */
 async function verdict(command: string): Promise<{ caught: boolean; rule: string | null }> {
   const before = keptCount();
-  await guard.check(seat, "claude", command, PROJECT);
+  await guard.check(SEAT, "claude", command, PROJECT);
   const kept = store.kept("", 1)[0];
   return keptCount() > before ? { caught: true, rule: `${kept.pack}:${kept.rule}` } : { caught: false, rule: null };
 }

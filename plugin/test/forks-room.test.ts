@@ -1,17 +1,12 @@
-import { installRoom, PROJECT, ROOM_HOME } from "./support/room";
+import { PROJECT, ROOM_HOME } from "./support/room";
 import assert from "node:assert/strict";
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { after, before, test } from "node:test";
-import contribute from "../index.server";
-import { fakeServer } from "./support/server";
-import { projectFolder, roomSeats } from "./room-seats";
+import { test } from "node:test";
+import { pluginRoom } from "./support/plugin";
+import { projectFolder } from "./support/seats";
 
-const paseoSide = fakeServer();
-const { call } = paseoSide;
-const output = { log: console.log, error: console.error };
 const realFetch = globalThis.fetch;
-let dispose: () => Promise<void>;
 
 const says: Partial<Record<string, string>> = {};
 const asked: { fork: string; labels: string[]; state: Record<string, unknown> }[] = [];
@@ -56,27 +51,21 @@ async function jev(url: unknown, init?: RequestInit): Promise<Response> {
   });
 }
 
-before(() => {
-  installRoom(["claude-hq", "claude-supervisor", "claude-lead", "claude-peer"]);
-  const file = join(ROOM_HOME, "policy.json");
-  const policy = JSON.parse(readFileSync(file, "utf8"));
-  policy.jev.forks = ["tier", "gaps", "escalate", "duplicate"];
-  policy.safety.council.mode = "off";
-  writeFileSync(file, JSON.stringify(policy));
-  mkdirSync(join(ROOM_HOME, "jev"), { recursive: true });
-  writeFileSync(join(ROOM_HOME, "jev", "openrouter.key"), "test-key\n");
-  globalThis.fetch = jev as typeof fetch;
-  console.log = console.error = () => {};
-  dispose = contribute(paseoSide.server);
-});
-
-after(async () => {
-  await dispose();
-  globalThis.fetch = realFetch;
-  Object.assign(console, output);
-});
-
-const { agents, context, seat, turnEnds } = roomSeats(call);
+const { call, agents, context, seat, turnEnds } = pluginRoom(
+  ["claude-hq", "claude-supervisor", "claude-lead", "claude-peer"],
+  {
+    policy: (policy) => {
+      policy.jev.forks = ["tier", "gaps", "escalate", "duplicate"];
+      policy.safety.council.mode = "off";
+    },
+    before: () => {
+      mkdirSync(join(ROOM_HOME, "jev"), { recursive: true });
+      writeFileSync(join(ROOM_HOME, "jev", "openrouter.key"), "test-key\n");
+      globalThis.fetch = jev as typeof fetch;
+    },
+    after: () => void (globalThis.fetch = realFetch),
+  },
+);
 
 const reset = () => {
   for (const key of Object.keys(says)) delete says[key];

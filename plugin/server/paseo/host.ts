@@ -85,7 +85,6 @@ function liveSeat(agent: Agent): LiveSeat {
     error: agent.lastError ?? null,
     usage: agent.lastUsage ?? null,
     model: agent.model ?? null,
-    mode: agent.currentModeId ?? null,
     thinking: agent.thinkingOptionId ?? agent.effectiveThinkingOptionId ?? null,
   };
 }
@@ -257,7 +256,6 @@ export class PaseoHost implements Host {
       agentId: agentIdOf(seat.key),
       config: {
         provider: `${seat.provider}/${seat.model}`,
-        ...(seat.mode ? { modeId: seat.mode } : {}),
         ...(seat.thinking ? { thinkingOptionId: seat.thinking } : {}),
       },
       cwd: seat.cwd,

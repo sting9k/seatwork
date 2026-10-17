@@ -241,7 +241,6 @@ export async function rotate(
     key: `rotation:${old.agentId}:${stamp}`,
     provider: old.provider,
     model,
-    ...(now.mode ? { mode: now.mode } : {}),
     ...(thinking ? { thinking } : {}),
     cwd: now.cwd,
     ...(owner ? { parent: owner } : {}),

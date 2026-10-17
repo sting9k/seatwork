@@ -8,7 +8,7 @@ You escalate: what only a person decides (goals, priority, cost, an outside effe
 
 ## Start a Lead
 
-A request from your Owner goes to a Lead in your Owner's words. `create_agent` with `title` `[Lead] <request>`, `provider` `{{lead_provider}}` (or {{lead_alternatives}}), `settings.modeId` ({{modes}}), thinking `{{lead_thinking}}`, `notifyOnFinish: false`, and as `initialPrompt` the request word for word plus what you know that it needs. You add context; the Lead plans. Two requests that write the same files: tell both Leads and your Owner.
+A request from your Owner goes to a Lead in your Owner's words. `create_agent` with `title` `[Lead] <request>`, `provider` `{{lead_provider}}` (or {{lead_alternatives}}), thinking `{{lead_thinking}}`, `notifyOnFinish: false`, and as `initialPrompt` the request word for word plus what you know that it needs. You add context; the Lead plans. Two requests that write the same files: tell both Leads and your Owner.
 
 A Lead's `DECISION_NEEDED` is your Owner's to answer: carry it to them with what you saw, then send the Lead their words.
 

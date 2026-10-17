@@ -49,7 +49,7 @@ import { WorkStores } from "../tasks/stores";
 import { Callers, serverToken } from "./callers";
 import { errorText, fromRoom, releaseWork, sweepLeases, taskOf, type RoomContext } from "./context";
 import { lookAtRunningTurns } from "./council";
-import { fitAt, launch, ownAgentMode, type Launched, type SeatLaunch } from "./launch";
+import { fitAt, launch, ownAgentMode, promptMark, type Launched, type SeatLaunch } from "./launch";
 import { mailHealth, registerTools } from "./tools";
 import { rotationFailed, turnEnded, type SeatEvent, type TurnEnd } from "./turns";
 import { excerpt } from "../excerpt";
@@ -407,7 +407,7 @@ async function seatCreated(room: RoomContext, agent: SeatEvent): Promise<void> {
     provider: seat.provider,
     title: agent.title,
     cwd: agent.cwd,
-    version: room.version,
+    prompt: promptMark({ provider: seat.provider, title: agent.title, cwd: agent.cwd }, room.policy),
   };
   room.engine.rememberSeat(record);
   room.operations.opened(agent.id);
@@ -734,7 +734,11 @@ export function startRoom(input: {
       ),
     async olderSeats() {
       return [...(await host.live()).values()]
-        .filter((seat) => parseSeat(seat.provider) && engine.seat(seat.id)?.version !== version)
+        .filter((seat) => {
+          const record = engine.seat(seat.id);
+          const mark = record?.prompt ? promptMark(record, policy) : undefined;
+          return mark !== undefined && mark !== record?.prompt;
+        })
         .map((seat) => seat.title ?? seat.id);
     },
     async waiting() {

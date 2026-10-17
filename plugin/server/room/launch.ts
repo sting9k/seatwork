@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { join } from "node:path";
 import { inRoom, specFromTitle } from "../../shared/workflow";
 import type { Host } from "../host";
@@ -125,6 +126,27 @@ function shadowLines(root: string, role: string): string[] {
     );
   }
   return lines;
+}
+
+/** The mark of what the room writes into a seat's prompt: its role, harness and spec prompt on the table in force at its folder, its skills and the shared instructions, hashed; undefined where that cannot be worked out now. */
+export function promptMark(
+  seat: Pick<SeatRecord, "provider" | "title" | "cwd">,
+  policy: RuntimePolicy,
+): string | undefined {
+  const parsed = parseSeat(seat.provider);
+  if (!parsed || !seat.cwd) return undefined;
+  try {
+    const { models } = tableOf(projectAt(seat.cwd, parsed.role, parsed.provider));
+    const spec = specFromTitle(seat.title);
+    const text = [
+      rolePrompt(parsed.role, { harness: parsed.harness, spec, params: policy.room.params, models }),
+      roleSkillNames(parsed.role).join(", "),
+      sharedInstructions(policy) ?? "",
+    ].join("\n\n");
+    return createHash("sha256").update(text).digest("hex").slice(0, 16);
+  } catch {
+    return undefined;
+  }
 }
 
 /** The mode an agent of the owner's own harness starts in: the room's seats' mode when the policy says so; undefined leaves its creator's choice, also when the room's table cannot be read. */

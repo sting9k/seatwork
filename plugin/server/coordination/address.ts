@@ -5,7 +5,7 @@ import { seatLabel } from "./envelope";
 
 /** Whom a seat may write to, and which seat a word in `to` names. */
 
-/** A seat the room registered: its parent, role and agent CLI, its title and the folder it works in. */
+/** A seat the room registered: its parent, role and agent CLI, its title, the folder it works in and the mark of the prompt the room gave it (absent where the room kept none). */
 export interface SeatRecord {
   agentId: string;
   parentAgentId: string | null;
@@ -13,7 +13,7 @@ export interface SeatRecord {
   provider: string;
   title: string | null;
   cwd?: string;
-  version?: string;
+  prompt?: string;
 }
 
 /** The room's seats and who stands above whom, as the mail engine keeps them. */

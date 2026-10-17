@@ -312,10 +312,10 @@ test("while Paseo still lists the folder of the version before, the room is not 
   rmSync(older, { recursive: true });
 });
 
-test("a seat opened by an earlier version of the plugin is named on the screen until it is archived", async () => {
-  const opened = (agentId: string, version?: string) =>
-    `${JSON.stringify({ agentId, parentAgentId: null, provider: "claude-lead", role: "lead", title: null, version })}\n`;
-  appendFileSync(join(ROOM_HOME, "registry-log.jsonl"), opened("before-1", "0.1.0") + opened("before-2"));
+test("a seat is named on the screen when the prompt it started on is not the one the room gives its kind now, until it is archived; an update that leaves its prompt alone names nothing", async () => {
+  const opened = (agentId: string, prompt?: string) =>
+    `${JSON.stringify({ agentId, parentAgentId: null, provider: "claude-lead", role: "lead", title: null, cwd: PROJECT, prompt })}\n`;
+  appendFileSync(join(ROOM_HOME, "registry-log.jsonl"), opened("before-1", "0123456789abcdef") + opened("before-2"));
   await restart();
   const created = { id: "now-1", provider: "claude-peer", cwd: PROJECT, title: "[Peer] new", parentAgentId: null };
   await call("on agent.created", { agent: created }, context);
@@ -325,14 +325,19 @@ test("a seat opened by an earlier version of the plugin is named on the screen u
     { id: "now-1", provider: "claude-peer", title: "[Peer] new" },
     { id: "a2", provider: "claude", title: "not a seat" },
   ];
+  const older = async () => (await state()).checks.find((check) => check.id === "older-seats")?.detail ?? "";
 
-  const row = (await state()).checks.find((check) => check.id === "older-seats");
-
-  assert.equal(row?.ok, false);
-  assert.match(row?.detail ?? "", /^2 open seats .*\[Lead\] billing, \[Lead\] search/);
-  assert.doesNotMatch(row?.detail ?? "", /\[Peer\] new|not a seat/);
-  daemon.open = [daemon.open[2]];
-  assert.ok(!(await state()).checks.some((check) => check.id === "older-seats"));
+  assert.match(
+    await older(),
+    /^1 open seat started on a prompt the room has since changed, and keeps it: \[Lead\] billing\./,
+  );
+  const role = join(ROOM_HOME, "room", "roles", "peer.md");
+  const before = readFileSync(role, "utf8");
+  writeFileSync(role, `${before}\nOne more line.\n`);
+  assert.match(await older(), /^2 open seats .*: \[Lead\] billing, \[Peer\] new\./, "the Peer's role prompt changed");
+  writeFileSync(role, before);
+  daemon.open = [daemon.open[1], daemon.open[2]];
+  assert.equal(await older(), "", "a seat with no mark of its prompt is not known to be behind");
   daemon.open = [];
 });
 

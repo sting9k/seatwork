@@ -90,7 +90,7 @@ test("a task sent back twice starts its successor a tier up where the table list
       move: async () => {},
       threadsFor: () => [],
     } as never,
-    version: "test",
+    mark: () => undefined,
     fit: fitAt,
     up: stepUpAt,
     handOver: () => {},

@@ -398,7 +398,7 @@ export class MailEngine implements Directory {
           provider: rec.provider,
           title: rec.title ?? null,
           ...(rec.cwd ? { cwd: rec.cwd } : {}),
-          ...(rec.version ? { version: rec.version } : {}),
+          ...(rec.prompt ? { prompt: rec.prompt } : {}),
         });
       } catch {
         // a torn line

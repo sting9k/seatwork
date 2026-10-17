@@ -20,7 +20,7 @@ import {
   roleSkillNames,
   sharedInstructions,
 } from "../orchestration/runtimes";
-import { enabledSeats, knownSpecs, parseSeat, rolePrompt } from "../orchestration/seats";
+import { enabledSeats, HARNESSES, knownSpecs, parseSeat, rolePrompt } from "../orchestration/seats";
 import { SAFETY_DIR } from "../paths";
 import type { RuntimePolicy } from "../policy";
 import type { SeatRecord } from "../coordination/engine";
@@ -35,9 +35,10 @@ export interface SeatLaunch {
   systemPrompt?: string;
 }
 
-/** What the room lays into a start: the table's model (absent where the asked one stands; `thinking` null takes the model's own default), the prompt, Claude's flags, OpenCode's permissions. */
+/** What the room lays into a start: the table's model (absent where the asked one stands; `thinking` null takes the model's own default), the table's mode for the harness (absent where it has none), the prompt, Claude's flags, OpenCode's permissions. */
 export interface Launched {
   model?: { id: string; thinking?: string | null };
+  mode?: string;
   systemPrompt: string;
   claude?: { dirs: string[]; args: Record<string, string | null> };
   opencode?: { permission: Record<string, unknown> };
@@ -126,6 +127,16 @@ function shadowLines(root: string, role: string): string[] {
   return lines;
 }
 
+/** The mode an agent of the owner's own harness starts in: the room's seats' mode when the policy says so; undefined leaves its creator's choice, also when the room's table cannot be read. */
+export function ownAgentMode(provider: string, policy: RuntimePolicy): string | undefined {
+  if (!policy.ownAgentMode || !(HARNESSES as readonly string[]).includes(provider)) return undefined;
+  try {
+    return loadModels().modes[provider] ?? undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 /** A room seat's start: held to its project and table, given its prompt; throws when refused. A creator that named no model may have the decision model pick the tier. */
 export async function launch(
   request: SeatLaunch,
@@ -178,7 +189,9 @@ export async function launch(
   ]
     .filter((part): part is string => typeof part === "string" && part.trim().length > 0)
     .join("\n\n");
+  const mode = models.modes[seat.harness];
   return {
+    ...(mode ? { mode } : {}),
     ...(fit.model
       ? {
           model: {

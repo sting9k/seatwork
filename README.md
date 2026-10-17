@@ -93,7 +93,10 @@ its own schedule.
   of agents, dictation and voice mode off (from the daemon's next restart).
   Your own Claude, Codex, Pi and OpenCode agents keep the Paseo tools the
   room's roles use, creating and managing agents among them, and no other.
-  Remove gives each switch back while it still holds the room's value.
+  Every agent, the room's and your own, starts without permission prompts:
+  Claude in bypass, Codex in full access, OpenCode in build; you can switch
+  an agent's mode after it starts. Remove gives each switch back while it
+  still holds the room's value.
 - A mail server on `127.0.0.1` for the agents' mail tool.
 - `~/.config/seatwork`: logs, copies of your agent CLI config and each
   agent's temporary files, readable by your user only. Its `policy.json`

@@ -110,6 +110,7 @@ export interface RuntimePolicy {
   jev?: JevPolicy;
   knowledge?: KnowledgePolicy;
   budget?: BudgetPolicy;
+  ownAgentMode: boolean;
 }
 
 export const POLICY_FILE = join(ROOM_HOME, "policy.json");
@@ -166,6 +167,7 @@ export function loadPolicy(): RuntimePolicy {
     jev: parsed.jev,
     knowledge: parsed.knowledge,
     budget: parsed.budget,
+    ownAgentMode: parsed.daemon?.ownAgentMode === "room",
   };
 }
 

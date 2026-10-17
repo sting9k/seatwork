@@ -11,7 +11,7 @@ export interface ChairDeps {
   isChair(agentId: string): boolean;
   ownerOf(agentId: string): string | null;
   titleOf(agentId: string): string;
-  tell(to: string, mail: { subject: string; body: string; needs: "nothing" | "reply"; why: string }): Promise<void>;
+  tell(to: string, mail: { subject: string; body: string; needs: "nothing" | "reply" }): Promise<void>;
 }
 
 /** The evidence an appeal carries, filtered: what the member found and why it asks, its readings, the turn's commands, the diff, the brief. */
@@ -79,7 +79,6 @@ export class Chair {
       subject: `APPEAL #${id}: ${a.member} on ${this.deps.room.titleOf(a.seat)}'s candidate`,
       body: asked(id, this.deps.room.titleOf(a.seat), a.packet, this.minutes),
       needs: "nothing",
-      why: "a member of the room's council asks whether a candidate goes back",
     });
     return id;
   }
@@ -105,7 +104,6 @@ export class Chair {
         subject: `HAND-IN RETURNED: the chair sent your candidate back (${row.member})`,
         body: returned(packet.finding, said),
         needs: "reply",
-        why: "the room's chair read a council finding about your candidate and sent it back",
       }),
     ];
     if (owner && owner !== by)
@@ -114,7 +112,6 @@ export class Chair {
           subject: `COUNCIL: the chair sent ${title}'s hand-in back`,
           body: `The room's chair sent this seat's candidate back after a council finding (${row.member}): ${said}\nHold your verdict on it until the seat hands in again.`,
           needs: "nothing",
-          why: "the candidate you were given was sent back by the room's chair",
         }),
       );
     for (const result of await Promise.allSettled(sent))
@@ -150,8 +147,8 @@ function asked(id: number, title: string, packet: Packet, minutes: number): stri
   const brief = Object.entries(packet.brief).map(([key, value]) => `${key}: ${redact(clip(value, 300))}`);
   if (brief.length) lines.push("The brief:", ...brief);
   lines.push(
-    `Rule within ${minutes} minutes, on this evidence only: seatwork_safety action=rule id=${id} send_back=true or false and a reason of a sentence in English.`,
-    "Send it back only when the evidence above shows the problem. When it is thin or unclear, send_back=false. If you do not rule in time nothing is sent back.",
+    `Rule within ${minutes} minutes, on this evidence only: seatwork_safety action=rule id=${id} send_back=true or false, with a reason of one sentence the seat reads.`,
+    "Send it back only when the evidence above shows the problem; thin or unclear evidence means false. With no ruling in time, nothing is sent back.",
   );
   return lines.join("\n");
 }
@@ -166,7 +163,6 @@ const REASONS = {
 /** What the seat reads when the chair sends its candidate back. */
 function returned(finding: string, reason: string): string {
   return [
-    "The room's chair read the evidence behind a council finding about your candidate and sent it back.",
     `Finding: ${finding}`,
     `The chair's reason: ${reason}`,
     "Fix what the reason names, then hand in again. If you think the chair is wrong, say so in your next hand-in, with your evidence.",

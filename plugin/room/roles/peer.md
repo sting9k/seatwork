@@ -32,7 +32,7 @@ Commit, then end the turn with `CANDIDATE: <what is now usable>`. In under 3,000
 - each test added, changed or removed, with why;
 - residual risk, and each `TEMPORARY`.
 
-The room reads the change before your Owner does. It may hand it back once for a pass with fresh eyes, or with findings from its check. Fix each finding, or keep one on purpose with `seatwork_safety` `ack` and why; then hand in again.
+The room reads the change before your Owner does and may hand it back first: do what that mail says, then hand in again.
 
 ## Your Owner's answer
 

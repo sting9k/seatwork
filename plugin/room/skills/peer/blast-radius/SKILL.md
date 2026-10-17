@@ -1,6 +1,6 @@
 ---
 name: blast-radius
-description: "Before handing in a change to shared code, or judging one: find what it breaks beyond the diff and prove the one fact it is safe because of by running code. Not for a change wholly inside new code."
+description: "Finds what a change breaks beyond its diff (callers, sibling cases, tests that use it) and proves the one fact that makes it safe by running code. Use before handing in or judging a change to shared code; not for a change wholly inside new code."
 ---
 
 # Blast radius

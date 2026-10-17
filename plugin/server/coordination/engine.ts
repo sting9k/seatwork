@@ -857,7 +857,6 @@ export class MailEngine implements Directory {
         subject: `UNDELIVERABLE: #${mail.id} re: ${mail.subject}`.slice(0, config.subjectChars),
         body: `Your mail to ${who ? `${who.role} ${agentId}` : agentId} was not delivered: that seat is archived or gone. Nothing is waiting on it. If the work still matters, launch a new seat with the brief and what was tried.`,
         needs: "nothing",
-        why: "the recipient of a mail you sent no longer exists",
         thread: mail.thread,
         quiet: !waited,
       });
@@ -1074,7 +1073,6 @@ export class MailEngine implements Directory {
             subject: wakeSubject(wake.note),
             body: wakeBody(wake, wake.by === wake.seat ? "you" : this.label(wake.by, wake.seat)),
             needs: "nothing",
-            why: "a wake-up set earlier has come due",
             key,
           });
         }

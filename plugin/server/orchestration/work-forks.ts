@@ -90,7 +90,6 @@ async function askAcceptance(deps: WorkForkDeps, issue: Issue, seat: string) {
     priority: "action",
     subject: `ACCEPTANCE NEEDED: ${issue.id} "${clip(issue.title, 80)}"`,
     body: `${named(deps, seat)} took ${issue.id}, which has no acceptance criteria. Add them: seatwork_work do=update id=${issue.id} acceptance_criteria=<how anyone can tell it is done>. The seat goes on meanwhile.`,
-    why: "an issue you made was claimed and has no acceptance criteria",
   });
   return sent
     ? {
@@ -111,7 +110,6 @@ async function askDecision(deps: WorkForkDeps, issue: Issue, seat: string) {
     subject: `ISSUE NEEDS A DECISION: ${issue.id} "${clip(issue.title, 80)}"`,
     body: `${named(deps, seat)} took ${issue.id}, which leaves a choice open that someone with the authority must make before work can start. Read it (seatwork_work do=show id=${issue.id}), decide, and answer ${seat} by mail. The seat waits.`,
     needs: "decision",
-    why: "a seat under you took an issue that needs a decision first",
   };
   const routed = await routeUp(deps, seat, draft, "DECISION_NEEDED");
   const out = routed?.draft ?? draft;
@@ -133,7 +131,6 @@ async function suggestSplit(deps: WorkForkDeps, issue: Issue, seat: string) {
     quiet: true,
     subject: `SPLIT SUGGESTED: ${issue.id} "${clip(issue.title, 80)}"`,
     body: `${named(deps, seat)} took ${issue.id}, which reads as more than one seat's work. Consider splitting it into issues under it (seatwork_work do=create parent=${issue.id}) and giving each its own seat.`,
-    why: "an issue a seat under you took looks too big for one seat",
   });
   return sent
     ? {

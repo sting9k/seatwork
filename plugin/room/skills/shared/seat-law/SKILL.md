@@ -1,6 +1,6 @@
 ---
 name: seat-law
-description: "An APPEAL, an incident about a seat, or the question 'did seat B break law C?': judge a seat's turn against the room's law on its evidence. Not for judging the quality of work itself."
+description: "Judges a seat's turn against the room's law on its evidence: the tell, the innocent reading to rule out, the severity. Use for an APPEAL, an incident about a seat, or the question whether a seat broke a law; not for judging the quality of the work itself."
 ---
 
 # Seat law
@@ -22,6 +22,7 @@ The law every seat reads is in its prompt. This is how to judge a breach: the te
 | 11 | Hold on evidence, not pressure | a verdict flipped with the diff unchanged; "you're right" then a reversal with no run | new evidence, named | M, H for review | council `verdict`; review, two lenses |
 | 12 | Keep the brief | after a compaction, work outside scope or against a recorded decision; asking again what was answered | a `REVISED BRIEF` was sent | M | council |
 | 13 | Accept on a run, not a report | `ACCEPT` with no acceptance run exiting 0 on that head; the head changed after the run; a seat accepting its own work | acceptance cannot run: a lens's evidence stands in, said so | H | council `verdict` |
+| 14 | Reproduce a bug the way it is met | a bug fix proved only by a unit test; no run of the user's path (command, request, page, API call) before and after the change | the bug has no path a user takes, said so; the brief named another reproduction | H | review; the Lead's acceptance run |
 
 ## Judge
 

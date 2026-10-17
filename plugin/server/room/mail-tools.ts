@@ -472,9 +472,8 @@ async function stopBelow(
       to: under.agentId,
       priority: "blocking",
       subject: "STOP: the work above you was stopped",
-      body: `The seat above your Owner stopped this work with: "${subject}". Stop where you are: leave the tree as it is, start nothing new, and end your turn with what is finished, what is half-done and where it lies. Your Owner writes next.`,
+      body: `The seat above your Owner stopped this work with: "${subject}", and your running turn was ended for it. Stop where you are: leave the tree as it is, start nothing new, and end your turn with what is finished, what is half-done and where it lies. Your Owner writes next.`,
       needs: "nothing",
-      why: "the work you are part of was stopped; the turn you were in was ended to bring you this",
       thread: mail.thread,
       urgent: true,
     });

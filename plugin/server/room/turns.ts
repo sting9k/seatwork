@@ -73,46 +73,42 @@ const REPORTS: Record<
     needs: Needs;
     quiet?: true;
     progress?: true;
-    why(signal: string | undefined, tries: number): string;
+    why(tries: number): string;
   }
 > = {
   failed: {
     priority: "blocking",
     needs: "decision",
-    why: (_, tries) =>
+    why: (tries) =>
       `the seat's turn failed${tries > 0 ? `, and again after the room's ${tries} tries` : ""}; its work is stopped: a mail to it starts it again, or archive it and brief a new seat`,
   },
-  asks: { priority: "action", needs: "reply", why: (signal) => `the seat ended its turn with ${signal}` },
+  asks: { priority: "action", needs: "reply", why: () => "" },
   again: {
     priority: "fyi",
     needs: "nothing",
     quiet: true,
-    why: () => "nothing new: the seat ended its turn with DONE again, after mail that asked nothing",
+    why: () => "nothing new: DONE again, after mail that asked nothing",
   },
   progress: {
     priority: "fyi",
     needs: "nothing",
     quiet: true,
     progress: true,
-    why: () => "progress only: the seat ended its turn with STATUS and asks nothing of you",
+    why: () => "progress only; it asks nothing of you",
   },
   ack: {
     priority: "fyi",
     needs: "nothing",
     quiet: true,
-    why: () => "nothing new: the seat ended its turn with an acknowledgement",
+    why: () => "nothing new: an acknowledgement",
   },
   "nothing-new": {
     priority: "fyi",
     needs: "nothing",
     quiet: true,
-    why: () => "nothing new: the decision model read the report as nothing for you to act on",
+    why: () => "nothing new, as the decision model reads the report",
   },
-  said: {
-    priority: "fyi",
-    needs: "nothing",
-    why: (signal) => `the seat ended its turn with ${signal ?? "a progress message"}`,
-  },
+  said: { priority: "fyi", needs: "nothing", why: () => "" },
 };
 
 const ALIKE_SHARE = 0.6;
@@ -180,7 +176,7 @@ function reportOf(room: RoomContext, turn: Gathered, to: string, nothingNew: boo
           : `${signal ?? "turn ended"}: ${name}`,
     body: text || `(no final message; outcome ${outcome.kind})`,
     needs: kind === "asks" && DECIDES.has(signal!) ? "decision" : shape.needs,
-    why: shape.why(signal, failure && "gaveUpAfter" in failure ? failure.gaveUpAfter : 0),
+    why: shape.why(failure && "gaveUpAfter" in failure ? failure.gaveUpAfter : 0),
     ...(shape.quiet ? { quiet: true as const } : {}),
     ...(shape.progress ? { progress: true as const } : {}),
   };
@@ -274,10 +270,7 @@ async function answerRotation(
           subject: `ROTATED: ${record.role} ${record.title ?? id} continues in a fresh seat`,
           body: `The room started ${nextTitle(record.title)} (${next.id}) on ${next.model}${next.raised ? " (a tier up: its task was sent back twice)" : ""}, with the brief in force and the handoff at ${next.file}. The seats the old one launched report to it now. ${next.left.length === 0 ? `The old seat ${id} is archived` : `The old seat ${id} is not archived, because these did not move to the successor: ${next.left.join("; ")}. Move them, then archive it`}: write to ${next.id} from here on.`,
           needs: "nothing",
-          why: [
-            "a seat under you was replaced by a fresh one",
-            ...(told === reportsTo && council ? [council] : []),
-          ].join("; "),
+          ...(told === reportsTo && council ? { why: council } : {}),
           quiet: true,
         });
       return true;
@@ -298,7 +291,6 @@ export async function rotationFailed(room: RoomContext, by: string, seat: SeatRe
     subject: `ROTATION FAILED: ${seat.role} ${seat.title ?? seat.agentId} stays as it is`,
     body: `The room did not replace this seat: ${problem}. Ask again with seatwork_rotate, or brief a new seat yourself and archive this one.`,
     needs: "nothing",
-    why: "the rotation you asked for did not happen",
   });
 }
 
@@ -367,7 +359,6 @@ async function mailCouncil(
       subject: `COUNCIL: ${finding.member} on ${title}`,
       body: finding.line,
       needs: "nothing",
-      why: "the room's council read a turn of a seat under you",
     });
     noteShown(room, [finding]);
   }
@@ -389,11 +380,18 @@ async function holdForRound(room: RoomContext, up: NewMail, id: string): Promise
   if (round && round.awaited > 0) {
     const minutes = Number(room.policy.room.params[REVIEW_STALL]) || 0;
     up.heldUntil = new Date(Date.now() + minutes * 60_000).toISOString();
-    up.why = `${up.why}; held for the ${round.awaited} other${round.awaited === 1 ? "" : "s"} of its review round`;
+    up.why = [up.why, `held for the ${round.awaited} other${round.awaited === 1 ? "" : "s"} of its review round`]
+      .filter(Boolean)
+      .join("; ");
   }
   const alike = round?.members && round.members.length > 1 ? await oneFamily(room, round.members) : 0;
   if (alike)
-    up.why = `${up.why}; ${alike} answers to one question in this round came from one model family: their agreement is weak evidence, so ask one on another family before you rest on it`;
+    up.why = [
+      up.why,
+      `${alike} answers to one question in this round came from one model family: their agreement is weak evidence, so ask one on another family before you rest on it`,
+    ]
+      .filter(Boolean)
+      .join("; ");
 }
 
 /** The lines of a brief that say what it asks, not its angle. */
@@ -561,12 +559,7 @@ async function readHandIn(
   if (room.policy.room.handin.freshEyes && room.rounds.owesFreshEyes(task))
     return {
       check: null,
-      returned: returnOf(
-        id,
-        "HAND-IN RETURNED: one pass with fresh eyes, then hand in again",
-        FRESH_EYES,
-        "the room returns a first hand-in once before the Owner reads it",
-      ),
+      returned: returnOf(id, "HAND-IN RETURNED: one pass with fresh eyes, then hand in again", FRESH_EYES),
     };
   const check = await checkHandIn(room, id);
   if (check?.state !== "blocked" || !room.safety.handInBlocks) return { check, returned: null };
@@ -576,20 +569,18 @@ async function readHandIn(
       id,
       `HAND-IN RETURNED: ${check.open.length} finding(s) from the room's check`,
       handInReturn(check),
-      "the room reads a candidate before its Owner does",
     ),
   };
 }
 
 /** The room's mail that returns a candidate to its seat, and waits for its reply. */
-const returnOf = (to: string, subject: string, body: string, why: string): NewMail => ({
+const returnOf = (to: string, subject: string, body: string): NewMail => ({
   from: fromRoom,
   to,
   priority: "action",
   subject,
   body,
   needs: "reply",
-  why,
 });
 
 /** Answers the rotation asked of a seat whose handoff this turn is, the council's findings going with it; true when its successor started. */

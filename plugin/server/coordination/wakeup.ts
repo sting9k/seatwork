@@ -1,6 +1,5 @@
 import config from "../../shared/mail.json";
 import { MailError } from "./address";
-import { clock } from "./envelope";
 import type { WakeUp } from "./store";
 
 /** Timed wake-ups: a request read against the settings, and the WAKE mail a wake-up becomes when it falls due. */
@@ -83,6 +82,6 @@ export function noteOf(value: unknown): string {
 /** The subject of a WAKE mail: the first line of its note, cut short. */
 export const wakeSubject = (note: string): string => `WAKE: ${note.split("\n")[0].trim().slice(0, SUBJECT_NOTE_CHARS)}`;
 
-/** The body of a WAKE mail: the note, then which wake-up it is and who set it, as `by` reads to the seat woken. */
+/** The body of a WAKE mail: its note, and who set it when another seat did. */
 export const wakeBody = (wake: WakeUp, by: string): string =>
-  `${wake.note}\n\nWake-up #${wake.id}, set by ${by} at ${clock(wake.at)} UTC for ${clock(wake.due)} UTC.`;
+  by === "you" ? wake.note : `${wake.note}\n\nSet by ${by}.`;

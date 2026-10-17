@@ -1,6 +1,6 @@
 ---
 name: lenses
-description: "A hard-to-undo decision, a contested design, a large plan, or a bug two fixes failed: ask independent read-only Peers on different model families, then decide on evidence. Not for routine review or a question one run answers."
+description: "Puts one hard question to independent read-only Peers on different model families, then decides on their evidence. Use for a hard-to-undo decision, a contested design, a large plan, or a bug two fixes failed; not for routine review or a question one run answers."
 ---
 
 # Lenses

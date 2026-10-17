@@ -158,7 +158,6 @@ export interface Resumes {
     subject: string;
     body: string;
     needs: "nothing";
-    why: string;
   }): Promise<unknown>;
 }
 
@@ -193,7 +192,6 @@ async function resumeOne(recovery: Recovery, mail: Resumes, retry: Retry, now: n
     subject: "RESUME: your last turn stopped on the model service, not on your work",
     body: resumeText(retry),
     needs: "nothing",
-    why: "the room starts you again after a failure that was not your work's",
   });
 }
 

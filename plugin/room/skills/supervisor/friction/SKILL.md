@@ -1,6 +1,6 @@
 ---
 name: friction
-description: "A WAKE you set, or a sign the room is working badly (rework, loops, stalls, piled rejections, seats colliding): find the friction, name its class with evidence, propose the smallest correction. Not for judging a single candidate."
+description: "Finds where the room wastes work (rework, loops, stalls, piled rejections, seats colliding), names its class with evidence and proposes the smallest correction. Use on a WAKE you set or a sign the room works badly; not for judging a single candidate."
 ---
 
 # Friction

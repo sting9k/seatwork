@@ -1,6 +1,6 @@
 ---
 name: skill-creator
-description: "Considering a new or changed skill for the room's seats, or a skill from outside: decide whether it should exist, then draft it. Not for notes, prompt edits, or what a tool description already says."
+description: "Decides whether a skill for the room's seats should exist, then drafts it from a failure seen twice. Use when a new, changed or outside skill is proposed; not for notes, prompt edits, or what a tool description already says."
 ---
 
 # Skill creator

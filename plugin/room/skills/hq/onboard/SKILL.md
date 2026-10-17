@@ -1,6 +1,6 @@
 ---
 name: onboard
-description: "Your Owner names a project that seatwork_projects shows NOT registered, or registered without mission or law: bring it into the room. Not for starting a project's first task."
+description: "Brings a project into the room: its mission, its law, its model table and its first Supervisor. Use when your Owner names a project that seatwork_projects shows unregistered or without mission or law; not for a project's first task."
 ---
 
 # Onboard a project

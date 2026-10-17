@@ -1,6 +1,6 @@
 ---
 name: test-audit
-description: "Writing, changing or judging tests: keep proof that a regression would break, reject proof that restates code or needs a test-only seam. Not for raising coverage numbers."
+description: "Judges tests by whether a regression would break them: keeps that proof, rejects tests that restate the code or need a test-only seam. Use when writing, changing or reviewing tests; not for raising coverage numbers."
 ---
 
 # Test audit

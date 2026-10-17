@@ -1,6 +1,6 @@
 ---
 name: hillclimb
-description: "Before tuning a policy key, or trusting a number about the room: one change, one measurement, keep or revert, with the number vetted first. Not for a fault in the plugin's code."
+description: "Tunes one room policy key at a time against a measured baseline: one change, one reading, keep or revert, the number vetted first. Use before changing any key or trusting a number about the room; not for a fault in the plugin's code."
 ---
 
 # Hillclimb

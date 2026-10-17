@@ -463,7 +463,7 @@ module.exports = [
           args: {
             title: "[Peer] joined durations",
             provider: "claude-peer/claude-sonnet-5-5",
-            settings: { modeId: "bypassPermissions", thinkingOptionId: "high" },
+            settings: { thinkingOptionId: "high" },
             notifyOnFinish: false,
             initialPrompt: JOINED_BRIEF(null),
           },
@@ -715,7 +715,7 @@ module.exports = [
           args: {
             title: "[Peer:arch] duration shape",
             provider: "claude-peer/claude-sonnet-5-5",
-            settings: { modeId: "bypassPermissions", thinkingOptionId: "high" },
+            settings: { thinkingOptionId: "high" },
             notifyOnFinish: false,
             initialPrompt: LENS_QUESTION,
           },
@@ -730,7 +730,7 @@ module.exports = [
           args: {
             title: "[Peer:arch] duration shape, independent",
             provider: "claude-peer/claude-opus-5-5",
-            settings: { modeId: "bypassPermissions", thinkingOptionId: "high" },
+            settings: { thinkingOptionId: "high" },
             notifyOnFinish: false,
             initialPrompt: `${LENS_QUESTION}\nAngle: independent, from first principles`,
           },
@@ -740,7 +740,7 @@ module.exports = [
           args: {
             title: "[Peer:arch] duration shape, challenger",
             provider: "codex-peer/gpt-6-astra",
-            settings: { modeId: "full-access", thinkingOptionId: "high" },
+            settings: { thinkingOptionId: "high" },
             notifyOnFinish: false,
             initialPrompt: `${LENS_QUESTION}\nAngle: premise challenger, test the framing`,
           },
@@ -917,7 +917,7 @@ module.exports = [
           args: {
             title: "[Lead] joined durations",
             provider: "claude-lead/claude-opus-5-5",
-            settings: { modeId: "bypassPermissions", thinkingOptionId: "high" },
+            settings: { thinkingOptionId: "high" },
             notifyOnFinish: false,
             initialPrompt: "Make the duration parser accept hours and minutes together, such as 1h30m.",
           },

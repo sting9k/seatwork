@@ -75,7 +75,7 @@ test("a task sent back twice starts its successor a tier up where the table list
   };
   const on = (model: string) => ({
     host: {
-      seat: async () => ({ cwd: PROJECT, model, mode: null, thinking: "high" }),
+      seat: async () => ({ cwd: PROJECT, model, thinking: "high" }),
       prompts: async () => ["Brief: build the store."],
       create: async (input: { model?: string }) => {
         made.push(input);

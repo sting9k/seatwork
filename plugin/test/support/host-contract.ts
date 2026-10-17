@@ -236,7 +236,6 @@ export const HOST_CONTRACT: { [M in keyof Host]: Clause[] } = {
           key: "start-1",
           provider: "claude-peer",
           model: "opus",
-          mode: "bypass",
           thinking: "high",
           cwd: "/work/p",
           parent: "lead-1",
@@ -248,7 +247,6 @@ export const HOST_CONTRACT: { [M in keyof Host]: Clause[] } = {
         assert.equal(start.key, "start-1");
         assert.deepEqual(start.request.config, {
           provider: "claude-peer/opus",
-          modeId: "bypass",
           thinkingOptionId: "high",
         });
         assert.deepEqual(

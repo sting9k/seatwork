@@ -24,7 +24,6 @@ export interface LiveSeat {
   error: string | null;
   usage: SeatUsage | null;
   model: string | null;
-  mode: string | null;
   thinking: string | null;
 }
 
@@ -33,7 +32,6 @@ export interface NewSeat {
   key: string;
   provider: string;
   model: string;
-  mode?: string;
   thinking?: string;
   cwd: string;
   parent?: string;

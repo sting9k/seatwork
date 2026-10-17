@@ -1025,7 +1025,6 @@ test("seatwork_rotate replaces a seat with a fresh one: its handoff and brief st
   Object.assign(agents[lead.agent.id], {
     current: () => ({
       ...state,
-      currentModeId: "bypassPermissions",
       thinkingOptionId: "medium",
       ...(archived ? { archivedAt: "x" } : {}),
     }),
@@ -1050,7 +1049,6 @@ test("seatwork_rotate replaces a seat with a fresh one: its handoff and brief st
   assert.equal(created.length, 1);
   assert.deepEqual(created[0].config, {
     provider: "claude-lead/claude-opus-5-5",
-    modeId: "bypassPermissions",
     thinkingOptionId: "medium",
   });
   assert.deepEqual(

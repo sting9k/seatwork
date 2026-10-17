@@ -78,15 +78,6 @@ function paramVar(name: string, value: string | number): [string, string] {
 /** The placeholder map for role prompts: seats, tiers, the table's own words about a role (reviewThinking is {{review_thinking}}) and the params. */
 export function promptVars(m: Models, params: RoomParams): Record<string, string> {
   const vars: Record<string, string> = {};
-  const withMode = Object.entries(m.modes)
-    .filter(([, mode]) => mode)
-    .map(([h, mode]) => `${h} \`${mode}\``);
-  const without = Object.entries(m.modes)
-    .filter(([, mode]) => !mode)
-    .map(([h]) => h);
-  vars.modes = [withMode.join(", "), without.length ? `${without.join(", ")}: none, omit \`modeId\`` : ""]
-    .filter(Boolean)
-    .join("; ");
   for (const role of rolesWhere((role) => role.models === "one")) {
     const seat = m.seats[role];
     if (!seat) continue;

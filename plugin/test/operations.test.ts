@@ -5,7 +5,9 @@ import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { test } from "node:test";
 import { Operations, OperationsRefused } from "../server/operations/index";
-import { operationsAt } from "./support/operations";
+import settings from "../shared/operations.json";
+import forkCatalog from "../shared/forks.json";
+import { DOWN, LOCKED, operationsAt } from "./support/operations";
 import { districtOf, incidentOf } from "../server/operations/lines";
 import { OperationsStore } from "../server/operations/store";
 import { Vitals } from "../server/operations/vitals";
@@ -30,8 +32,6 @@ const GROUNDS = {
   reason: "The forks cap ran out before noon three days in a row.",
   evidence: "jev reading: forks spent 0.25 of 0.25 by 11:40 UTC on each of the last three days.",
 };
-const LOCKED = (n: number) =>
-  `knowledge: the turn ${n}f2504e0-4f89-11d3-9a0c-0305e82c3301:t${n} was not kept: database is locked`;
 
 /** The operator reads jev and its log in this turn, as a change needs. */
 const readJev = (ops: Operations) => {
@@ -547,4 +547,98 @@ test("the vital signs say a store's new slow statements, a large write-ahead log
   assert.ok(vitals.minute().some((line) => /event loop was slow, held up to \d+ ms/.test(line)));
   assert.equal((vitals.reading().stores as unknown[]).length, 1);
   vitals.close();
+});
+
+/** An operations district whose decision model labels each incident as `labeler.answers` says, and keeps what it was asked. */
+function labelling() {
+  const labeled: { ids: string[]; state: Record<string, unknown> }[] = [];
+  const labeler = {
+    answers: new Map<string, string | null>(),
+    on: true,
+    open: () => labeler.on,
+    take: async (asked: Record<string, unknown>, ids: readonly string[]) => {
+      labeled.push({ ids: [...ids], state: asked });
+      return ids.map((id) => labeler.answers.get(id) ?? null);
+    },
+  };
+  const rig = operationsAt(`incidents-${(homes += 1)}`, {
+    start: "2026-10-15T10:00:00.000Z",
+    policy: { budget: {} },
+    deps: { labeler },
+  });
+  return { ...rig, labeler, labeled };
+}
+
+test("a new incident is read once by the decision model, many in one call, and a sure label is shown and groups the mail", async () => {
+  const { ops, mailed, labeler, labeled } = labelling();
+  ops.log(LOCKED(1));
+  ops.log(DOWN);
+  ops.log("jev: the decision model failed: 401 unauthorized");
+  labeler.answers.set("i1", "code");
+  labeler.answers.set("i2", "outside");
+  labeler.answers.set("i3", "tunable");
+  await ops.tick();
+  assert.equal(labeled.length, 1, "three incidents, one call");
+  assert.deepEqual(labeled[0].ids, ["i1", "i2", "i3"]);
+  assert.deepEqual(Object.keys(labeled[0].state.incidents as object), ["i1", "i2", "i3"]);
+  assert.deepEqual((labeled[0].state.incidents as Record<string, { district: string }>).i2.district, "mail");
+  const body = mailed[0].body.split("\n");
+  const at = (header: string) => body.findIndex((line) => line.startsWith(header));
+  assert.ok(at("A setting may answer these:") < at("A fault in the plugin's code:"));
+  assert.ok(at("A fault in the plugin's code:") < at("An outside service is down or refusing:"));
+  assert.match(body[at("A fault in the plugin's code:") + 1], /^#1 \[knowledge\] /);
+  assert.match(body[at("An outside service is down or refusing:") + 1], /^#2 \[mail\] /);
+  const read = (ops.act("hq-1", { do: "incidents" }).incidents as string[]).join("\n");
+  assert.match(read, /A fault in the plugin's code:\n#1 /);
+  await ops.tick();
+  ops.log(LOCKED(2));
+  await ops.tick();
+  assert.equal(labeled.length, 1, "an incident seen again is not asked again");
+  ops.close();
+});
+
+test("a split or missing label shows nothing new, and a fork that is off is never asked", async () => {
+  const { ops, mailed, labeler, labeled, at } = labelling();
+  ops.log(LOCKED(1));
+  labeler.answers.set("i1", null);
+  await ops.tick();
+  assert.equal(labeled.length, 1);
+  assert.match(mailed[0].body, /^The room met these since you were last told[^\n]*\n#1 \[knowledge\] /);
+  assert.doesNotMatch(mailed[0].body, /A fault|A setting|An outside|Not read/);
+  // a label the closed list does not hold is a label not given
+  ops.log(DOWN);
+  labeler.answers.set("i2", "cosmic rays");
+  at("2026-10-15T00:20:00.000Z");
+  await ops.tick();
+  assert.equal(labeled.length, 2);
+  assert.doesNotMatch((ops.act("hq-1", { do: "incidents" }).incidents as string[]).join("\n"), /cosmic|:$/m);
+  // a fork the policy keeps off is not asked, and the incident waits to be asked once it is on
+  labeler.on = false;
+  ops.log("jev: the decision model failed: timeout");
+  await ops.tick();
+  assert.equal(labeled.length, 2);
+  labeler.on = true;
+  labeler.answers.set("i3", "outside");
+  await ops.tick();
+  assert.deepEqual(labeled.at(-1)?.ids, ["i3"]);
+  ops.close();
+});
+
+test("at most a batch of new incidents is asked in a minute, the oldest first", async () => {
+  const { ops, labeled } = labelling();
+  for (let i = 0; i < 20; i += 1)
+    ops.log(`mail: delivery to seat${"abcdefghijklmnopqrst"[i]} failed: refused ${"xyz".repeat(i + 1)}`);
+  await ops.tick();
+  await ops.tick();
+  assert.deepEqual(
+    labeled.map((call) => call.ids.length),
+    [8, 8],
+  );
+  assert.equal(labeled[0].ids[0], "i1");
+  assert.equal(labeled[1].ids[0], "i9");
+  ops.close();
+});
+
+test("the kinds an incident is read as are the labels the fork may answer, and no others", () => {
+  assert.deepEqual(Object.keys(settings.incidentKinds), Object.keys(forkCatalog.forks.incident.question.criteria));
 });

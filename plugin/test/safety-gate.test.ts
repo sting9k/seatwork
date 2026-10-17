@@ -480,33 +480,36 @@ test("what the gate cannot finish is a doubt, never a pass: size, depth, time, a
   assert.deepEqual(await hits("echo 'open"), []);
 });
 
-test("a line built to make the reader work without end is read to a fixed budget, then is a doubt", async () => {
-  for (const line of ["$((".repeat(40) + "`" + "))".repeat(40), "$((".repeat(2200) + "x" + "))".repeat(2200)]) {
-    const started = performance.now();
-    const read = await evaluate(line, PROJECT, place, config(), tools());
-    assert.deepEqual(
-      read.doubts.map((doubt) => doubt.reason),
-      ["the room could not read the line (the line is too costly to read)"],
-    );
-    // the budget counts steps, not time; this bound only catches a reader that never stops
-    assert.ok(performance.now() - started < 10_000);
-  }
-});
+// the budget counts steps, not time; the timeout only catches a reader that never stops
+test(
+  "a line built to make the reader work without end is read to a fixed budget, then is a doubt",
+  { timeout: 10_000 },
+  async () => {
+    for (const line of ["$((".repeat(40) + "`" + "))".repeat(40), "$((".repeat(2200) + "x" + "))".repeat(2200)]) {
+      const read = await evaluate(line, PROJECT, place, config(), tools());
+      assert.deepEqual(
+        read.doubts.map((doubt) => doubt.reason),
+        ["the room could not read the line (the line is too costly to read)"],
+      );
+    }
+  },
+);
 
-test("a pattern with many stars in a protected folder is read in time proportional to its length", async () => {
-  const folder = "~/.terraform.d";
-  for (const [command, expected] of [
-    [`echo x > ${folder}/${"*?".repeat(14)}z`, []],
-    [`echo x > ${folder}/${"*?".repeat(14)}n`, ["overwrite:credentials"]],
-    [`rm ${folder}/${"*?".repeat(14)}z`, ["delete:outside"]],
-    [`rm ${folder}/${"*?".repeat(14)}n`, ["delete:credentials"]],
-  ] as const) {
-    const started = performance.now();
-    assert.deepEqual(await hits(command), [...expected], command);
-    // the glob test reads each name once; this bound only catches a pattern that backtracks without end
-    assert.ok(performance.now() - started < 5_000, command);
-  }
-});
+// the glob test reads each name once; the timeout only catches a pattern that backtracks without end
+test(
+  "a pattern with many stars in a protected folder is decided by the names it can match, with no backtracking",
+  { timeout: 10_000 },
+  async () => {
+    const folder = "~/.terraform.d";
+    for (const [command, expected] of [
+      [`echo x > ${folder}/${"*?".repeat(14)}z`, []],
+      [`echo x > ${folder}/${"*?".repeat(14)}n`, ["overwrite:credentials"]],
+      [`rm ${folder}/${"*?".repeat(14)}z`, ["delete:outside"]],
+      [`rm ${folder}/${"*?".repeat(14)}n`, ["delete:credentials"]],
+    ] as const)
+      assert.deepEqual(await hits(command), [...expected], command);
+  },
+);
 
 test("one finding in one command text is kept once; different texts are kept each", async () => {
   assert.deepEqual(await hits("rm -rf ./a; rm -rf ./a"), ["delete:seat"]);

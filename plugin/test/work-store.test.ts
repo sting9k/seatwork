@@ -171,17 +171,21 @@ function inProcess(
   });
 }
 
+/** Runs `count` processes on the store at `dir`, the `i`th doing `job(i)`, all let go at once. */
+async function together(dir: string, count: number, job: (i: number) => string[]) {
+  const gate = join(dir, "..", `${basename(dir)}-gate`);
+  const running = Array.from({ length: count }, (_, i) => inProcess(dir, job(i), gate));
+  const ready = () => readdirSync(dirname(gate)).filter((name) => name.startsWith(`${basename(gate)}.`)).length;
+  while (ready() < count) await new Promise((resolve) => setTimeout(resolve, 10));
+  writeFileSync(gate, "");
+  return Promise.all(running);
+}
+
 test("eight processes claim one issue at once: one wins, seven are told who holds it", async () => {
   const { store, dir } = fresh();
   const issue = store.create({ title: "the one" }, "lead");
   store.close();
-  // the eight start their claim together, once every one has its store open
-  const gate = join(dir, "..", `${basename(dir)}-gate`);
-  const running = Array.from({ length: 8 }, (_, i) => inProcess(dir, ["claim", issue.id, `peer-${i}`], gate));
-  const ready = () => readdirSync(dirname(gate)).filter((name) => name.startsWith(`${basename(gate)}.`)).length;
-  while (ready() < 8) await new Promise((resolve) => setTimeout(resolve, 10));
-  writeFileSync(gate, "");
-  const results = await Promise.all(running);
+  const results = await together(dir, 8, (i) => ["claim", issue.id, `peer-${i}`]);
   const winners = results.filter((result) => result.won);
   assert.equal(winners.length, 1, JSON.stringify(results));
   assert.equal(results.filter((result) => result.refused === "ALREADY_ASSIGNED").length, 7, JSON.stringify(results));
@@ -189,14 +193,14 @@ test("eight processes claim one issue at once: one wins, seven are told who hold
   assert.deepEqual([after.get(issue.id).assignee, after.get(issue.id).status], [winners[0].won, "in_progress"]);
 });
 
-test("six processes write a new store at once: every issue is there once", async () => {
+test("eight processes open a new store at the same moment and write to it: every issue is there once", async () => {
   const dir = join(ROOM_HOME, `work-test-${(stores += 1)}`);
-  const results = await Promise.all(Array.from({ length: 6 }, (_, i) => inProcess(dir, ["create", "40", `seat-${i}`])));
+  const results = await together(dir, 8, (i) => ["create", "40", `seat-${i}`]);
   const made = results.flatMap((result) => result.made ?? []);
-  assert.equal(made.length, 240, JSON.stringify(results.map((result) => result.refused)));
-  assert.equal(new Set(made).size, 240);
+  assert.equal(made.length, 320, JSON.stringify(results.map((result) => result.refused)));
+  assert.equal(new Set(made).size, 320);
   const store = new WorkStore(dir, TIMING);
-  assert.equal(store.count(), 240);
+  assert.equal(store.count(), 320);
 });
 
 test("every query the store runs is served by an index, but the whole-store ones named here with their reason", () => {

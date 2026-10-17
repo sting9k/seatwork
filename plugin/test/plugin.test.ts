@@ -5,10 +5,7 @@ import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, st
 import { join } from "node:path";
 import { incidentOf } from "../server/operations/lines";
 import { loadPolicy } from "../server/policy";
-import { projectBlock } from "../server/orchestration/registry";
-import { roleSkillNames } from "../server/orchestration/runtimes";
 import { rolePrompt } from "../server/orchestration/seats";
-import { sinceMark } from "../server/paseo/timeline";
 import { test } from "node:test";
 import { repoWith } from "./support/git";
 import { earnLevel3 } from "./support/council";
@@ -678,18 +675,6 @@ test("a Supervisor's prompt names no path of the room's own files", async () => 
   assert.ok(
     !supervisor.prompt.includes(ROOM_HOME),
     "the seat header points a project seat at the room home, where the other roles' files live",
-  );
-});
-
-test("a project seat is told which of its own skills the project law names", () => {
-  const law = "## Policy\n- Tests: proof a regression would break (`test-audit` applies)";
-  const block = (role: string) => projectBlock("demo", PROJECT, null, law, roleSkillNames(role));
-  assert.match(block("peer"), /Skills of your seat this law names: `test-audit`\. Load each before your first edit\.$/);
-  // the law names a Peer's skill: a Lead has none of that name
-  assert.doesNotMatch(block("lead"), /Skills of your seat/);
-  assert.doesNotMatch(
-    projectBlock("demo", PROJECT, null, "- Review lane: two lenses", ["lenses"]),
-    /Skills of your seat/,
   );
 });
 
@@ -1365,30 +1350,6 @@ test("a turn that ends with no words of the seat's own sends up its outcome, nev
   await endTurn({ agent: own }, [prompt], "turn-own");
   const found = JSON.parse(await lead.call("seatwork_knowledge", { do: "search", q: "parser tests", agent: own.id }));
   assert.deepEqual(found.hits, [], "an agent of the user's own is none of the room's business");
-});
-
-test("a turn read with no mark from before starts at its prompt", () => {
-  const timeline = [
-    { type: "user_message", text: "one" },
-    { type: "assistant_message", text: "done one" },
-    { type: "user_message", text: "two" },
-    { type: "assistant_message", text: "done two" },
-  ];
-  const fresh = sinceMark(timeline, undefined);
-  assert.deepEqual(
-    fresh.items,
-    timeline.slice(2),
-    "after a restart the room has no mark: the last prompt opens the turn",
-  );
-  const moved = sinceMark([...timeline.slice(1), { type: "user_message", text: "three" }], {
-    count: 2,
-    last: sinceMark(timeline.slice(0, 2), undefined).mark.last,
-  });
-  assert.deepEqual(
-    moved.items,
-    [timeline[2], timeline[3], { type: "user_message", text: "three" }],
-    "a cut timeline is read after the last item seen",
-  );
 });
 
 test("a person's decision reaches every seat: a new seat starts with it, a working seat is told its change by the guard", async () => {

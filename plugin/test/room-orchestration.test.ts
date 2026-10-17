@@ -6,11 +6,7 @@ import { test } from "node:test";
 import { briefFields } from "../server/orchestration/brief";
 import { parseHandoff } from "../server/orchestration/rotation";
 import { Rounds } from "../server/orchestration/rounds";
-import { TaskKeys } from "../server/orchestration/task-keys";
 import { MailEngine } from "../server/coordination/engine";
-import type { LiveSeat } from "../server/host";
-import { lookAtRunningTurns } from "../server/room/council";
-import type { RoomContext } from "../server/room/context";
 import { Safety } from "../server/safety/index";
 import { WorkStore } from "../server/tasks/store";
 import { fastestInTurns } from "./support/timing";
@@ -102,45 +98,6 @@ test("a rotation whose successor stands is not reported as failed when a later s
     "a successor stands and its Owner was told it does not",
   );
   assert.match(await supervisor.call("seatwork_inbox", {}), /ROTATED: lead \[Lead\] late continues in a fresh seat/);
-});
-
-test("the council's look at running turns goes on to the next seat when one cannot be looked at", async () => {
-  const running = (title: string) => ({ status: "running", cwd: PROJECT, title }) as LiveSeat;
-  const posted: string[] = [];
-  const shown: number[] = [];
-  const logs: string[] = [];
-  const room = {
-    log: (line: string) => logs.push(line),
-    host: {
-      live: async () =>
-        new Map([
-          ["seat-a", running("A")],
-          ["seat-b", running("B")],
-        ]),
-      turn: async () => [],
-    },
-    works: { existing: () => null },
-    taskKeys: new TaskKeys(join(ROOM_HOME, "council-keys.json")),
-    engine: {
-      seat: () => ({ role: "peer" }),
-      projectOf: () => PROJECT,
-      parentOf: () => "owner-1",
-      post: async (mail: { subject: string }) => void posted.push(mail.subject),
-    },
-    safety: {
-      council: {
-        whileRunning: (seat: { id: string }) => {
-          if (seat.id === "seat-a") throw new Error("a timeline that cannot be read");
-          return [{ id: 7, member: "stuck", line: "the same command four times", level: 1 }];
-        },
-        shown: (findings: { id: number }[]) => shown.push(...findings.map((finding) => finding.id)),
-      },
-    },
-  } as unknown as RoomContext;
-  await lookAtRunningTurns(room);
-  assert.deepEqual(posted, ["COUNCIL: stuck on B"]);
-  assert.deepEqual(shown, [7], "a finding is shown once its mail is posted");
-  assert.match(logs[0], /seat-a.*cannot be read/);
 });
 
 test("the reason a seat is asked for its handoff is a clause, whatever length it was given", async () => {
@@ -277,6 +234,29 @@ const HANDOFF = "HANDOFF\nCURRENT TASK: the store\nPROGRESS: done 2ea3368\nBLOCK
 
 const inForce = async (who: TestSeat): Promise<string[]> =>
   (JSON.parse(await who.call("seatwork_knowledge", { do: "list" })) as { inForce: string[] }).inForce;
+
+test("what a Lead recorded as a task's decision before its first claim follows the task to its issue", async () => {
+  const project = projectFolder("task-keys-room");
+  const supervisor = await seat("sup-keys", "claude-supervisor", null, "[Supervisor] keys", project);
+  const lead = await seat("lead-keys", "claude-lead", supervisor.agent.id, "[Lead] keys", project);
+  const inForce = async () =>
+    (JSON.parse(await lead.call("seatwork_knowledge", { do: "list" })) as { inForce: string[] }).inForce.join("\n");
+  const issue = JSON.parse(await supervisor.call("seatwork_work", { do: "create", title: "the store" })) as {
+    id: string;
+  };
+
+  await lead.call("seatwork_knowledge", {
+    do: "decide",
+    scope: "task",
+    topic: "store engine",
+    statement: "Keep the store in SQLite.",
+  });
+  assert.match(await inForce(), /\[task lead-keys\] store-engine: Keep the store in SQLite/);
+
+  await lead.call("seatwork_work", { do: "claim", id: issue.id });
+  assert.match(await inForce(), new RegExp(`\\[task ${issue.id}\\] store-engine: Keep the store in SQLite`));
+  assert.doesNotMatch(await inForce(), /\[task lead-keys\]/);
+});
 
 test("the decisions of a task stay with it when its issue is closed and follow the seat that takes the seat over; another claim leaves them", async () => {
   const project = projectFolder("keys-project");

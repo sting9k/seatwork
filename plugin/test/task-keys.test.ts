@@ -75,3 +75,32 @@ test("seats the room no longer knows lose their key, and a file that cannot be r
   writeFileSync(path, "{not json");
   assert.equal(new TaskKeys(path).of("peer-live", []), "peer-live");
 });
+
+test("a task's key is told of once, at a seat's first claim, whether its key was its own id or the head of its chain", () => {
+  const told: string[] = [];
+  const keys = new TaskKeys(
+    file("told"),
+    () => {},
+    (seat, from, to) => void told.push(`${seat}:${from}>${to}`),
+  );
+  assert.equal(keys.of("lead-1", ["sw-a"]), "sw-a");
+  assert.equal(keys.of("lead-1", ["sw-b"]), "sw-b", "a claim of another issue moves the key");
+  keys.succeed("lead-0", "lead-9");
+  assert.equal(keys.of("lead-9", ["sw-c"]), "sw-c");
+  keys.of("lead-9", []);
+  assert.deepEqual(told, ["lead-1:lead-1>sw-a", "lead-9:lead-0>sw-c"], "never a move from one issue to another");
+});
+
+test("a move that fails is logged and the key still moves", () => {
+  const lines: string[] = [];
+  const keys = new TaskKeys(
+    file("fails"),
+    (line) => lines.push(line),
+    () => {
+      throw new Error("database is locked");
+    },
+  );
+  assert.equal(keys.of("lead-1", ["sw-a"]), "sw-a");
+  assert.equal(keys.of("lead-1", []), "sw-a");
+  assert.match(lines.join("\n"), /what lead-1 recorded under lead-1 did not follow it to sw-a: database is locked/);
+});

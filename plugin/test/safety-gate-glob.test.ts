@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { componentGlob } from "../server/safety/gate/glob";
+import { fastestInTurns } from "./support/timing";
 
 test("a component glob reads * ? [set] {a,b} without regard to case", () => {
   const holds = (pattern: string, name: string) => componentGlob(pattern)(name);
@@ -32,12 +33,15 @@ test("a component glob it cannot read matches any name, the safe side", () => {
   assert.ok(componentGlob("a".repeat(1001))("anything"));
 });
 
-test("a component glob with many stars is decided in steps proportional to its length", () => {
+test("a component glob with many stars is decided in steps proportional to its length", async () => {
   const name = "application_default_credentials.json";
-  const started = performance.now();
   assert.equal(componentGlob(`${"*?".repeat(400)}z`)(name), false);
   assert.equal(componentGlob(`${"*?".repeat(10)}n`)(name), true);
   assert.equal(componentGlob(`${"*a".repeat(400)}b`)(name), false);
-  // the bound only catches a matcher that backtracks without end
-  assert.ok(performance.now() - started < 2_000);
+  const decide = (pairs: number) => () => {
+    for (let i = 0; i < 300; i += 1) componentGlob(`${"*?".repeat(pairs)}z`)(name);
+  };
+  // four times the stars: a matcher that tried each star against each other would do sixteen times the work
+  const [short, long] = await fastestInTurns(decide(100), decide(400));
+  assert.ok(long < Math.max(short, 1) * 8, `100 stars: ${short.toFixed(2)} ms, 400 stars: ${long.toFixed(2)} ms`);
 });

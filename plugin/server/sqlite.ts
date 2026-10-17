@@ -44,6 +44,8 @@ interface Script {
 const SCRIPT_NAME = /^V(\d+)__(.+)\.sql$/;
 const MAX_STATEMENTS = 512;
 const WAL_LIMIT_BYTES = 16 * 1024 * 1024;
+const WAL_PAUSE_MOST_MS = 50;
+const PAUSE = new Int32Array(new SharedArrayBuffer(4));
 const HISTORY = `CREATE TABLE IF NOT EXISTS schema_history (
   version INTEGER PRIMARY KEY,
   description TEXT NOT NULL,
@@ -186,6 +188,20 @@ export class Sqlite {
     return this.failure("DATABASE_LOCKED", `another process is writing ${this.options.name}; try again`);
   }
 
+  /** Puts a file in write-ahead mode; SQLite answers a lock on the switch at once, with no busy wait, when processes open a new file together, so the switch is tried again until the busy time is up. */
+  private toWal(db: DatabaseSync): void {
+    const until = Date.now() + this.options.busyTimeoutMs;
+    for (let pause = 1; ; pause = Math.min(pause * 2, WAL_PAUSE_MOST_MS)) {
+      try {
+        db.exec("PRAGMA journal_mode = WAL");
+        return;
+      } catch (error) {
+        if (!isBusy(error) || Date.now() >= until) throw error;
+        Atomics.wait(PAUSE, 0, 0, pause);
+      }
+    }
+  }
+
   /** Opens the database; a damaged one is set aside and a new one started, but a file the process merely cannot open stays where it is; auto_vacuum takes only on a file with no table yet. */
   private open(): { db: DatabaseSync; startedOver: boolean } {
     const attempt = () => {
@@ -194,7 +210,7 @@ export class Sqlite {
         // the wait comes first: another process creating the same file holds it while it sets its layout
         db.exec(`PRAGMA busy_timeout = ${Math.trunc(this.options.busyTimeoutMs)}`);
         if (this.options.reclaims) db.exec("PRAGMA auto_vacuum = INCREMENTAL");
-        db.exec("PRAGMA journal_mode = WAL");
+        this.toWal(db);
         // after a checkpoint the write-ahead log is cut back to this size, so one large write does not keep its size on disk
         db.exec(`PRAGMA synchronous = FULL; PRAGMA foreign_keys = ON; PRAGMA journal_size_limit = ${WAL_LIMIT_BYTES};`);
         const check = db.prepare("PRAGMA quick_check").get() as { quick_check?: string } | undefined;

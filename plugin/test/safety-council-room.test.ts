@@ -1,10 +1,14 @@
-import { ROOM_HOME } from "./support/room";
+import { PROJECT, ROOM_HOME } from "./support/room";
 import assert from "node:assert/strict";
 import { appendFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { test } from "node:test";
 import { parserRepo, type TestSeat } from "./support/seats";
+import type { LiveSeat } from "../server/host";
+import { TaskKeys } from "../server/orchestration/task-keys";
+import { lookAtRunningTurns } from "../server/room/council";
+import type { RoomContext } from "../server/room/context";
 import { pluginRoom } from "./support/plugin";
 
 const { call, context, seat, turnEnds, rotatable } = pluginRoom(["claude-supervisor", "claude-lead", "claude-peer"], {
@@ -154,4 +158,43 @@ test("a finding of a seat rotated with no report kept goes up with the word of i
   // the old seat stays when what it launched did not move; it says the same thing again
   await turnEnds(peer, "DONE: parser fixed\nthe bug was at src/parse.js:400");
   assert.doesNotMatch(lead.inbox.at(-1)!, /\[council\]/, "and the finding is told once");
+});
+
+test("the council's look at running turns goes on to the next seat when one cannot be looked at", async () => {
+  const running = (title: string) => ({ status: "running", cwd: PROJECT, title }) as LiveSeat;
+  const posted: string[] = [];
+  const shown: number[] = [];
+  const logs: string[] = [];
+  const room = {
+    log: (line: string) => logs.push(line),
+    host: {
+      live: async () =>
+        new Map([
+          ["seat-a", running("A")],
+          ["seat-b", running("B")],
+        ]),
+      turn: async () => [],
+    },
+    works: { existing: () => null },
+    taskKeys: new TaskKeys(join(ROOM_HOME, "council-keys.json")),
+    engine: {
+      seat: () => ({ role: "peer" }),
+      projectOf: () => PROJECT,
+      parentOf: () => "owner-1",
+      post: async (mail: { subject: string }) => void posted.push(mail.subject),
+    },
+    safety: {
+      council: {
+        whileRunning: (seat: { id: string }) => {
+          if (seat.id === "seat-a") throw new Error("a timeline that cannot be read");
+          return [{ id: 7, member: "stuck", line: "the same command four times", level: 1 }];
+        },
+        shown: (findings: { id: number }[]) => shown.push(...findings.map((finding) => finding.id)),
+      },
+    },
+  } as unknown as RoomContext;
+  await lookAtRunningTurns(room);
+  assert.deepEqual(posted, ["COUNCIL: stuck on B"]);
+  assert.deepEqual(shown, [7], "a finding is shown once its mail is posted");
+  assert.match(logs[0], /seat-a.*cannot be read/);
 });

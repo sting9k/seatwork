@@ -1,11 +1,9 @@
 import { ROOM_HOME, shipSql } from "./support/room";
 import { fastestInTurns } from "./support/timing";
 import assert from "node:assert/strict";
-import { request } from "node:http";
 import { copyFileSync, mkdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { test } from "node:test";
-import { McpHttpServer } from "../server/mcp-http";
 import { answerHook } from "../server/safety/hooks";
 import { SafetyStore } from "../server/safety/store";
 import { guardAt, machine, PROJECT, SEAT } from "./support/gate";
@@ -73,30 +71,6 @@ test("a command too long to read is kept as unread from its start, whatever its 
     assert.ok(kept.command.length <= 2000);
   } finally {
     redactModule.redact = real;
-  }
-});
-
-test("the room's server turns away a body past what a real call needs, and reads one just under it", async () => {
-  const server = new McpHttpServer("tok", "test", "0");
-  const seen: number[] = [];
-  server.route("gate", async (body) => (seen.push(body.length), { type: "text/plain", text: "ok" }));
-  const port = await server.listen(0);
-  const post = (size: number) =>
-    new Promise<number>((resolve) => {
-      const sent = request({ host: "127.0.0.1", port, path: `/gate/tok`, method: "POST" }, (res) => {
-        res.resume();
-        res.on("end", () => resolve(res.statusCode ?? 0));
-      });
-      sent.on("error", () => resolve(0));
-      sent.end("x".repeat(size));
-    });
-  try {
-    assert.equal(await post(3_000_000), 200);
-    assert.deepEqual(seen, [3_000_000]);
-    assert.ok([413, 0].includes(await post(5_000_000)), "a body of 5 MB is refused");
-    assert.deepEqual(seen, [3_000_000], "the handler never saw it");
-  } finally {
-    await server.close();
   }
 });
 

@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { request } from "node:http";
 import { after, before, test } from "node:test";
 import { McpHttpServer } from "../server/mcp-http";
 
@@ -102,4 +103,28 @@ test("a plain route answers with its own type, its query and headers; a body pas
     true,
     "the server went on answering after a refused body",
   );
+});
+
+test("the room's server turns away a body past what a real call needs, and reads one just under it", async () => {
+  const server = new McpHttpServer("tok", "test", "0");
+  const seen: number[] = [];
+  server.route("gate", async (body) => (seen.push(body.length), { type: "text/plain", text: "ok" }));
+  const port = await server.listen(0);
+  const post = (size: number) =>
+    new Promise<number>((resolve) => {
+      const sent = request({ host: "127.0.0.1", port, path: `/gate/tok`, method: "POST" }, (res) => {
+        res.resume();
+        res.on("end", () => resolve(res.statusCode ?? 0));
+      });
+      sent.on("error", () => resolve(0));
+      sent.end("x".repeat(size));
+    });
+  try {
+    assert.equal(await post(3_000_000), 200);
+    assert.deepEqual(seen, [3_000_000]);
+    assert.ok([413, 0].includes(await post(5_000_000)), "a body of 5 MB is refused");
+    assert.deepEqual(seen, [3_000_000], "the handler never saw it");
+  } finally {
+    await server.close();
+  }
 });

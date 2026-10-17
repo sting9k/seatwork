@@ -198,27 +198,3 @@ test("a task sent back twice: its Lead is told the tier a new Peer starts on, an
     /on claude-sonnet-5-5 \(a tier up: its task was sent back twice\)/,
   );
 });
-
-test("what a Lead recorded as a task's decision before its first claim follows the task to its issue", async () => {
-  reset();
-  const project = projectFolder("forks-keys");
-  const supervisor = await seat("sup-keys", "claude-supervisor", null, "[Supervisor] keys", project);
-  const lead = await seat("lead-keys", "claude-lead", supervisor.agent.id, "[Lead] keys", project);
-  const inForce = async () =>
-    (JSON.parse(await lead.call("seatwork_knowledge", { do: "list" })) as { inForce: string[] }).inForce.join("\n");
-  const issue = JSON.parse(await supervisor.call("seatwork_work", { do: "create", title: "the store" })) as {
-    id: string;
-  };
-
-  await lead.call("seatwork_knowledge", {
-    do: "decide",
-    scope: "task",
-    topic: "store engine",
-    statement: "Keep the store in SQLite.",
-  });
-  assert.match(await inForce(), /\[task lead-keys\] store-engine: Keep the store in SQLite/);
-
-  await lead.call("seatwork_work", { do: "claim", id: issue.id });
-  assert.match(await inForce(), new RegExp(`\\[task ${issue.id}\\] store-engine: Keep the store in SQLite`));
-  assert.doesNotMatch(await inForce(), /\[task lead-keys\]/);
-});

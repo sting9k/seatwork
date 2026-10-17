@@ -7,6 +7,12 @@ import { ROOM_HOME } from "./room";
 
 type Deps = ConstructorParameters<typeof Operations>[0];
 
+/** A log line the knowledge district writes when its store is locked, for the turn `n`. */
+export const LOCKED = (n: number) =>
+  `knowledge: the turn ${n}f2504e0-4f89-11d3-9a0c-0305e82c3301:t${n} was not kept: database is locked`;
+
+export const DOWN = "mail: delivery to some-seat failed: socket hang up";
+
 /** A mail the district sent. */
 export interface Mailed {
   to: string;

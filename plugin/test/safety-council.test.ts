@@ -4,7 +4,6 @@ import { mkdirSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { test } from "node:test";
 import { traits } from "../shared/workflow";
-import { briefFields, quotedCommands, scopeGlobs } from "../server/orchestration/brief";
 import type { TurnEvent } from "../server/host";
 import { Council, type CouncilPolicy, type HandInDiff, type TurnInput } from "../server/safety/council/council";
 import { counted, hiFor, levelFor, type Label } from "../server/safety/council/calibration";
@@ -51,12 +50,6 @@ test("what a turn shows without a model: claims, checks, changes outside the sco
     turnFacts(ran, ["./scripts/acceptance.sh"]).checks.map(({ command }) => command),
     ["cd app && npx vitest run", "./scripts/acceptance.sh --fast"],
   );
-  assert.deepEqual(
-    quotedCommands(
-      '`npm test` passes; `parseDuration("2h") === 7200000`; edit `src/a.js`; run `./scripts/check.sh --fast`, `make`',
-    ),
-    ["npm test", "./scripts/check.sh --fast", "make"],
-  );
 
   const facts = turnFacts([shell("npm test"), change("src/a.js"), shell("npm test", 1), shell("git diff")], []);
   assert.deepEqual(
@@ -91,45 +84,11 @@ test("a file whose name starts with two dots is inside the work tree; only a ste
     "a/../../y.js",
   ]);
   assert.deepEqual(outsideScope(["..data/app.yaml"], ["..data/**"], ROOT), []);
-  for (const [scope, globs] of [
-    [
-      "src/, test/ (including new fixtures under test/fixtures/), README.md. Nothing else. Do NOT edit fixtures/",
-      ["src/", "test/", "test/fixtures/", "README.md"],
-    ],
-    ["`src/parse.js`, `test/parse.test.js`", ["src/parse.js", "test/parse.test.js"]],
-    ["src/a.ts src/b.ts", ["src/a.ts", "src/b.ts"]],
-    ["src, docs/*.md", ["src", "docs/*.md"]],
-    ["NONE. Read-only. Do not edit any file", []],
-    [
-      "src/cli.js; src/glob.js (new); in src/check.js ONLY scanFolder — do not touch parseMarkdown; new fixture folders under test/fixtures/; README.md: the usage block — NOT the Limits section",
-      ["src/cli.js", "src/glob.js", "src/check.js", "test/fixtures/", "README.md"],
-    ],
-  ] as const)
-    assert.deepEqual(scopeGlobs(scope), globs, scope);
   assert.deepEqual(
     outsideScope([".env", ".github/ci.yml", "src/.hidden.ts", "other/a.ts"], ["src/**", ".github/**"], ROOT),
     [".env", "other/a.ts"],
     "a glob covers a name that starts with a dot as it covers any other",
   );
-});
-
-test("a brief label may carry a note in brackets, and a write scope ends at its first blank line", () => {
-  const fields = briefFields(
-    [
-      "Write scope: src/, README.md. Nothing else.",
-      "",
-      "Contract the candidate must meet (locked by the Lead):",
-      "- `mdlinks a/**/b.md` skips drafts/** and is case-sensitive",
-      "Contract (locked): one line per link",
-      "Non-goals: tables",
-      "Acceptance evidence (run after your last change):",
-      "- `npm test`",
-    ].join("\n"),
-  );
-  assert.deepEqual(scopeGlobs(fields.writeScope!), ["src/", "README.md"]);
-  assert.equal(fields.contract, "one line per link");
-  assert.equal(fields.nonGoals, "tables");
-  assert.equal(fields.acceptance, "- `npm test`");
 });
 
 test("a check whose exit code proves nothing is named: a later command sets it, or a filter the brief did not ask for", () => {

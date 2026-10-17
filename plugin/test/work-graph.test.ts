@@ -225,11 +225,11 @@ test("a plan stops counting colliding pairs at its bound, in time, and says the 
       assert.equal(made.overlapsCut, true);
     };
   };
-  // four times the issues is sixteen times the pairs
-  const [fastSmall, fastLarge] = await fastestInTurns(board(400), board(1600), 3);
+  // eight times the issues is sixty-four times the pairs; counted to the bound, the plan costs about the same
+  const [fastSmall, fastLarge] = await fastestInTurns(board(400), board(3200));
   assert.ok(
-    fastLarge < Math.max(fastSmall, 2) * 3,
-    `400 issues: ${fastSmall.toFixed(1)} ms, 1600 issues: ${fastLarge.toFixed(1)} ms`,
+    fastLarge < Math.max(fastSmall, 2) * 4,
+    `400 issues: ${fastSmall.toFixed(1)} ms, 3200 issues: ${fastLarge.toFixed(1)} ms`,
   );
 });
 

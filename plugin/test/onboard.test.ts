@@ -4,7 +4,8 @@ import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node
 import { join } from "node:path";
 import { beforeEach, test } from "node:test";
 import { registerProject, unregisterProject } from "../server/orchestration/onboard";
-import { loadRegistry } from "../server/orchestration/registry";
+import { loadRegistry, projectBlock } from "../server/orchestration/registry";
+import { roleSkillNames } from "../server/orchestration/runtimes";
 
 const ROOM_SEATS = ["claude-hq", "claude-supervisor", "claude-lead", "claude-peer", "codex-peer"];
 const seatsFile = join(ROOM_HOME, "seats.json");
@@ -126,5 +127,17 @@ test("a project leaves the registry without taking one registered at the same mo
   assert.deepEqual(
     loadRegistry()?.projects.map((entry) => entry.name),
     ["other"],
+  );
+});
+
+test("a project seat is told which of its own skills the project law names", () => {
+  const law = "## Policy\n- Tests: proof a regression would break (`test-audit` applies)";
+  const block = (role: string) => projectBlock("demo", PROJECT, null, law, roleSkillNames(role));
+  assert.match(block("peer"), /Skills of your seat this law names: `test-audit`\. Load each before your first edit\.$/);
+  // the law names a Peer's skill: a Lead has none of that name
+  assert.doesNotMatch(block("lead"), /Skills of your seat/);
+  assert.doesNotMatch(
+    projectBlock("demo", PROJECT, null, "- Review lane: two lenses", ["lenses"]),
+    /Skills of your seat/,
   );
 });

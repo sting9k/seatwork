@@ -730,3 +730,46 @@ test("a store read back from its files passes over a file it cannot read, and st
   again.rememberSeat(seat(id.lead, "lead", null, project));
   assert.equal(again.storeOf(id.lead)!.count(), 1);
 });
+
+/** A mail engine with one seat of `role` in `status`, held by the gate for as long as `why()` gives a reason; `got` keeps what the seat is sent. */
+function gated(role: string, status: string, why: () => string | null) {
+  const id = names(role)[role];
+  const got: string[] = [];
+  const engine = engineOver({
+    [id]: { ...IDLE, current: () => ({ status }), send: async (text: string) => void got.push(text) },
+  });
+  engine.rememberSeat(seat(id, role));
+  engine.holds = (held) => (held === id ? why() : null);
+  const post = (subject: string, more: Partial<NewMail> = {}) => engine.post(mail(id, subject, more));
+  return { id, got, engine, post };
+}
+
+test("a seat the gate holds takes no mail until the hold ends; its mail waits in the store and none is lost", async () => {
+  let why: string | null = "the project passed its cap";
+  const { id, got, engine, post } = gated("lead", "idle", () => why);
+  await post("FYI: first");
+  await post("STOP: now", { urgent: true });
+  await engine.sweep();
+  assert.deepEqual(got, [], "nothing starts a turn, not even a stop order");
+  assert.equal(engine.holding(id)?.mails, 2);
+  why = null;
+  await engine.sweep();
+  assert.equal(got.length, 1);
+  assert.match(got[0], /subject="FYI: first"[\s\S]*subject="STOP: now"/);
+  assert.equal(engine.holding(id), undefined);
+  engine.close();
+});
+
+test("a running seat of a held project still takes a stop order, which ends its spending; its other mail waits", async () => {
+  const { id, got, engine, post } = gated("peer", "running", () => "the project passed its cap");
+  await post("FYI: later");
+  await engine.sweep();
+  assert.deepEqual(got, [], "mail that is no stop order waits");
+  await post("STOP: the project is over its cap", { urgent: true });
+  await engine.sweep();
+  assert.equal(got.length, 1);
+  assert.match(got[0], /subject="STOP: the project is over its cap"/);
+  assert.doesNotMatch(got[0], /FYI: later/);
+  assert.equal(engine.holding(id)?.mails, 1);
+  engine.close();
+});

@@ -43,6 +43,8 @@ function runHook(
     let stdout = "";
     child.stdout.on("data", (chunk) => (stdout += chunk));
     child.on("close", (status) => resolve({ status, stdout }));
+    // a hook that ends before it reads its input closes the pipe under the payload: the call still runs
+    child.stdin.on("error", () => {});
     child.stdin.end(JSON.stringify(payload));
   });
 }

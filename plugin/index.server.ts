@@ -14,7 +14,7 @@ import {
   setupState,
 } from "./shared/setup";
 
-const VERSION = "0.42.0";
+const VERSION = "0.42.1";
 
 /** Seatwork on Paseo: the setup screen first; the room once it is set up, hooked to Paseo's events only while it runs. */
 export default function contribute(server: PluginServerContext) {

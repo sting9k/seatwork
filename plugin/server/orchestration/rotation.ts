@@ -210,11 +210,11 @@ export class Rotations {
   }
 }
 
-/** What starting a successor needs: the app, the mail engine, the table in force at a folder (`fit`, `up`), and moving what the room keeps for the old seat (`handOver`). */
+/** What starting a successor needs: the app, the mail engine, the mark of a seat's prompt (`mark`), the table in force at a folder (`fit`, `up`), and moving what the room keeps for the old seat (`handOver`). */
 interface RotateDeps {
   host: Host;
   engine: MailEngine;
-  version: string;
+  mark(seat: Pick<SeatRecord, "provider" | "title" | "cwd">): string | undefined;
   fit(cwd: string, role: string, provider: string, model: string | undefined): SeatFit;
   up(cwd: string, role: string, provider: string, model: string): string | undefined;
   handOver(from: string, to: string): void;
@@ -255,7 +255,14 @@ export async function rotate(
     }),
   });
   // the successor must be a seat of the room before anything is handed to it
-  engine.rememberSeat({ ...old, agentId: id, parentAgentId: owner, title, version: deps.version });
+  engine.rememberSeat({
+    ...old,
+    agentId: id,
+    parentAgentId: owner,
+    title,
+    cwd: now.cwd,
+    prompt: deps.mark({ provider: old.provider, title, cwd: now.cwd }),
+  });
   // the successor stands: failures are said; the old seat goes only when nothing is left on it
   const left = await moveOver(deps, old, id);
   if (left.length === 0) await host.archive(old.agentId).catch(failedTo(left, "the old seat's archive"));

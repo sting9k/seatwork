@@ -72,9 +72,9 @@ export async function setupChecks(
     const many = olderSeats.length > 1;
     checks.push({
       id: "older-seats",
-      label: "Seats from before the update",
+      label: "Seats on an older prompt",
       ok: false,
-      detail: `${olderSeats.length} open seat${many ? "s" : ""} got ${many ? "their" : "its"} prompt from an earlier version of the plugin and ${many ? "keep" : "keeps"} it: ${olderSeats.slice(0, 5).join(", ")}${olderSeats.length > 5 ? ", …" : ""}. Archive a seat and create it again to have it on ${version}.`,
+      detail: `${olderSeats.length} open seat${many ? "s" : ""} started on a prompt the room has since changed, and ${many ? "keep" : "keeps"} it: ${olderSeats.slice(0, 5).join(", ")}${olderSeats.length > 5 ? ", …" : ""}. Archive a seat and create it again to give it the new one.`,
     });
   }
   if (seats.some((seat) => seat.startsWith("pi-"))) {

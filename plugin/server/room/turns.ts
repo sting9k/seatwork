@@ -14,7 +14,7 @@ import { asksOwner, DECIDES, signalOf, subjectSignal } from "../signals";
 import type { Finding } from "../safety/council/council";
 import { errorText, fromRoom, releaseWork, taskOf, type RoomContext } from "./context";
 import { councilLine, councilRead } from "./council";
-import { fitAt, stepUpAt } from "./launch";
+import { fitAt, promptMark, stepUpAt } from "./launch";
 import { clip, excerpt } from "../excerpt";
 import { ROOM_SENDER } from "../coordination/address";
 
@@ -232,7 +232,7 @@ async function answerRotation(
         {
           host: room.host,
           engine: eng,
-          version: room.version,
+          mark: (seat) => promptMark(seat, room.policy),
           fit: fitAt,
           up: stepUpAt,
           handOver: (from, to) => {

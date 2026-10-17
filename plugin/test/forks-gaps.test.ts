@@ -1,8 +1,7 @@
-import { ROOM_HOME, shipSql } from "./support/room";
+import { shipSql } from "./support/room";
 import forkCatalog from "../shared/forks.json";
-import { forksWith, modelSaying } from "./forks-support";
+import { forksWith, freshStore, modelSaying, RULES } from "./forks-support";
 import assert from "node:assert/strict";
-import { join } from "node:path";
 import { test } from "node:test";
 import type { NewMail, SeatRecord } from "../server/coordination/engine";
 import type { ForkName } from "../server/orchestration/forks";
@@ -11,15 +10,6 @@ import { WorkStore } from "../server/tasks/store";
 import { work } from "../server/tasks/tools";
 
 shipSql();
-
-const RULES = {
-  busyTimeoutMs: 5000,
-  flushAfterMs: 60_000,
-  staleClaimMinutes: 120,
-  close: { minReasonChars: 20, forbidSelfClose: true },
-};
-let stores = 0;
-const freshStore = () => new WorkStore(join(ROOM_HOME, `forks-gaps-${(stores += 1)}`), RULES);
 
 const record = (agentId: string, role: string, parent: string | null): SeatRecord => ({
   agentId,
@@ -70,7 +60,7 @@ test("an issue the decision model reads as ready, or as split, or with the fork 
     ["split", modelSaying("unclear", 0.6), ["gaps"]],
     ["off", modelSaying("unclear"), []],
   ] as const) {
-    const store = freshStore();
+    const store = freshStore("forks-gaps");
     const { deps, posted } = roomOf(model, on);
     const issue = murky(store);
     const answer = await claims(deps, store, issue.id);
@@ -81,7 +71,7 @@ test("an issue the decision model reads as ready, or as split, or with the fork 
 });
 
 test("the model is shown the issue's title, description, acceptance and scope, clipped, with the five labels the catalog gives", async () => {
-  const store = freshStore();
+  const store = freshStore("forks-gaps");
   const model = modelSaying("ready");
   const { deps } = roomOf(model, ["gaps"]);
   const issue = store.create(
@@ -99,7 +89,7 @@ test("the model is shown the issue's title, description, acceptance and scope, c
 });
 
 test("an unclear issue gets a Research child the claimer holds, which keeps the issue open, and the claim says what to do; it is made once", async () => {
-  const store = freshStore();
+  const store = freshStore("forks-gaps");
   const model = modelSaying("unclear");
   const { deps } = roomOf(model, ["gaps"]);
   const issue = murky(store);
@@ -120,7 +110,6 @@ test("an unclear issue gets a Research child the claimer holds, which keeps the 
   assert.match(String(answer.note), new RegExp(`comment on ${child.id.replace(".", "\\.")}`));
   assert.match(store.get(issue.id).notes, /room\] gaps: unclear; /);
 
-  // the same claim again reads nothing and makes nothing
   const again = await claims(deps, store, issue.id);
   assert.equal(again.note, undefined);
   assert.equal(model.asked.length, 1);
@@ -128,7 +117,7 @@ test("an unclear issue gets a Research child the claimer holds, which keeps the 
 });
 
 test("a seat that claims the Research issue itself is not sent into another; an open Research child is never made twice", async () => {
-  const store = freshStore();
+  const store = freshStore("forks-gaps");
   const { deps } = roomOf(modelSaying("unclear"), ["gaps"]);
   const issue = murky(store);
   const made = store.create({ title: "Research: Make the export better", parent: issue.id }, "room");
@@ -143,7 +132,7 @@ test("a seat that claims the Research issue itself is not sent into another; an 
 });
 
 test("an issue with no acceptance criteria: its creator, another seat, is mailed for them and the claimer goes on", async () => {
-  const store = freshStore();
+  const store = freshStore("forks-gaps");
   const { deps, posted } = roomOf(modelSaying("no-acceptance"), ["gaps"]);
   const issue = murky(store);
   const answer = await claims(deps, store, issue.id);
@@ -161,7 +150,6 @@ test("an issue with no acceptance criteria: its creator, another seat, is mailed
   assert.equal((await claims(given.deps, store, stated.id)).note, undefined);
   assert.equal(given.posted.length, 0);
 
-  // a creator that is the claimer, gone, or no seat is not mailed
   for (const [by, gone] of [
     ["peer", []],
     ["lead", ["lead"]],
@@ -176,7 +164,7 @@ test("an issue with no acceptance criteria: its creator, another seat, is mailed
 });
 
 test("an issue that needs a decision is sent to the claimer's Owner, and where the escalation fork is on, to the seat it picks with the Owner copied", async () => {
-  const store = freshStore();
+  const store = freshStore("forks-gaps");
   const plain = roomOf(modelSaying("needs-decision"), ["gaps"]);
   const issue = murky(store);
   const answer = await claims(plain.deps, store, issue.id);
@@ -200,7 +188,7 @@ test("an issue that needs a decision is sent to the claimer's Owner, and where t
 });
 
 test("an issue that is too big tells the claimer's Owner in a mail read with its next, and nobody else", async () => {
-  const store = freshStore();
+  const store = freshStore("forks-gaps");
   const { deps, posted } = roomOf(modelSaying("too-big"), ["gaps"]);
   const issue = murky(store);
   const answer = await claims(deps, store, issue.id);
@@ -211,7 +199,7 @@ test("an issue that is too big tells the claimer's Owner in a mail read with its
 });
 
 test("a fork that fails, or a mail that cannot be posted, leaves the claim as it was and writes nothing", async () => {
-  const store = freshStore();
+  const store = freshStore("forks-gaps");
   const throwing = roomOf(modelSaying("too-big"), ["gaps"]);
   throwing.deps.engine.post = async () => {
     throw new Error("the store is locked");
@@ -238,7 +226,7 @@ test("a fork that fails, or a mail that cannot be posted, leaves the claim as it
 });
 
 test("a Research issue that cannot be claimed stands unassigned and the claim still says what to do", async () => {
-  const store = freshStore();
+  const store = freshStore("forks-gaps");
   const { deps, lines } = roomOf(modelSaying("unclear"), ["gaps"]);
   const issue = murky(store);
   const done = work(store, RULES, { id: "peer", owner: false }, { do: "claim", id: issue.id });
@@ -254,7 +242,7 @@ test("a Research issue that cannot be claimed stands unassigned and the claim st
 });
 
 test("only a claim is read: a show, a list, a claim that fails and a plan made in one call pass through", async () => {
-  const store = freshStore();
+  const store = freshStore("forks-gaps");
   const model = modelSaying("unclear");
   const { deps } = roomOf(model, ["gaps", "duplicate"]);
   const issue = murky(store);

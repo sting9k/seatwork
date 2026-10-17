@@ -1,7 +1,7 @@
 import { MAIL_POLICY, ROOM_HOME, shipSql } from "./support/room";
 import { fastestInTurns } from "./support/timing";
 import assert from "node:assert/strict";
-import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { test } from "node:test";
@@ -10,7 +10,6 @@ import { MailEngine } from "../server/coordination/engine";
 import type { LiveSeat } from "../server/host";
 import { PaseoHost } from "../server/paseo/host";
 import { sweepLeases, type RoomContext } from "../server/room/context";
-import { Sqlite, keptOutOfGit } from "../server/sqlite";
 import { alerts } from "../server/tasks/graph";
 import { WorkStore, type Seating } from "../server/tasks/store";
 import { WorkStores } from "../server/tasks/stores";
@@ -22,7 +21,7 @@ const LEASE = vocabulary.leaseMinutes;
 const DOWN_HOURS = vocabulary.leaseDownHours;
 const MOST = vocabulary.leaseMostPerPass;
 const POLICY = { minReasonChars: 20, forbidSelfClose: true };
-const TIMING = { busyTimeoutMs: 5000, flushAfterMs: 60_000 };
+const TIMING = { busyTimeoutMs: 5000 };
 const RULES = { ...TIMING, staleClaimMinutes: 120, close: POLICY };
 const START = Date.parse("2026-10-14T09:00:00Z");
 const FAR = "2099-01-01T00:00:00.000Z";
@@ -140,12 +139,10 @@ test("renewal pushes the leases of the seats shown alive, in one statement, and 
   assert.equal(store.renewLeases([]), 0);
 });
 
-test("a renewal is one statement however many issues it pushes, and the text copy is not rewritten for it", async () => {
-  const { store, dir, pass } = leased({ ...TIMING, flushAfterMs: 5 });
+test("a renewal is one statement however many issues it pushes", () => {
+  const { store, pass } = leased(TIMING);
   const peers = Array.from({ length: 40 }, (_, i) => `peer-${i}`);
   for (const peer of peers) store.claim(store.create({ title: peer }, "lead-1").id, peer);
-  store.flush();
-  rmSync(join(dir, "issues.jsonl"));
   pass(LEASE);
   const calls = () => store.stat().calls;
   const statements = (seats: string[]) => {
@@ -154,13 +151,6 @@ test("a renewal is one statement however many issues it pushes, and the text cop
     return calls() - before;
   };
   assert.equal(statements(peers), statements(["nobody"]), "forty rows, as many statements as none");
-  await new Promise((done) => setTimeout(done, 40));
-  assert.equal(existsSync(join(dir, "issues.jsonl")), false);
-
-  pass(LEASE + 1);
-  assert.equal(store.expireLeases([], MOST).length, MOST);
-  await new Promise((done) => setTimeout(done, 40));
-  assert.equal(existsSync(join(dir, "issues.jsonl")), true, "what goes back to the board is written to the copy");
 });
 
 test("an issue whose lease has passed with its seat missing from the list is open again, unassigned, with a comment", () => {
@@ -227,38 +217,6 @@ test("at most the set number go back in a pass, the longest lapsed first, and th
   const order = [2, 2, 1, 0].map((most) => store.expireLeases([], most).map((one) => one.id));
   assert.deepEqual(order, [ids.slice(0, 2), ids.slice(2, 4), ids.slice(4), []]);
   assert.ok(MOST >= 1);
-});
-
-test("a lease is kept in the text copy, and a held issue read back from a copy that has none gets one", () => {
-  const { store, dir, open, at, pass } = leased();
-  const [held, free] = ["held", "free"].map((title) => store.create({ title }, "lead-1").id);
-  store.claim(held, "peer-a");
-  store.flush();
-  const copy = join(dir, "issues.jsonl");
-  const lines = readFileSync(copy, "utf8").trim().split("\n");
-  assert.ok(lines.some((line) => line.includes(`"lease_until":"${at(LEASE)}"`)));
-
-  const fresh = () => {
-    store.close();
-    for (const suffix of ["", "-wal", "-shm"]) rmSync(join(dir, `work.db${suffix}`), { force: true });
-    return open();
-  };
-  const back = fresh();
-  assert.equal(lease(back, held), at(LEASE), "the lease comes back as it was written");
-  back.flush();
-
-  pass(30);
-  const older = lines.map((line) => {
-    const { lease_until: _lost, ...rest } = JSON.parse(line) as Record<string, unknown>;
-    return JSON.stringify(rest);
-  });
-  back.close();
-  writeFileSync(copy, `${older.join("\n")}\n`);
-  for (const suffix of ["", "-wal", "-shm"]) rmSync(join(dir, `work.db${suffix}`), { force: true });
-  const again = open();
-  assert.equal(lease(again, held), at(LEASE), "a copy from before leases: the holder's lease starts at the restore");
-  assert.equal(lease(again, free), null);
-  again.close();
 });
 
 test("the stale-claim alert still fires for a seat that is alive and idle: a renewal is not progress", () => {
@@ -553,104 +511,6 @@ test("an Owner that is gone cannot be told, and the issues still go back", async
   assert.deepEqual(sent, []);
   assert.match(logs.join("\n"), /went back to the board/);
   works.close();
-});
-
-/** A work store made before leases: the shipped layout without its last script, with rows put in from outside the store. */
-function olderStore(rows: { id: string; status: string; assignee: string | null }[]) {
-  const dir = join(ROOM_HOME, `lease-older-${(made += 1)}`);
-  const earlier = join(ROOM_HOME, `lease-older-layout-${made}`);
-  mkdirSync(earlier, { recursive: true });
-  const shipped = join(ROOM_HOME, "room", "sql", "work");
-  for (const name of readdirSync(shipped).filter((script) => !script.startsWith("V4__")))
-    copyFileSync(join(shipped, name), join(earlier, name));
-  new Sqlite(join(keptOutOfGit(dir), "work.db"), {
-    busyTimeoutMs: TIMING.busyTimeoutMs,
-    scripts: earlier,
-    name: "the earlier work store",
-    fail: (_code, message) => new Error(message),
-  }).close();
-  const raw = new DatabaseSync(join(dir, "work.db"));
-  const stamp = new Date(START).toISOString();
-  const insert = raw.prepare(
-    "INSERT INTO issues (id, title, status, priority, issue_type, assignee, created_at, created_by, updated_at, closed_at) VALUES (?, 'task', ?, 2, 'task', ?, ?, 'lead-1', ?, ?)",
-  );
-  for (const row of rows)
-    insert.run(row.id, row.status, row.assignee, stamp, stamp, row.status === "closed" ? stamp : null);
-  raw.close();
-  return dir;
-}
-
-test("a store opened with held issues that carry no lease gives those of seats of the room one, and leaves a person's claim alone", () => {
-  const dir = olderStore([
-    { id: "sw-a", status: "in_progress", assignee: "peer-a" },
-    { id: "sw-b", status: "open", assignee: "peer-b" },
-    { id: "sw-c", status: "deferred", assignee: "lead-1" },
-    { id: "sw-d", status: "in_progress", assignee: "alice" },
-    { id: "sw-e", status: "closed", assignee: "peer-a" },
-    { id: "sw-f", status: "open", assignee: null },
-  ]);
-  const clock = { at: START };
-  const store = new WorkStore(dir, TIMING, () => new Date(clock.at), isSeat);
-  assert.equal(lease(store, "sw-a"), null, "a store made before leases opens as it was");
-  store.leaseHeld();
-  const begins = new Date(START + LEASE * 60_000).toISOString();
-  for (const id of ["sw-a", "sw-b", "sw-c"]) assert.equal(lease(store, id), begins, id);
-  for (const id of ["sw-d", "sw-e", "sw-f"]) assert.equal(lease(store, id), null, id);
-  assert.equal(store.get("sw-a").revision, 1, "a lease is no progress: the issue is not rewritten");
-  assert.equal(store.events("sw-a").length, 0);
-  assert.equal(store.get("sw-a").updated_at, new Date(START).toISOString());
-
-  // from then on the lease runs as any other: with its seat gone, the issues go back
-  clock.at += (LEASE + 1) * 60_000;
-  assert.deepEqual(
-    store
-      .expireLeases([], MOST)
-      .map((one) => one.id)
-      .sort(),
-    ["sw-a", "sw-b", "sw-c"],
-  );
-  assert.equal(store.get("sw-d").assignee, "alice");
-  store.close();
-
-  const again = new WorkStore(dir, TIMING, () => new Date(clock.at), isSeat);
-  again.leaseHeld();
-  assert.equal(lease(again, "sw-d"), null, "opened again, a person's claim still holds none");
-  again.close();
-});
-
-test("the room's stores give the leases when a project's store is opened", () => {
-  const dir = olderStore([
-    { id: "sw-a", status: "in_progress", assignee: "peer-a" },
-    { id: "sw-d", status: "in_progress", assignee: "alice" },
-  ]);
-  const root = join(ROOM_HOME, `lease-older-root-${(made += 1)}`);
-  mkdirSync(join(root, WORK_DIR), { recursive: true });
-  copyFileSync(join(dir, "work.db"), join(root, WORK_DIR, "work.db"));
-  const stores = new WorkStores(RULES, () => {}, isSeat);
-  const { store } = stores.of(root);
-  assert.ok(Date.parse(lease(store, "sw-a")!) > Date.now());
-  assert.equal(lease(store, "sw-d"), null);
-  stores.close();
-});
-
-test("the leases given when a store opens cost a few statements however many issues are held, found by the index of the holder", () => {
-  const rows = Array.from({ length: 300 }, (_, i) => ({
-    id: `sw-${i}`,
-    status: i % 3 === 0 ? "closed" : "in_progress",
-    assignee: `peer-${i % 40}`,
-  }));
-  const store = new WorkStore(olderStore(rows), TIMING, () => new Date(START), isSeat);
-  const before = store.stat().calls;
-  store.leaseHeld();
-  const used = store.stat().calls - before;
-  assert.ok(used <= 4, `${used} statements to give 40 holders their leases`);
-  const again = store.stat().calls;
-  store.leaseHeld();
-  assert.ok(store.stat().calls - again <= 1, "with nothing left to give, one read");
-  const plans = store.plans().filter(({ sql }) => sql.includes("lease_until IS NULL"));
-  assert.ok(plans.length >= 2, "the read and the write");
-  for (const { sql, plan } of plans) assert.match(plan, /USING (COVERING )?INDEX issues_by_assignee/, sql);
-  store.close();
 });
 
 const hoursAgo = (hours: number) => new Date(Date.now() - hours * 3_600_000).toISOString();

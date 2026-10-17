@@ -43,12 +43,11 @@ function ensureDir(path: string): void {
   mkdirSync(path, { recursive: true });
 }
 
-/** Links `name` inside the runtime to the same name in the user's home, if it exists there. */
+/** Links `name` inside the runtime to the same name in the user's home, if it exists there; what is already there stays, symlink or not. */
 function share(runtime: string, home: string, name: string): void {
   const target = join(home, name);
   const link = join(runtime, name);
   if (!existsSync(target)) return;
-  // never replace what is there, symlink or not
   if (lstatSync(link, { throwIfNoEntry: false })) return;
   symlinkSync(target, link);
 }
@@ -76,7 +75,6 @@ function readJsonObject(path: string): Record<string, unknown> {
   }
 }
 
-/** Writes a value as indented JSON. */
 function writeJson(path: string, value: unknown): void {
   writeFileSync(path, `${JSON.stringify(value, null, 2)}\n`);
 }
@@ -107,7 +105,7 @@ function skillFiles(dir: string, depth = 0, found: string[] = []): string[] {
   return found;
 }
 
-/** A Codex seat's home: the user's config without MCP servers, plugins and hooks, with the policy's switches and shares. */
+/** A Codex seat's home: the user's config without MCP servers, plugins and hooks, with the policy's switches and shares, and the user's skills and Codex's bundled ones off. */
 function buildCodex(runtime: string, policy: RuntimePolicy["codex"], guarded: boolean): void {
   const file = join(CODEX_HOME, "config.toml");
   let config: TomlTable;
@@ -135,7 +133,6 @@ function buildCodex(runtime: string, policy: RuntimePolicy["codex"], guarded: bo
     if (v2 instanceof Map) v2.set("enabled", "false");
     else table("features").set("multi_agent_v2", "false");
   }
-  // the room's skills table: the user's skills, each by its SKILL.md, and Codex's bundled ones off
   const skills: TomlTable = new Map([["bundled", new Map([["enabled", "false"]])]]);
   config.delete("skills");
   config.set("skills", skills);
@@ -163,9 +160,8 @@ function buildCodex(runtime: string, policy: RuntimePolicy["codex"], guarded: bo
   for (const name of policy.shareSkills) share(join(runtime, "skills"), join(CODEX_HOME, "skills"), name);
 }
 
-/** A Pi seat's home: the user's settings with the policy's laid over them, and what the policy shares. */
+/** A Pi seat's home: the user's settings with the policy's laid over them, and what the policy shares; the user's ~/.agents/skills is left out, the room's skills sitting in this home's skills/. */
 function buildPi(runtime: string, policy: RuntimePolicy["pi"], guarded: boolean): void {
-  // the user's ~/.agents/skills is left out; the room's skills sit in this home's skills/
   writeJson(join(runtime, "settings.json"), {
     ...readJsonObject(join(PI_HOME, "settings.json")),
     ...policy.settings,
@@ -185,13 +181,12 @@ function buildOpenCode(runtime: string, role: string, policy: RuntimePolicy["ope
   for (const name of policy.shareEntries) share(runtime, OPENCODE_CONFIG_HOME, name);
 }
 
-/** Links a role's skills where its harness reads them. */
+/** Links a role's skills where its harness reads them; a link to a skill the room renamed or dropped is removed. */
 function installRoleSkills(runtime: string, seat: Pick<Seat, "harness" | "role">): void {
   const role = seat.role;
   const source = join(ROOM_DIR, "skills", role);
   const target = seat.harness === "claude" ? join(claudeRoleDir(role), ".claude", "skills") : join(runtime, "skills");
   ensureDir(target);
-  // a skill the room renamed or dropped leaves a link to nothing
   for (const name of readdirSync(target)) {
     const link = join(target, name);
     if (lstatSync(link).isSymbolicLink() && !existsSync(link)) unlinkSync(link);
@@ -239,12 +234,9 @@ export function claudeRoleDir(role: string): string {
 }
 
 /** Lays out a seat's home for its harness. */
-function build(seat: Pick<Seat, "harness" | "role">, dir: string, policy: RuntimePolicy): void {
+function build(seat: { harness: Exclude<Harness, "claude">; role: string }, dir: string, policy: RuntimePolicy): void {
   const guarded = policy.safety?.mode !== "off";
   switch (seat.harness) {
-    case "claude":
-      // a Claude seat runs on the user's home and has none to build
-      return;
     case "codex":
       return buildCodex(dir, policy.codex, guarded);
     case "pi":
@@ -278,11 +270,12 @@ export function ensureRuntime(seat: Pick<Seat, "harness" | "role">, policy: Runt
   }
   const dir = runtimeDir(seat);
   const marker = join(dir, MARKER);
-  const print = fingerprint({ harness: seat.harness, role: seat.role }, policy);
+  const own = { harness: seat.harness, role: seat.role };
+  const print = fingerprint(own, policy);
   if (readJsonObject(marker).fingerprint !== print) {
     ensureDir(dir);
     pruneLinks(dir);
-    build(seat, dir, policy);
+    build(own, dir, policy);
     writeJson(marker, {
       fingerprint: print,
       harness: seat.harness,

@@ -7,45 +7,37 @@ import { projectPolicy, WORK_DIR } from "./tools";
 /** The room's work stores, one per project. */
 
 /** The issues that went back to the board in one project. */
-export interface Passed {
+interface Passed {
   root: string;
   lapsed: Lapsed[];
 }
 
-/** One open work store per project, made on first use; `policy` is undefined when the room's files predate the work store. */
+/** One open work store per project, made on first use. */
 export class WorkStores {
   private readonly open = new Map<string, WorkStore>();
   private sweeping = false;
 
   constructor(
-    private readonly policy: WorkPolicy | undefined,
+    private readonly policy: WorkPolicy,
     private readonly log: (message: string) => void,
     private readonly leased: (holder: string) => boolean = () => true,
   ) {}
 
-  /** A project's store and the rules in force there; throws when the room's files predate the work store. */
+  /** A project's store and the rules in force there. */
   of(root: string): { store: WorkStore; rules: WorkPolicy } {
-    if (!this.policy) throw new Error("the room's files are from an earlier version; set the room up again");
     const rules = projectPolicy(root, this.policy);
     let store = this.open.get(root);
     if (!store) {
       store = new WorkStore(join(root, WORK_DIR), rules, undefined, this.leased);
-      try {
-        store.leaseHeld();
-      } catch (error) {
-        store.close();
-        throw error;
-      }
       this.open.set(root, store);
-      if (store.startedOver)
-        this.log(`work: the store of ${root} was damaged; it was set aside and read back from issues.jsonl`);
+      if (store.startedOver) this.log(`work: the store of ${root} was damaged; it was set aside and starts empty`);
     }
     return { store, rules };
   }
 
   /** A project's store when it has one already; null when it has none yet. */
   existing(root: string | null): WorkStore | null {
-    if (!root || !this.policy || !existsSync(join(root, WORK_DIR, "work.db"))) return null;
+    if (!root || !existsSync(join(root, WORK_DIR, "work.db"))) return null;
     return this.of(root).store;
   }
 
@@ -93,7 +85,7 @@ export class WorkStores {
     }
   }
 
-  /** Closes every store, the text copy of each written first. */
+  /** Closes every store. */
   close(): void {
     for (const store of this.open.values()) store.close();
     this.open.clear();

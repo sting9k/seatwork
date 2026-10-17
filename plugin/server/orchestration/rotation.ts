@@ -6,6 +6,8 @@ import type { Host } from "../host";
 import { keptOutOfGit } from "../sqlite";
 import { fromTemplate } from "./brief";
 import type { SeatFit } from "./models";
+import { ROOM_FOLDER } from "../paths";
+import { ROOM_SENDER } from "../coordination/address";
 
 /** A seat whose context has grown is replaced: its handoff is asked for and read, and its successor starts on it. */
 
@@ -43,7 +45,7 @@ interface Handoff {
 /** A heading at the start of a line, behind whatever list or emphasis marks the writer put there on that line. */
 const headingAt = (heading: string) => new RegExp(`^[ \\t#>*_\\-\\d.)]*${heading}\\b[*_]*[ \\t]*[:—-]?[ \\t]*`, "im");
 
-/** The handoff in a seat's reply; null when it does not say what it was doing and how far it got. */
+/** The handoff in a seat's reply, its exact strings keeping their first line's indentation; null when it does not say what it was doing and how far it got. */
 export function parseHandoff(message: string): Handoff | null {
   const found = [...HANDOFF_HEADINGS, VERBATIM]
     .flatMap((heading) => {
@@ -57,7 +59,6 @@ export function parseHandoff(message: string): Handoff | null {
   found.forEach((at, index) => {
     const end = found[index + 1]?.from ?? message.length;
     if (at.heading === VERBATIM) {
-      // blank lines before the first string go, the first string's own indentation stays
       exact = message
         .slice(at.body, end)
         .replace(/^(?:[ \t]*\n)+/, "")
@@ -241,7 +242,7 @@ export async function rotate(
   const thinking = fit.model ? (fit.thinking === "default" ? undefined : fit.thinking) : now.thinking;
   const received = await host.prompts(old.agentId, 4000);
   const stamp = new Date().toISOString().slice(0, 16).replace(/[T:]/g, "-");
-  const file = join(keptOutOfGit(join(now.cwd, ".seatwork", "handoffs")), `${stamp}_${old.agentId.slice(0, 8)}.md`);
+  const file = join(keptOutOfGit(join(now.cwd, ROOM_FOLDER, "handoffs")), `${stamp}_${old.agentId.slice(0, 8)}.md`);
   const exact = handoff.verbatim.text ? `\n${exactBlock(handoff.verbatim).join("\n")}` : "";
   writeFileSync(file, `# Handoff of ${old.title ?? old.agentId}\n\n${handoff.text}\n${exact}`);
   const owner = engine.parentOf(old.agentId);
@@ -278,7 +279,7 @@ export async function rotate(
     if (!adopted.ok) continue;
     await engine
       .post({
-        from: { agentId: "room", role: "system" },
+        from: ROOM_SENDER,
         to: child.agentId,
         priority: "fyi",
         subject: "OWNER CHANGED: your Owner continues in a fresh seat",

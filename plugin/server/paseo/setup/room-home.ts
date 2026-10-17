@@ -1,6 +1,5 @@
 import {
   chmodSync,
-  copyFileSync,
   cpSync,
   existsSync,
   mkdirSync,
@@ -35,9 +34,11 @@ export function readSetup(roomHome: string): Setup {
   return checkSetup(parsed, file);
 }
 
-/** Moves a room home aside, whole, and returns where it went; it is kept for keepRemovedDays (shared/settings.json). */
+/** Moves a room home aside, whole, and returns where it went; it is kept for keepRemovedDays (shared/settings.json), a second later in its name when one moved that second already. */
 export function moveRoomHomeAside(roomHome: string): string {
-  const target = `${roomHome}.removed-${stamp()}`;
+  let at = Date.now();
+  while (existsSync(`${roomHome}.removed-${stamp(new Date(at))}`)) at += 1000;
+  const target = `${roomHome}.removed-${stamp(new Date(at))}`;
   renameSync(roomHome, target);
   return target;
 }
@@ -77,7 +78,6 @@ export function writeRoomHome(input: {
     if (existsSync(room)) renameSync(room, previous);
     renameSync(next, room);
     rmSync(previous, { recursive: true, force: true });
-    if (plan.keepAside) copyFileSync(join(roomHome, "policy.json"), join(roomHome, plan.keepAside));
     writePrivate(join(roomHome, "policy.json"), json(plan.policy));
     writePrivate(join(roomHome, "policy.shipped.json"), json(plan.shipped));
   }

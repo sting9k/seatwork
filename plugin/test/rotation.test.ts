@@ -109,10 +109,8 @@ test("a handoff may carry exact strings under VERBATIM: they are kept as written
   assert.doesNotMatch(handoff.text, /ENOENT|VERBATIM/);
   assert.equal(handoff.sections.BLOCKERS, "none", "the heading after it still ends it");
 
-  // on the heading's own line, as the last heading, with the marks a writer puts on it
   const last = parseHandoff("HANDOFF\nCURRENT TASK: a\nPROGRESS: b\n**VERBATIM** — npm run build:all  \n")!;
   assert.equal(last.verbatim.text, "npm run build:all");
-  // it is optional
   assert.deepEqual(parseHandoff("CURRENT TASK: a\nPROGRESS: b")!.verbatim, { text: "", left: 0 });
 });
 

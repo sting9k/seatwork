@@ -38,7 +38,7 @@ const MOST_FILES = 200;
 const MOST_PATCH_CHARS = 2 * 1024 * 1024;
 const MOST_PATH_CHARS = 4096;
 
-/** The tool call inside a hook's payload: the shell line it runs, or the files it writes. */
+/** The tool call inside a hook's payload: the shell line it runs, or the files it writes; the guard reads only the first files of a large call, the call runs whole. */
 function callOf(body: Record<string, unknown>): Call {
   const input = (body.tool_input ?? body.input ?? {}) as Record<string, unknown>;
   const tool = String(body.tool_name ?? body.tool ?? "");
@@ -58,7 +58,6 @@ function callOf(body: Record<string, unknown>): Call {
       call.texts.set(path, addedBy(input));
     }
   }
-  // the guard reads the first files of a large call; the call runs whole
   call.writes = call.writes.filter((path) => path.length <= MOST_PATH_CHARS).slice(0, MOST_FILES);
   return call;
 }
@@ -123,15 +122,12 @@ export async function answerHook(
 
 const absolute = (path: string, cwd: string | null) => (path.startsWith("/") || !cwd ? path : `${cwd}/${path}`);
 
-/** An answer in the shape its CLI reads: hook JSON for Claude and Codex, a block flag for Pi and OpenCode. */
+/** An answer in the shape its CLI reads: hook JSON for Claude and Codex, the note alone for Pi and OpenCode, which ask about no tool the room refuses. */
 export function render(cli: Cli, answer: { refused?: string; note?: string }): { type: string; text: string } {
   if (cli === "pi" || cli === "opencode")
-    return {
-      type: "application/json",
-      text: JSON.stringify(
-        answer.refused ? { block: true, reason: answer.refused } : { block: false, note: answer.note ?? null },
-      ),
-    };
+    return answer.note
+      ? { type: "application/json", text: JSON.stringify({ note: answer.note }) }
+      : { type: "text/plain", text: "" };
   if (!answer.refused && !answer.note) return { type: "text/plain", text: "" };
   const output = answer.refused
     ? { hookEventName: "PreToolUse", permissionDecision: "deny", permissionDecisionReason: answer.refused }
@@ -269,36 +265,48 @@ function askRoom(cli: Cli): string {
 }`;
 }
 
-/** Pi's extension: every bash, write, edit and read call is told to the room first. */
+/** Pi's extension: every bash, write, edit and read call is told to the room first, and what the room says rides on the call's result. */
 export function piExtension(): string {
-  return `// The room's hook: every bash, write, edit and read call is told to the room first.
+  return `// The room's hook: every bash, write, edit and read call is told to the room first; what it says rides on the call's result.
 ${askRoom("pi")}
 
+let notes: string[] = [];
 export default function (pi: any) {
   pi.on("tool_call", async (event: any, ctx: any) => {
     if (!["bash", "write", "edit", "read", "grep", "find", "ls"].includes(event.toolName)) return;
     const answer = await ask({ tool: event.toolName, input: event.input, cwd: ctx.cwd });
-    if (answer?.block) return { block: true, reason: answer.reason };
+    if (typeof answer?.note === "string") notes.push(answer.note);
+  });
+  pi.on("tool_result", async (event: any) => {
+    if (notes.length === 0) return;
+    const text = notes.join("\\n\\n");
+    notes = [];
+    return { content: [...event.content, { type: "text", text }], structuredContent: event.structuredContent };
   });
 }
 `;
 }
 
-/** OpenCode's V2 plugin: every shell, write, edit, patch and read call is told to the room first; a refused one is replaced by a shell call that prints why and fails. */
+/** OpenCode's V2 plugin: every shell, write, edit, patch and read call is told to the room first, and what the room says rides on the call's result. */
 export function openCodePlugin(): string {
-  return `// The room's hook: every shell, write, edit, patch and read call is told to the room first.
+  return `// The room's hook: every shell, write, edit, patch and read call is told to the room first; what it says rides on the call's result.
 ${askRoom("opencode")}
 
-const quote = (s: string) => "'" + s.replace(/'/g, "'\\\\''") + "'";
+let notes: string[] = [];
 export default {
   id: "room-guard",
   setup(ctx: any) {
     ctx.tool.hook("execute.before", async (e: any) => {
       if (!["shell", "write", "edit", "patch", "read", "grep", "glob", "list"].includes(e.tool)) return;
       const answer = await ask({ tool: e.tool, input: e.input, cwd: ctx.location?.directory ?? null });
-      if (!answer?.block) return;
-      e.tool = "shell";
-      e.input = { command: "printf '%s\\\\n' " + quote(answer.reason) + " >&2; exit 1" };
+      if (typeof answer?.note === "string") notes.push(answer.note);
+    });
+    ctx.tool.hook("execute.after", async (e: any) => {
+      if (notes.length === 0 || e.status !== "completed" || !e.result) return;
+      const text = notes.join("\\n\\n");
+      notes = [];
+      if (typeof e.result.output === "string") e.result.output += "\\n\\n" + text;
+      else if (Array.isArray(e.result.content)) e.result.content.push({ type: "text", text });
     });
   },
 };

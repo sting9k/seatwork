@@ -3,7 +3,7 @@ import type { SeatRecord } from "../coordination/engine";
 import { KEEP_LOG_DAYS } from "../gc";
 import type { LiveSeat } from "../host";
 import type { McpHttpServer, McpToolHandler } from "../mcp-http";
-import { clip } from "../orchestration/forks";
+
 import { describeProjects, registerProject, unregisterProject } from "../orchestration/onboard";
 import { retryNote } from "../orchestration/recovery";
 import { handoffRequest } from "../orchestration/rotation";
@@ -18,10 +18,10 @@ import { refusal } from "../refusal";
 import { WorkError } from "../tasks/store";
 import { KnowledgeRefused } from "../knowledge/refused";
 import { OperationsRefused } from "../operations/index";
-import { OperationsError } from "../operations/store";
-import { KnowledgeError } from "../knowledge/store";
+import { StoreError } from "../sqlite";
 import { fromRoom, taskOf, type RoomContext } from "./context";
 import { readInbox, refused, sendMail } from "./mail-tools";
+import { clip } from "../excerpt";
 
 /** The room's MCP tools, each answering for the seat whose nonce called it. */
 
@@ -242,7 +242,7 @@ export function registerTools(room: RoomContext, mcp: McpHttpServer): void {
       return JSON.stringify(await room.knowledge.act(me, args));
     } catch (error) {
       if (error instanceof KnowledgeRefused) throw new Error(refusal(error));
-      if (error instanceof KnowledgeError)
+      if (error instanceof StoreError)
         throw new Error(
           refusal({ code: error.code, message: error.message, retryable: error.code === "DATABASE_LOCKED" }),
         );
@@ -325,7 +325,7 @@ export function registerTools(room: RoomContext, mcp: McpHttpServer): void {
       return JSON.stringify(room.operations.act(me, args));
     } catch (error) {
       if (error instanceof OperationsRefused) throw new Error(refusal(error));
-      if (error instanceof OperationsError)
+      if (error instanceof StoreError)
         throw new Error(
           refusal({ code: error.code, message: error.message, retryable: error.code === "DATABASE_LOCKED" }),
         );

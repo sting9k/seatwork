@@ -1,7 +1,9 @@
+import { isObject } from "../../shared/json";
+
 /** The decision contract: typed questions about a state, typed answers with probabilities. */
 
 export type State = string | Record<string, unknown> | unknown[];
-export type Instructions = string | Record<string, unknown> | unknown[];
+type Instructions = string | Record<string, unknown> | unknown[];
 
 export interface NoulQuestion {
   type: "noul";
@@ -18,7 +20,7 @@ export interface ChoiceQuestion {
   criteria: Record<string, Meaning>;
 }
 
-export interface ScoreQuestion {
+interface ScoreQuestion {
   type: "score";
   instructions: Instructions;
   criteria: string[];
@@ -28,7 +30,7 @@ export interface ScoreQuestion {
 export type Question = NoulQuestion | ChoiceQuestion | ScoreQuestion;
 export type Questions = Record<string, Question>;
 
-export interface NoulAnswer {
+interface NoulAnswer {
   type: "noul";
   noul: number;
 }
@@ -40,7 +42,7 @@ export interface ChoiceAnswer {
   confidence: number;
 }
 
-export interface ScoreAnswer {
+interface ScoreAnswer {
   type: "score";
   score: number;
   legend: Record<string, string>;
@@ -96,8 +98,6 @@ const SUM_TOLERANCE = 0.025;
 export const tokensOf = (state: State, questions: Questions): number =>
   Math.ceil(JSON.stringify({ state, questions }).length / 4);
 
-export const isRecord = (value: unknown): value is Record<string, unknown> =>
-  typeof value === "object" && value !== null && !Array.isArray(value);
 const isProbability = (value: unknown): value is number =>
   typeof value === "number" && Number.isFinite(value) && value >= 0 && value <= 1;
 
@@ -117,11 +117,11 @@ export function checkRequest(state: State, questions: Questions): void {
       const criteria = question.criteria;
       if (
         criteria !== undefined &&
-        (!isRecord(criteria) || Object.keys(criteria).some((k) => k !== "true" && k !== "false"))
+        (!isObject(criteria) || Object.keys(criteria).some((k) => k !== "true" && k !== "false"))
       )
         throw invalid(`${id}: a noul's criteria name only true and false`);
     } else if (question.type === "choice") {
-      const labels = isRecord(question.criteria) ? Object.keys(question.criteria) : [];
+      const labels = isObject(question.criteria) ? Object.keys(question.criteria) : [];
       if (labels.length === 0 || labels.length > LIMITS.labels)
         throw invalid(`${id}: a choice has 1 to ${LIMITS.labels} labels, not ${labels.length}`);
       if (labels.some((label) => !label.trim())) throw invalid(`${id}: a choice label is empty`);
@@ -144,7 +144,7 @@ export function checkRequest(state: State, questions: Questions): void {
 
 /** Reads a distribution: every expected key, each a probability, summing to one. */
 function distribution(id: string, raw: unknown, keys: readonly string[]): Record<string, number> {
-  if (!isRecord(raw)) throw new DecisionError("CONTRACT", `${id}: no probabilities`);
+  if (!isObject(raw)) throw new DecisionError("CONTRACT", `${id}: no probabilities`);
   const extra = Object.keys(raw).find((key) => !keys.includes(key));
   if (extra !== undefined)
     throw new DecisionError("CONTRACT", `${id}: a probability for "${extra}", which was not asked`);
@@ -160,11 +160,11 @@ function distribution(id: string, raw: unknown, keys: readonly string[]): Record
 
 /** Holds a provider's answers to the questions asked; anything off is a contract error. */
 export function checkAnswers(questions: Questions, raw: unknown): Record<string, Answer> {
-  if (!isRecord(raw)) throw new DecisionError("CONTRACT", "the reply holds no answers");
+  if (!isObject(raw)) throw new DecisionError("CONTRACT", "the reply holds no answers");
   const out: Record<string, Answer> = {};
   for (const [id, question] of Object.entries(questions)) {
     const answer = raw[id];
-    if (!isRecord(answer) || answer.type !== question.type)
+    if (!isObject(answer) || answer.type !== question.type)
       throw new DecisionError("CONTRACT", `${id}: no ${question.type} answer`);
     const confidence = () => {
       if (!isProbability(answer.confidence)) throw new DecisionError("CONTRACT", `${id}: no confidence`);
@@ -189,7 +189,7 @@ export function checkAnswers(questions: Questions, raw: unknown): Record<string,
       if (typeof score !== "number" || !Number.isFinite(score) || score < 0 || score > keys.length - 1)
         throw new DecisionError("CONTRACT", `${id}: the score is outside the scale`);
       const legend = answer.legend;
-      if (!isRecord(legend) || keys.some((key) => typeof legend[key] !== "string"))
+      if (!isObject(legend) || keys.some((key) => typeof legend[key] !== "string"))
         throw new DecisionError("CONTRACT", `${id}: the legend does not name every level`);
       out[id] = {
         type: "score",

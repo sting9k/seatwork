@@ -1,4 +1,7 @@
 import { Forks, type Fork, type ForkName, type Router } from "../server/orchestration/forks";
+import { join } from "node:path";
+import { WorkStore } from "../server/tasks/store";
+import { ROOM_HOME } from "./support/room";
 
 /** One call the stand-in decision model was put: the caller, the state, the question ids and the labels of the first question. */
 export interface Asked {
@@ -41,4 +44,17 @@ export function modelSaying(
 export function forksWith(router: Router | null, on: readonly ForkName[]) {
   const lines: string[] = [];
   return { forks: new Forks({ router, on: (name) => on.includes(name), log: (line) => lines.push(line) }), lines };
+}
+
+/** The work rules the fork tests run the store and its tool on. */
+export const RULES = {
+  busyTimeoutMs: 5000,
+  staleClaimMinutes: 120,
+  close: { minReasonChars: 20, forbidSelfClose: true },
+};
+
+/** A fresh work store under the test's room home, named `<prefix>-<n>`. */
+let stores = 0;
+export function freshStore(prefix: string): WorkStore {
+  return new WorkStore(join(ROOM_HOME, `${prefix}-${(stores += 1)}`), RULES);
 }

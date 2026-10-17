@@ -1,9 +1,10 @@
 import { rolesWhere } from "./workflow";
+import { isObject } from "./json";
 
 /** The room's model table as the setup screen edits it: choices are differences laid over it, in its own shape. */
 
 /** One of a role's models in the table: what its Owner picks it for. */
-export interface TableTier {
+interface TableTier {
   providers: string[];
   thinking: string;
   use?: string;
@@ -18,9 +19,6 @@ const tiers = (table: Table, role: string): Record<string, TableTier> =>
   ((table[role] as { tiers?: Record<string, TableTier> } | undefined)?.tiers ?? {}) as Record<string, TableTier>;
 
 type Json = Record<string, unknown>;
-const isObject = (value: unknown): value is Json =>
-  typeof value === "object" && value !== null && !Array.isArray(value);
-
 /** Objects merge key by key, anything else replaces; `null` removes a key (a tier, say). */
 export function merge(base: unknown, over: unknown): unknown {
   if (!isObject(base) || !isObject(over)) return over;
@@ -43,7 +41,7 @@ export interface ModelChoice {
 }
 
 /** One of a role's models as the screen lists it; `more` counts further models under the same label. */
-export interface TierChoice extends ModelChoice {
+interface TierChoice extends ModelChoice {
   label: string;
   use: string;
   more: number;
@@ -108,7 +106,7 @@ export function dropTier(choices: Json, room: Table, role: string, label: string
 }
 
 /** What applying would do to one of a role's models: nothing, change it, add it, or take it out. */
-export type TierChange = "same" | "changed" | "added" | "removed";
+type TierChange = "same" | "changed" | "added" | "removed";
 
 /** A role's models in `next`, each marked by how it differs from `now`, then those it dropped. */
 export function tierDiff(now: Table | null, next: Table, role: string): (TierChoice & { change: TierChange })[] {

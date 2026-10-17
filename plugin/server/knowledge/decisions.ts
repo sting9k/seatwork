@@ -105,7 +105,7 @@ export function promptBlock(
 }
 
 /** What the book takes from the district: its stores, the room's seats, tasks and projects, the gate and the pairs. */
-export interface DecisionDeps {
+interface DecisionDeps {
   book(): KnowledgeStore;
   recordOf(agent: string): KnowledgeStore | null;
   isRoomSeat(agent: string): boolean;
@@ -122,7 +122,7 @@ export interface DecisionDeps {
 }
 
 /** A notice as made for a seat: its text, the changes it holds, what it was made against, and its last own note. */
-export interface Told {
+interface Told {
   text: string;
   seen: { note: string; version: number }[];
   complete: boolean;
@@ -199,7 +199,6 @@ export class DecisionBook {
       );
     if (scope === "room") return { key: "room", needsPerson: true };
     const named = String(args.project ?? "").trim();
-    // a seat that works in a project records that project's decisions, and no other's
     const own = this.deps.projectOf(agent);
     if (own) {
       if (named && named !== own && named !== own.split("/").at(-1))

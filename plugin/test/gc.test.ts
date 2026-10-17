@@ -77,34 +77,9 @@ const lines = (file: string) =>
         .map((line) => JSON.parse(line) as { subject?: string; kind: string })
     : [];
 
-test("GC's file sweep clears what the room left longer ago than it keeps logs, and the files no version writes any more", () => {
-  const mailLog = join(ROOM_HOME, "mail", "log.jsonl");
-  const gcLog = join(ROOM_HOME, "gc.log");
+test("GC's file sweep clears what the room left longer ago than it keeps it", () => {
   const paseoHome = join(ROOM_HOME, "..", "paseo-of-tidy");
-  mkdirSync(join(ROOM_HOME, "mail"), { recursive: true });
   mkdirSync(paseoHome);
-  const mail = (days: number, kind: string, subject: string) =>
-    JSON.stringify({ at: daysAgo(days), kind, id: `m${days}`, from: "lead", to: "peer", priority: "action", subject });
-  writeFileSync(
-    mailLog,
-    [
-      mail(30, "queued", "QUESTION: which unit"),
-      mail(30, "delivered-idle", "QUESTION: which unit"),
-      mail(20, "queued", "REJECT abc: one repair"),
-      mail(20, "delivered-idle", "REJECT abc: one repair"),
-      "a torn li",
-      mail(2, "queued", "ANSWER: seconds"),
-    ].join("\n") + "\n",
-  );
-  writeFileSync(
-    gcLog,
-    [
-      { at: daysAgo(9), kind: "archived-idle" },
-      { at: daysAgo(1), kind: "deleted-heartbeat" },
-    ]
-      .map((line) => JSON.stringify(line))
-      .join("\n") + "\n",
-  );
   // the room's backups of config.json, and one file that is not the room's
   for (const name of [
     "config.json.bak-20260901-120000",
@@ -115,9 +90,6 @@ test("GC's file sweep clears what the room left longer ago than it keeps logs, a
   ])
     writeFileSync(join(paseoHome, name), "{}");
 
-  for (const folder of ["queue", "reports"]) mkdirSync(join(ROOM_HOME, "mail", folder), { recursive: true });
-  writeFileSync(join(ROOM_HOME, "mail", "adoptions.json"), "{}");
-  writeFileSync(join(ROOM_HOME, "usage-log.jsonl"), `${JSON.stringify({ at: daysAgo(1), agentId: "p1" })}\n`);
   // local skills taken out: kept as long as a folder set aside by Remove
   const removed = join(ROOM_HOME, "skills-local", "removed");
   for (const at of ["20260901-120000", "20261015-120000"])
@@ -129,12 +101,6 @@ test("GC's file sweep clears what the room left longer ago than it keeps logs, a
 
   const done = collectFiles(ROOM_HOME, [{ dir: paseoHome, prefixes: ["config.json.bak-"], spare: 1 }], NOW);
 
-  assert.deepEqual(readdirSync(join(ROOM_HOME, "mail")), ["adoptions.json"], "only what the room still reads is left");
-  assert.equal(existsSync(join(ROOM_HOME, "usage-log.jsonl")), false, "the usage log is the spend ledger's now");
-  assert.deepEqual(
-    lines(gcLog).map((line) => line.kind),
-    ["deleted-heartbeat"],
-  );
   assert.deepEqual(readdirSync(paseoHome).sort(), [
     "config.json",
     "config.json.bak-20261019-120000",
@@ -142,7 +108,7 @@ test("GC's file sweep clears what the room left longer ago than it keeps logs, a
   ]);
   assert.deepEqual(readdirSync(removed), ["20261015-120000"]);
   assert.deepEqual(readdirSync(controls), ["20261019-120000"]);
-  assert.equal(done.length, 9);
+  assert.equal(done.length, 4);
   assert.deepEqual(
     collectFiles(ROOM_HOME, [{ dir: paseoHome, prefixes: ["config.json.bak-"], spare: 1 }], NOW),
     [],

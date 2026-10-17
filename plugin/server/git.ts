@@ -78,7 +78,7 @@ async function driverEnv(cwd: string | null, timeoutMs: number): Promise<NodeJS.
   return env;
 }
 
-/** The environment for a folder, listed once for a few seconds. */
+/** The environment for a folder, listed once for a few seconds; a listing that failed is tried again by the next call. */
 function envFor(cwd: string | null, timeoutMs: number): Promise<NodeJS.ProcessEnv | null> {
   const key = cwd ?? "";
   const kept = drivers.get(key);
@@ -88,7 +88,6 @@ function envFor(cwd: string | null, timeoutMs: number): Promise<NodeJS.ProcessEn
   const env = driverEnv(cwd, timeoutMs);
   const entry = { at: Date.now(), env };
   drivers.set(key, entry);
-  // a listing that failed is tried again by the next call
   void env.then((found) => {
     if (!found && drivers.get(key) === entry) drivers.delete(key);
   });

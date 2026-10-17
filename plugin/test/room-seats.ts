@@ -4,25 +4,35 @@ import { join } from "node:path";
 import { PROJECT } from "./support/room";
 import type { fakeServer } from "./support/server";
 
-/** A seat made through the plugin's hooks: its inbox, a caller of the room's tools over its own MCP server, and its Claude hook's question to the guard. */
+/** A seat made through the plugin's hooks: its inbox and prompt, a caller of the room's tools over its own MCP server and the tools it is listed, what seatwork_inbox hands it, and its Claude hook's question to the guard. */
 export interface TestSeat {
   agent: { id: string; parentAgentId: string | null; provider: string; cwd: string; title: string; workspaceId: null };
   inbox: string[];
+  prompt: string;
   call(name: string, args: Record<string, unknown>): Promise<string>;
+  listed(): Promise<string[]>;
   mail(args: Record<string, unknown>): Promise<string>;
-  hook(tool: string, input: Record<string, unknown>): Promise<string>;
+  held(): Promise<string>;
+  adopt(agentId: string): Promise<string>;
+  hook(tool: string, input: object, cwd?: string): Promise<string>;
 }
 
 /** The seats of a room served through `call`: the app's handles of them, the context the hooks are given, and the verbs a test needs. */
 export function roomSeats(call: ReturnType<typeof fakeServer>["call"]) {
   const agents: Record<string, object> = {};
+  /** What the daemon lists of the stand-in agents: every one not archived. */
   const listed = async () => ({
     entries: Object.entries(agents).flatMap(([id, handle]) => {
-      const now = (handle as { current?: () => object }).current?.();
-      return now ? [{ agent: { id, updatedAt: new Date().toISOString(), ...now } }] : [];
+      const now = (handle as { current?: () => { archivedAt?: string } | null }).current?.();
+      return now && !now.archivedAt ? [{ agent: { id, updatedAt: new Date().toISOString(), ...now } }] : [];
     }),
   });
-  const context = { paseo: { agents: { ref: (id: string) => agents[id], list: listed } } };
+  const context = {
+    paseo: {
+      agents: { ref: (id: string) => agents[id], list: listed },
+      projects: { list: async () => ({ projects: [] }) },
+    },
+  };
 
   async function seat(
     id: string,
@@ -33,37 +43,44 @@ export function roomSeats(call: ReturnType<typeof fakeServer>["call"]) {
   ): Promise<TestSeat> {
     const made = (await call("before agent.create", { request: { config: { provider, cwd, title }, env: {} } })) as {
       env: Record<string, string>;
-      config: { mcpServers: { seatwork: { url: string } } };
+      config: { systemPrompt: string; mcpServers: { seatwork: { url: string } } };
     };
     await call("before agent.session_open", { request: { env: made.env, reason: "create", agentId: id, provider } });
     const inbox: string[] = [];
     agents[id] = {
       refresh: async () => {},
-      current: () => ({ status: "idle" }),
+      current: () => ({ status: "idle", provider }),
       send: async (text: string) => void inbox.push(text),
     };
     const agent = { id, parentAgentId: parent, provider, cwd, title, workspaceId: null };
     await call("on agent.created", { agent }, context);
+    const { url } = made.config.mcpServers.seatwork;
+    const post = (to: string, body: object, headers: Record<string, string> = {}) =>
+      fetch(to, {
+        method: "POST",
+        headers: { "content-type": "application/json", ...headers },
+        body: JSON.stringify(body),
+      });
+    const rpc = async (method: string, params?: object) =>
+      ((await (await post(url, { jsonrpc: "2.0", id: 1, method, params })).json()) as { result: any }).result;
     const tool = async (name: string, args: Record<string, unknown>) => {
-      const response = await fetch(made.config.mcpServers.seatwork.url, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name, arguments: args } }),
-      });
-      const { result } = (await response.json()) as { result: { content: { text: string }[]; isError: boolean } };
+      const result = await rpc("tools/call", { name, arguments: args });
       if (result.isError) throw new Error(result.content[0].text);
-      return result.content[0].text;
+      return result.content[0].text as string;
     };
-    const gate = `${made.config.mcpServers.seatwork.url.replace(/\/mcp\/([^/]+)\/[^/]+$/, "/gate/$1")}?cli=claude`;
-    const hook = async (tool_name: string, tool_input: Record<string, unknown>) => {
-      const response = await fetch(gate, {
-        method: "POST",
-        headers: { "content-type": "application/json", "x-seat": id },
-        body: JSON.stringify({ tool_name, tool_input, cwd }),
-      });
-      return response.text();
+    const gate = `${url.replace(/\/mcp\/([^/]+)\/[^/]+$/, "/gate/$1")}?cli=claude`;
+    return {
+      agent,
+      inbox,
+      prompt: made.config.systemPrompt,
+      call: tool,
+      listed: async () => (await rpc("tools/list")).tools.map((entry: { name: string }) => entry.name),
+      mail: (args) => tool("seatwork_mail", args),
+      held: () => tool("seatwork_inbox", {}),
+      adopt: (agentId) => tool("seatwork_adopt", { agent_id: agentId }),
+      hook: async (tool_name, tool_input, at = cwd) =>
+        (await post(gate, { tool_name, tool_input, cwd: at }, { "x-seat": id })).text(),
     };
-    return { agent, inbox, call: tool, mail: (args) => tool("seatwork_mail", args), hook };
   }
 
   const turnEnds = (who: TestSeat, text: string) =>
@@ -75,6 +92,13 @@ export function roomSeats(call: ReturnType<typeof fakeServer>["call"]) {
         outcome: { kind: "completed" },
         timeline: [{ type: "assistant_message", text }],
       },
+      context,
+    );
+
+  const fails = (who: TestSeat, message: string) =>
+    call(
+      "on agent.turn_ended",
+      { agent: who.agent, turnId: null, outcome: { kind: "failed", error: { message } }, timeline: [] },
       context,
     );
 
@@ -92,7 +116,7 @@ export function roomSeats(call: ReturnType<typeof fakeServer>["call"]) {
     });
   };
 
-  return { agents, context, seat, turnEnds, rotatable };
+  return { agents, context, seat, turnEnds, fails, rotatable };
 }
 
 /** A folder the room reads as a project of its own, so its seats share one work store. */

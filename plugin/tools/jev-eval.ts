@@ -1,7 +1,6 @@
 /**
  * Measures what the room asks the decision model against labelled cases in evals/jev: each choice asked in its listed order and reversed, each juror asked as written and reworded, and the input variants (where a long text is cut, what else rides in the state). It calls the provider in force with the key in the room home, and writes nothing there.
  *   node --require ./test/register.cjs tools/jev-eval.ts [--only <site>] [--variants <regex>] [--questions <file>] [--label <name>] [--dry]
- * --questions names a JSON file of rewordings to try beside the shipped questions: { "<site>": { "<name>": { "question" or "nouls", "reworded"?, "with"? } } }.
  */
 import { mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -10,7 +9,7 @@ import models from "../room/models.json";
 import forkCatalog from "../shared/forks.json";
 import knowledgeCatalog from "../shared/knowledge.json";
 import councilCatalog from "../shared/safety/council.json";
-import { excerpt } from "../server/excerpt";
+import { clip, excerpt } from "../server/excerpt";
 import { call } from "../server/jev/client";
 import {
   LIMITS,
@@ -24,7 +23,7 @@ import {
 import type { Dialect } from "../server/jev/dialects";
 import { cleanState, guarded } from "../server/jev/input";
 import { merged, REVERSED, withReversed } from "../server/jev/order";
-import { clip } from "../server/orchestration/forks";
+
 import { JEV_DIR } from "../server/paths";
 
 /** One labelled case as its file holds it: an id, the answer it should get, and the raw fields its site builds a state from. */
@@ -627,6 +626,8 @@ async function main(): Promise<void> {
       ),
   ];
   const dir = join(RESULTS, `jev-${label}`);
+  const { dropOldResults } = require("../../evals/keep.cjs") as { dropOldResults(results: string): string[] };
+  for (const gone of dropOldResults(RESULTS)) console.log(`old results deleted: ${gone}`);
   mkdirSync(dir, { recursive: true });
   writeFileSync(join(dir, "report.md"), `${lines.join("\n")}\n`);
   writeFileSync(join(dir, "rows.jsonl"), rows.map((row) => JSON.stringify(row)).join("\n") + "\n");

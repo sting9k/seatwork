@@ -9,14 +9,13 @@ import { loadRegistry } from "../server/orchestration/registry";
 const ROOM_SEATS = ["claude-hq", "claude-supervisor", "claude-lead", "claude-peer", "codex-peer"];
 const seatsFile = join(ROOM_HOME, "seats.json");
 const marker = join(PROJECT, ".seatwork", "room.json");
-/** The seats the room was asked to set up; setting one up leaves it in seats.json. */
 let asked: string[][] = [];
+/** Stands in for setting seats up: keeps the providers asked for, and leaves them in seats.json. */
 const setUpSeats = async (providers: string[]) => {
   asked.push(providers);
   writeFileSync(seatsFile, JSON.stringify({ providers: [...ROOM_SEATS, ...providers] }));
 };
 
-// the app knows one project, the test's
 const paseo = async () => [{ name: "demo", path: PROJECT }];
 
 beforeEach(() => {
@@ -38,7 +37,6 @@ test("a project's table may put a role on a harness the room has no seat for: th
 });
 
 test("a table the room refuses sets up no seat and is not written", async () => {
-  // a Peer seat in the Supervisor's slot
   await assert.rejects(
     registerProject(
       paseo,

@@ -20,11 +20,12 @@ import {
   CODEX_HOME,
   JEV_DIR,
   KNOWLEDGE_DIR,
-  OPERATIONS_DIR,
   OPENCODE_CONFIG_HOME,
+  OPERATIONS_DIR,
   PASEO_HOME,
   PI_HOME,
   REGISTRY_LOG,
+  ROOM_FOLDER,
   ROOM_HOME,
   SAFETY_DIR,
   SEAT_TMP_DIR,
@@ -92,6 +93,7 @@ export interface Room {
   jevPlaces(): ReturnType<typeof jevPlaces>;
   jevPlace(id: string, on: boolean): ReturnType<typeof jevPlaces>;
   status(): ReturnType<typeof roomStatus>;
+  clean(): Promise<string[] | null>;
   stop(): Promise<void>;
 }
 
@@ -148,7 +150,7 @@ function startKnowledge(
     rootOf: projectRootOf,
     threadsOf: (id) => engine.threadsFor(id, 5),
     judge: jev,
-    busyTimeoutMs: policy.room.work?.busyTimeoutMs ?? 5000,
+    busyTimeoutMs: policy.room.work.busyTimeoutMs,
     log,
   });
 }
@@ -179,7 +181,7 @@ function startSafety(
       except: [SEAT_TMP_DIR, roomProjectDir()],
       secrets: secretsOf(PASEO_HOME, ROOM_HOME),
     },
-    roomFolder: ".seatwork",
+    roomFolder: ROOM_FOLDER,
     decider: jev,
     log,
     chair: {
@@ -326,7 +328,6 @@ function startTimers(room: RoomContext, gc: Collector): { touch(): void; stop():
       room.operators,
       operator,
     ).catch((error) => log(`room: its own seat could not be kept: ${String(error)}`));
-  // what waits is moved every minute: held mail, failed turns due again, handoffs never written
   const sweep = setInterval(() => {
     void room.operations.tick();
     if (touched && (minutes += 1) % OPERATOR_EVERY_MINUTES === 1) keep();
@@ -340,7 +341,7 @@ function startTimers(room: RoomContext, gc: Collector): { touch(): void; stop():
     void resumeDue(room.recovery, engine, Date.now(), log).catch((error) =>
       log(`resuming a failed seat did not work: ${String(error)}`),
     );
-    for (const [seat, asked] of room.rotations.expired(Date.now(), policy.room.rotation?.answerMinutes ?? 120)) {
+    for (const [seat, asked] of room.rotations.expired(Date.now(), policy.room.rotation.answerMinutes)) {
       const record = engine.seat(seat);
       if (record)
         void rotationFailed(room, asked.by, record, "it did not answer the handoff request in time").catch((error) =>
@@ -356,7 +357,6 @@ function startTimers(room: RoomContext, gc: Collector): { touch(): void; stop():
     },
     Math.max(1, policy.gc.everyMinutes) * 60_000,
   );
-  // the council looks at running turns for loops and silence; one look at a time
   let looking = false;
   const councilTick = setInterval(
     () => {
@@ -392,7 +392,6 @@ function startTimers(room: RoomContext, gc: Collector): { touch(): void; stop():
 async function seatCreated(room: RoomContext, agent: SeatEvent): Promise<void> {
   const seat = parseSeat(agent.provider);
   const parent = agent.parentId ? room.engine.seat(agent.parentId) : undefined;
-  // a seat may create only what the workflow's spawn table gives its role
   if (parent && !(seat && maySpawn(parent.role, seat.role, agent.title))) {
     const what = seat ? `a ${seat.role} seat` : `a non-room agent (provider ${agent.provider})`;
     await refuseSpawn(room, agent, parent.agentId, parent.role, what);
@@ -450,7 +449,6 @@ async function seatArchived(room: RoomContext, gc: Collector, seat: SeatEvent): 
         why: "the rotation you asked for did not happen",
       })
       .catch((error) => room.log(`the notice of a failed rotation was not sent: ${String(error)}`));
-  // a reviewer archived before its report holds its round back no longer
   try {
     const round = room.gate.gone(id);
     const owner = round ? engine.parentOf(id) : null;
@@ -504,7 +502,7 @@ function startOperations(policy: RuntimePolicy, operators: ReadonlySet<string>, 
   const budgetNow = followBudget(policy);
   return new Operations({
     dir: OPERATIONS_DIR,
-    busyTimeoutMs: policy.room.work?.busyTimeoutMs ?? 5000,
+    busyTimeoutMs: policy.room.work.busyTimeoutMs,
     policy: () => (budgetNow(), policy as unknown as Record<string, unknown>),
     persist: (path, value) => writePolicyKey(POLICY_FILE, path, value),
     operators: () => [...operators],
@@ -557,7 +555,7 @@ function startOperations(policy: RuntimePolicy, operators: ReadonlySet<string>, 
           (since) => room().engine.posted(since),
           (since) => mailHealth(room(), since),
         ).split("\n"),
-      safety: () => room().safety.councilLines(1).split("\n"),
+      safety: () => [...room().safety.councilLines(1).split("\n"), ...room().safety.guardLines(1, 20)],
       seats: () => ({ retrying: room().recovery.waiting() }),
     },
     vitals: new Vitals(undefined, () => ({ "mail waiting": room().engine.backlog() })),
@@ -638,7 +636,7 @@ export function startRoom(input: {
     rotateAt: policy.room.params.rotateAtTokens ?? Infinity,
     addSeats: input.addSeats,
   };
-  /** An archived seat can never call the room's tools again. */
+  /** What the room and each district hold for an archived seat goes: its rounds, usage, caller, brief and records. */
   const forget = (agentId: string) => {
     // the rounds of a task go with its last seat, not with one that a successor replaced
     const task = room.taskKeys.forget(agentId);
@@ -670,7 +668,6 @@ export function startRoom(input: {
     filesFrom,
     async launch(request) {
       await served.started;
-      // a seat started now would hold an address nothing answers: it is refused, and says why
       const unbound = served.unbound();
       if (unbound)
         throw new Error(
@@ -690,7 +687,6 @@ export function startRoom(input: {
       timers.touch();
       const seat = parseSeat(provider);
       if (!seat) return null;
-      // the seat holds the decisions its launch's prompt showed
       knowledge.opened(agentId, nonce ?? null);
       if (inRoom(seat.role)) operators.add(agentId);
       // the app saves no env with an agent: a reopened seat would start on the user's own home
@@ -756,6 +752,7 @@ export function startRoom(input: {
     jevPlaces: () => jevPlaces(room),
     jevPlace: (id, on) => setJevPlace(room, id, on),
     status: async () => roomStatus(await host.live(), engine, room.owed),
+    clean: () => gc.run(),
     async stop() {
       timers.stop();
       room.works.close();

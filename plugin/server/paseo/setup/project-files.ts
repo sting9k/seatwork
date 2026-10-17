@@ -11,10 +11,9 @@ import {
   rmSync,
 } from "node:fs";
 import { join } from "node:path";
-import { ROOM_HOME } from "../../paths";
+import { ROOM_FOLDER, ROOM_HOME } from "../../paths";
 import { isInside, realOrSelf } from "../../orchestration/registry";
 
-const FOLDER = ".seatwork";
 const ROOM_FILES = new Set([
   "room.json",
   "mission.md",
@@ -67,12 +66,12 @@ export const keptAt = (movedTo: string, root: string) =>
     movedTo,
     "projects",
     `${createHash("sha256").update(root).digest("hex").slice(0, 8)}-${root.replace(/[^A-Za-z0-9._-]+/g, "-").replace(/^-+/, "")}`,
-    FOLDER,
+    ROOM_FOLDER,
   );
 
 /** Moves the room's files, by name, out of a project's `.seatwork/` into `into`; the rest stays. Null when the project has none. */
 export function takeRoomFiles(root: string, into: string): ProjectFiles | null {
-  const seatwork = join(root, FOLDER);
+  const seatwork = join(root, ROOM_FOLDER);
   // a link of that name points at someone else's folder
   if (!existsSync(seatwork) || !lstatSync(seatwork).isDirectory()) return null;
   const moved = readdirSync(seatwork).filter(isRoomFile);

@@ -11,12 +11,12 @@ import type { Harness } from "./orchestration/seats";
 
 /** Types and loader for policy.json: no defaults here, a broken file stops the plugin. */
 
-export interface ClaudeRuntimePolicy {
+interface ClaudeRuntimePolicy {
   deniedSkills: string[];
 }
 
 /** How a harness's seats start: `{runtime}` in an env value is the seat's home; `extraArgs` are launch flags. */
-export interface LaunchPolicy {
+interface LaunchPolicy {
   env: Record<string, string>;
   extraArgs?: Record<string, string | null>;
 }
@@ -35,17 +35,17 @@ export interface CodexRuntimePolicy {
 }
 
 /** What the room does for the Owner in the app. */
-export interface OwnerPolicy {
+interface OwnerPolicy {
   chime: boolean;
 }
 
-export interface PiRuntimePolicy {
+interface PiRuntimePolicy {
   shareFiles: string[];
   shareDirs: string[];
   settings: Record<string, unknown>;
 }
 
-export interface OpenCodeRuntimePolicy {
+interface OpenCodeRuntimePolicy {
   shareEntries: string[];
   config: Record<string, unknown>;
 }
@@ -72,13 +72,13 @@ export interface RoomParams {
 }
 
 /** How the room works beside its workflow (shared/workflow.json): its numbers, the instructions every seat reads, recovery, hand-ins, work store. */
-export interface RoomPolicy {
+interface RoomPolicy {
   params: RoomParams;
   instructions?: string[];
-  recovery?: RecoveryPolicy;
-  rotation?: { answerMinutes: number };
-  handin?: { freshEyes: boolean };
-  work?: WorkPolicy;
+  recovery: RecoveryPolicy;
+  rotation: { answerMinutes: number };
+  handin: { freshEyes: boolean };
+  work: WorkPolicy;
 }
 
 /** Garbage collection, see gc.ts. Hours of 0 mean "never archive that role". */
@@ -134,7 +134,7 @@ function need<T>(value: T | undefined, where: string): T {
   return value;
 }
 
-/** The policy the room runs on, read from the room home. */
+/** The policy the room runs on, read from the room home; recovery, rotation, hand-in and work are absent until the room is applied again after the plugin updates. */
 export function loadPolicy(): RuntimePolicy {
   if (!existsSync(POLICY_FILE)) throw new Error(`seatwork: ${POLICY_FILE} not found; set the room up again`);
   const parsed = JSON.parse(readFileSync(POLICY_FILE, "utf8")) as Record<string, any>;
@@ -144,11 +144,10 @@ export function loadPolicy(): RuntimePolicy {
     room: {
       params: need(room.params, "room.params"),
       instructions: room.instructions,
-      // absent until the room is applied again after the plugin updates
-      recovery: room.recovery,
-      rotation: room.rotation,
-      handin: room.handin,
-      work: room.work,
+      recovery: need(room.recovery, "room.recovery"),
+      rotation: need(room.rotation, "room.rotation"),
+      handin: need(room.handin, "room.handin"),
+      work: need(room.work, "room.work"),
     },
     mail: need(parsed.mail, "mail"),
     gc: need(parsed.gc, "gc"),

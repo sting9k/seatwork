@@ -14,7 +14,7 @@ export interface MailMore {
 }
 
 /** What the budget takes from the room: the store and policy, the clock, a seat's project, the people to tell, and what to start when a hold ends. */
-export interface BudgetDeps {
+interface BudgetDeps {
   store: OperationsStore;
   policy(): Record<string, unknown>;
   now(): Date;
@@ -149,7 +149,7 @@ export class Budget {
     this.deps.store.baseline(seat);
   }
 
-  /** A seat is gone. */
+  /** A seat is gone: its last total is not kept. */
   forget(seat: string): void {
     this.deps.store.dropSeat(seat);
   }

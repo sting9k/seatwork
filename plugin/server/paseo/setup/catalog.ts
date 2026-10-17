@@ -1,36 +1,9 @@
-import { paseoCli } from "../cli";
 import type { PaseoApi } from "../api";
 import type { Harness } from "../../orchestration/seats";
 import type { Catalog, CatalogModel } from "./plan";
 
-/** The catalogs as the `paseo` CLI lists them; null when the daemon does not answer. */
-export const cliCatalog: Catalog = async (harness) => {
-  try {
-    const rows = JSON.parse(await paseoCli(["provider", "models", harness, "--json"])) as {
-      id: string;
-      model?: string;
-      description?: string;
-      thinkingOptionIds?: string[];
-      defaultThinkingOptionId?: string | null;
-    }[];
-    return Object.fromEntries(
-      rows.map((row) => [
-        row.id,
-        {
-          label: row.model ?? row.id,
-          description: row.description,
-          thinking: row.thinkingOptionIds ?? [],
-          defaultThinking: row.defaultThinkingOptionId ?? undefined,
-        },
-      ]),
-    );
-  } catch {
-    return null;
-  }
-};
-
 /** An agent CLI as the running daemon sees it: ready or not, and the models it lists. */
-export interface HarnessState {
+interface HarnessState {
   id: Harness;
   label: string;
   available: boolean;

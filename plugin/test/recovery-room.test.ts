@@ -6,6 +6,7 @@ import { after, before, mock, test } from "node:test";
 import contribute from "../index.server";
 import { roomProjectDir } from "../server/orchestration/registry";
 import { fakeServer } from "./support/server";
+import { roomSeats } from "./room-seats";
 
 const paseoSide = fakeServer();
 const { call } = paseoSide;
@@ -30,50 +31,15 @@ after(async () => {
   Object.assign(console, output);
 });
 
-const agents: Record<string, object> = {};
-const context = { paseo: { agents: { ref: (id: string) => agents[id] } } };
+const { seat, fails } = roomSeats(call);
 const settle = () => new Promise((resolve) => setTimeout(resolve, 20));
-
-/** A seat the room knows, open on the stand-in app, with the MCP tools it calls. */
-async function seat(id: string, provider: string, parent: string | null, title: string, cwd: string) {
-  const made = (await call("before agent.create", { request: { config: { provider, cwd, title }, env: {} } })) as {
-    env: Record<string, string>;
-    config: { mcpServers: { seatwork: { url: string } } };
-  };
-  await call("before agent.session_open", { request: { env: made.env, reason: "create", agentId: id, provider } });
-  const inbox: string[] = [];
-  agents[id] = {
-    refresh: async () => {},
-    current: () => ({ status: "idle", provider }),
-    send: async (text: string) => void inbox.push(text),
-  };
-  const agent = { id, parentAgentId: parent, provider, cwd, title, workspaceId: null };
-  await call("on agent.created", { agent }, context);
-  const tool = async (name: string, args: Record<string, unknown>) => {
-    const response = await fetch(made.config.mcpServers.seatwork.url, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name, arguments: args } }),
-    });
-    const { result } = (await response.json()) as { result: { content: { text: string }[]; isError: boolean } };
-    if (result.isError) throw new Error(result.content[0].text);
-    return result.content[0].text;
-  };
-  const fails = (message: string) =>
-    call(
-      "on agent.turn_ended",
-      { agent, turnId: null, outcome: { kind: "failed", error: { message } }, timeline: [] },
-      context,
-    );
-  return { inbox, call: tool, fails };
-}
 
 test("a seat whose turn failed on the service is still resumed after the operator read how many wait", async () => {
   const hq = await seat("hq-recovery", "claude-hq", null, "[HQ] room", roomProjectDir());
   const lead = await seat("lead-recovery", "claude-lead", null, "[Lead] stream", PROJECT);
   const peer = await seat("peer-recovery", "claude-peer", "lead-recovery", "[Peer] store", PROJECT);
 
-  await peer.fails("API Error: 529 Overloaded");
+  await fails(peer, "API Error: 529 Overloaded");
   const waiting = async () =>
     (JSON.parse(await hq.call("seatwork_room", { do: "seats" })) as Record<string, unknown>).seats;
   assert.deepEqual(await waiting(), { retrying: 1 });

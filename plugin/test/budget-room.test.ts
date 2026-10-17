@@ -1,24 +1,20 @@
 import { installRoom, PROJECT, ROOM_HOME } from "./support/room";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
+import { readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { after, before, mock, test } from "node:test";
 import contribute from "../index.server";
 import { roomProjectDir } from "../server/orchestration/registry";
 import { fakeServer } from "./support/server";
+import { projectFolder, roomSeats } from "./room-seats";
 
 const paseoSide = fakeServer();
 const { call } = paseoSide;
 const output = { log: console.log, error: console.error };
 let dispose: () => Promise<void>;
 
-const project = (name: string) => {
-  const dir = join(PROJECT, "..", name);
-  mkdirSync(join(dir, ".seatwork"), { recursive: true });
-  writeFileSync(join(dir, ".seatwork", "room.json"), "{}");
-  return realpathSync(dir);
-};
+const project = (name: string) => realpathSync(projectFolder(name));
 const capped = project("budget-capped");
 const free = project("budget-free");
 
@@ -40,55 +36,20 @@ after(async () => {
   Object.assign(console, output);
 });
 
-const agents: Record<string, object> = {};
+const { agents, context, seat: open, turnEnds } = roomSeats(call);
 const costs: Record<string, number> = {};
-const listed = async () => ({
-  entries: Object.entries(agents).flatMap(([id, handle]) => {
-    const now = (handle as { current?: () => object }).current?.();
-    return now ? [{ agent: { id, updatedAt: new Date().toISOString(), ...now } }] : [];
-  }),
-});
-const context = { paseo: { agents: { ref: (id: string) => agents[id], list: listed } } };
 
-/** A seat the room knows, open on the stand-in app, with the MCP tools it calls. */
+/** A seat the room knows, whose turns the app reports with what they cost so far. */
 async function seat(id: string, provider: string, parent: string | null, title: string, cwd: string) {
-  const made = (await call("before agent.create", { request: { config: { provider, cwd, title }, env: {} } })) as {
-    env: Record<string, string>;
-    config: { mcpServers: { seatwork: { url: string } } };
-  };
-  await call("before agent.session_open", { request: { env: made.env, reason: "create", agentId: id, provider } });
-  const inbox: string[] = [];
-  agents[id] = {
-    refresh: async () => {},
+  const one = await open(id, provider, parent, title, cwd);
+  Object.assign(agents[id], {
     current: () => ({ status: "idle", provider, ...(id in costs ? { lastUsage: { totalCostUsd: costs[id] } } : {}) }),
-    send: async (text: string) => void inbox.push(text),
-  };
-  const agent = { id, parentAgentId: parent, provider, cwd, title, workspaceId: null };
-  await call("on agent.created", { agent }, context);
-  const tool = async (name: string, args: Record<string, unknown>) => {
-    const response = await fetch(made.config.mcpServers.seatwork.url, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name, arguments: args } }),
-    });
-    const { result } = (await response.json()) as { result: { content: { text: string }[]; isError: boolean } };
-    if (result.isError) throw new Error(result.content[0].text);
-    return result.content[0].text;
-  };
+  });
   const endsTurn = (message: string, cost: number) => {
     costs[id] = cost;
-    return call(
-      "on agent.turn_ended",
-      {
-        agent,
-        turnId: null,
-        outcome: { kind: "completed" },
-        timeline: [{ type: "assistant_message", text: message }],
-      },
-      context,
-    );
+    return turnEnds(one, message);
   };
-  return { agent, inbox, call: tool, endsTurn };
+  return { ...one, endsTurn };
 }
 
 const createRequest = (provider: string, cwd: string) => ({
@@ -123,7 +84,6 @@ test("a project past its cap takes no mail and no new seat; the room's operator 
   );
   await call("before agent.create", createRequest("claude-peer", free), context);
 
-  // the minute: the operator hears of the hold, the project's top seat gets its quiet notice
   mock.timers.tick(60_000);
   for (let waited = 0; hq.inbox.length === 0 && waited < 100; waited += 1) await settle();
   assert.equal(hq.inbox.length, 1);

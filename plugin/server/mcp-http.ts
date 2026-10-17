@@ -8,7 +8,7 @@ export interface McpTool {
   inputSchema: Record<string, unknown>;
 }
 
-export interface McpCallContext {
+interface McpCallContext {
   nonce: string;
 }
 
@@ -30,13 +30,12 @@ interface JsonRpcRequest {
 const PROTOCOL_VERSION = "2025-06-18";
 const MAX_BODY = 4 * 1024 * 1024;
 
-/** A request's body as text, whole; past the cap, or if the client goes away first, it is answered 413 and null is returned. */
+/** A request's body as text, joined as bytes so a letter split between two chunks stays one; past the cap, or if the client goes away first, it is answered 413 and null is returned. */
 async function bodyOf(req: IncomingMessage, res: ServerResponse): Promise<string | null> {
   const chunks: Buffer[] = [];
   let size = 0;
   try {
     for await (const chunk of req as AsyncIterable<Buffer>) {
-      // a payload past the cap is refused, never read whole into memory
       if ((size += chunk.length) > MAX_BODY) throw new RangeError("body past the cap");
       chunks.push(chunk);
     }
@@ -45,7 +44,6 @@ async function bodyOf(req: IncomingMessage, res: ServerResponse): Promise<string
     req.destroy();
     return null;
   }
-  // joined as bytes first: a letter split between two chunks stays one letter
   return Buffer.concat(chunks).toString("utf8");
 }
 
@@ -76,11 +74,10 @@ export class McpHttpServer {
     return `http://127.0.0.1:${port}/${name}/${this.token}`;
   }
 
-  /** Listens on 127.0.0.1:port (0 = random) and resolves the bound port. */
+  /** Listens on 127.0.0.1:port (0 = random) and resolves the bound port; a request that fails where nothing caught it ends in a 500, never as an unhandled rejection. */
   listen(port: number): Promise<number> {
     return new Promise((resolve, reject) => {
       const server = createServer((req, res) =>
-        // a request that fails where nothing caught it ends here, never as an unhandled rejection
         this.handle(req, res).catch((error) => {
           console.error("seatwork: a request to the room's server failed", error);
           if (!res.headersSent) res.writeHead(500);
@@ -238,12 +235,10 @@ export class McpHttpServer {
   }
 }
 
-/** A JSON-RPC success. */
 function rpcResult(id: string | number | null, result: unknown): unknown {
   return { jsonrpc: "2.0", id, result };
 }
 
-/** A JSON-RPC error. */
 function rpcError(id: string | number | null, code: number, message: string): unknown {
   return { jsonrpc: "2.0", id, error: { code, message } };
 }

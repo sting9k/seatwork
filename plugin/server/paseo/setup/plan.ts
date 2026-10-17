@@ -1,13 +1,12 @@
 import { existsSync, readFileSync } from "node:fs";
-import { KEEP_LOG_DAYS, stamp } from "../../gc";
 import { join } from "node:path";
 import { allowed, layModels, tiersOf, type Models } from "../../orchestration/models";
 import { PASEO_HOME } from "../../paths";
 import { claudeDisallowed } from "../../policy";
 import { secretsOf } from "../../safety/gate/rules/secrets";
 import { HARNESSES, parseSeat, type Harness } from "../../orchestration/seats";
-import { inRoom, ROLES, ROOM_ROLE, traits } from "../../../shared/workflow";
-import { keptChanges, layOver, unshipped } from "./policy-changes";
+import { ROLES, traits } from "../../../shared/workflow";
+import { keptChanges, layOver } from "./policy-changes";
 
 /** This machine's own choices, kept in ROOM_HOME/setup.json and never in the repo; the room's own seat is in `models` like any seat. */
 export interface Setup {
@@ -30,7 +29,7 @@ export interface CatalogModel {
 export type Catalog = (harness: Harness) => Promise<Record<string, CatalogModel> | null>;
 
 /** A seat's provider as Paseo's config holds it. */
-export interface ProviderEntry {
+interface ProviderEntry {
   extends: string;
   label: string;
   description: string;
@@ -42,7 +41,7 @@ export interface ProviderEntry {
 }
 
 /** An agent profile as Paseo's config holds it. */
-export interface Profile {
+interface Profile {
   id: string;
   name: string;
   provider: string;
@@ -60,7 +59,7 @@ interface ProfileSpec {
   [key: string]: unknown;
 }
 
-/** Everything setting the room up writes, worked out before anything is written; `keepAside` names the copy the old policy.json is kept as when its changes cannot be known. */
+/** Everything setting the room up writes, worked out before anything is written. */
 export interface RoomPlan {
   seats: Record<string, string[]>;
   providers: Record<string, ProviderEntry>;
@@ -68,7 +67,6 @@ export interface RoomPlan {
   models: Models;
   policy: Record<string, any>;
   shipped: Record<string, any>;
-  keepAside?: string;
   warnings: string[];
 }
 
@@ -86,37 +84,11 @@ function readJson(file: string): any {
   return JSON.parse(readFileSync(file, "utf8"));
 }
 
-/** The room's own seat on one harness and model, laid into a machine's model choices; null takes it out, back to the table's. */
-export function withOwnSeat(
-  models: Record<string, unknown> | undefined,
-  seat: { provider: string; thinking?: string } | null,
-): Record<string, unknown> | undefined {
-  if (!ROOM_ROLE) return models;
-  const next = { ...(models ?? {}) };
-  const seats = { ...((next.seats as Record<string, unknown> | undefined) ?? {}) };
-  // a model without thinking options carries none: "default" tells the prompts to leave it out
-  if (seat) seats[ROOM_ROLE] = { thinking: "default", ...seat };
-  else delete seats[ROOM_ROLE];
-  if (Object.keys(seats).length) next.seats = seats;
-  else delete next.seats;
-  return Object.keys(next).length ? next : undefined;
-}
-
-/** setup.json, checked: it may have been edited by hand; an `hq` an earlier version wrote moves into `models`. */
+/** setup.json, checked: it may have been edited by hand. */
 export function checkSetup(setup: unknown, where: string): Setup {
   if (typeof setup !== "object" || setup === null || Array.isArray(setup))
     throw new Error(`${where} must hold an object`);
-  const { hq = "default", ...rest } = setup as Record<string, unknown>;
-  const { seats = [], models, chime, mailPort } = rest;
-  if (hq !== "default") {
-    const provider = typeof hq === "object" && hq !== null ? String((hq as { provider?: unknown }).provider ?? "") : "";
-    const slash = provider.indexOf("/");
-    if (slash <= 0 || !inRoom(parseSeat(provider.slice(0, slash))?.role) || !provider.slice(slash + 1)) {
-      throw new Error(
-        `${where}: "hq" must be "default" or {"provider": "<harness>-<role>/<model>", "thinking": "<id>"} for a role at home in the room`,
-      );
-    }
-  }
+  const { seats = [], models, chime, mailPort } = setup as Record<string, unknown>;
   if (!Array.isArray(seats) || !seats.every((seat) => parseSeat(String(seat)))) {
     throw new Error(
       `${where}: "seats" must list <harness>-<role> ids; harnesses are ${HARNESSES.join(", ")}, roles are ${ROLES.join(", ")}`,
@@ -130,12 +102,7 @@ export function checkSetup(setup: unknown, where: string): Setup {
     !(Number.isInteger(mailPort) && (mailPort as number) >= 0 && (mailPort as number) <= 65535)
   )
     throw new Error(`${where}: "mailPort" must be a port number`);
-  if (typeof hq !== "object") return rest as Setup;
-  // the room's own seat was once chosen apart from the table: it is one seat of the table now, unless the table names it
-  const own = models as { seats?: Record<string, unknown> } | undefined;
-  return ROOM_ROLE && own?.seats?.[ROOM_ROLE] !== undefined
-    ? (rest as Setup)
-    : ({ ...rest, models: withOwnSeat(own, hq as { provider: string; thinking?: string }) } as Setup);
+  return setup as Setup;
 }
 
 /** The room's model table as the plugin ships it. */
@@ -198,7 +165,6 @@ function enabledSeats(
   };
   for (const [role, harnesses] of Object.entries(listed.seats ?? {}))
     for (const harness of harnesses ?? []) enable(harness, role, "paseo/seats.json");
-  // a seat the table names is a seat the room has
   const used = modelsByProvider(models);
   for (const provider of used.keys()) {
     const seat = parseSeat(provider);
@@ -351,11 +317,6 @@ export async function planRoom(input: {
   const bySetup = [setup.chime !== undefined && "owner.chime", setup.mailPort !== undefined && "mail.port"];
   const changes = keptChanges(roomHome).filter((change) => !bySetup.includes(change.path.join(".")));
   warnings.push(...layOver(policy, changes));
-  const keepAside = unshipped(roomHome) ? `policy.json.unshipped-${stamp()}` : undefined;
-  if (keepAside)
-    warnings.push(
-      `policy.json: this room's policy is from a version that kept no copy of what it shipped, so its changes cannot be told from its defaults; this version's policy is written, the old one is kept as ${keepAside} for ${KEEP_LOG_DAYS} days, and a key changed there is laid in again by hand`,
-    );
   const { seats, enabled, used } = enabledSeats(seatsFile, models, setup);
 
   const tools = policy.paseoTools as Tools;
@@ -384,5 +345,5 @@ export async function planRoom(input: {
   for (const id of enabled) providers[id] = await providerFor(id, context);
   const profiles = await profilesFor(shown, models, providers, catalogOf);
 
-  return { seats, providers, profiles, models, policy, shipped, ...(keepAside ? { keepAside } : {}), warnings };
+  return { seats, providers, profiles, models, policy, shipped, warnings };
 }

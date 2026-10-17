@@ -34,7 +34,7 @@ const inOrder = (roles: readonly Role[], seen = new Set<Role>()): Role[] =>
 const modelName = (choice: ModelChoice, harnesses: Harness[]) =>
   harnesses.find((h) => h.id === choice.harness)?.models.find((m) => m.id === choice.model)?.label ?? choice.model;
 
-/** A seat's model as a chip. */
+/** A model as a chip, named the way this host lists it. */
 export function ModelChip(props: {
   choice: ModelChoice;
   harnesses: Harness[];

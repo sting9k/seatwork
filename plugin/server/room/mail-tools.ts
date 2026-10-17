@@ -6,7 +6,7 @@ import { exactSeat, MailError, namesTeam, reachable, resolve, shown } from "../c
 import { refusal, type NextCall } from "../refusal";
 import type { Mail, MailEngine, NewMail, Needs, SeatRecord } from "../coordination/engine";
 import { inbox } from "../coordination/reader";
-import { MailStoreError } from "../coordination/store";
+import { StoreError } from "../sqlite";
 import type { LiveSeat } from "../host";
 import { routeUp } from "../orchestration/escalation";
 import { CLOSES_WORK, isReceiptWord, priorityOf, SUBJECT_SIGNALS, subjectOpening, subjectSignal } from "../signals";
@@ -28,7 +28,7 @@ export function refused(room: RoomContext, seat: string | null, error: unknown):
   const mail =
     error instanceof MailError
       ? error
-      : error instanceof MailStoreError
+      : error instanceof StoreError
         ? new MailError("STORE_UNAVAILABLE", error.message)
         : null;
   if (!mail) return error as Error;
@@ -345,14 +345,14 @@ export async function sendMail(room: RoomContext, from: string, args: Record<str
   const waits =
     team ||
     signal === "ACK" ||
-    (to.length === 1 && isReceipt(subject, args.needs, toWorker, room.lastSignal.get(to[0]))) ||
-    (await informsOnly(room, draft, found.get(to[0]), stops, cc.length));
+    (to.length === 1 && isReceipt(subject, needs, toWorker, room.lastSignal.get(to[0]))) ||
+    (await informsOnly(room, draft, found.get(to[0]), cc.length));
   const mail = await eng.post({
     ...outgoing,
     priority: stops ? "blocking" : waits ? "fyi" : draft.priority,
     ...(team ? { kind: "team" as const } : {}),
     ...(stops ? { why: "the seat above you stopped this work; the turn you were in was ended to bring you this" } : {}),
-    quiet: waits && !stops,
+    quiet: waits,
     urgent: stops,
   });
   const sentTo = [outgoing.to]
@@ -383,12 +383,10 @@ async function informsOnly(
   room: RoomContext,
   draft: NewMail,
   status: string | undefined,
-  stops: boolean,
   copies: number,
 ): Promise<boolean> {
   const signal = subjectSignal(draft.subject);
-  if (stops || copies > 0 || draft.needs !== "nothing" || status !== "idle" || !signal || !INFORMS.has(signal))
-    return false;
+  if (copies > 0 || draft.needs !== "nothing" || status !== "idle" || !signal || !INFORMS.has(signal)) return false;
   if ([draft.to].flat().length !== 1) return false;
   return (await room.forks.take("wake", { subject: draft.subject, body: excerpt(draft.body, 1500) })) === "nothing";
 }

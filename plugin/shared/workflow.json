@@ -46,8 +46,6 @@
       "rotate": "This Peer {{held}}. Its repair goes on in the fresh seat seatwork_rotate starts; a new task goes to a new Peer."
     }
   },
-  "$comment_vars": "Prompt placeholders beyond {{<role>_provider}}, {{<role>_thinking}}, {{<role>_alternatives}}, {{<role>_table}}: the providers of a role's tiers except the tiers named.",
-  "vars": {},
   "$comment_reviewers": "A seat of another role reviews too when its spec is one of `specs` or its title matches `titles`. stall: the params entry for how long a review round waits for its last reviewer.",
   "reviewers": {
     "specs": ["search", "scout", "review"],

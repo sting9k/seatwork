@@ -4,7 +4,6 @@ import { dirname, join } from "node:path";
 import { Guard, type SafetyPolicy, type SeatRef } from "./guard";
 import type { Place } from "./gate/types";
 import { inspectHandIn, workDigest, type HandIn } from "./handin";
-import { firstRelease } from "./registry";
 import { buildControl } from "./control";
 import { stamp } from "../gc";
 import { CONTROLS_DIR } from "../paths";
@@ -100,8 +99,7 @@ export class Safety {
     agentId: string | null,
     note?: string,
   ): Promise<{ type: string; text: string; noted: boolean }> {
-    if (!this.on)
-      return { type: "text/plain", text: cli === "pi" || cli === "opencode" ? '{"block":false}' : "", noted: false };
+    if (!this.on) return { type: "text/plain", text: "", noted: false };
     const answered = await answerHook(this.guard, cli, body, agentId ? this.seatRef(agentId) : null, note);
     if (answered.wrote && agentId) this.council.wrote(agentId, answered.wrote);
     return answered;
@@ -126,12 +124,11 @@ export class Safety {
     this.diffs.delete(agentId);
     if (!this.on || this.deps.policy()?.handin?.mode === "off") return null;
     const place = this.placeOf(this.seatRef(agentId));
-    const result = await inspectHandIn(
-      agentId,
-      this.store(),
-      { place, config: this.guard.gateConfig(place), tools: machineTools(() => this.startedAt(agentId), this.baseOf) },
-      this.deps.policy()?.handin?.registry === false ? {} : { firstRelease },
-    );
+    const result = await inspectHandIn(agentId, this.store(), {
+      place,
+      config: this.guard.gateConfig(),
+      tools: machineTools(() => this.startedAt(agentId), this.baseOf),
+    });
     if (this.council.on)
       this.keepDiff(agentId, {
         gaming: result.gaming ?? null,
@@ -201,6 +198,23 @@ export class Safety {
     if (seat === by || !this.deps.isAncestor(by, seat)) return `Finding #${id} is about a seat that is not under you.`;
     const member = this.council.label(id, `seat:${by}`, value, reason);
     return `Noted: finding #${id} was ${value}. ${member} speaks at level ${member ? this.council.level(member) : 0} now.`;
+  }
+
+  /** The guard's audit log of the last `days`: the calls each rule held for, then the newest `most` of them. */
+  guardLines(days: number, most: number): string[] {
+    if (!this.existing()) return [];
+    const since = new Date(Date.now() - days * 86_400_000).toISOString();
+    const counts = this.store().keptCounts(since);
+    if (!counts.length) return [`The guard kept no call in the last ${days} days.`];
+    return [
+      `guard, last ${days} days: ${counts.map((c) => `${c.rule} ${c.n}`).join(", ")}`,
+      ...this.store()
+        .kept(since, most)
+        .map(
+          (c) =>
+            `${c.at} ${c.role ?? "?"} ${c.seat ?? "?"} ${c.pack}:${c.rule} (${c.severity ?? "unread"}): ${c.command}`,
+        ),
+    ];
   }
 
   /** How each council member has read turns over the last `days`, as lines. */

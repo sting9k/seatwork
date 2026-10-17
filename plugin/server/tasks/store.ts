@@ -1,5 +1,4 @@
 import { createHash, randomBytes } from "node:crypto";
-import { existsSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import config from "../../shared/work.json";
 import { SQL_DIR } from "../paths";
@@ -50,8 +49,7 @@ export interface Dependency {
   type: DependencyType;
 }
 
-/** One comment on an issue. */
-export interface Comment {
+interface Comment {
   author: string;
   text: string;
   created_at: string;
@@ -85,20 +83,19 @@ export interface NewIssue {
 }
 
 /** What a close needs: a reason of this length, and whether the holder of an issue may close it. */
-export interface ClosePolicy {
+interface ClosePolicy {
   minReasonChars: number;
   forbidSelfClose: boolean;
 }
 
-/** The work store's rules: how long a write waits on another process's, how soon the text copy follows a write, when a claim is stale, what a close needs. */
+/** The work store's rules: how long a write waits on another process's, when a claim is stale, what a close needs. */
 export interface WorkPolicy {
   busyTimeoutMs: number;
-  flushAfterMs: number;
   staleClaimMinutes: number;
   close: ClosePolicy;
 }
 
-export type WorkErrorCode =
+type WorkErrorCode =
   | "ISSUE_NOT_FOUND"
   | "AMBIGUOUS_ID"
   | "VALIDATION_FAILED"
@@ -235,14 +232,11 @@ function databaseIn(dir: string): string {
   return join(keptOutOfGit(dir), "work.db");
 }
 
-/** A project's work store: `dir` holds its database and `issues.jsonl`, the text copy it is read back from; `leased` says which holders are seats of the room, whose claims carry a lease. */
+/** A project's work store: `dir` holds its database; `leased` says which holders are seats of the room, whose claims carry a lease. */
 export class WorkStore extends Sqlite {
-  private readonly jsonl: string;
-  private pending: NodeJS.Timeout | undefined;
-
   constructor(
     dir: string,
-    private readonly policy: Pick<WorkPolicy, "busyTimeoutMs" | "flushAfterMs">,
+    policy: Pick<WorkPolicy, "busyTimeoutMs">,
     private readonly now: () => Date = () => new Date(),
     private readonly leased: (holder: string) => boolean = () => true,
   ) {
@@ -253,172 +247,10 @@ export class WorkStore extends Sqlite {
       name: "the work store",
       now,
     });
-    this.jsonl = join(dir, "issues.jsonl");
-    // a new database gets its issues back from the text copy
-    try {
-      if (this.count() === 0 && existsSync(this.jsonl)) this.restore();
-    } catch (error) {
-      super.close();
-      throw error;
-    }
-  }
-
-  /** Writes the text copy if a write is waiting for it, then closes the file, whether or not the copy was written. */
-  override close(): void {
-    try {
-      if (this.pending) this.flush();
-    } finally {
-      super.close();
-    }
-  }
-
-  /** One write of the store; the text copy follows. */
-  private write<T>(work: () => T): T {
-    const done = this.transaction("write", work);
-    this.followed();
-    return done;
-  }
-
-  /** Has the text copy written a moment from now, once for a burst of writes. */
-  private followed(): void {
-    this.pending ??= setTimeout(() => {
-      try {
-        this.flush();
-      } catch (error) {
-        this.pending = undefined;
-        console.error(`seatwork: the text copy of the work store was not written: ${(error as Error).message}`);
-      }
-    }, this.policy.flushAfterMs).unref();
-  }
-
-  /** Writes the store as text, an issue a line: what a person reads and a restore needs. */
-  flush(): void {
-    clearTimeout(this.pending);
-    this.pending = undefined;
-    const lines = this.transaction("read", () => {
-      const deps = new Map<string, Dependency[]>();
-      for (const dep of this.dependencies()) push(deps, dep.issue_id, dep);
-      const said = new Map<string, Comment[]>();
-      for (const one of this.rows<Comment & { issue_id: string }>(
-        "SELECT issue_id, author, text, created_at FROM comments ORDER BY id",
-      ))
-        push(said, one.issue_id, { author: one.author, text: one.text, created_at: one.created_at });
-      return this.all().map((issue) =>
-        JSON.stringify({ ...issue, dependencies: deps.get(issue.id) ?? [], comments: said.get(issue.id) ?? [] }),
-      );
-    });
-    // a name of its own: two processes that flush at once each rename a whole file
-    const scratch = `${this.jsonl}.${process.pid}.${randomBytes(4).toString("hex")}.tmp`;
-    writeFileSync(scratch, lines.length > 0 ? `${lines.join("\n")}\n` : "");
-    renameSync(scratch, this.jsonl);
-  }
-
-  /** Reads the text copy into an empty database: issues first, then what joins them. */
-  private restore(): void {
-    const read = readFileSync(this.jsonl, "utf8")
-      .split("\n")
-      .flatMap((line) => {
-        try {
-          return line.trim() ? [JSON.parse(line) as Issue & { dependencies?: Dependency[]; comments?: Comment[] }] : [];
-        } catch {
-          return [];
-        }
-      });
-    this.transaction("write", () => {
-      if (this.count() > 0) return;
-      const kept = new Set<string>();
-      for (const one of read) {
-        if (!one || typeof one.id !== "string" || typeof one.title !== "string" || !STATUSES.includes(one.status))
-          continue;
-        // a line the layout refuses is passed over, as a line that is no JSON is: the rest still comes back
-        if (
-          !this.tried(() =>
-            this.run(
-              INSERT_ISSUE,
-              one.id,
-              one.title,
-              one.description ?? "",
-              one.design ?? "",
-              one.acceptance_criteria ?? "",
-              one.notes ?? "",
-              one.write_scope ?? "",
-              one.status,
-              one.priority,
-              one.issue_type,
-              one.assignee ?? null,
-              JSON.stringify(one.labels ?? []),
-              one.revision ?? 1,
-              one.created_at,
-              one.created_by,
-              one.updated_at,
-              one.closed_at ?? null,
-              one.close_reason ?? null,
-              one.closed_by ?? null,
-              one.defer_until ?? null,
-              one.lease_until ?? (one.status === "closed" ? null : this.lease(one.assignee ?? null)),
-            ),
-          )
-        )
-          continue;
-        this.event(one.id, "restored", "room", null, null);
-        kept.add(one.id);
-      }
-      if (kept.size < read.length)
-        console.error(`seatwork: ${read.length - kept.size} lines of ${this.jsonl} could not be read back`);
-      for (const one of read.filter((line) => kept.has(line?.id))) {
-        for (const dep of (one.dependencies ?? []).filter((dep) => kept.has(dep.depends_on_id)))
-          this.tried(() =>
-            this.run(
-              "INSERT OR IGNORE INTO dependencies (issue_id, depends_on_id, type, created_at, created_by) VALUES (?, ?, ?, ?, 'room')",
-              one.id,
-              dep.depends_on_id,
-              dep.type,
-              this.stamp(),
-            ),
-          );
-        for (const said of one.comments ?? [])
-          this.tried(() =>
-            this.run(
-              "INSERT INTO comments (issue_id, author, text, created_at) VALUES (?, ?, ?, ?)",
-              one.id,
-              said.author,
-              said.text,
-              said.created_at,
-            ),
-          );
-      }
-    });
-  }
-
-  /** One write of a restore: false when the layout refuses it, which leaves the rest of the restore standing. */
-  private tried(write: () => unknown): boolean {
-    try {
-      write();
-      return true;
-    } catch {
-      return false;
-    }
   }
 
   private stamp(): string {
     return this.now().toISOString();
-  }
-
-  /** Gives a lease to the open issues held by seats of the room that carry none, as in a store made before leases; a person's claim is left alone. */
-  leaseHeld(): void {
-    const holders = this.rows<{ assignee: string }>(
-      "SELECT DISTINCT assignee FROM issues INDEXED BY issues_by_assignee WHERE assignee IS NOT NULL AND status <> 'closed' AND lease_until IS NULL",
-    )
-      .map((row) => row.assignee)
-      .filter((holder) => this.leased(holder));
-    if (holders.length === 0) return;
-    this.transaction("write", () =>
-      this.run(
-        "UPDATE issues INDEXED BY issues_by_assignee SET lease_until = ?1 WHERE assignee IN (SELECT value FROM json_each(?2)) AND status <> 'closed' AND lease_until IS NULL",
-        this.leaseFrom(1),
-        JSON.stringify(holders),
-      ),
-    );
   }
 
   /** The end of a lease that starts now, for a holder that is a seat of the room; null for any other. */
@@ -477,14 +309,13 @@ export class WorkStore extends Sqlite {
     return `${config.idPrefix}-${digest}`;
   }
 
-  /** The issue an id names; a unique start of it after the prefix is enough. */
+  /** The issue an id names; a unique start of it after the prefix is enough, found as a range on the key. */
   get(id: string): Issue {
     const asked = id.trim();
     if (asked.replace(ID_PREFIX, "") === "") throw new WorkError("VALIDATION_FAILED", "give an issue id");
     const start = asked.startsWith(`${config.idPrefix}-`) ? asked : `${config.idPrefix}-${asked}`;
     const exact = this.find(asked) ?? this.find(start);
     if (exact) return exact;
-    // a range on the key, which its index serves
     const found = this.rows("SELECT * FROM issues WHERE id >= ? AND id < ? LIMIT 4", start, `${start}\u{10ffff}`);
     if (found.length === 1) return toIssue(found[0]);
     if (found.length > 1)
@@ -492,7 +323,6 @@ export class WorkStore extends Sqlite {
     throw new WorkError("ISSUE_NOT_FOUND", `no issue ${id}`, { tool: "seatwork_work", args: { do: "list" } });
   }
 
-  /** How many issues the store holds. */
   count(): number {
     return this.row<{ n: number }>("SELECT COUNT(*) AS n FROM issues")!.n;
   }
@@ -502,7 +332,7 @@ export class WorkStore extends Sqlite {
     return this.rows("SELECT * FROM issues ORDER BY created_at, id").map(toIssue);
   }
 
-  /** Every edge. */
+  /** Every edge, by issue then target. */
   dependencies(): Dependency[] {
     return this.rows<Dependency>(
       "SELECT issue_id, depends_on_id, type FROM dependencies ORDER BY issue_id, depends_on_id",
@@ -525,12 +355,12 @@ export class WorkStore extends Sqlite {
 
   /** Makes an issue, with its parent and the edges it names. */
   create(input: NewIssue, actor: string): Issue {
-    return this.write(() => this.insert(input, actor));
+    return this.transaction("write", () => this.insert(input, actor));
   }
 
-  /** A whole plan in one write, all or none; issues name each other by `key`. */
+  /** A whole plan in one write, all or none; issues name each other by `key`, and every issue exists before the first edge so one may wait for a later one. */
   createMany(inputs: readonly (NewIssue & { key?: string })[], actor: string): Issue[] {
-    return this.write(() => {
+    return this.transaction("write", () => {
       const ids = new Map<string, string>();
       const named = (id: string) => ids.get(id) ?? id;
       const made = inputs.map((input) => {
@@ -538,7 +368,6 @@ export class WorkStore extends Sqlite {
         if (input.key) ids.set(input.key, issue.id);
         return issue;
       });
-      // every issue exists before the first edge: an issue may wait for one listed after it
       inputs.forEach((input, index) => {
         for (const dep of input.deps ?? [])
           this.link(made[index].id, this.get(named(dep.id)).id, dep.type ?? "blocks", actor);
@@ -650,12 +479,12 @@ export class WorkStore extends Sqlite {
 
   /** Makes `issue` depend on `on`; an edge that orders work may close no cycle. */
   addDependency(issue: string, on: string, type: DependencyType, actor: string): void {
-    this.write(() => this.link(this.get(issue).id, this.get(on).id, type, actor));
+    this.transaction("write", () => this.link(this.get(issue).id, this.get(on).id, type, actor));
   }
 
   /** Removes the edge of `type`, or every edge but parent-child when none is named. */
   removeDependency(issue: string, on: string, actor: string, type?: DependencyType): void {
-    this.write(() => {
+    this.transaction("write", () => {
       const [a, b] = [this.get(issue).id, this.get(on).id];
       this.run(
         "DELETE FROM dependencies WHERE issue_id = ? AND depends_on_id = ? AND (type = ?3 OR (?3 IS NULL AND type != 'parent-child'))",
@@ -716,12 +545,11 @@ export class WorkStore extends Sqlite {
     ).map(toIssue);
   }
 
-  /** The issues that match the filters given, best first, at most `limit`, and how many match in all; the count is read only when the page is full. */
+  /** The issues that match the filters given, best first, at most `limit`, and how many match in all; the count is read only when the page is full, and only the filters given enter the query so each uses its index. */
   list(filter: { status?: Status; assignee?: string; type?: IssueType; limit?: number } = {}): {
     issues: Issue[];
     total: number;
   } {
-    // only the filters given go into the query, so each one can use its index
     const given = (["status", "assignee", "issue_type"] as const).flatMap((column) => {
       const value = { status: filter.status, assignee: filter.assignee, issue_type: filter.type }[column];
       return value === undefined ? [] : [{ column, value }];
@@ -777,7 +605,7 @@ export class WorkStore extends Sqlite {
 
   /** Takes an issue for `actor` in one write: nobody else holds it, nothing blocks it. */
   claim(id: string, actor: string): Issue {
-    return this.write(() => {
+    return this.transaction("write", () => {
       const issue = this.get(id);
       if (issue.status === "closed" || issue.status === "deferred")
         throw new WorkError("VALIDATION_FAILED", `${issue.id} is ${issue.status}: it cannot be claimed`, READY);
@@ -806,7 +634,7 @@ export class WorkStore extends Sqlite {
     actor: string,
     owner = false,
   ): Issue {
-    return this.write(() => {
+    return this.transaction("write", () => {
       const issue = this.get(id);
       if (issue.status === "closed" && patch.status !== undefined)
         throw new WorkError("VALIDATION_FAILED", `${issue.id} is closed: reopen it first`, {
@@ -873,11 +701,11 @@ export class WorkStore extends Sqlite {
     });
   }
 
-  /** Adds a comment to an issue. */
+  /** Adds a comment to an issue; it moves the issue's update time. */
   comment(id: string, author: string, text: string): void {
     if (!text.trim()) throw new WorkError("VALIDATION_FAILED", "a comment has text");
     fit("a comment", text);
-    this.write(() => {
+    this.transaction("write", () => {
       const issue = this.get(id);
       this.run(
         "INSERT INTO comments (issue_id, author, text, created_at) VALUES (?, ?, ?, ?)",
@@ -899,7 +727,7 @@ export class WorkStore extends Sqlite {
     policy: ClosePolicy,
     force = false,
   ): { issue: Issue; unblocked: Issue[] } {
-    return this.write(() => {
+    return this.transaction("write", () => {
       const issue = this.get(id);
       if (issue.status === "closed") throw new WorkError("VALIDATION_FAILED", `${issue.id} is closed already`);
       if (reason.trim().length < policy.minReasonChars)
@@ -920,7 +748,6 @@ export class WorkStore extends Sqlite {
           `${issue.id} still waits for ${blockers.join(", ")}`,
           showOf(blockers[0]),
         );
-      // what this close may free: the open issues it blocked, and its open parent
       const waiting = this.rows<{ id: string }>(
         `SELECT d.issue_id AS id FROM dependencies d JOIN issues w ON w.id = d.issue_id
            WHERE d.depends_on_id = ? AND d.type = 'blocks' AND w.status = 'open'
@@ -944,9 +771,9 @@ export class WorkStore extends Sqlite {
     });
   }
 
-  /** Opens a closed issue again. */
+  /** Opens a closed issue again, giving it back the lease of its holder. */
   reopen(id: string, actor: string): Issue {
-    return this.write(() => {
+    return this.transaction("write", () => {
       const issue = this.get(id);
       if (issue.status !== "closed")
         throw new WorkError("VALIDATION_FAILED", `${issue.id} is not closed`, {
@@ -966,35 +793,22 @@ export class WorkStore extends Sqlite {
 
   /** Drops the issues closed before `before`, in slices, with their comments and trail; a closed issue in a live tree stays, so its number holds. Returns how many. */
   expire(before: Date): number {
-    const at = before.toISOString();
-    let gone = 0;
-    for (;;) {
-      const slice = this.transaction(
-        "write",
-        () =>
-          this.run(
-            `DELETE FROM issues WHERE id IN (
+    return this.deleteInSlices(
+      `DELETE FROM issues WHERE id IN (
                SELECT i.id FROM issues i INDEXED BY issues_by_closing WHERE i.status = 'closed' AND i.closed_at < ?1
                  AND NOT EXISTS (SELECT 1 FROM dependencies d JOIN issues o ON o.id = d.depends_on_id
                                  WHERE d.issue_id = i.id AND d.type = 'parent-child' AND o.status != 'closed')
                  AND NOT EXISTS (SELECT 1 FROM dependencies d JOIN issues o ON o.id = d.issue_id
                                  WHERE d.depends_on_id = i.id AND d.type = 'parent-child' AND o.status != 'closed')
                LIMIT ?2)`,
-            at,
-            EXPIRE_BATCH,
-          ).changes,
-      );
-      gone += slice;
-      if (slice < EXPIRE_BATCH) break;
-    }
-    // the text copy shrinks with the store
-    if (gone > 0) this.followed();
-    return gone;
+      [before.toISOString()],
+      EXPIRE_BATCH,
+    );
   }
 
   /** A gone seat's issues in progress are open again, or go to its successor. */
   release(actor: string, successor: string | null, by: string): string[] {
-    return this.write(() => {
+    return this.transaction("write", () => {
       const held = this.rows("SELECT * FROM issues WHERE assignee = ? AND status != 'closed'", actor).map(toIssue);
       for (const issue of held) this.handOver(issue, successor, by);
       return held.map((issue) => issue.id);
@@ -1059,7 +873,6 @@ export class WorkStore extends Sqlite {
         return { id: issue.id, title: issue.title, holder: issue.holder };
       }),
     );
-    if (gone.length > 0) this.followed();
     return gone;
   }
 

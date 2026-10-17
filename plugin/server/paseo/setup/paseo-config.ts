@@ -4,19 +4,17 @@ import type { PaseoApi } from "../api";
 import { stamp } from "../../gc";
 import { isRoomProvider } from "../../orchestration/seats";
 import type { RoomPlan } from "./plan";
+import { isObject } from "../../../shared/json";
 
 /** Whether a profile is the room's own, by the id prefixes the room has written. */
-const isOwnProfile = (id: string) => id.startsWith("agent_profile_seatwork_") || id.startsWith("agent_profile_slp_");
+const isOwnProfile = (id: string) => id.startsWith("agent_profile_seatwork_");
 const NO_BUNDLED_SKILLS = { mode: "custom", skills: [] as string[] };
 
 type Json = Record<string, any>;
-const isRecord = (value: unknown): value is Json =>
-  typeof value === "object" && value !== null && !Array.isArray(value);
-
 /** Whether `before` holds a key, at any depth of plain objects, that `after` no longer has. */
 function dropsKeys(before: unknown, after: unknown): boolean {
-  if (!isRecord(before)) return false;
-  if (!isRecord(after)) return true;
+  if (!isObject(before)) return false;
+  if (!isObject(after)) return true;
   return Object.keys(before).some((key) => !(key in after) || dropsKeys(before[key], after[key]));
 }
 
@@ -69,35 +67,6 @@ export async function removeWithSdk(paseo: PaseoApi): Promise<{ removed: string[
   return { removed };
 }
 
-/** Paseo's config.json with the plan laid in: seats, profiles and daemon switches; the rest is kept. */
-function mergeIntoConfig(config: Json, plan: RoomPlan): Json {
-  const next: Json = structuredClone(config);
-  const owned = new Set(plan.profiles.map((profile) => profile.id));
-  next.daemon ??= {};
-  next.agents ??= {};
-  next.daemon.agentProfiles = [
-    ...((next.daemon.agentProfiles ?? []) as { id?: string }[]).filter(
-      (p) => !isOwnProfile(p.id ?? "") && !owned.has(p.id ?? ""),
-    ),
-    ...plan.profiles,
-  ];
-  next.agents.providers = {
-    ...Object.fromEntries(Object.entries((next.agents.providers ?? {}) as Json).filter(([id]) => !isRoomProvider(id))),
-    ...plan.providers,
-  };
-  next.daemon.mcp = { ...(next.daemon.mcp ?? {}), enabled: true, injectIntoAgents: true };
-  next.pluginsEnabled = true;
-  const daemon = (plan.policy.daemon ?? {}) as Json;
-  next.daemon.browserTools = { ...(next.daemon.browserTools ?? {}), enabled: daemon.browserTools ?? false };
-  next.daemon.enableTerminalAgentHooks = daemon.enableTerminalAgentHooks ?? false;
-  next.features ??= {};
-  next.features.dictation = { ...(next.features.dictation ?? {}), enabled: daemon.dictation ?? false };
-  next.features.voiceMode = { ...(next.features.voiceMode ?? {}), enabled: daemon.voiceMode ?? false };
-  if ((daemon.bundledSkills ?? "none") === "none")
-    next.agents.skills = { ...(next.agents.skills ?? {}), selection: NO_BUNDLED_SKILLS };
-  return next;
-}
-
 /** Replaces a config.json in place, leaving the old one beside it as config.json.bak-<time>. */
 function writeConfig(file: string, next: Json): void {
   if (existsSync(file)) copyFileSync(file, `${file}.bak-${stamp()}`);
@@ -107,15 +76,8 @@ function writeConfig(file: string, next: Json): void {
   chmodSync(file, 0o600);
 }
 
-/** The installer's way in: the plan written into config.json, for `paseo daemon reload` to pick up. */
-export function applyToConfigFile(paseoHome: string, plan: RoomPlan): void {
-  const file = join(paseoHome, "config.json");
-  const config = existsSync(file) ? (JSON.parse(readFileSync(file, "utf8")) as Json) : { version: 1 };
-  writeConfig(file, mergeIntoConfig(config, plan));
-}
-
 /** The daemon switches the room cares about and the SDK cannot set, as this daemon's config.json has them. */
-export interface DaemonSwitches {
+interface DaemonSwitches {
   paseoTools: boolean | null;
   dictation: boolean | null;
   voiceMode: boolean | null;
@@ -148,12 +110,38 @@ export function readSwitches(paseoHome: string, pluginDir: string): DaemonSwitch
   };
 }
 
+/** Whether a skill selection is the room's own: none of Paseo's bundled skills. */
+const noBundled = (selection: any) =>
+  selection?.mode === "custom" && Array.isArray(selection.skills) && selection.skills.length === 0;
+
+/** Paseo's skill selection and the config.json that holds it, when the file is surely this daemon's; null where it names none. */
+export function skillSelection(paseoHome: string, pluginDir: string): { file: string; selection: unknown } | null {
+  const own = ownConfig(paseoHome, pluginDir);
+  return own ? { file: own.file, selection: own.config.agents?.skills?.selection ?? null } : null;
+}
+
+/** Puts a skill selection back into the config.json the room found its daemon's, while the room's own still stands there; null takes the key out. True when a daemon reload is due. */
+export function restoreSkillSelection(file: string, selection: unknown): boolean {
+  let config: Json;
+  try {
+    config = JSON.parse(readFileSync(file, "utf8")) as Json;
+  } catch {
+    return false;
+  }
+  if (noBundled(selection) || !noBundled(config.agents?.skills?.selection)) return false;
+  const next = structuredClone(config);
+  if (selection !== null) next.agents.skills.selection = selection;
+  else if (Object.keys(next.agents.skills).length > 1) delete next.agents.skills.selection;
+  else delete next.agents.skills;
+  writeConfig(file, next);
+  return true;
+}
+
 /** Keeps Paseo's bundled skills out of agents by writing config.json; true when a daemon reload is now due. */
 export function turnBundledSkillsOff(paseoHome: string, pluginDir: string): boolean {
   const own = ownConfig(paseoHome, pluginDir);
   if (!own) return false;
-  const selection = own.config.agents?.skills?.selection;
-  if (selection?.mode === "custom" && Array.isArray(selection.skills) && selection.skills.length === 0) return false;
+  if (noBundled(own.config.agents?.skills?.selection)) return false;
   const next = structuredClone(own.config);
   next.agents = { ...(next.agents ?? {}), skills: { ...(next.agents?.skills ?? {}), selection: NO_BUNDLED_SKILLS } };
   writeConfig(own.file, next);

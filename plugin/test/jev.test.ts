@@ -5,7 +5,6 @@ import { chmodSync, statSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { DatabaseSync } from "node:sqlite";
 import { test } from "node:test";
-import { probeChat } from "../server/jev/chat";
 import { call } from "../server/jev/client";
 import { DecisionError, type Questions } from "../server/jev/contract";
 import { Jev, type JevPolicy, type ProviderName } from "../server/jev/index";
@@ -30,7 +29,6 @@ const QUESTIONS: Questions = {
 const RAN: Questions = { ran: QUESTIONS.ran };
 const WIRE = { url: "https://ts.test/v1/systemone", model: "m" };
 
-/** The answers a System One provider gives to QUESTIONS. */
 const SYSTEM_ONE = {
   ran: { type: "noul", noul: 0.2 },
   lane: { type: "choice", choice: "scope", probabilities: { scope: 0.7, outcome: 0.3 }, confidence: 0.4 },
@@ -43,10 +41,8 @@ const SYSTEM_ONE = {
   },
 };
 
-/** SYSTEM_ONE as a provider sends it: the choice answered in both orders of its options, alike. */
 const REPLIED = { ...SYSTEM_ONE, "lane~r": SYSTEM_ONE.lane };
 
-/** The same answers as OpenAI's Decisions give them. */
 const OPENAI = [
   { type: "predicate", name: "ran", probability: 0.2 },
   {
@@ -926,34 +922,4 @@ test("a Chat Completions call whose caller has already given up sends nothing", 
     { code: "ABORTED" },
   );
   assert.equal(endpoint.sent.length, 0);
-});
-
-test("a probe of a Chat Completions endpoint says whether it gives what the wire reads", async () => {
-  const wire = { url: "http://127.0.0.1:8000/v1/chat/completions", model: "qwen-chat" };
-  const answering = (top: { token: string; p: number }[] | null) =>
-    (async () =>
-      json({
-        choices: [
-          {
-            logprobs: top && {
-              content: [{ top_logprobs: top.map(({ token, p }) => ({ token, logprob: Math.log(p) })) }],
-            },
-          },
-        ],
-      })) as typeof fetch;
-  const tops = (p: number) => ({
-    fetch: answering([
-      { token: "yes", p },
-      { token: "no", p: (1 - p) / 2 },
-    ]),
-  });
-  const good = await probeChat(wire, tops(0.8).fetch);
-  assert.deepEqual([good.fits, good.topLogprobs], [true, 2]);
-  assert.match(good.notes.join(" "), /shows 2 likely tokens/);
-  assert.match((await probeChat(wire, tops(0.9995).fetch)).notes.join(" "), /all but certain of an open question/);
-  const bare = await probeChat(wire, answering(null));
-  assert.deepEqual([bare.fits, bare.topLogprobs], [false, null]);
-  assert.match(bare.notes[0], /without the log probabilities/);
-  const refused = (async () => json({ error: { message: "logprobs are not supported" } }, 400)) as typeof fetch;
-  assert.match((await probeChat(wire, refused)).notes[0], /HTTP 400: .*logprobs are not supported/);
 });

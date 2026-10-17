@@ -13,7 +13,6 @@ import mailConfig from "../shared/mail.json";
 
 shipSql();
 
-/** A seat at rest that takes the mail it is sent. */
 const idle = { refresh: async () => {}, current: () => ({ status: "idle" }), send: async () => {} };
 
 let cases = 0;
@@ -267,13 +266,12 @@ test("a mail names at most the number of entries shared/mail.json allows in `to`
   const id = names("lead", "peer", "boss");
   const { room, engine } = roomOf({ [id.lead]: idle, [id.peer]: idle }, [id.peer]);
   tree(engine, id, [[id.peer]]);
-  const most = (mailConfig as { namedMost?: number }).namedMost;
-  assert.equal(typeof most, "number");
+  const most = (mailConfig as { namedMost: number }).namedMost;
   for (const field of ["to", "cc", "files"] as const) {
-    const args = { ...note, to: id.peer, [field]: Array((most as number) + 1).fill(id.peer) };
+    const args = { ...note, to: id.peer, [field]: Array(most + 1).fill(id.peer) };
     const refused = await refusedWith(sendMail(room, id.lead, args));
     assert.equal(refused.code, "INVALID_ARGUMENT");
-    assert.match(refused.message, new RegExp(`\`${field}\` names ${(most as number) + 1} entries; ${most} at most`));
+    assert.match(refused.message, new RegExp(`\`${field}\` names ${most + 1} entries; ${most} at most`));
   }
 });
 

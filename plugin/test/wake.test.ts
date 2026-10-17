@@ -1,5 +1,6 @@
 import { hostOf, installRoom, MAIL_POLICY, PROJECT, shipSql } from "./support/room";
 import { fakeServer } from "./support/server";
+import { roomSeats } from "./room-seats";
 import { fastestInTurns } from "./support/timing";
 import assert from "node:assert/strict";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
@@ -320,7 +321,7 @@ test("a wake-up is refused unless its time is an ISO time with a zone or minutes
   assert.equal(await code({ note: "x".repeat(config.wake.noteChars + 1), in_minutes: 5 }), "INVALID_ARGUMENT");
   const tooSoon = await r.call(id.lead, { action: "wake", in_minutes: 0, note: "n" });
   assert.deepEqual(Object.keys(tooSoon.fix).sort(), ["earliest", "latest", "now"], "the window is said");
-  // the edges stand
+  // the shortest and the farthest time, and a note at its cap, are accepted
   assert.equal((await r.call(id.lead, { action: "wake", in_minutes: 1, note: "n" })).at, "2026-10-15T08:01:00.000Z");
   const zoned = await r.call(id.lead, { action: "wake", at: "2026-10-15T16:00:00+07:00", note: "n" });
   assert.equal(zoned.at, "2026-10-15T09:00:00.000Z", "the answer is in UTC");
@@ -868,64 +869,18 @@ test("the statements of wake-ups use their indexes, and a pass over a large stor
 });
 
 test("through the room: a seat sets a wake-up with the tool, and the room's own minute pass wakes it when the time comes", async (t) => {
-  installRoom(["claude-hq", "claude-supervisor", "claude-lead", "claude-peer", "claude-lens"]);
+  installRoom(["claude-hq", "claude-supervisor", "claude-lead", "claude-peer"]);
   const paseoSide = fakeServer();
   const log = { log: console.log, error: console.error };
   console.log = console.error = () => {};
   t.mock.timers.enable({ apis: ["setInterval", "Date"], now: START });
   const dispose = contribute(paseoSide.server);
-  const agents: Record<string, object> = {};
-  const context = {
-    paseo: {
-      agents: {
-        ref: (id: string) => agents[id],
-        list: async () => ({
-          entries: Object.entries(agents).map(([id, handle]) => ({
-            agent: { id, updatedAt: new Date().toISOString(), ...(handle as { current(): object }).current() },
-          })),
-        }),
-      },
-    },
-  };
-  const seat = async (id: string, provider: string, parent: string | null, title: string) => {
-    const made = (await paseoSide.call("before agent.create", {
-      request: { config: { provider, cwd: PROJECT, title }, env: {} },
-    })) as { env: Record<string, string>; config: { mcpServers: { seatwork: { url: string } } } };
-    await paseoSide.call("before agent.session_open", {
-      request: { env: made.env, reason: "create", agentId: id, provider },
-    });
-    const inbox: string[] = [];
-    agents[id] = {
-      refresh: async () => {},
-      current: () => ({ status: "idle" }),
-      send: async (text: string) => void inbox.push(text),
-    };
-    const agent = { id, parentAgentId: parent, provider, cwd: PROJECT, title, workspaceId: null };
-    await paseoSide.call("on agent.created", { agent }, context);
-    const rpc = async (method: string, params: object) => {
-      const response = await fetch(made.config.mcpServers.seatwork.url, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }),
-      });
-      return ((await response.json()) as { result: any }).result;
-    };
-    const call = async (args: Record<string, unknown>) => {
-      const result = await rpc("tools/call", { name: "seatwork_mail", arguments: args });
-      if (result.isError) throw new Error(result.content[0].text);
-      return JSON.parse(result.content[0].text);
-    };
-    return { inbox, call, rpc };
-  };
+  const { seat } = roomSeats(paseoSide.call);
   try {
     const lead = await seat("lead-wake-room", "claude-lead", null, "[Lead] wake");
     const peer = await seat("peer-wake-room", "claude-peer", "lead-wake-room", "[Peer] wake");
-    const shown = (await peer.rpc("tools/list", {})).tools.find(
-      (tool: { name: string }) => tool.name === "seatwork_mail",
-    );
-    for (const name of ["action", "at", "in_minutes", "note", "id"])
-      assert.ok(name in shown.inputSchema.properties, name);
-    const set = await peer.call({ action: "wake", in_minutes: 2, note: "look at the CI run" });
+    const mail = async (args: Record<string, unknown>) => JSON.parse(await peer.mail(args));
+    const set = await mail({ action: "wake", in_minutes: 2, note: "look at the CI run" });
     assert.equal(set.at, new Date(START + 2 * MINUTE).toISOString());
     const settle = async () => {
       for (let i = 0; i < 50; i += 1) await new Promise((done) => setImmediate(done));
@@ -938,7 +893,7 @@ test("through the room: a seat sets a wake-up with the tool, and the room's own 
     assert.equal(peer.inbox.length, 1);
     assert.match(peer.inbox[0], /subject="WAKE: look at the CI run"/);
     assert.deepEqual(lead.inbox, []);
-    assert.deepEqual((await peer.call({ action: "wakes" })).wakes, []);
+    assert.deepEqual((await mail({ action: "wakes" })).wakes, []);
   } finally {
     await dispose();
     Object.assign(console, log);

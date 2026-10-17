@@ -17,7 +17,7 @@ import type { Delivery, Message } from "./store";
 /** A project's mail as files, one per mail and one per thread: for a reader, and for a rebuild. */
 
 /** A mail and the recipients it was written with. */
-export interface Archived {
+interface Archived {
   message: Message;
   deliveries: Pick<Delivery, "seat" | "kind" | "priority" | "quiet">[];
 }
@@ -104,7 +104,7 @@ export function writeMessage(dir: string, entry: Archived): string {
   return file;
 }
 
-/** Adds a mail to its thread's file. */
+/** Adds a mail to its thread's file, made with the first; returns the file. */
 export function appendThread(dir: string, message: Message, from: string, to: string): string {
   const file = join(keptOutOfGit(dir), "threads", `${safe(message.thread)}.md`);
   mkdirSync(dirname(file), { recursive: true });

@@ -10,7 +10,7 @@ const RISE = TREND.rise as Record<string, number>;
 
 const round = (value: number): number => Math.round(value * 10) / 10;
 
-/** The vital signs of the process: lines of trouble each minute, a series of each measure, and a reading on demand. */
+/** The vital signs of the process: lines of trouble each minute, a series of each measure, and a reading on demand; the event loop's hold is a short timer's lateness, since Node's own delay histogram misses one long hold. */
 export class Vitals {
   private readonly seen = new Map<string, number>();
   private readonly series = new Map<string, { kind: string; values: number[]; at: number }>();
@@ -25,7 +25,6 @@ export class Vitals {
     private readonly gauges: () => Record<string, number> = () => ({}),
     private readonly memory: () => { heapUsed: number; rss: number } = () => process.memoryUsage(),
   ) {
-    // a timer that fires late by as long as something held the loop: Node's own delay histogram misses one long hold
     let expected = Date.now() + LAG_TICK_MS;
     this.timer = setInterval(() => {
       const now = Date.now();
@@ -35,7 +34,7 @@ export class Vitals {
     this.timer.unref();
   }
 
-  /** The minute's lines of trouble: an event loop held too long, new slow statements, a large write-ahead log, a measure whose low point keeps rising. */
+  /** The minute's lines of trouble: an event loop held too long, new slow statements, a large write-ahead log, a measure whose low point keeps rising; a store that closed, or a measure no longer given, takes its counts and series with it. */
   minute(): string[] {
     const lines: string[] = [];
     this.last = { maxMs: this.lagMs };
@@ -64,7 +63,6 @@ export class Vitals {
       this.sample(`${store.name} log MB`, "walMb", store.walBytes / MB);
       this.sample(`${store.name} file MB`, "fileMb", store.fileBytes / MB);
     }
-    // a store that closed, or a measure no longer given, takes its counts and series with it
     for (const file of this.seen.keys()) if (!open.has(file)) this.seen.delete(file);
     for (const [name, one] of this.series) if (one.at !== this.minutes) this.drop(name);
     return [...lines, ...this.rising()];

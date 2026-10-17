@@ -13,7 +13,6 @@ const output = { log: console.log, error: console.error };
 const realFetch = globalThis.fetch;
 let dispose: () => Promise<void>;
 
-/** What the decision model is made to say for each fork, and every question it was put. */
 const says: Partial<Record<string, string>> = {};
 const asked: { fork: string; labels: string[]; state: Record<string, unknown> }[] = [];
 
@@ -27,7 +26,7 @@ const forkOf = (labels: string[]): string =>
         ? "duplicate"
         : "tier";
 
-/** The model's wire, in the room's own process: the label a test set is answered sure, any other question split. */
+/** The model's wire, in the room's own process: the label a test set in `says` is answered sure, any other question split, and every question is kept in `asked`. */
 async function jev(url: unknown, init?: RequestInit): Promise<Response> {
   if (!String(url).includes("openrouter.ai")) return realFetch(url as string, init);
   const body = JSON.parse(String(init?.body)) as {
@@ -58,7 +57,7 @@ async function jev(url: unknown, init?: RequestInit): Promise<Response> {
 }
 
 before(() => {
-  installRoom(["claude-hq", "claude-supervisor", "claude-lead", "claude-peer", "claude-lens"]);
+  installRoom(["claude-hq", "claude-supervisor", "claude-lead", "claude-peer"]);
   const file = join(ROOM_HOME, "policy.json");
   const policy = JSON.parse(readFileSync(file, "utf8"));
   policy.jev.forks = ["tier", "gaps", "escalate", "duplicate"];

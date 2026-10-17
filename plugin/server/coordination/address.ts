@@ -44,6 +44,9 @@ type MailErrorCode =
   | "INVALID_ARGUMENT"
   | "STORE_UNAVAILABLE";
 
+/** The room itself as a mail's sender: no seat, the role no seat holds. */
+export const ROOM_SENDER = { agentId: "room", role: "system" } as const;
+
 /** A refusal a seat can act on: what went wrong, what a right call looks like, and the call to make instead. */
 export class MailError extends Error {
   readonly retryable: boolean;
@@ -69,7 +72,7 @@ const bare = (title: string | null) =>
     .trim()
     .toLowerCase();
 
-/** A word of `to` without a role tag before it. */
+/** A word of `to` with a leading `<role>:` tag removed. */
 const plain = (word: string) => word.trim().replace(ROLE_TAG, "");
 
 /** Whether a word of `to` names the sender's whole team. */

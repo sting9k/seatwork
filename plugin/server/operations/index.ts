@@ -12,7 +12,7 @@ import { OperationsStore, type Incident, type IncidentState, type Trace, type Tr
 /** The Operations district: the room's log and incidents told to its operator seat, the traces of their causes, the policy that seat tunes, and each project's spend against its cap. */
 
 /** What the district takes from the room: its folder and policy, the operators and mail, the districts' readings, vitals, what the budget needs of seats and projects, and the decision model. */
-export interface OperationsDeps {
+interface OperationsDeps {
   dir: string;
   busyTimeoutMs: number;
   policy(): Record<string, unknown>;
@@ -172,7 +172,7 @@ const tuneLine = (one: Tune): string =>
   `#${one.id} ${minute(one.at)} ${one.path}: ${one.before ?? "unset"} -> ${one.after ?? "unset"}` +
   `${one.reverts ? ` (reverts #${one.reverts})` : ""}${one.trace ? ` (trace #${one.trace})` : ""}; ${one.reason}`;
 
-/** The operations of the room: one per room, held by its timers and its operator's tool. */
+/** The operations of the room: one per room, held by its timers and its operator's tool; its first digest comes a full period after it starts, and a store that cannot open closes the vitals it was given. */
 export class Operations {
   private readonly store: OperationsStore;
   private readonly budget: Budget;
@@ -187,7 +187,6 @@ export class Operations {
     try {
       this.store = new OperationsStore(deps.dir, deps.busyTimeoutMs, () => this.now());
     } catch (error) {
-      // a store that cannot open leaves the vitals' timer to nobody
       deps.vitals?.close();
       throw error;
     }
@@ -208,7 +207,6 @@ export class Operations {
       ...(vitals ? { host: () => vitals.reading() } : {}),
       budget: () => this.budget.reading(),
     };
-    // a room that starts again sends its first digest a full period later, never at once
     this.lastDigest = this.now().getTime();
   }
 
@@ -221,14 +219,13 @@ export class Operations {
     this.keep(line, undefined, true);
   }
 
-  /** Echoes and keeps a line under an incident `key` given, else under the key its words make; `ask` false keeps the decision model from reading a new incident. */
+  /** Echoes and keeps a line under an incident `key` given, else under the key its words make; `ask` false keeps the decision model from reading a new incident; a store that cannot keep the line is said on the app's log only, never through the store again. */
   private keep(line: string, key: string | null | undefined, ask: boolean): void {
     this.deps.echo(line);
     const kept = line.slice(0, settings.lineChars);
     try {
       this.store.record(districtOf(kept), kept, key === undefined ? incidentOf(kept) : key, ask);
     } catch (error) {
-      // a store that cannot keep the line must not log about itself again
       this.deps.echo(`operations: a log line was not kept: ${(error as Error).message}`);
     }
   }

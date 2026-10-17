@@ -1,7 +1,6 @@
-import { ROOM_HOME, shipSql } from "./support/room";
-import { forksWith, modelSaying } from "./forks-support";
+import { shipSql } from "./support/room";
+import { forksWith, freshStore, modelSaying, RULES } from "./forks-support";
 import assert from "node:assert/strict";
-import { join } from "node:path";
 import { test } from "node:test";
 import type { ForkName } from "../server/orchestration/forks";
 import { afterWork, type WorkForkDeps } from "../server/orchestration/work-forks";
@@ -9,15 +8,6 @@ import { WorkStore } from "../server/tasks/store";
 import { work } from "../server/tasks/tools";
 
 shipSql();
-
-const RULES = {
-  busyTimeoutMs: 5000,
-  flushAfterMs: 60_000,
-  staleClaimMinutes: 120,
-  close: { minReasonChars: 20, forbidSelfClose: true },
-};
-let stores = 0;
-const freshStore = () => new WorkStore(join(ROOM_HOME, `forks-duplicate-${(stores += 1)}`), RULES);
 
 function roomOf(model: ReturnType<typeof modelSaying>, on: readonly ForkName[]) {
   const { forks, lines } = forksWith(model.router, on);
@@ -33,7 +23,7 @@ async function creates(deps: WorkForkDeps, store: WorkStore, args: Record<string
 }
 
 test("a new issue that repeats an open one is linked to it as related and its creator is told; neither is merged or closed", async () => {
-  const store = freshStore();
+  const store = freshStore("forks-duplicate");
   const old = store.create({ title: "Add paging to the orders list", description: "Twenty rows a page." }, "lead");
   store.create({ title: "Rename the billing module" }, "lead");
   const model = modelSaying((labels) => labels.find((label) => label !== "none") ?? null);
@@ -76,7 +66,7 @@ test("a new issue that repeats an open one is linked to it as related and its cr
 });
 
 test("a new issue is compared with at most three open issues, found by the words of their titles; closed ones and its own are left out", async () => {
-  const store = freshStore();
+  const store = freshStore("forks-duplicate");
   const alike = ["one", "two", "three", "four"].map((n) =>
     store.create({ title: `Cache the orders list query ${n}` }, "lead"),
   );
@@ -94,7 +84,7 @@ test("a new issue is compared with at most three open issues, found by the words
 });
 
 test("a store of hundreds of open issues is read by title in two bounded pages, and the model still sees three at most", async () => {
-  const store = freshStore();
+  const store = freshStore("forks-duplicate");
   for (let n = 0; n < 250; n += 1) store.create({ title: `Cache the orders list query ${n}` }, "lead");
   const model = modelSaying("none");
   const { deps } = roomOf(model, ["duplicate"]);
@@ -115,14 +105,14 @@ test("an answer of none, a split answer, a fork that is off, and no issue like i
     ["split", modelSaying((labels) => labels[1], 0.6), ["duplicate"]],
     ["off", modelSaying((labels) => labels[1]), []],
   ] as const) {
-    const store = freshStore();
+    const store = freshStore("forks-duplicate");
     store.create({ title: "Add paging to the orders list" }, "lead");
     const answer = await creates(roomOf(model, on).deps, store, { title: "Paging for the orders list" });
     assert.equal(answer.duplicate_of, undefined, name);
     assert.deepEqual(store.dependencies(), [], name);
   }
 
-  const store = freshStore();
+  const store = freshStore("forks-duplicate");
   store.create({ title: "Add paging to the orders list" }, "lead");
   const model = modelSaying((labels) => labels[1]);
   const { deps } = roomOf(model, ["duplicate"]);
@@ -131,7 +121,7 @@ test("an answer of none, a split answer, a fork that is off, and no issue like i
 });
 
 test("a plan made in one call is read in one call: each issue against the open ones, never against the plan's own", async () => {
-  const store = freshStore();
+  const store = freshStore("forks-duplicate");
   const paging = store.create({ title: "Add paging to the orders list" }, "lead");
   const cache = store.create({ title: "Cache the billing report query" }, "lead");
   const model = modelSaying((labels, state, id) => {
@@ -164,7 +154,7 @@ test("a plan made in one call is read in one call: each issue against the open o
 });
 
 test("a link that cannot be made leaves the issue made, and the answer is the create's own", async () => {
-  const store = freshStore();
+  const store = freshStore("forks-duplicate");
   store.create({ title: "Add paging to the orders list" }, "lead");
   const model = modelSaying((labels) => labels[1]);
   const { deps, lines } = roomOf(model, ["duplicate"]);

@@ -24,7 +24,7 @@ function piVersion(): Promise<string> {
 }
 
 /** What is wrong with this machine's Pi, or null: a Pi seat needs Pi's built-in MCP, there from 0.99. */
-export async function piProblem(): Promise<string | null> {
+async function piProblem(): Promise<string | null> {
   const found = await piVersion();
   return atLeast(found, [0, 99])
     ? null

@@ -43,11 +43,10 @@ function quoted(part: string, double?: string, single?: string, backtick?: strin
   return FAULT_WORD.test(double ?? single ?? backtick ?? "") ? part : "*";
 }
 
-/** A line's incident key: its district and its words with ids, paths, times, numbers and quoted texts made alike; null when it reports no trouble. */
+/** A line's incident key: its district and its words with ids, paths, times, numbers and quoted texts made alike, so one fault met by many seats, files or turns is one incident; null when it reports no trouble. */
 export function incidentOf(line: string): string | null {
   const text = line.slice(0, settings.lineChars);
   if (!TROUBLE.test(text)) return null;
-  // one fault met by many seats, files or turns is one incident
   const plain = text.replace(QUOTED, quoted);
   const shape = VARYING.reduce((words, pattern) => words.replace(pattern, "*"), plain)
     .replace(/\s+/g, " ")

@@ -9,7 +9,6 @@ import { StandInApp } from "./support/stand-in-app";
 
 const QUICK = { readSeconds: 0.03, historySeconds: 0.03, writeSeconds: 0.03, startSeconds: 0.03 };
 
-/** Each Host the room can run on, made over a stand-in app, with or without the client the app hands. */
 const HOSTS: Record<string, (app: StandInApp, client: boolean) => Host> = {
   paseo: (app, client) => {
     const host = new PaseoHost(QUICK);

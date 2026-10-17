@@ -64,7 +64,7 @@ const FAILED_SHELL = 0.9;
 const ITEM_CHARS = 400;
 
 /** One entry of a pack, with how far it can be trusted. */
-export interface PackItem {
+interface PackItem {
   address: string;
   kind: EntryKind;
   at: string;
@@ -74,7 +74,7 @@ export interface PackItem {
 }
 
 /** A task's evidence fitted to a budget: what was used and what was left out, and why. */
-export interface Pack {
+interface Pack {
   task: string;
   budget: number;
   used: number;

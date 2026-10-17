@@ -1,19 +1,9 @@
 import { join } from "node:path";
 import { SQL_DIR } from "../paths";
-import { keptOutOfGit, Sqlite, type Param, type SqliteFailure } from "../sqlite";
+import { keptOutOfGit, Sqlite, type Param } from "../sqlite";
 import { addressOf, type Entry, type EntryKind, type SourceKind } from "./record";
 
 /** One store of the Knowledge district: the record and the decisions of a project, or of the room's own seats. */
-
-/** A store that cannot be used: another process holds it, or its layout is newer or invalid; `code` says which. */
-export class KnowledgeError extends Error {
-  constructor(
-    readonly code: SqliteFailure,
-    message: string,
-  ) {
-    super(message);
-  }
-}
 
 /** One turn of a seat or one mail, as the record keeps it. */
 export interface Source {
@@ -47,7 +37,7 @@ export interface Filters {
 }
 
 /** A decision's state; a pending one becomes active, applied or dropped, an active one superseded, expired or withdrawn. */
-export type DecisionState = "pending" | "active" | "applied" | "dropped" | "superseded" | "expired" | "withdrawn";
+type DecisionState = "pending" | "active" | "applied" | "dropped" | "superseded" | "expired" | "withdrawn";
 
 /** A decision of a scope and topic, with its version and the dates it holds. */
 export interface Decision {
@@ -70,7 +60,7 @@ export interface Decision {
 }
 
 /** A decision as asked for, before the store gives it a state, a version and a time. */
-export type NewDecision = Pick<
+type NewDecision = Pick<
   Decision,
   "action" | "scopeKey" | "topic" | "statement" | "baseVersion" | "recordedBy" | "validFrom" | "validUntil" | "reason"
 >;
@@ -116,7 +106,7 @@ const DECISION = decisionColumns("decisions");
 export type PairChoice = "duplicate" | "replaces" | "independent";
 
 /** A new decision beside an older one, as the measures keep it. */
-export interface Pair {
+interface Pair {
   id: number;
   oldId: number;
   newText: string;
@@ -127,7 +117,7 @@ export interface Pair {
 }
 
 /** One search as the measures keep it. */
-export interface SearchLog {
+interface SearchLog {
   seat: string;
   task: string;
   phrases: readonly string[];
@@ -181,7 +171,6 @@ export class KnowledgeStore extends Sqlite {
     super(join(keptOutOfGit(dir), "knowledge.db"), {
       busyTimeoutMs,
       scripts: join(SQL_DIR, "knowledge"),
-      fail: (code, message) => new KnowledgeError(code, message),
       name: "the knowledge store",
       now,
       reclaims: true,
@@ -357,7 +346,6 @@ export class KnowledgeStore extends Sqlite {
     return this.rows<Decision>(sql, ...params).map((row) => ({ ...row }));
   }
 
-  /** One decision by its id. */
   decision(id: number): Decision | null {
     return this.decisions(`SELECT ${DECISION} FROM decisions WHERE id = ?`, id)[0] ?? null;
   }
@@ -453,7 +441,6 @@ export class KnowledgeStore extends Sqlite {
     );
   }
 
-  /** How many decisions are in force in a scope. */
   countActive(scopeKey: string): number {
     return this.row<{ n: number }>(
       "SELECT count(*) AS n FROM decisions WHERE state = 'active' AND scope_key = ?",
@@ -549,7 +536,6 @@ export class KnowledgeStore extends Sqlite {
     return this.decision(before.id);
   }
 
-  /** Drops a pending decision with the reason. */
   dropPending(id: number, why: string): Decision {
     this.run(
       "UPDATE decisions SET state = 'dropped', reason = ?, closed_at = ? WHERE id = ? AND state = 'pending'",
@@ -626,7 +612,6 @@ export class KnowledgeStore extends Sqlite {
     });
   }
 
-  /** Forgets what a seat was shown. */
   forgetShown(seat: string): void {
     this.run("DELETE FROM shown WHERE seat = ?", seat);
   }
@@ -705,7 +690,6 @@ export class KnowledgeStore extends Sqlite {
     });
   }
 
-  /** The pairs of a new decision. */
   pairsOf(newId: number): Pair[] {
     return this.rows<Pair>(
       `SELECT id, old_id AS oldId, new_text AS newText, old_text AS oldText, seat, seat_choice AS seatChoice, ask_id AS askId
@@ -748,14 +732,15 @@ export class KnowledgeStore extends Sqlite {
   expireDecisions(before: Date): number {
     const cut = before.toISOString();
     // a replaced decision in date comes back when the one above it ends, so it stays while that one can end
-    const decisions = this.sliced(
+    const decisions = this.deleteInSlices(
       `DELETE FROM decisions WHERE id IN (
          SELECT d.id FROM decisions d WHERE d.closed_at < ?
            AND NOT (d.state = 'superseded' AND (d.valid_until IS NULL OR d.valid_until > ?)
              AND EXISTS (SELECT 1 FROM decisions up WHERE up.id = d.superseded_by AND up.state IN ('active', 'superseded')))
          LIMIT ?)`,
-      cut,
-      this.now().toISOString(),
+      [cut, this.now().toISOString()],
+      SLICE,
+      PASS_SLICES,
     );
     // a seat that left without being archived leaves its notes behind; one that holds a note past a year is told it again
     return decisions + this.run("DELETE FROM shown WHERE at < ?", cut).changes;
@@ -766,26 +751,40 @@ export class KnowledgeStore extends Sqlite {
     const cut = before.toISOString();
     this.run("DELETE FROM tallies WHERE day < ?", cut.slice(0, 10));
     return (
-      this.sliced("DELETE FROM searches WHERE id IN (SELECT id FROM searches WHERE at < ? LIMIT ?)", cut) +
-      this.sliced("DELETE FROM pairs WHERE id IN (SELECT id FROM pairs WHERE at < ? LIMIT ?)", cut)
+      this.deleteInSlices(
+        "DELETE FROM searches WHERE id IN (SELECT id FROM searches WHERE at < ? LIMIT ?)",
+        [cut],
+        SLICE,
+        PASS_SLICES,
+      ) +
+      this.deleteInSlices(
+        "DELETE FROM pairs WHERE id IN (SELECT id FROM pairs WHERE at < ? LIMIT ?)",
+        [cut],
+        SLICE,
+        PASS_SLICES,
+      )
     );
   }
 
   /** Drops entries before `before`, then the oldest past `maxEntries`, then the sources left empty; each step is bounded, the rest waits for the next pass. */
   expire(before: Date, maxEntries = Infinity): number {
     const cut = before.toISOString();
-    let gone = this.sliced(
+    let gone = this.deleteInSlices(
       `DELETE FROM entries WHERE id IN (
          SELECT e.id FROM sources s CROSS JOIN entries e ON e.source_id = s.id WHERE s.started_at < ? LIMIT ?)`,
-      cut,
+      [cut],
+      SLICE,
+      PASS_SLICES,
     );
     const over = this.row<{ n: number }>("SELECT count(*) AS n FROM entries")!.n - maxEntries;
     if (over > 0) gone += this.dropOldest(over);
-    this.sliced(
+    this.deleteInSlices(
       `DELETE FROM sources WHERE id IN (
          SELECT s.id FROM sources s WHERE s.started_at < ?
            AND NOT EXISTS (SELECT 1 FROM entries e WHERE e.source_id = s.id) LIMIT ?)`,
-      cut,
+      [cut],
+      SLICE,
+      PASS_SLICES,
     );
     // deleted rows leave marks in the full-text index until its segments merge: a bounded merge
     if (gone > 0) this.run("INSERT INTO entries_fts (entries_fts, rank) VALUES ('merge', ?)", MERGE_PAGES);
@@ -809,17 +808,6 @@ export class KnowledgeStore extends Sqlite {
       );
       if (done === 0) break;
       gone += done;
-    }
-    return gone;
-  }
-
-  /** Runs a delete that ends in `LIMIT ?` until it removes fewer than a slice or a pass's slices are used, each slice its own write. */
-  private sliced(sql: string, ...params: string[]): number {
-    let gone = 0;
-    for (let slice = 0; slice < PASS_SLICES; slice += 1) {
-      const done = this.transaction("write", () => this.run(sql, ...params, SLICE).changes);
-      gone += done;
-      if (done < SLICE) break;
     }
     return gone;
   }

@@ -3,7 +3,7 @@ import council from "../../../shared/safety/council.json";
 import type { RoleTraits } from "../../../shared/workflow";
 import type { TurnEvent } from "../../host";
 import { briefFields, quotedCommands, scopeGlobs } from "../../orchestration/brief";
-import { excerpt } from "../../excerpt";
+import { clip, excerpt } from "../../excerpt";
 import { redact } from "../../redact";
 import { CLOSES_WORK, signalOf } from "../../signals";
 import type { MemberCount, MemberState, ReadingRow, SafetyStore } from "../store";
@@ -11,7 +11,6 @@ import { counted, hiFor, levelFor } from "./calibration";
 import type { Chair, Packet } from "./chair";
 import {
   claimsIn,
-  clip,
   loopIn,
   maskOf,
   outsideScope,
@@ -258,7 +257,7 @@ export class Council {
     this.started.delete(seat);
   }
 
-  /** Reads an ended turn; returns what is to be shown with its report, a member's line at a time. */
+  /** Reads an ended turn and returns what is shown with its report; a juror of a member that speaks is waited for, one of a member that only logs runs on its own, up to a cap. */
   async endOfTurn(input: TurnInput): Promise<Finding[]> {
     const wrote = this.started.get(input.seat.id)?.wrote;
     this.started.delete(input.seat.id);
@@ -281,12 +280,10 @@ export class Council {
           const shown = this.log(member, input, reading);
           if (shown) findings.push(shown);
         } else if (this.level(member) > 0) {
-          // a member that speaks is waited for; one that only logs is not
           const settled = await reading().catch((error) => this.failed(member, error));
           const shown = this.log(member, input, settled);
           if (shown) findings.push(shown);
         } else if (this.inFlight < MAX_JURORS_IN_FLIGHT) {
-          // a juror past the cap is never asked: its question is not even sent
           this.inFlight += 1;
           void reading()
             .catch((error) => this.failed(member, error))
@@ -299,7 +296,7 @@ export class Council {
     return findings;
   }
 
-  /** Reads a running turn for loops and silence; returns what is to be mailed now. */
+  /** Reads a running turn for loops and silence; returns what is to be mailed now, logging only a finding not yet logged. */
   whileRunning(seat: CouncilSeat, events: readonly TurnEvent[]): Finding[] {
     if (!this.on || !this.watches("stuck", seat.traits)) return [];
     const quiet = quietMinutes(events, this.now());
@@ -314,7 +311,6 @@ export class Council {
             evidence: { quietMinutes: Math.round(quiet) },
           }
         : null);
-    // a running turn is logged only for a finding not yet logged: the turn's end logs the turn
     if (!reading || this.deps.store().readBefore(seat.id, "stuck", reading.fingerprint!)) return [];
     const shown = this.log("stuck", { seat, turn: null, events, text: "", brief: null, verdicts: [] }, reading, true);
     return shown ? [shown] : [];
@@ -379,7 +375,6 @@ export class Council {
     const labels = counted(store.labelsOf(member, shipped.version, LABELS_READ));
     const total = store.labelCount(member, shipped.version);
     const held = this.state(member);
-    // only a member that may send a hand-in back reaches the level that does
     const reach = "sendsBack" in shipped && shipped.sendsBack ? SEND_BACK_LEVEL : SEND_BACK_LEVEL - 1;
     const level = Math.min(levelFor(labels, held?.level ?? 0), reach);
     const shippedHi = "hi" in shipped ? shipped.hi : null;
@@ -403,7 +398,7 @@ export class Council {
     return { tier: "juror", zone: "skipped", evidence: { error: String(error).slice(0, 200) } };
   }
 
-  /** Logs a reading; returns it as a finding when it is found, new, and its member speaks; it is shown once its line or its mail reaches the seat above (`shown`). */
+  /** Logs a reading; returns it as a finding when it is found, new, and its member speaks, its line numbered so the seat above can label it; `shown` is set once the line or mail reaches that seat. */
   private log(member: MemberName, input: TurnInput, reading: Reading, mailed = false): Finding | null {
     const level = this.level(member);
     const store = this.deps.store();
@@ -429,7 +424,6 @@ export class Council {
       evidence: reading.evidence === undefined ? null : JSON.stringify(reading.evidence),
     });
     this.appealIfWarranted(member, input, reading, level, id);
-    // the number lets the seat above say whether the finding was right
     return shows ? { id, member, level, line: reading.line!.replace(/^(\w+):/, `$1 #${id}:`) } : null;
   }
 
@@ -597,9 +591,8 @@ export class Council {
     ];
   }
 
-  /** The files a turn changed are held to its write scope; a juror is asked whether the work touched a non-goal. */
+  /** The files a turn changed, by git or else by its tool calls, are held to its write scope; a juror is asked whether the work touched a non-goal. */
   private readScope(input: TurnInput, fields: BriefFields): Pending[] {
-    // git sees every change, a shell's included; the tool calls are what is left without it
     const changed = input.changed ?? turnFacts(input.events, []).changed;
     if (changed.length === 0) return [{ tier: "fact", zone: "skipped" }];
     const out: Pending[] = [];

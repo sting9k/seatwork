@@ -23,7 +23,6 @@ const TABLE = {
       other: tier(["codex-peer/astra"], "a second family"),
     },
   },
-  lens: { tiers: {} },
   modes: {},
 } as unknown as Models;
 

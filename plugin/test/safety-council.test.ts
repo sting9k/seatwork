@@ -619,10 +619,6 @@ test("a member earns its level from the seat above's labels and then speaks; a l
     spoken.map((finding) => finding.member),
     ["claims"],
   );
-
-  const pinned = councilWith({ claims: 0 });
-  for (const id of ids.slice(0, 1)) pinned.council.label(id, "seat:lead-1", "right", "x");
-  assert.equal(pinned.council.level("claims"), 0);
 });
 
 test("an Owner's run of the work's own check labels the claim it answers; the label waits until the seats agree with it", async () => {

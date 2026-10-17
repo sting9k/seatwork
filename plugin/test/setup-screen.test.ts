@@ -11,7 +11,7 @@ import {
   symlinkSync,
   writeFileSync,
 } from "node:fs";
-import { dirname, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { after, before, test } from "node:test";
 import contribute from "../index.server";
 import { fakeServer } from "./support/server";
@@ -21,16 +21,19 @@ const { call } = paseoSide;
 const output = { log: console.log, error: console.error };
 let dispose: () => Promise<void>;
 
-/** A daemon as the setup screen meets it: its config, its harnesses, its workspaces and its open agents. */
 const daemon = {
   config: {
     providers: { "my-own": { extends: "claude" } } as Record<string, unknown>,
     agentProfiles: [{ id: "mine" }] as { id: string }[],
-    mcp: { enabled: true },
+    // the owner's own switches, before the room sets its own
+    mcp: { enabled: true, injectIntoAgents: false } as Record<string, boolean>,
+    browserTools: { enabled: true },
+    enableTerminalAgentHooks: true,
     plugins: { seatwork: { path: PLUGIN_DIR } } as Record<string, { path: string }>,
   },
   workspaces: [] as string[],
   open: [] as { id: string; provider: string; title: string }[],
+  archived: [] as Record<string, unknown>[],
   patches: [] as object[],
   refuses: "",
 };
@@ -42,12 +45,19 @@ const paseo = {
       providers?: Record<string, unknown>;
       removeProviders?: string[];
       agentProfiles?: { id: string }[];
+      mcp?: Record<string, boolean>;
+      browserTools?: { enabled: boolean };
+      enableTerminalAgentHooks?: boolean;
     }) => {
       daemon.patches.push(patch);
       if (daemon.refuses) throw new Error(daemon.refuses);
       for (const id of patch.removeProviders ?? []) delete daemon.config.providers[id];
       Object.assign(daemon.config.providers, patch.providers ?? {});
       if (patch.agentProfiles) daemon.config.agentProfiles = patch.agentProfiles;
+      if (patch.mcp) Object.assign(daemon.config.mcp, patch.mcp);
+      if (patch.browserTools) daemon.config.browserTools = patch.browserTools;
+      if (patch.enableTerminalAgentHooks !== undefined)
+        daemon.config.enableTerminalAgentHooks = patch.enableTerminalAgentHooks;
     },
   },
   providers: {
@@ -77,7 +87,11 @@ const paseo = {
     open: async ({ cwd }: { cwd: string }) => void daemon.workspaces.push(cwd),
     archive: async (id: string) => void (daemon.workspaces = daemon.workspaces.filter((dir) => dir !== id)),
   },
-  agents: { list: async () => ({ entries: daemon.open.map((agent) => ({ agent })) }) },
+  agents: {
+    list: async ({ filter }: { filter?: { includeArchived?: boolean } } = {}) => ({
+      entries: [...daemon.open, ...(filter?.includeArchived ? daemon.archived : [])].map((agent) => ({ agent })),
+    }),
+  },
 };
 const context = { paseo };
 const init = (choices: object = {}) =>
@@ -143,6 +157,16 @@ test("a daemon that only downloaded the plugin: nothing is created, a room seat 
     ],
   );
   assert.equal(screen.harnesses[1].why, "codex is not installed");
+});
+
+test("the clean-up runs when the screen asks, room or no room, and says what it cleared", async () => {
+  const aside = `${ROOM_HOME}.removed-20260102-000000`;
+  mkdirSync(aside);
+  const { lines, running } = (await call("rpc room.clean", {}, context)) as { lines: string[]; running: boolean };
+  assert.equal(existsSync(aside), false);
+  assert.equal(running, false);
+  assert.deepEqual(lines.filter((line) => line.includes("removed-20260102-000000")).length, 1, lines.join("\n"));
+  assert.deepEqual(((await call("rpc room.clean", {}, context)) as { lines: string[] }).lines, []);
 });
 
 test("Init sets the room up and starts it without a reload; Apply restarts it on the new choices with its hooks registered once", async () => {
@@ -355,6 +379,15 @@ test("removing the room waits for its seats, then takes it out of Paseo and out 
   assert.ok("claude-hq" in daemon.config.providers && existsSync(join(PROJECT, ".seatwork", "status.md")));
 
   daemon.open = [daemon.open[1]];
+  // the room's archived HQ seat and its Claude session, beside an agent of the owner's in the same folder
+  const hqDir = join(ROOM_HOME, "hq-seatwork");
+  const sessions = join(process.env.CLAUDE_CONFIG_DIR!, "projects", hqDir.replace(/[^A-Za-z0-9]/g, "-"));
+  mkdirSync(sessions, { recursive: true });
+  for (const id of ["hq-session", "own-session"]) writeFileSync(join(sessions, `${id}.jsonl`), "{}\n");
+  daemon.archived = [
+    { id: "z1", provider: "claude-hq", cwd: hqDir, archivedAt: "2026-10-17", persistence: { sessionId: "hq-session" } },
+    { id: "z2", provider: "claude", cwd: hqDir, archivedAt: "2026-10-17", persistence: { sessionId: "own-session" } },
+  ];
   const { removed, movedTo, projects, notes } = (await call("rpc setup.remove", {}, context)) as {
     removed: string[];
     movedTo: string;
@@ -368,6 +401,15 @@ test("removing the room waits for its seats, then takes it out of Paseo and out 
     [existsSync(ROOM_HOME), dirname(movedTo), existsSync(join(movedTo, "room", "models.json"))],
     [false, dirname(ROOM_HOME), true],
   );
+  // the daemon-wide switches the room set are the owner's again
+  assert.deepEqual(
+    [daemon.config.mcp.injectIntoAgents, daemon.config.browserTools.enabled, daemon.config.enableTerminalAgentHooks],
+    [false, true, true],
+  );
+  // the HQ seat's session goes with the room; the owner's own stays; the CLI that deletes the record fails here
+  assert.deepEqual(readdirSync(sessions), ["own-session.jsonl"]);
+  assert.ok(existsSync(join(movedTo, "claude-sessions", hqDir.replace(/[^A-Za-z0-9]/g, "-"), "hq-session.jsonl")));
+  assert.match(notes.join(" "), /Paseo still lists 1 archived seat of the room/);
   // the paseo CLI fails here: the HQ workspace is archived, and the screen is told the project's line stays
   assert.deepEqual(daemon.workspaces, [], "the HQ workspace is still listed in Paseo");
   assert.match(notes.join(" "), /hq-seatwork project is still in Paseo's list/);
@@ -400,6 +442,33 @@ test("removing the room waits for its seats, then takes it out of Paseo and out 
   await assert.rejects(createPeer(), /no room is set up on this daemon/);
   assert.deepEqual(
     paseoSide.names().filter((name) => name.startsWith("on ")),
+    [],
+  );
+});
+
+test("removing the plugin takes the room out of Paseo by itself, and puts its home and what was set aside in the Trash", async () => {
+  const trash =
+    process.platform === "darwin"
+      ? join(process.env.HOME!, ".Trash")
+      : join(process.env.HOME!, ".local", "share", "Trash", "files");
+  mkdirSync(trash, { recursive: true });
+  daemon.archived = [];
+  await init();
+  assert.ok("claude-hq" in daemon.config.providers);
+  daemon.config.plugins = {};
+  await dispose();
+  dispose = async () => {};
+
+  assert.deepEqual([Object.keys(daemon.config.providers), daemon.config.agentProfiles], [["my-own"], [{ id: "mine" }]]);
+  assert.deepEqual(
+    [daemon.config.mcp.injectIntoAgents, daemon.config.browserTools.enabled, daemon.config.enableTerminalAgentHooks],
+    [false, true, true],
+  );
+  assert.equal(existsSync(ROOM_HOME), false);
+  const trashed = readdirSync(trash).filter((name) => name.startsWith(`${basename(ROOM_HOME)}.removed-`));
+  assert.equal(trashed.length, 2, "the home this removal set aside and the one Remove set aside before");
+  assert.deepEqual(
+    readdirSync(dirname(ROOM_HOME)).filter((name) => name.startsWith(`${basename(ROOM_HOME)}.removed-`)),
     [],
   );
 });

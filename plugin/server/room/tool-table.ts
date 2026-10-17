@@ -40,7 +40,7 @@ export function refusedCaller(name: string, role: string | undefined): string | 
 }
 
 /** The value of `choices` a word most likely meant: the same in other case, else the only one within a few edits or starting with it. */
-export function nearest(word: string, choices: readonly string[]): string | null {
+function nearest(word: string, choices: readonly string[]): string | null {
   const lower = word.toLowerCase();
   const same = choices.find((choice) => choice.toLowerCase() === lower);
   if (same) return same;

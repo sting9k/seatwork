@@ -11,7 +11,7 @@ shipSql();
 
 let stores = 0;
 const NOW = new Date("2026-10-14T12:00:00Z");
-const TIMING = { busyTimeoutMs: 5000, flushAfterMs: 60_000 };
+const TIMING = { busyTimeoutMs: 5000 };
 /** schema → api → ui, schema → report; docs and lint stand apart and touch the same file. */
 function sample() {
   let tick = Date.parse("2026-10-14T09:00:00Z");
@@ -45,7 +45,6 @@ test("triage puts first the ready issue that most work rests on, and says why; a
   assert.equal(next(s.work(), NOW)?.id, s.schema);
 
   s.store.claim(s.schema, "peer-a");
-  // in progress it is still worth clearing, and no longer on offer
   assert.equal(triage(s.work(), NOW).recommendations[0].id, s.schema);
   assert.ok([s.docs, s.lint].includes(next(s.work(), NOW)!.id));
   s.store.closeIssue(s.schema, "done in 4f2a91c, npm test 88/88", "lead", {
@@ -58,7 +57,6 @@ test("triage puts first the ready issue that most work rests on, and says why; a
 test("a plan groups what no dependency joins, lists what is ready in each group, and names ready issues whose files collide", () => {
   const s = sample();
   const made = plan(s.work(), NOW);
-  // the track with the highest priority comes first; the rest by id
   assert.deepEqual(
     made.tracks.map((track) => track.items.map((item) => item.id)),
     [[s.schema], ...[[s.docs], [s.lint]].sort((a, b) => a[0].localeCompare(b[0]))],

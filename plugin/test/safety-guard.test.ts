@@ -71,11 +71,9 @@ test("a call a rule holds for runs and is kept: Claude and Codex read nothing, P
     cwd: "/Users/u/proj",
   };
   assert.equal((await safety.answer("codex", patch, "peer")).text, "");
-  assert.deepEqual(
-    JSON.parse(
-      (await safety.answer("opencode", { tool: "shell", input: { command: "rm -rf ~" }, cwd: "/x" }, "peer")).text,
-    ),
-    { block: false, note: null },
+  assert.equal(
+    (await safety.answer("opencode", { tool: "shell", input: { command: "rm -rf ~" }, cwd: "/x" }, "peer")).text,
+    "",
   );
   assert.deepEqual(keptRules(safety.store(), "peer"), [
     "core.git:clean-force",
@@ -91,6 +89,18 @@ test("with the guard off nothing is checked, and a seat still gets the guard's a
   assert.deepEqual(safety.env("peer", "http://x"), { [GATE_ENV.url]: "http://x", [GATE_ENV.seat]: "peer" });
 });
 
+test("what the guard kept reads back as its audit log: the calls each rule held for, then the newest calls", async () => {
+  const { safety } = fresh();
+  assert.deepEqual(safety.guardLines(1, 5), []);
+  await verdictOf(safety, "git reset --hard");
+  await verdictOf(safety, "ls");
+  await verdictOf(safety, "git reset --hard HEAD~1");
+  const [counts, ...newest] = safety.guardLines(1, 5);
+  assert.equal(counts, "guard, last 1 days: core.git:reset-hard 2");
+  assert.equal(newest.length, 2);
+  assert.match(newest[0], /core\.git:reset-hard \(critical\): git reset --hard HEAD~1$/);
+});
+
 test("every statement the safety store runs uses an index", async () => {
   const { safety } = fresh();
   await verdictOf(safety, "git reset --hard");
@@ -103,6 +113,8 @@ test("every statement the safety store runs uses an index", async () => {
     { fingerprint: "f1", rule: "debugger", severity: "block", path: "a.ts", line: 1, text: "debugger" },
   ]);
   store.acknowledge("peer", "f1", "kept on purpose for the demo");
+  store.kept("", 5, "peer");
+  store.keptCounts("");
   store.expire(new Date(0));
   const scans = store.plans().filter(({ plan }) => /\bSCAN (decisions|seats|findings)\b(?! USING)/.test(plan));
   assert.deepEqual(scans, []);
@@ -133,16 +145,11 @@ test("a script the seat wrote after it started is read before it runs, in a repo
   assert.deepEqual(keptRules(safety.store(), "peer"), ["core.filesystem:rm-rf-root-home"]);
 });
 
-test("the guard's gate settings are the policy's, with the packs the project adds", () => {
-  const project = join(ROOM_HOME, "config-project");
-  mkdirSync(join(project, ".seatwork"), { recursive: true });
-  writeFileSync(join(project, ".seatwork", "safety.json"), JSON.stringify({ packs: { add: ["strict_git"] } }));
-  const place = { home: HOME, project, tmp: null, start: null, guard: null, roomFolder: ".seatwork" };
-  const plain = fresh({ packs: { add: ["containers"] } }).safety.guard.gateConfig({ ...place, project: null });
+test("the guard's gate settings are the policy's", () => {
+  const plain = fresh({ packs: { add: ["containers"] } }).safety.guard.gateConfig();
   assert.deepEqual([plain.packs.has("strict_git"), plain.packs.has("containers")], [false, true]);
   assert.deepEqual([plain.budgetMs, plain.maxBytes], [1000, 65536]);
-  const set = fresh({ packs: { add: ["containers"] }, budgetMs: 300, maxBytes: 4096 }).safety.guard.gateConfig(place);
-  assert.deepEqual([set.packs.has("strict_git"), set.packs.has("containers")], [true, true]);
+  const set = fresh({ packs: { add: ["containers"] }, budgetMs: 300, maxBytes: 4096 }).safety.guard.gateConfig();
   assert.deepEqual([set.budgetMs, set.maxBytes], [300, 4096]);
 });
 

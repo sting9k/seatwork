@@ -14,6 +14,7 @@ const fs = require("node:fs");
 const { tmpdir } = require("node:os");
 const { join, resolve } = require("node:path");
 const { grade } = require("./graders.cjs");
+const { dropOldResults } = require("./keep.cjs");
 
 const EVALS = __dirname;
 const MODELS = JSON.parse(fs.readFileSync(resolve(EVALS, "..", "plugin", "room", "models.json"), "utf8"));
@@ -180,6 +181,7 @@ async function main() {
     throw new Error(
       `${runs.length} runs on real agent CLIs cost money: add --spend once the owner has said so, or use --harness script`,
     );
+  for (const gone of dropOldResults(join(EVALS, "results"))) console.log(`old results deleted: ${gone}`);
   const results = [];
   const queue = [...runs];
   const jobs = Math.max(1, Number(args.jobs ?? 2));

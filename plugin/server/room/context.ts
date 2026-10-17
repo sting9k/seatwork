@@ -4,7 +4,7 @@ import type { Host, LiveSeat, SeatUsage } from "../host";
 import type { Jev } from "../jev/index";
 import type { Forks } from "../orchestration/forks";
 import type { Knowledge } from "../knowledge/index";
-import { clip } from "../orchestration/forks";
+
 import type { Operations } from "../operations/index";
 import type { Recovery } from "../orchestration/recovery";
 import type { ReviewGate } from "../orchestration/review-gate";
@@ -17,6 +17,8 @@ import type { OwedList } from "./status";
 import type { Lapsed, Seating } from "../tasks/store";
 import type { WorkStores } from "../tasks/stores";
 import type { Callers } from "./callers";
+import { ROOM_SENDER } from "../coordination/address";
+import { clip } from "../excerpt";
 
 /** What the parts of a running room share: the districts, the app, and per seat its mail up this turn, last signal, last usage and brief. */
 export interface RoomContext {
@@ -135,4 +137,4 @@ export async function sweepLeases(room: RoomContext): Promise<void> {
   }
 }
 
-export const fromRoom = { agentId: "room", role: "system" } as const;
+export const fromRoom = ROOM_SENDER;

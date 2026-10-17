@@ -14,6 +14,7 @@ import {
 } from "./registry";
 import { rolesWhere } from "../../shared/workflow";
 import { enabledSeats } from "./seats";
+import { ROOM_FOLDER } from "../paths";
 
 /** Registering projects with the room: the registry, each project's marker, mission and own model table. */
 
@@ -37,8 +38,8 @@ function slug(name: string): string {
 }
 
 function writeMarker(root: string, content: Record<string, unknown>): void {
-  mkdirSync(join(root, ".seatwork"), { recursive: true });
-  writeFileSync(join(root, ".seatwork", "room.json"), `${JSON.stringify(content, null, 2)}\n`);
+  mkdirSync(join(root, ROOM_FOLDER), { recursive: true });
+  writeFileSync(join(root, ROOM_FOLDER, "room.json"), `${JSON.stringify(content, null, 2)}\n`);
 }
 
 /** The projects of the registry file as written. */
@@ -46,7 +47,7 @@ function registryEntries(raw: Record<string, unknown>): ProjectEntry[] {
   return (Array.isArray(raw.projects) ? raw.projects : []) as ProjectEntry[];
 }
 
-/** Writes a project's own model table, or takes it out; returns the seats set up for it. */
+/** Writes a project's own model table, or takes it out; returns the seats set up for it; the table is checked before it is written, since one naming a seat the room lacks would refuse every seat. */
 async function writeModels(
   root: string,
   models: unknown,
@@ -63,7 +64,6 @@ async function writeModels(
   }
   const added = missingSeats(models, enabledProviders(), "models");
   if (added.length) await setUpSeats(added);
-  // checked before it is written: a table naming a seat the room lacks would refuse every seat
   projectModels(models, enabledProviders(), "models");
   writeMarker(root, { ...content, models });
   return added;
@@ -136,7 +136,7 @@ export async function describeProjects(list: ProjectList): Promise<string> {
   return projects
     .map((p) => {
       const entry = registry?.projects.find((e) => e.cwd === p.path);
-      const has = (file: string) => (existsSync(join(p.path, ".seatwork", file)) ? "yes" : "no");
+      const has = (file: string) => (existsSync(join(p.path, ROOM_FOLDER, file)) ? "yes" : "no");
       const law = readLaw(p.path, entry?.name ?? slug(p.name)) ? "yes" : "no";
       return `${entry ? `registered as ${entry.name}` : "NOT registered"} | ${p.name} | ${p.path} | mission: ${has("mission.md")} | law: ${law} | ${modelsLine(p.path)}`;
     })
@@ -152,7 +152,7 @@ function claimOf(entries: readonly ProjectEntry[], name: string, path: string): 
   return { known };
 }
 
-/** Registers a project the app knows (marker, mission, law, own table, registry line), repeatably; the registry is read and written in one step so concurrent registrations all stay. */
+/** Registers a project the app knows (marker, mission, law, own table, registry line), repeatably; a name clash is refused before anything is written, and the registry is read and written in one step so concurrent registrations all stay. */
 export async function registerProject(
   list: ProjectList,
   args: { path: string; name?: string; mission?: string; law?: string; models?: unknown },
@@ -164,10 +164,9 @@ export async function registerProject(
     throw new Error(`${args.path} is not a project in Paseo (or is the room's own); it has to be added to Paseo first`);
   const name = slug(args.name?.trim() || project.name);
   if (!name) throw new Error("give a name made of letters, digits or dashes");
-  // a clash leaves nothing written
   claimOf(registryEntries(readRegistryFile()), name, project.path);
 
-  const seatwork = join(project.path, ".seatwork");
+  const seatwork = join(project.path, ROOM_FOLDER);
   const added = args.models !== undefined ? await writeModels(project.path, args.models, setUpSeats) : [];
   if (!existsSync(join(seatwork, "room.json"))) writeMarker(project.path, {});
   const mission = args.mission?.trim();

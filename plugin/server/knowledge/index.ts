@@ -11,6 +11,7 @@ import { KnowledgeRefused } from "./refused";
 import { isoTime } from "./lint";
 import { ftsQueries, fuse, pack, QUERY_CHARS } from "./search";
 import { KnowledgeStore, type Decision, type Filters, type Found, type Source, type SourceWords } from "./store";
+import { ROOM_FOLDER } from "../paths";
 
 /** The Knowledge district: the room's record of turns and mail, and its decisions, for seats to search and be told. */
 
@@ -23,7 +24,7 @@ export interface KnowledgePolicy {
 }
 
 /** What the district takes from the room: its seats, projects, mail and tasks, and the decision model. */
-export interface KnowledgeDeps {
+interface KnowledgeDeps {
   roomDir: string;
   policy(): KnowledgePolicy | undefined;
   projectOf(agentId: string): string | null;
@@ -44,7 +45,7 @@ export interface KnowledgeDeps {
 }
 
 /** A seat's turn as it ends: whose, how it ended, and what it did. */
-export interface EndedTurn {
+interface EndedTurn {
   agent: string;
   parentId: string | null;
   role: string;
@@ -55,12 +56,12 @@ export interface EndedTurn {
 }
 
 /** What a seat that takes another's place is given: lines for its prompt, and the decisions they already told. */
-export interface Inheritance {
+interface Inheritance {
   lines: string[];
   shown: { note: string; version: number }[];
 }
 
-const PROJECT_DIR = join(".seatwork", ".knowledge");
+const PROJECT_DIR = join(ROOM_FOLDER, ".knowledge");
 
 const MAIL = { batch: 500, batches: 5, chars: 20_000 } as const;
 const SEARCH = { pool: 50, limit: 10, most: 50, phrases: 4 } as const;
@@ -382,7 +383,6 @@ export class Knowledge {
   noticesFor(agent: string): { text: string; told(): void } | null {
     if (!this.on) return null;
     const now = this.now().getTime();
-    // a notice already on its way is not made again until it is told, or until it is surely lost
     const flight = this.telling.get(agent);
     if (flight && !flight.lost && now - flight.at < TELLING_MS) return null;
     try {

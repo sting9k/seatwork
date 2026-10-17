@@ -2,12 +2,12 @@ import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { basename, join } from "node:path";
 import config from "../../shared/mail.json";
-import { REGISTRY_LOG, ROOM_HOME } from "../paths";
+import { REGISTRY_LOG, ROOM_FOLDER, ROOM_HOME } from "../paths";
 import { writeJson } from "../persisted";
 import type { MailPolicy, MidTurnDelivery } from "../policy";
 import { inRoom, maySpawn, SPAWN } from "../../shared/workflow";
 import { ANSWERS, subjectOpening } from "../signals";
-import { MailError, mayWrite, type Directory, type SeatRecord } from "./address";
+import { type Directory, MailError, mayWrite, ROOM_SENDER, type SeatRecord } from "./address";
 import {
   appendThread,
   countFiles,
@@ -87,7 +87,7 @@ export interface EngineOptions extends Partial<MailLimits> {
 }
 
 /** `idle` is any seat a message starts a turn in: at rest, closed, or after a failed turn. */
-export type Status = "idle" | "running" | "permission" | "unknown" | "gone";
+type Status = "idle" | "running" | "permission" | "unknown" | "gone";
 
 /** What mail needs from the app that runs the seats: a seat's status, a text sent to it (a turn on it at rest; `interrupt` ends a running turn first, else it steers; the same `id` again arrives once), its parent moved. */
 interface MailHost {
@@ -96,7 +96,7 @@ interface MailHost {
   reparent(child: string, parent: string): Promise<void>;
 }
 
-const MAIL_DIR = join(".seatwork", ".mail");
+const MAIL_DIR = join(ROOM_FOLDER, ".mail");
 export const ROOM_MAIL = join(ROOM_HOME, "mail");
 const ADOPTIONS_FILE = join(ROOM_MAIL, "adoptions.json");
 const DEFAULTS: MailLimits = {
@@ -218,7 +218,6 @@ export class MailEngine implements Directory {
   /** What a store just opened gets: its mail back from the files when it lost its file, reports taken by a stopped process kept again, a check against the files. */
   private settleOpening(store: MailStore, dir: string, fresh: boolean, since: string): void {
     this.unwell.delete(dir);
-    // a store that lost its file, or was set aside as damaged, gets its mail and its wake-ups back from their files
     if ((fresh || store.startedOver) && store.count() === 0) {
       const archived = readArchive(dir);
       if (archived.length > 0) {
@@ -233,7 +232,6 @@ export class MailEngine implements Directory {
       const woken = store.restoreWakeUps();
       if (woken > 0) this.log(`mail: ${woken} wake-ups of ${dir} read back from their copy`);
     }
-    // a report taken to go out by a process that stopped is posted by the next sweep
     const taken = store.keepTaken();
     if (taken > 0) this.log(`mail: ${taken} reports taken to go out when the room stopped are kept for the next pass`);
     const files = countFiles(dir);
@@ -347,7 +345,7 @@ export class MailEngine implements Directory {
       }
   }
 
-  /** Closes every store. */
+  /** Closes every open store; a later call opens it again. */
   close(): void {
     for (const store of this.stores.values()) store.close();
     this.stores.clear();
@@ -396,7 +394,7 @@ export class MailEngine implements Directory {
     this.roots.delete(seat.agentId);
   }
 
-  /** A registered seat's record. */
+  /** A registered seat's record; undefined for an id the room never registered or has forgotten. */
   seat(agentId: string): SeatRecord | undefined {
     return this.seats.get(agentId);
   }
@@ -644,7 +642,7 @@ export class MailEngine implements Directory {
 
   /** A mail that answers one: the ask it names; else, of its recipient's open asks, the one `chooseAsk` picks or the oldest. */
   private async settle(store: MailStore, mail: Mail, to: readonly string[]): Promise<void> {
-    if (mail.senderRole === "system") return;
+    if (mail.senderRole === ROOM_SENDER.role) return;
     if (mail.replyTo) {
       if (store.deliveries(mail.replyTo).some((to) => to.seat === mail.sender && to.kind === "to"))
         store.answer(mail.replyTo, mail.id);
@@ -673,13 +671,11 @@ export class MailEngine implements Directory {
     const dir = this.folderOf(to[0]);
     let mail: Mail;
     if (input.id !== undefined) {
-      // a report kept for its sender's turn end: it goes out as it stands now
       store.revise(input.id, { body: input.body, why: input.why ?? "" });
       store.revive(input.id, to[0]);
       store.hold(input.id, to[0], input.round ?? null, input.heldUntil ?? null);
       mail = this.heldBy(store, input.id, to[0])!;
     } else mail = this.write(store, input, "queued");
-    // the last report of a round is in: the reports held for it go out with it
     if (input.round && !heldAt(input, this.now().getTime())) store.release(to[0], input.round);
     this.file(store, dir, mail.id);
     await this.settle(store, mail, to);
@@ -749,7 +745,7 @@ export class MailEngine implements Directory {
     this.paused.add(agentId);
   }
 
-  /** The seat takes mail again. */
+  /** Ends `pause`: the seat takes its waiting mail at its next delivery pass. */
   unpause(agentId: string): void {
     this.paused.delete(agentId);
   }
@@ -833,11 +829,11 @@ export class MailEngine implements Directory {
     );
     const who = this.seats.get(agentId);
     for (const mail of queue) {
-      if (mail.kind !== "to" || mail.senderRole === "system" || !this.seats.has(mail.sender)) continue;
+      if (mail.kind !== "to" || mail.senderRole === ROOM_SENDER.role || !this.seats.has(mail.sender)) continue;
       // a sender that waited must learn no answer will come; one that asked nothing reads it later
       const waited = mail.needs !== "nothing";
       await this.post({
-        from: { agentId: "room", role: "system" },
+        from: ROOM_SENDER,
         to: mail.sender,
         priority: waited ? "action" : "fyi",
         subject: `UNDELIVERABLE: #${mail.id} re: ${mail.subject}`.slice(0, config.subjectChars),
@@ -880,8 +876,7 @@ export class MailEngine implements Directory {
         // quiet mail starts no turn; it goes out with the first mail that does
         send = ready.some((mail) => !mail.quiet) ? ready : [];
       } else {
-        // running: only harnesses whose steer waits for the current tool call get mail mid-turn
-        // a seat is the provider <agent CLI>-<role>: how its CLI takes mail mid-turn is its own
+        // running: only a CLI whose steer waits for the current tool call gets mail mid-turn; a seat's provider is `<agent CLI>-<role>`
         const provider = this.seats.get(agentId)?.provider ?? "";
         const midTurn: Partial<Record<string, MidTurnDelivery>> = this.policy.midTurn;
         const mode = midTurn[provider.split("-")[0]] ?? "hold";
@@ -1013,7 +1008,7 @@ export class MailEngine implements Directory {
     }
   }
 
-  /** Sends the due wake-ups of a store, the oldest first and at most `turnsPerPass` of them, so a crowd set for one minute does not start a crowd of turns: each a WAKE mail, or dropped with a seat that is gone. The copy beside the store is written once for the pass. */
+  /** Sends a store's due wake-ups as WAKE mails, oldest first and at most `turnsPerPass`, so a crowd set for one minute starts no crowd of turns; a gone seat's are dropped; the store's copy is written once. */
   private async fireDue(store: MailStore): Promise<void> {
     const states = new Map<string, Status>();
     let started = 0;
@@ -1037,7 +1032,7 @@ export class MailEngine implements Directory {
           if (started >= config.wake.turnsPerPass) return;
           started += 1;
           await this.post({
-            from: { agentId: "room", role: "system" },
+            from: ROOM_SENDER,
             to: wake.seat,
             priority: "action",
             subject: wakeSubject(wake.note),

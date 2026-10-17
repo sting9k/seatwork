@@ -2,7 +2,7 @@ import { REVIEW_STALL, routeOpen, traits } from "../../shared/workflow";
 import type { Mail, NewMail, Needs, Priority, SeatRecord } from "../coordination/engine";
 import type { TurnEvent, TurnOutcome } from "../host";
 import { contextFell } from "../orchestration/compaction";
-import { clip } from "../orchestration/forks";
+
 import { classify, type FailureKind } from "../orchestration/recovery";
 import { nextTitle, parseHandoff, rotate } from "../orchestration/rotation";
 import { familyOf } from "../orchestration/models";
@@ -15,7 +15,8 @@ import type { Finding } from "../safety/council/council";
 import { errorText, fromRoom, releaseWork, taskOf, type RoomContext } from "./context";
 import { councilLine, councilRead } from "./council";
 import { fitAt, stepUpAt } from "./launch";
-import { excerpt } from "../excerpt";
+import { clip, excerpt } from "../excerpt";
+import { ROOM_SENDER } from "../coordination/address";
 
 /** The end of a seat's turn: its report goes up, a hand-in may be sent back, a review round is held, a rotation is answered. */
 
@@ -54,7 +55,7 @@ const ALIKE_SHARE = 0.6;
 function askedNothing(wake: readonly Mail[]): boolean {
   return (
     wake.length > 0 &&
-    wake.every((mail) => mail.needs === "nothing" && (mail.priority === "fyi" || mail.senderRole === "system"))
+    wake.every((mail) => mail.needs === "nothing" && (mail.priority === "fyi" || mail.senderRole === ROOM_SENDER.role))
   );
 }
 
@@ -445,19 +446,16 @@ export async function turnEnded(room: RoomContext, end: TurnEnd): Promise<void> 
           nothingNew: await nothingNew(room, end, wake, kept, mailed),
         })
       : null;
-  // a writing seat's candidate goes back to it once, for a pass with fresh eyes, before its Owner reads it
   const handIn = kept ?? report;
   const candidate =
     traits(role).writes === true &&
     outcome.kind === "completed" &&
     !!handIn &&
     subjectSignal(handIn.subject) === "CANDIDATE";
-  const rereads = candidate && room.policy.room.handin?.freshEyes === true && room.rounds.owesFreshEyes(task);
+  const rereads = candidate && room.policy.room.handin.freshEyes && room.rounds.owesFreshEyes(task);
   if (rereads) kept = report = null;
-  // the room reads a writing seat's candidate first; a blocking finding sends it back
   const check = candidate && !rereads ? await checkHandIn(room, id) : null;
   const sendBack = check?.state === "blocked" && room.safety.handInBlocks;
-  // the council reads the turn; a member that has earned it speaks under the report, or to the seat above
   const findings = role && !canceled ? await findingsOf(room, end, role, task) : [];
   if (sendBack) kept = report = null;
   const up = kept ?? report;
@@ -496,10 +494,8 @@ export async function turnEnded(room: RoomContext, end: TurnEnd): Promise<void> 
       why: "the room reads a candidate before its Owner does",
     });
   await mailCouncil(room, findings, reportsTo, seat.title ?? id);
-  // held mail may now start the next turn
   await eng.deliver(id);
   if (!reportsTo) return;
-  // a newer report takes the place of this seat's progress report that still waits unread
   if (kept || report) eng.dropProgress(id, reportsTo);
   // the report the seat mailed before its turn ended goes out now, however the turn ended
   if (kept) await eng.postReport({ ...kept, to: reportsTo });

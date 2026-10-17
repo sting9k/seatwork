@@ -3,7 +3,7 @@ import type { Delivery, Message } from "./store";
 /** What a seat reads of a mail: one tagged block per mail, and one line per mail in a list. */
 
 /** `from`: the sender as this reader sees it; `chars`: how much of the body is shown. */
-export interface Shown {
+interface Shown {
   message: Message;
   delivery?: Pick<Delivery, "kind" | "state" | "quiet">;
   from: string;

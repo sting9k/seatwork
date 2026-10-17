@@ -5,7 +5,7 @@ import { planRoom, type Catalog, type RoomPlan, type Setup } from "./plan";
 import { readSetup, stampVersion, writeRoomHome } from "./room-home";
 
 /** What setting the room up reads from and writes to: the plugin folder, the room home, the harness catalogs, the version. */
-export interface RoomSource {
+interface RoomSource {
   pluginDir: string;
   roomHome: string;
   catalog: Catalog;

@@ -35,13 +35,13 @@ export interface Reading {
 }
 
 /** What the gate made of a new decision: kept, with the reading when there was one, or turned away. */
-export type Verdict =
+type Verdict =
   | { kept: true; reading: Reading | null }
   | { kept: false; noise: { label: string; meaning: string } }
   | { kept: false; repeats: number[] };
 
 /** What the gate takes: the decision model, whether the district's gate is on, and a log. */
-export interface GateDeps {
+interface GateDeps {
   judge: Judge | null;
   on(): boolean;
   at(): number | undefined;
@@ -70,7 +70,6 @@ export class Gate {
       store.tally("gate-unread");
       return { kept: true, reading: null };
     }
-    // a threshold the policy sets holds when it is one: from a half up to certainty
     const set = this.deps.at();
     const at = typeof set === "number" && set >= 0.5 && set <= 1 ? set : GATE.at;
     if (!reading.parted && reading.keep < at) {

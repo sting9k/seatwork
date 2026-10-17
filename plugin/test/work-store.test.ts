@@ -2,17 +2,7 @@ import { ROOM_HOME, shipSql } from "./support/room";
 import { fastestInTurns } from "./support/timing";
 import assert from "node:assert/strict";
 import { execFileSync, spawn } from "node:child_process";
-import {
-  chmodSync,
-  copyFileSync,
-  existsSync,
-  mkdirSync,
-  readdirSync,
-  readFileSync,
-  rmSync,
-  statSync,
-  writeFileSync,
-} from "node:fs";
+import { chmodSync, copyFileSync, existsSync, mkdirSync, readdirSync, writeFileSync } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
 import { basename, dirname, join } from "node:path";
 import { test } from "node:test";
@@ -25,7 +15,7 @@ import { work } from "../server/tasks/tools";
 shipSql();
 
 const POLICY = { minReasonChars: 20, forbidSelfClose: true };
-const TIMING = { busyTimeoutMs: 5000, flushAfterMs: 60_000 };
+const TIMING = { busyTimeoutMs: 5000 };
 let stores = 0;
 const stores_ = (name: string) => `${name}-${(stores += 1)}`;
 /** A store of its own, with a clock that moves a second at every reading. */
@@ -46,7 +36,6 @@ test("an issue is ready when nothing is in its way: open blockers, open children
   const note = store.create({ title: "typo in README", priority: 3, deps: [{ type: "related", id: api.id }] }, "lead");
   assert.match(schema.id, /^sw-[0-9a-z]{3}$/);
   assert.equal(child.id, `${epic.id}.1`);
-  // the highest priority that is free comes first; a related issue holds nothing back
   assert.deepEqual(
     store.ready().map((issue) => issue.title),
     ["schema", "typo in README"],
@@ -56,7 +45,6 @@ test("an issue is ready when nothing is in its way: open blockers, open children
   assert.deepEqual(store.blockers(child.id), [`${epic.id}:parent-blocked`]);
 
   store.claim(schema.id, "peer-a");
-  // an issue in progress still blocks, and is no longer on offer
   assert.deepEqual(
     store.ready().map((issue) => issue.title),
     ["typo in README"],
@@ -136,19 +124,6 @@ test("a seat that is gone holds nothing: its work is open again, or its successo
     store.events(one.id, 3).map((event) => event.event_type),
     ["assignee_changed", "assignee_changed", "commented"],
   );
-  // the text copy follows a burst of writes, and a new store on the same folder finds everything
-  store.flush();
-  const lines = readFileSync(join(dir, "issues.jsonl"), "utf8")
-    .trim()
-    .split("\n")
-    .map((line) => JSON.parse(line));
-  assert.deepEqual(
-    lines.map((line) => [line.title, line.priority, line.write_scope]),
-    [
-      ["one", 0, "src/store.js"],
-      ["two", 2, ""],
-    ],
-  );
   store.close();
   assert.equal(new WorkStore(dir, TIMING).count(), 2);
 });
@@ -214,7 +189,7 @@ test("eight processes claim one issue at once: one wins, seven are told who hold
   assert.deepEqual([after.get(issue.id).assignee, after.get(issue.id).status], [winners[0].won, "in_progress"]);
 });
 
-test("six processes write a new store at once: every issue is there once, and the text copy is whole", async () => {
+test("six processes write a new store at once: every issue is there once", async () => {
   const dir = join(ROOM_HOME, `work-test-${(stores += 1)}`);
   const results = await Promise.all(Array.from({ length: 6 }, (_, i) => inProcess(dir, ["create", "40", `seat-${i}`])));
   const made = results.flatMap((result) => result.made ?? []);
@@ -222,40 +197,6 @@ test("six processes write a new store at once: every issue is there once, and th
   assert.equal(new Set(made).size, 240);
   const store = new WorkStore(dir, TIMING);
   assert.equal(store.count(), 240);
-  store.flush();
-  const lines = readFileSync(join(dir, "issues.jsonl"), "utf8").trim().split("\n");
-  assert.equal(lines.length, 240);
-  assert.doesNotThrow(() => lines.forEach((line) => JSON.parse(line)));
-  assert.deepEqual(
-    readdirSync(dir).filter((name) => name.endsWith(".tmp")),
-    [],
-  );
-});
-
-test("a store whose database is lost or damaged comes back from its text copy, and the damaged file is kept aside", () => {
-  const { store, dir } = fresh();
-  const one = store.create({ title: "one", priority: 1 }, "lead");
-  const two = store.create({ title: "two", deps: [{ id: one.id }] }, "lead");
-  store.claim(one.id, "peer-a");
-  store.comment(one.id, "lead", "keep the v2 reader");
-  store.close();
-  for (const suffix of ["", "-wal", "-shm"]) rmSync(join(dir, `work.db${suffix}`), { force: true });
-  const back = new WorkStore(dir, TIMING);
-  assert.deepEqual([back.count(), back.get(one.id).assignee, back.blockers(two.id)], [2, "peer-a", [one.id]]);
-  assert.deepEqual(
-    back.comments(one.id).comments.map((comment) => comment.text),
-    ["keep the v2 reader"],
-  );
-  assert.equal(back.events(one.id, 1)[0].event_type, "restored");
-  back.close();
-
-  writeFileSync(
-    join(dir, "work.db"),
-    "this is not a database, and it is long enough to be read as one page of something else",
-  );
-  const again = new WorkStore(dir, TIMING);
-  assert.equal(again.count(), 2);
-  assert.equal(readdirSync(dir).filter((name) => name.startsWith("work.db.damaged-")).length, 1);
 });
 
 test("every query the store runs is served by an index, but the whole-store ones named here with their reason", () => {
@@ -321,7 +262,6 @@ test("a plan is written in one go: all of it or none, with issues naming each ot
     [made[0].id, `${made[0].id}.1`, `${made[0].id}.2`],
   );
   assert.deepEqual(store.blockers(made[1].id), [made[2].id]);
-  // a cycle in the batch refuses the whole batch
   refuses("CYCLE_DETECTED", () =>
     store.createMany(
       [
@@ -341,7 +281,7 @@ test("nothing of the store shows in the project's git: its folder keeps itself o
   const store = new WorkStore(join(repo, ".seatwork", ".work"), TIMING);
   store.create({ title: "schema" }, "lead");
   store.close();
-  assert.ok(existsSync(join(repo, ".seatwork", ".work", "issues.jsonl")));
+  assert.ok(existsSync(join(repo, ".seatwork", ".work", "work.db")));
   assert.equal(
     execFileSync("git", ["-C", repo, "status", "--porcelain", "--untracked-files=all"], { encoding: "utf8" }),
     "",
@@ -420,12 +360,10 @@ test("as in br, a blocked parent and an open child hold an issue back from ready
   // the child of a blocked parent may be what frees it: it is started, and closed while the parent waits
   assert.equal(store.claim(child.id, "peer-a").status, "in_progress");
   store.closeIssue(child.id, "done in 4f2a91c, npm test green", "lead", POLICY);
-  // a parent with an open child is started, and closed only once the child is
   assert.equal(store.claim(whole.id, "peer-b").status, "in_progress");
   refuses("CLOSE_INCOMPLETE", () => store.closeIssue(whole.id, "done in 5b3c02d, npm test green", "lead", POLICY));
   store.closeIssue(part.id, "done in 6c4d13e, npm test green", "lead", POLICY);
   assert.equal(store.closeIssue(whole.id, "done in 5b3c02d, npm test green", "lead", POLICY).issue.status, "closed");
-  // a blocker of its own still keeps an issue from being started
   refuses("BLOCKED", () => store.claim(epic.id, "peer-c"));
 });
 
@@ -464,25 +402,9 @@ test(
   },
 );
 
-test("a text copy with a line that is not an issue, or one the layout refuses, gives back the rest", () => {
-  const { store, dir } = fresh();
-  const kept = store.create({ title: "schema" }, "lead");
-  store.close();
-  const copy = join(dir, "issues.jsonl");
-  const whole = JSON.parse(readFileSync(copy, "utf8").trim());
-  const refused = JSON.stringify({ ...whole, id: "sw-refused", priority: 9, issue_type: "saga" });
-  writeFileSync(copy, `${readFileSync(copy, "utf8")}null\n{"id":"sw-bad","title":"x","status":"done"}\n${refused}\n`);
-  for (const suffix of ["", "-wal", "-shm"]) rmSync(join(dir, `work.db${suffix}`), { force: true });
-  const back = new WorkStore(dir, TIMING);
-  assert.deepEqual(
-    back.all().map((issue) => issue.id),
-    [kept.id],
-  );
-});
-
 test("a seat that launches no one closes nothing, and a tool call's numbers and times are checked", () => {
   const { store } = fresh();
-  const rules = { busyTimeoutMs: 5000, flushAfterMs: 60_000, staleClaimMinutes: 120, close: POLICY };
+  const rules = { busyTimeoutMs: 5000, staleClaimMinutes: 120, close: POLICY };
   const peer = { id: "peer-a", owner: false };
   const lead = { id: "lead", owner: true };
   const made = work(store, rules, lead, { do: "create", title: "schema", priority: "0" }) as {
@@ -502,7 +424,7 @@ test("a seat that launches no one closes nothing, and a tool call's numbers and 
 test("a write that finds another process writing is refused as one to try again, and goes through once that write ends", () => {
   const { store: made, dir } = fresh();
   made.close();
-  const store = new WorkStore(dir, { busyTimeoutMs: 50, flushAfterMs: 60_000 });
+  const store = new WorkStore(dir, { busyTimeoutMs: 50 });
   const other = new DatabaseSync(join(dir, "work.db"));
   other.exec("BEGIN IMMEDIATE");
   assert.throws(
@@ -598,16 +520,6 @@ test("what stands in an issue's way is read from its own corner of the graph: te
   );
 });
 
-test("a store opened and closed with no write leaves its text copy as it was", () => {
-  const { store, dir } = fresh();
-  store.create({ title: "schema" }, "lead");
-  store.close();
-  const copy = join(dir, "issues.jsonl");
-  const before = statSync(copy).ino;
-  new WorkStore(dir, TIMING).close();
-  assert.equal(statSync(copy).ino, before);
-});
-
 test("an issue holds at most the characters the vocabulary allows, in every text field, its labels, its notes and a comment", () => {
   const { store } = fresh();
   const most = vocabulary.textChars;
@@ -626,7 +538,7 @@ test("an issue holds at most the characters the vocabulary allows, in every text
 });
 
 test("closed issues past their keep leave the store, with their comments; open work and closed work in a live tree stay", () => {
-  const { store, dir } = fresh();
+  const { store } = fresh();
   const close = (id: string) => store.closeIssue(id, "done in 4f2a91c, tests green", "lead", POLICY, true);
   const old = store.create({ title: "old" }, "lead");
   store.comment(old.id, "lead", "keep the v2 reader");
@@ -655,12 +567,10 @@ test("closed issues past their keep leave the store, with their comments; open w
     ["waits", "open child", "open kid"],
   );
   assert.equal(store.create({ title: "next child", parent: live.id }, "lead").id, `${live.id}.3`);
-  store.flush();
-  assert.equal(readFileSync(join(dir, "issues.jsonl"), "utf8").trim().split("\n").length, store.count());
 });
 
 test("the stores of the projects a room names expire their closed issues; a project with no store is left as it is", () => {
-  const rules = { busyTimeoutMs: 5000, flushAfterMs: 60_000, staleClaimMinutes: 120, close: POLICY };
+  const rules = { busyTimeoutMs: 5000, staleClaimMinutes: 120, close: POLICY };
   const stores = new WorkStores(rules, () => {});
   const [one, two, none] = ["one", "two", "none"].map((name) => join(ROOM_HOME, `expire-${stores_(name)}`));
   for (const root of [one, two]) {
@@ -674,14 +584,6 @@ test("the stores of the projects a room names expire their closed issues; a proj
   assert.equal(stores.of(one).store.count(), 1);
   assert.equal(existsSync(join(none, ".seatwork")), false);
   stores.close();
-});
-
-test("a store whose text copy cannot be written is closed all the same", () => {
-  const { store, dir } = fresh();
-  store.create({ title: "schema" }, "lead");
-  mkdirSync(join(dir, "issues.jsonl", "in-the-way"), { recursive: true });
-  assert.throws(() => store.close());
-  assert.throws(() => store.count(), /not open/);
 });
 
 test("a list counts the issues that match only when its page is full", () => {
@@ -729,7 +631,7 @@ test("a list of the issues with no filter, or of one status, is read in index or
 
 test("a call to show returns the newest few comments with a count of the rest, and comments pages back through them", () => {
   const { store } = fresh();
-  const rules = { busyTimeoutMs: 5000, flushAfterMs: 60_000, staleClaimMinutes: 120, close: POLICY };
+  const rules = { busyTimeoutMs: 5000, staleClaimMinutes: 120, close: POLICY };
   const lead = { id: "lead", owner: true };
   const issue = store.create({ title: "schema" }, "lead");
   type Shown = { comments: { text: string }[]; older_comments?: number };

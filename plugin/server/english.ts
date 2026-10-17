@@ -11,9 +11,8 @@ const VIETNAMESE = new Set(
 );
 const UNACCENTED = { least: 2, share: 0.25 };
 
-/** Why a text is not English, or null when it is: a letter outside basic Latin, or Vietnamese typed without accents. */
+/** Why a text is not English, or null when it is: a letter outside basic Latin, or Vietnamese typed without accents; letters split from their marks (NFD) are read joined, as a person typed them. */
 export function notEnglish(text: string): string | null {
-  // letters split from their marks (NFD) are read joined, as a person typed them
   const plain = text.normalize("NFC").replace(TYPOGRAPHY, " ");
   const letter = plain.match(FOREIGN_LETTER);
   if (letter) return `has the letter "${letter[0]}"`;

@@ -645,7 +645,6 @@ test("no person's words, no decision; words of an earlier turn carry a decision 
   );
   assert.equal((ask(knowledge, "hq-2", { do: "list" }).inForce as string[]).length, 0);
 
-  // a command typed to the seat's program is no person's words
   knowledge.turnStarted("hq-2");
   await decide(knowledge, "hq-2", { scope: "room", topic: "squash", statement: "Squash every merge." });
   endTurn(knowledge, "hq-2", [{ kind: "prompt", text: "/compact" }], "t1b");
@@ -1600,7 +1599,6 @@ test("a seat that replaces another is given the decisions in force for the task 
   knowledge.opened("lead-new", null);
   knowledge.inherited("lead-new", kit);
   assert.equal(knowledge.noticesFor("lead-new"), null, "the decisions its prompt held are not news");
-  // a decision made after the kit was made is still news to the successor
   await decide(knowledge, "lead-old", { topic: "queue", statement: "Run the queue in one process." });
   assert.match(knowledge.noticesFor("lead-new")!.text, /New decision: \[task T-1\] queue: Run the queue/);
   knowledge.close();
@@ -1627,7 +1625,7 @@ test("what a successor is given about its task has a size; with nothing to give,
   off.knowledge.close();
 });
 
-/** A district with a project decision in force and a seat that started on a brief, as after its first compaction test. */
+/** A district with a project decision in force and a seat that started on a brief, ready to be compacted. */
 async function compactable() {
   const made = district({
     threadsOf: (agent) =>
@@ -1691,7 +1689,6 @@ test("a compaction while a notice is on its way: that notice proves nothing abou
   compactionTurn(knowledge, "c2");
   const onItsWay = knowledge.noticesFor("peer-c")!;
   assert.equal(onItsWay.text, TOLD_AGAIN);
-  // the seat's context was compacted again before the notice was marked told
   compactionTurn(knowledge, "c3");
   onItsWay.told();
   const again = knowledge.noticesFor("peer-c")!;
@@ -1714,13 +1711,6 @@ test("a notice that arrives after a compaction does not stop the next one from b
   assert.equal(knowledge.noticesFor("peer-c"), null, "the second notice is still on its way");
   second.told();
   assert.equal(knowledge.noticesFor("peer-c"), null);
-  knowledge.close();
-});
-
-test("a compaction the room learns of from the seat's reported context is told as one the timeline showed, once", async () => {
-  const { knowledge } = await compactable();
-  knowledge.compacted("peer-c");
-  assert.equal(knowledge.noticesFor("peer-c")!.text, TOLD_AGAIN);
   knowledge.close();
 });
 
@@ -1749,7 +1739,6 @@ test("view and expand hold one answer to a size, leaving out the entries farthes
   assert.match(answer.cut!.note, /30000 characters/);
   assert.match(answer.cut!.note, /do=view[^.]*address[^.]*do=expand[^.]*smaller `around`/);
 
-  // what fits whole comes whole, with nothing said
   const small = ask(knowledge, "peer-w", { do: "expand", address, around: 10 });
   assert.equal((small.entries as unknown[]).length, 21);
   assert.equal("cut" in small, false);

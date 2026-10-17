@@ -1,8 +1,8 @@
+/** Test room support: the throwaway homes test/isolate.cjs made for this process (a run without it would reach the real ones), and the plugin folder whose room files and policy ship into them. */
 import { cpSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { PaseoHost } from "../../server/paseo/host";
 
-/** The throwaway homes test/isolate.cjs made for this process; a test run without it would reach the real ones. */
 const base = process.env.SEATWORK_TEST_BASE;
 if (!base) throw new Error("run the tests with npm test: test/isolate.cjs gives them homes of their own");
 
@@ -12,7 +12,6 @@ export const USER_PI = join(base, "pi");
 export const PROJECT = join(base, "project");
 export const USER_HOME = join(base, "home");
 
-/** The plugin folder: the room files and the policy ship inside it. */
 export const PLUGIN_DIR = join(__dirname, "..", "..");
 
 /** Puts the stores' layout scripts where a store looks for them: they ship with the room files. */

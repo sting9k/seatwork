@@ -43,7 +43,7 @@ async function archive(cwd: string, head: string, to: string): Promise<void> {
     );
 }
 
-/** Builds a control in `to` for the work in `cwd` since `head`: the whole repository, its tests run from `cwd`'s place in it; a string says why there is none. */
+/** Builds a control in `to` for the work in `cwd` since `head`: the whole repository, its tests run from `cwd`'s place in it, its installed dependency folders linked and nothing installed; a string says why there is none. */
 export async function buildControl(cwd: string, head: string, to: string): Promise<Control | string> {
   const changes = await changesSince(cwd, head);
   if (typeof changes === "string") return changes;
@@ -65,7 +65,6 @@ export async function buildControl(cwd: string, head: string, to: string): Promi
         writeFileSync(target, test.text ?? readFileSync(test.file));
       }
     }
-    // the project's installed dependencies serve the copy too: nothing is installed for it
     for (const name of SHARED)
       if (existsSync(join(cwd, name)) && !existsSync(join(here, name))) symlinkSync(join(cwd, name), join(here, name));
   } catch (error) {

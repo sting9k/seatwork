@@ -1,21 +1,11 @@
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { SQL_DIR } from "../paths";
-import { Sqlite, type SqliteFailure } from "../sqlite";
+import { Sqlite } from "../sqlite";
 import type { Answer } from "./contract";
 import { REVERSED } from "./order";
 
 /** The Jev district's log in the room home: what was asked, what was answered, what was read, and the labels that came later. */
-
-/** A decision log that cannot be used: held by another process, or its layout is newer or invalid; `code` says which. */
-class JevStoreError extends Error {
-  constructor(
-    readonly code: SqliteFailure,
-    message: string,
-  ) {
-    super(message);
-  }
-}
 
 /** One call as the log keeps it: who asked, of which provider, what it cost, how long it took, and how it failed. */
 export interface CallRow {
@@ -34,11 +24,10 @@ export interface CallRow {
   suspect?: string | null;
 }
 
-const PRUNE_BATCH = 2000;
 const ANSWERS_READ_MOST = 5000;
 
 /** The district a caller belongs to: the part of its name before the first dot, colon or at sign. */
-export const districtOf = (caller: string): string => caller.split(/[.:@]/, 1)[0] || caller;
+const districtOf = (caller: string): string => caller.split(/[.:@]/, 1)[0] || caller;
 
 /** The number calibration reads: a noul's probability, a choice's confidence, a score. */
 const valueOf = (answer: Answer): number =>
@@ -55,7 +44,6 @@ export class JevStore extends Sqlite {
     super(join(dir, "decisions.db"), {
       busyTimeoutMs,
       scripts: join(SQL_DIR, "jev"),
-      fail: (code, message) => new JevStoreError(code, message),
       name: "the decision log",
       now,
     });
@@ -185,23 +173,13 @@ export class JevStore extends Sqlite {
       "write",
       () => this.run("DELETE FROM states WHERE at < ?", statesBefore.toISOString()).changes,
     );
-    let calls = 0;
-    for (;;) {
-      const gone = this.transaction(
-        "write",
-        () =>
-          this.run(
-            `DELETE FROM calls WHERE id IN (
-               SELECT c.id FROM calls c WHERE c.at < ?
-                 AND NOT EXISTS (SELECT 1 FROM asks a JOIN labels l ON l.ask_id = a.id WHERE a.call_id = c.id)
-               LIMIT ?)`,
-            callsBefore.toISOString(),
-            PRUNE_BATCH,
-          ).changes,
-      );
-      calls += gone;
-      if (gone < PRUNE_BATCH) break;
-    }
+    const calls = this.deleteInSlices(
+      `DELETE FROM calls WHERE id IN (
+         SELECT c.id FROM calls c WHERE c.at < ?
+           AND NOT EXISTS (SELECT 1 FROM asks a JOIN labels l ON l.ask_id = a.id WHERE a.call_id = c.id)
+         LIMIT ?)`,
+      [callsBefore.toISOString()],
+    );
     this.transaction("write", () =>
       this.run("DELETE FROM spend_daily WHERE day < ?", callsBefore.toISOString().slice(0, 10)),
     );

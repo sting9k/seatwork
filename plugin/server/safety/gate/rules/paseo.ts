@@ -2,7 +2,7 @@ import { baseName } from "../normalize";
 import { literal, type Word } from "../shell";
 import type { Place, Scene } from "../types";
 
-/** The Paseo CLI: any command it names reaches other agents or the daemon, so only a call that names none runs. */
+/** The Paseo CLI: any command it names reaches other agents or the daemon; a call that names none only prints. */
 
 const CLI_PACKAGE = /(^|\/)@getpaseo\/cli\//;
 const LIBRARY = /@getpaseo\/[\w.-]+/;

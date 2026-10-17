@@ -1,5 +1,6 @@
 import type { SeatState as Liveness } from "../host";
 import { readJson, writeJson } from "../persisted";
+import { ROOM_SENDER } from "../coordination/address";
 
 /** A failed turn: a quota is waited out, a service error tried again, the rest told to the Owner. */
 
@@ -12,7 +13,7 @@ export interface RecoveryPolicy {
 }
 
 /** A resume planned for a seat: when, which try of how many, and the failure it answers. */
-export interface Retry {
+interface Retry {
   agentId: string;
   at: number;
   attempt: number;
@@ -32,12 +33,11 @@ const UNITS: Record<string, number> = { s: 1, m: 60, h: 3600 };
 const MISS_WAIT_MS = 60_000;
 const MISS_WAIT_MAX_MS = 30 * 60_000;
 
-/** When a quota message says it lifts, as a time; undefined when it names none the room can read. */
+/** When a quota message says it lifts, as a time; undefined when it names none the room can read; a retry-after past a day of seconds is a timestamp, kept when it falls in the next two days. */
 function liftsAt(message: string, now: number): number | undefined {
   const after = /retry[- ]after:?\s*(\d+)/i.exec(message);
   if (after) {
     const value = Number(after[1]);
-    // more than a day of seconds is a time, not a wait: kept when it falls in the next two days
     if (value <= 86_400) return now + value * 1000;
     const at = value < 1e12 ? value * 1000 : value;
     return at > now && at < now + 2 * 86_400_000 ? at : undefined;
@@ -50,7 +50,6 @@ function liftsAt(message: string, now: number): number | undefined {
   if (clock[3]) hour = (hour % 12) + (clock[3].toLowerCase() === "pm" ? 12 : 0);
   const at = new Date(now);
   at.setHours(hour, Number(clock[2] ?? 0), 0, 0);
-  // a clock time already past today is tomorrow's
   return at.getTime() > now ? at.getTime() : at.getTime() + 24 * 3_600_000;
 }
 
@@ -66,15 +65,14 @@ interface SeatState {
   retry?: Retry;
 }
 
-/** The resumes the room plans for seats whose turn failed, kept on disk across restarts. */
+/** The resumes the room plans for seats whose turn failed, kept on disk across restarts; an unreadable file starts empty, a seat left failed being seen by its Owner's next look. */
 export class Recovery {
   private readonly seats = new Map<string, SeatState>();
 
   constructor(
     private readonly file: string,
-    private readonly policy: RecoveryPolicy | undefined,
+    private readonly policy: RecoveryPolicy,
   ) {
-    // an unreadable list starts empty: a seat left failed is seen by its Owner's next look
     for (const [agentId, state] of Object.entries(readJson<Record<string, SeatState>>(file, {})))
       this.seats.set(agentId, state);
   }
@@ -85,8 +83,6 @@ export class Recovery {
     const found = classify(message, now);
     const kind = read ?? found.kind;
     const lifts = found.liftsAt;
-    // a room home without a recovery policy sends every failure to the Owner
-    if (!this.policy) return { gaveUpAfter: 0, kind };
     const of = this.policy.delaysSeconds.length;
     let at: number | null = null;
     if (kind === "limited") {
@@ -191,7 +187,7 @@ async function resumeOne(recovery: Recovery, mail: Resumes, retry: Retry, now: n
   if (status === "unknown") recovery.postpone(retry, now);
   if (status !== "idle") return;
   await mail.post({
-    from: { agentId: "room", role: "system" },
+    from: ROOM_SENDER,
     to: retry.agentId,
     priority: "action",
     subject: "RESUME: your last turn stopped on the model service, not on your work",

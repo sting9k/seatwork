@@ -8,17 +8,17 @@ import type { PaseoApi } from "./server/paseo/api";
 import { paseoCli } from "./server/paseo/cli";
 import { connect, seatRequest } from "./server/paseo/hooks";
 import { PaseoHost } from "./server/paseo/host";
-import { ensureRoomProject, removeRoomProject } from "./server/paseo/room-project";
+import { ensureRoomProject } from "./server/paseo/room-project";
 import { catalogFrom, harnessStates } from "./server/paseo/setup/catalog";
 import { setupChecks } from "./server/paseo/setup/checks";
 import { addSeats, setUpRoom, sourceOf } from "./server/paseo/setup/init";
-import { applyWithSdk, removeWithSdk, turnBundledSkillsOff } from "./server/paseo/setup/paseo-config";
+import { keepSwitches, leaveAtUninstall, takeRoomOut } from "./server/paseo/setup/leave";
+import { applyWithSdk, turnBundledSkillsOff } from "./server/paseo/setup/paseo-config";
 import { roomModels, type Setup } from "./server/paseo/setup/plan";
-import { keptAt, roomFolders, takeRoomFiles, type ProjectFiles } from "./server/paseo/setup/project-files";
-import { isSetUp, moveRoomHomeAside, readSetup } from "./server/paseo/setup/room-home";
+import { isSetUp, readSetup } from "./server/paseo/setup/room-home";
 import { PASEO_HOME, ROOM_HOME } from "./server/paths";
 import { startRoom, type Room } from "./server/room/room";
-import { roomDecisions, roomStatus, roomWaiting } from "./shared/room";
+import { roomClean, roomDecisions, roomStatus, roomWaiting } from "./shared/room";
 import {
   jevKey,
   jevPlaceSet,
@@ -31,12 +31,11 @@ import {
   setupRemove,
   setupState,
 } from "./shared/setup";
-import { ROOM_PROJECT } from "./shared/workflow";
 
-const VERSION = "0.39.0";
+const VERSION = "0.40.0";
 const PLUGIN_ID = "seatwork";
 
-/** Seatwork on Paseo: the setup screen first; the room once it is set up. */
+/** Seatwork on Paseo: the setup screen first; the room once it is set up, hooked to Paseo's events only while it runs. */
 export default function contribute(server: PluginServerContext) {
   server.registerSettings(roomSettings);
   const host = new PaseoHost();
@@ -49,7 +48,6 @@ export default function contribute(server: PluginServerContext) {
     const plan = await addSeats(await sourceFor(paseo), providers);
     await applyWithSdk(paseo, plan, { daemonPolicy: false });
   };
-  // Paseo's events reach a room only while it runs
   let unhook = () => {};
   const start = (): Room => {
     const started = startRoom({
@@ -71,24 +69,23 @@ export default function contribute(server: PluginServerContext) {
   if (!room)
     console.log(`seatwork ${VERSION}: no room is set up on this daemon; its setup screen is Seatwork, in the sidebar`);
   // the file sweep runs with no room set up too; it trims the seat records only once the daemon says which seats are open
-  const sweepFiles = async () => {
+  const sweepFiles = async (): Promise<string[]> => {
     try {
       const open = await host.live().then(
         (seats) => new Set(seats.keys()),
         () => undefined,
       );
-      const backups = [
-        { dir: PASEO_HOME, prefixes: ["config.json.bak-"], spare: 1 },
-        { dir: ROOM_HOME, prefixes: ["policy.json.unshipped-"], spare: 0 },
-      ];
-      for (const line of collectFiles(ROOM_HOME, backups, new Date(), open)) console.log(`seatwork: gc: ${line}`);
+      const backups = [{ dir: PASEO_HOME, prefixes: ["config.json.bak-"], spare: 1 }];
+      const done = collectFiles(ROOM_HOME, backups, new Date(), open);
+      for (const line of done) console.log(`seatwork: gc: ${line}`);
+      return done;
     } catch (error) {
       console.error("seatwork: gc: the file sweep failed", error);
+      return [`the file sweep failed: ${error instanceof Error ? error.message : String(error)}`];
     }
   };
   void sweepFiles();
   const fileSweep = setInterval(() => void sweepFiles(), 6 * 3_600_000);
-  // setting up, removing and restarting the room happen one at a time
   let busy: Promise<unknown> = Promise.resolve();
   const oneAtATime = <T>(work: () => Promise<T>): Promise<T> => {
     const next = busy.then(work, work);
@@ -121,7 +118,7 @@ export default function contribute(server: PluginServerContext) {
   };
 
   let behind: { why: string; at: number } | null = null;
-  /** Why a room on another version's files refuses something new. */
+  /** The reason a room set up by another version refuses a new seat or project: whose files it holds and why they could not be brought up. */
   const whyRefused = () =>
     `the room's files were set up by ${room?.filesFrom ? `version ${room.filesFrom}` : "an earlier version"} of the plugin and this is ${VERSION}${behind ? `; the plugin could not bring them to ${VERSION}: ${behind.why}` : ""}`;
   /** Brings the room's files to this version after an update, on its saved choices. */
@@ -146,7 +143,6 @@ export default function contribute(server: PluginServerContext) {
     });
   };
 
-  // a room seat starts on this version's files or does not start
   const offCreate = server.before("agent.create", async ({ request }, { paseo }) => {
     const provider = request.config.provider;
     if (!parseSeat(provider)) return;
@@ -157,7 +153,7 @@ export default function contribute(server: PluginServerContext) {
       );
     if (room.filesFrom !== VERSION)
       throw new Error(
-        `seatwork: ${provider} refused: ${whyRefused()}. Press Apply on the Seatwork screen (in the sidebar) or run install.sh, then create the seat again`,
+        `seatwork: ${provider} refused: ${whyRefused()}. Press Apply on the Seatwork screen (in the sidebar), then create the seat again`,
       );
     return seatRequest(room, request);
   });
@@ -170,30 +166,22 @@ export default function contribute(server: PluginServerContext) {
     await bringUp(paseo, false);
     return room ? room.decisions(folder, earlier) : { project: null, inForce: [], pending: [], earlier: 0, closed: [] };
   });
-  server.handle(jevState, async (_input, { paseo }) => {
+  /** The running room for a screen's question about it, brought up to this version first. */
+  const roomFor = async (paseo: PaseoApi): Promise<Room> => {
     await bringUp(paseo, false);
     if (!room) throw new Error("No room is set up on this daemon.");
-    return room.jev();
-  });
-  server.handle(jevKey, async ({ key }, { paseo }) => {
-    await bringUp(paseo, false);
-    if (!room) throw new Error("No room is set up on this daemon.");
-    return room.jevKey(key);
-  });
-  server.handle(jevPlaces, async (_input, { paseo }) => {
-    await bringUp(paseo, false);
-    if (!room) throw new Error("No room is set up on this daemon.");
-    return room.jevPlaces();
-  });
-  server.handle(jevPlaceSet, async ({ id, on }, { paseo }) => {
-    await bringUp(paseo, false);
-    if (!room) throw new Error("No room is set up on this daemon.");
-    return room.jevPlace(id, on);
-  });
-  server.handle(jevTry, async (_input, { paseo }) => {
-    await bringUp(paseo, false);
-    if (!room) throw new Error("No room is set up on this daemon.");
-    return room.jevCheck();
+    return room;
+  };
+  server.handle(jevState, async (_input, { paseo }) => (await roomFor(paseo)).jev());
+  server.handle(jevKey, async ({ key }, { paseo }) => (await roomFor(paseo)).jevKey(key));
+  server.handle(jevPlaces, async (_input, { paseo }) => (await roomFor(paseo)).jevPlaces());
+  server.handle(jevPlaceSet, async ({ id, on }, { paseo }) => (await roomFor(paseo)).jevPlace(id, on));
+  server.handle(jevTry, async (_input, { paseo }) => (await roomFor(paseo)).jevCheck());
+  server.handle(roomClean, async (_input, { paseo }) => {
+    host.use(paseo);
+    const pass = room ? await room.clean() : [];
+    const files = await sweepFiles();
+    return { lines: [...(pass ?? []).map((line) => line.replace(/^gc: /, "")), ...files], running: pass === null };
   });
   server.handle(roomStatus, async (_input, { paseo }) => {
     host.use(paseo);
@@ -253,6 +241,7 @@ export default function contribute(server: PluginServerContext) {
         models: choices.models,
         chime: choices.chime,
       };
+      await keepSwitches(paseo, await ownFolder(paseo));
       const { plan, removed, pluginDir } = await settle(paseo, setup, true);
       behind = null;
       const notes = [...plan.warnings];
@@ -284,25 +273,8 @@ export default function contribute(server: PluginServerContext) {
             .map((seat) => seat.title ?? seat.id)
             .join(", ")}${open.length > 3 ? ", …" : ""}); archive them first`,
         );
-      const folders = roomFolders(); // read from the room home, before it moves
       await stop();
-      const { removed } = await removeWithSdk(paseo);
-      const notes = (await removeRoomProject(paseo))
-        ? []
-        : [
-            `The ${ROOM_PROJECT} project is still in Paseo's list, empty: the paseo CLI could not delete it. Delete it there.`,
-          ];
-      const movedTo = moveRoomHomeAside(ROOM_HOME);
-      const projects: ProjectFiles[] = [];
-      for (const root of folders) {
-        try {
-          const taken = takeRoomFiles(root, keptAt(movedTo, root));
-          if (taken) projects.push(taken);
-        } catch (error) {
-          notes.push(`${root}/.seatwork could not be moved: ${error instanceof Error ? error.message : String(error)}`);
-        }
-      }
-      return { removed, movedTo, projects, notes };
+      return takeRoomOut(paseo, true);
     }),
   );
 
@@ -316,11 +288,25 @@ export default function contribute(server: PluginServerContext) {
     });
   });
 
+  /** Paseo stops the plugin to reload, update or disable it too; only a removal first takes the plugin out of its config. */
+  const leaveIfRemoved = async () => {
+    const paseo = host.ready;
+    if (!paseo) return;
+    try {
+      const { plugins } = (await paseo.config.get()).config as { plugins?: Record<string, unknown> };
+      if (!plugins || PLUGIN_ID in plugins) return;
+      for (const line of await leaveAtUninstall(paseo)) console.log(`seatwork: ${line}`);
+    } catch (error) {
+      console.error("seatwork: the room could not leave Paseo as the plugin was removed", error);
+    }
+  };
+
   return async () => {
     clearInterval(fileSweep);
     offCreate();
     await busy;
     await stop();
+    await leaveIfRemoved();
   };
 }
 

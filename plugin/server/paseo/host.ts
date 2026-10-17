@@ -250,7 +250,7 @@ export class PaseoHost implements Host {
     return agent && !agent.archivedAt ? liveSeat(agent) : null;
   }
 
-  // a start cut off is asked once more under its key: the app hands back the seat it was starting, never a second
+  /** A start cut off is asked once more under its key: the app hands back the seat it was starting, never a second. */
   async create(seat: NewSeat): Promise<string> {
     const options = {
       idempotencyKey: seat.key,

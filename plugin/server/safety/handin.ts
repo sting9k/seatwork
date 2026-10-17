@@ -4,7 +4,6 @@ import { createHash } from "node:crypto";
 import { lstatSync, readFileSync } from "node:fs";
 import { basename, dirname, extname, join, resolve } from "node:path";
 import table from "../../shared/safety/handin.json";
-import type { Manager } from "./registry";
 import { ASSERTION, gamingOf, type GamingEvidence } from "./council/gaming";
 import { evaluate, type GateConfig, type Tools } from "./gate/evaluate";
 import type { Place } from "./gate/types";
@@ -47,16 +46,13 @@ interface TestCount {
   sources: number;
 }
 
-/** A dependency the hand-in adds to a manifest; `firstRelease` when its registry said. */
-export interface Dependency {
+/** The package manager a manifest belongs to. */
+type Manager = "npm" | "pypi" | "go" | "cargo" | "maven" | "rubygems" | "packagist" | "nuget" | "swift";
+
+/** A dependency the hand-in adds to a manifest. */
+interface Dependency {
   manager: Manager;
   name: string;
-  firstRelease: string | null;
-}
-
-/** What the hand-in may ask outside the machine: a package's first release on its registry. */
-export interface Lookups {
-  firstRelease?: (manager: Manager, name: string) => Promise<string | null>;
 }
 
 /** A rule of the table: a pattern read on one part of an added line (`in`) of the files of a language and kind. */
@@ -73,7 +69,7 @@ interface Rule {
 }
 
 /** A file's changes since the start: its added lines with their numbers, its removed lines, whether it is gone; `path` is the work tree's own, `file` is where it is read. */
-export interface Change {
+interface Change {
   path: string;
   file: string;
   added: [number, string][];
@@ -100,7 +96,6 @@ const MANIFEST =
 const LITERAL = /"(?:[^"\\\n]|\\.){2,}"|'(?:[^'\\\n]|\\.){2,}'|\b\d{3,}(?:\.\d+)?\b|\b\d+\.\d+\b/g;
 const ASSERTIONS_MOST = 2000;
 const DEPENDENCIES_MOST = 30;
-const LOOKUPS_MOST = 10;
 const DEPENDENCY_SECTIONS = ["dependencies", "devDependencies", "peerDependencies", "optionalDependencies"];
 const EXTENSIONS = new Map(
   Object.entries(table.languages as Record<string, string[]>).flatMap(([lang, exts]) =>
@@ -160,7 +155,7 @@ function textOf(change: Change): string {
   return (change.text ??= readFile(change.file)?.text ?? "");
 }
 
-/** The tracked files' added and removed lines out of a unified diff with no context lines; git names them from the work tree's top, `root`. */
+/** The tracked files' added and removed lines out of a unified diff with no context lines; git names them from the work tree's top, `root`, and a path it still quotes is dropped with its lines. */
 function parseDiff(diff: string, root: string): Map<string, Change> {
   const changes = new Map<string, Change>();
   let current: Change | null = null;
@@ -168,7 +163,6 @@ function parseDiff(diff: string, root: string): Map<string, Change> {
   let line = 0;
   for (const raw of diff.split("\n")) {
     if (raw.startsWith("diff --git ")) {
-      // a path git still quotes does not match; its lines are dropped rather than given to the file before it
       const path = DIFF_HEADER.exec(raw)?.[2];
       current =
         path && !SKIP.some((p) => p.test(path))
@@ -189,7 +183,7 @@ function parseDiff(diff: string, root: string): Map<string, Change> {
   return changes;
 }
 
-/** The changes since a commit: tracked edits, and new files git does not ignore; every path is named from the work tree's top. */
+/** The changes since a commit: tracked edits, and new files git does not ignore (a binary one has no lines); every path is named from the work tree's top. */
 export async function changesSince(cwd: string, head: string): Promise<Change[] | string> {
   const [diff, untracked, up] = await Promise.all([
     git(
@@ -225,7 +219,6 @@ export async function changesSince(cwd: string, head: string): Promise<Change[] 
     if (!read) continue;
     bytes += read.size;
     if (bytes > MAX_BYTES) return `more than ${MAX_BYTES >> 20} MB changed`;
-    // a binary file counts as a change but has no lines to read
     const lines = read.text.includes("\0") ? [] : read.text.replace(/\n$/, "").split("\n");
     changes.set(path, {
       path,
@@ -265,7 +258,6 @@ function maskOf(language: string, text: string): Uint8Array {
   let i = 0;
   while (i < length) {
     const c = text.charCodeAt(i);
-    // only these five characters open a comment or a string
     if (c !== HASH && c !== SLASH && c !== DOUBLE && c !== SINGLE && c !== TICK) {
       i += 1;
       continue;
@@ -321,12 +313,7 @@ const fingerprint = (rule: string, path: string, text: string, ordinal: number) 
     .slice(0, 12);
 
 /** Reads what a seat changed since its starting commit and stores what it finds. */
-export async function inspectHandIn(
-  seat: string,
-  store: SafetyStore,
-  gate: Gate,
-  lookups: Lookups = {},
-): Promise<HandIn> {
+export async function inspectHandIn(seat: string, store: SafetyStore, gate: Gate): Promise<HandIn> {
   const start = store.startOf(seat);
   const base = { files: 0, open: [], acknowledged: [], warnings: [] };
   if (!start) return { ...base, state: "partial", why: "the room has no record of where this seat started" };
@@ -370,7 +357,7 @@ export async function inspectHandIn(
   const open = rows.filter((r) => r.severity === "block" && !r.ack);
   const [related, dependencies] = await Promise.all([
     testsNaming(changes, start.cwd),
-    newDependencies(changes, start.cwd, start.start_head, lookups),
+    newDependencies(changes, start.cwd, start.start_head),
   ]);
   return {
     state: open.length ? "blocked" : left.block ? "partial" : "clean",
@@ -557,14 +544,9 @@ const WHOLE: Record<string, { manager: Manager; names: (text: string | null) => 
   "pom.xml": { manager: "maven", names: mavenNames },
 };
 
-/** The dependencies the changes add to manifests, each with its first release where its registry says. */
-async function newDependencies(
-  changes: readonly Change[],
-  cwd: string,
-  head: string,
-  lookups: Lookups,
-): Promise<Dependency[]> {
-  const found: Omit<Dependency, "firstRelease">[] = [];
+/** The dependencies the changes add to manifests. */
+async function newDependencies(changes: readonly Change[], cwd: string, head: string): Promise<Dependency[]> {
+  const found: Dependency[] = [];
   for (const change of changes) {
     if (change.deleted || found.length >= DEPENDENCIES_MOST || !MANIFEST.test(change.path)) continue;
     const text = textOf(change);
@@ -583,13 +565,7 @@ async function newDependencies(
       if (named && !gone.has(named.name) && !found.some((one) => one.name === named.name)) found.push(named);
     }
   }
-  const kept = found.slice(0, DEPENDENCIES_MOST);
-  const dates = await Promise.all(
-    kept.map((one, i) =>
-      i < LOOKUPS_MOST && lookups.firstRelease ? lookups.firstRelease(one.manager, one.name).catch(() => null) : null,
-    ),
-  );
-  return kept.map((one, i) => ({ ...one, firstRelease: dates[i] }));
+  return found.slice(0, DEPENDENCIES_MOST);
 }
 
 /** One digest of a seat's changes, the same whatever order git lists them in. */
@@ -667,7 +643,6 @@ async function inspectFile(change: Change, cwd: string, gate: Gate): Promise<Fou
   return out;
 }
 
-/** The start of each line of a text. */
 function lineStarts(text: string): number[] {
   const out = [0];
   for (let at = text.indexOf("\n"); at >= 0; at = text.indexOf("\n", at + 1)) out.push(at + 1);
@@ -736,10 +711,14 @@ function assertionsDropped(change: Change): Found[] {
   ];
 }
 
-/** The shell lines a change adds to a script or CI file, with their line numbers. */
-function scriptLines(change: Change, text: string): { line: number; command: string }[] {
+/** The shell lines a change adds to a script or CI file, with their line numbers; `away` for a line CI or a container runs, off this machine. */
+function scriptLines(change: Change, text: string): { line: number; command: string; away: boolean }[] {
   const path = change.path;
   const base = basename(path);
+  const away =
+    /(^|\/)\.github\/workflows\/.+\.ya?ml$/.test(path) ||
+    /(^|\/)\.gitlab-ci\.ya?ml$/.test(path) ||
+    /^Dockerfile/.test(base);
   const commands: { line: number; command: string }[] = [];
   if (base === "package.json") {
     try {
@@ -770,18 +749,18 @@ function scriptLines(change: Change, text: string): { line: number; command: str
       if (run) commands.push({ line, command: run[1] });
     }
   }
-  return commands;
+  return commands.map((one) => ({ ...one, away }));
 }
 
-/** Shell lines added to scripts and CI files, run through the guard. */
+/** Shell lines added to scripts and CI files, run through the guard; the room's own packs keep this machine, so they pass over a line that runs elsewhere. */
 async function scriptCommands(change: Change, text: string, cwd: string, gate: Gate): Promise<Found[]> {
   const out: Found[] = [];
   const read = new Map<string, Awaited<ReturnType<typeof evaluate>>>();
-  for (const { line, command } of scriptLines(change, text)) {
+  for (const { line, command, away } of scriptLines(change, text)) {
     let found = read.get(command);
     if (!found) read.set(command, (found = await evaluate(command, cwd, gate.place, gate.config, gate.tools)));
     for (const f of found.findings) {
-      if (f.severity === "low") continue;
+      if (f.severity === "low" || (away && f.pack.startsWith("room."))) continue;
       out.push({
         rule: "destructive-script",
         level: f.severity === "medium" ? "warn" : "block",
@@ -846,11 +825,9 @@ export function handInLine(result: HandIn): string | null {
   return parts.length ? `hand-in check over ${result.files} file(s): ${parts.join("; ")}` : null;
 }
 
-/** A new dependency as the hand-in line names it: its manager and, where the registry said, how old it is. */
+/** A new dependency as the hand-in line names it, with its manager. */
 function dependencyLine(one: Dependency): string {
-  if (!one.firstRelease) return `${one.name} (${one.manager})`;
-  const days = Math.floor((Date.now() - Date.parse(one.firstRelease)) / 86_400_000);
-  return `${one.name} (${one.manager}, first published ${one.firstRelease.slice(0, 10)}, ${days} day(s) ago)`;
+  return `${one.name} (${one.manager})`;
 }
 
 /** What a seat reads when its candidate comes back: each finding with its id, place and fix. */

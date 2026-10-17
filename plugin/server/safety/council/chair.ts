@@ -1,7 +1,7 @@
 import council from "../../../shared/safety/council.json";
 import { redact } from "../../redact";
 import type { SafetyStore } from "../store";
-import { clip } from "./facts";
+import { clip } from "../../excerpt";
 
 /** The chair: the room's own seat rules whether a council member's finding sends a candidate back. */
 
@@ -26,7 +26,7 @@ export interface Packet {
 }
 
 /** A finding that would send a candidate back, with the evidence behind it; `finding` names it so it is asked about once. */
-export interface Appeal {
+interface Appeal {
   reading: number;
   member: string;
   seat: string;

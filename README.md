@@ -63,10 +63,17 @@ That is the whole setup. Nothing is left to run in a terminal.
 To change a choice later, change it on the same screen and press **Apply**:
 it reaches every project that has no models of its own, for the seats
 opened from then on. A project gets models of its own on the same screen,
-on its **Projects** tab. **Remove the room** undoes Init: the `hq-seatwork`
-project leaves Paseo, and the room's folder is moved aside together with
-what the room wrote in each project's `.seatwork/`. That folder is kept for
-30 days, then the plugin deletes it.
+on its **Projects** tab. **Remove the room** undoes Init: the room's seats,
+profiles, the `hq-seatwork` project and the records of its archived seats
+leave Paseo, the daemon-wide switches Init set go back to what they were,
+and the room's folder is moved aside together with what the room wrote in
+each project's `.seatwork/` and its seats' Claude sessions. That folder is
+kept for 30 days, then the plugin deletes it.
+
+Removing the plugin in **Settings → Plugins** does the same by itself, then
+puts the room's folder, and any an earlier Remove set aside, in the Trash.
+**Clean up now** on the Seatwork screen runs the clean-up the room does on
+its own schedule.
 
 ## First project
 
@@ -77,39 +84,14 @@ what the room wrote in each project's `.seatwork/`. That folder is kept for
 3. From then on, open an agent on the **Supervisor** profile inside your
    project and say what you need.
 
-## From a terminal
-
-`install.sh` is a second way to do the same setup, in place of the three
-steps above. Pick one: a plugin installed from Paseo's settings is set up
-with Init, never with the script.
-
-Use the script on a machine without the app, or to work on the room's own
-files. It needs `node`, `npm` and `paseo`.
-
-```bash
-git clone https://github.com/sting9k/seatwork.git
-```
-
-```bash
-cd seatwork && ./install.sh
-```
-
-It installs the plugin from the clone's folder, does what Init does, and is
-safe to run again. The flags are at the top of the script.
-
-The script refuses to run over a plugin installed from Paseo's settings:
-Paseo would keep running its own copy while the room's folder was filled
-from the clone, two copies that can differ. To move a machine to a clone,
-run `paseo plugin remove seatwork` first, then the script.
-
 ## What it changes on your machine
 
 - Paseo's config: the room's providers and profiles, and the switch that
   gives agents Paseo's tools.
 - Three switches for every agent on the machine, not only the room's:
   Paseo's browser tools off, terminal agent hooks off, Paseo's bundled
-  skills kept out of agents. `install.sh` also turns dictation and voice
-  mode off; Init only reports them.
+  skills kept out of agents. Dictation and voice mode are left as they are;
+  the Seatwork screen names them when they are on.
 - A mail server on `127.0.0.1` for the agents' mail tool.
 - `~/.config/seatwork`: logs, copies of your agent CLI config and each
   agent's temporary files, readable by your user only. Its `policy.json`
@@ -126,7 +108,6 @@ agent runs: every agent runs under your account.
 
 ```text
 seatwork/
-├── install.sh           the terminal setup
 ├── plugin/              the Paseo plugin (id seatwork)
 │   ├── room/            what agents read: the room's law, role prompts, specs, skills, the model table
 │   ├── paseo/           what setup writes for a machine: policy.json, seats.json, profiles.json
@@ -137,9 +118,10 @@ seatwork/
 └── AGENTS.md            the rules for changing the plugin
 ```
 
-- After an edit, run `./install.sh` at the top of the clone. It copies the
-  room's files into `~/.config/seatwork` and reloads the plugin. This needs
-  a room set up from this clone: see [From a terminal](#from-a-terminal).
+- To run the room from a clone, install its folder in place of the Git
+  source: `paseo plugin install <clone>/plugin`, then Init on the Seatwork
+  screen. After an edit, run `paseo plugin reload seatwork`, then press
+  **Apply**: it lays the room's files into `~/.config/seatwork` again.
 - Tests: `npm test` in `plugin/` (Node 22.15 or later).
 - Format: `npm run format` in `plugin/` (Prettier, 120 columns; code only).
 - Logs: `paseo plugin logs seatwork`.

@@ -12,10 +12,11 @@ import {
   type Status,
   type WorkPolicy,
 } from "./store";
+import { ROOM_FOLDER } from "../paths";
 
 /** What a seat does with its project's work store through the room's two tools. */
 
-export const WORK_DIR = join(".seatwork", ".work");
+export const WORK_DIR = join(ROOM_FOLDER, ".work");
 
 /** The room's work policy with the project's own policy.json on top, checked. */
 export function projectPolicy(root: string, room: WorkPolicy): WorkPolicy {
@@ -28,12 +29,7 @@ export function projectPolicy(root: string, room: WorkPolicy): WorkPolicy {
     throw new WorkError("VALIDATION_FAILED", `${file} is not JSON: fix it or remove it`);
   }
   const merged = { ...room, ...own, close: { ...room.close, ...own.close } };
-  const kinds = [
-    typeof merged.busyTimeoutMs,
-    typeof merged.flushAfterMs,
-    typeof merged.staleClaimMinutes,
-    typeof merged.close.minReasonChars,
-  ];
+  const kinds = [typeof merged.busyTimeoutMs, typeof merged.staleClaimMinutes, typeof merged.close.minReasonChars];
   if (kinds.some((kind) => kind !== "number") || typeof merged.close.forbidSelfClose !== "boolean")
     throw new WorkError(
       "VALIDATION_FAILED",
@@ -43,7 +39,7 @@ export function projectPolicy(root: string, room: WorkPolicy): WorkPolicy {
 }
 
 /** The seat a call comes from; an Owner is a seat that launches others. */
-export interface Caller {
+interface Caller {
   id: string;
   owner: boolean;
 }
@@ -218,11 +214,6 @@ export function work(store: WorkStore, policy: WorkPolicy, caller: Caller, args:
     }
     case "reopen":
       return brief(store.reopen(need(args, "id"), actor));
-    default:
-      throw new WorkError(
-        "VALIDATION_FAILED",
-        `\`do\` is one of create, show, comments, list, ready, claim, update, note, comment, depend, undepend, close, reopen`,
-      );
   }
 }
 
@@ -243,7 +234,5 @@ export function graph(store: WorkStore, policy: WorkPolicy, args: Args, now: Dat
     }
     case "alerts":
       return alerts(open, now, policy.staleClaimMinutes);
-    default:
-      throw new WorkError("VALIDATION_FAILED", "`view` is one of triage, next, plan, blockers, alerts");
   }
 }

@@ -236,11 +236,7 @@ function orders(): NewIssue[][] {
 function made(order: readonly NewIssue[]) {
   let tick = Date.parse("2026-10-14T09:00:00Z");
   const clock = () => new Date((tick += 1000));
-  const store = new WorkStore(
-    join(ROOM_HOME, `metamorphic-graph-${(homes += 1)}`),
-    { busyTimeoutMs: 5000, flushAfterMs: 60_000 },
-    clock,
-  );
+  const store = new WorkStore(join(ROOM_HOME, `metamorphic-graph-${(homes += 1)}`), { busyTimeoutMs: 5000 }, clock);
   const titles = new Map(store.createMany(order, "lead").map((issue) => [issue.id, issue.title]));
   return { store, titles };
 }

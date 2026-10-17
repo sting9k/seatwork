@@ -1,19 +1,9 @@
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { SQL_DIR } from "../paths";
-import { Sqlite, type SqliteFailure } from "../sqlite";
+import { Sqlite } from "../sqlite";
 
-/** The operations store in the room home: the room's log, its incidents, the traces of their causes, and the changes made to its policy. */
-
-/** A store that cannot be used: another process holds it, or its layout is newer or invalid; `code` says which. */
-export class OperationsError extends Error {
-  constructor(
-    readonly code: SqliteFailure,
-    message: string,
-  ) {
-    super(message);
-  }
-}
+/** The operations store in the room home: the room's log, its incidents, the traces of their causes, the changes made to its policy, and what each project spends with the holds on it and the skills seats load. */
 
 /** Where an incident stands with the operator. */
 export type IncidentState = "open" | "acknowledged" | "snoozed" | "resolved";
@@ -92,7 +82,7 @@ const toIncident = (row: Record<string, unknown>): Incident => ({
   back: row.back === 1,
 });
 
-/** The operations store: log, incidents, traces and the record of changes. */
+/** The operations store; its deletes run in slices, each its own write, so none holds the write lock long. */
 export class OperationsStore extends Sqlite {
   constructor(
     dir: string,
@@ -103,7 +93,6 @@ export class OperationsStore extends Sqlite {
     super(join(dir, "operations.db"), {
       busyTimeoutMs,
       scripts: join(SQL_DIR, "operations"),
-      fail: (code, message) => new OperationsError(code, message),
       name: "the operations store",
       now,
       reclaims: true,
@@ -144,7 +133,6 @@ export class OperationsStore extends Sqlite {
     limit: number,
   ): { at: string; district: string; line: string }[] {
     const words = filters.words ?? "";
-    // one district reads its own index, newest first; all of them read the log newest first
     const where = filters.district ? "district = ? AND" : "";
     return this.rows<{ at: string; district: string; line: string }>(
       `SELECT at, district, line FROM log
@@ -325,16 +313,12 @@ export class OperationsStore extends Sqlite {
   /** Closes, with `conclusion`, the open traces that no note and no change touched since `before`; how many were closed. */
   closeIdleTraces(before: Date, conclusion: string): number {
     const cut = before.toISOString();
-    return this.sliced(
+    return this.deleteInSlices(
       `UPDATE traces SET closed_at = ?, conclusion = ? WHERE id IN (
          SELECT t.id FROM traces t WHERE t.closed_at IS NULL AND t.opened_at < ?
            AND coalesce((SELECT at FROM trace_notes WHERE trace = t.id ORDER BY id DESC LIMIT 1), '') < ?
            AND coalesce((SELECT at FROM tunes WHERE trace = t.id ORDER BY id DESC LIMIT 1), '') < ? LIMIT ?)`,
-      this.now().toISOString(),
-      conclusion,
-      cut,
-      cut,
-      cut,
+      [this.now().toISOString(), conclusion, cut, cut, cut],
     );
   }
 
@@ -344,12 +328,11 @@ export class OperationsStore extends Sqlite {
     return row ? { ...row, notes: this.notesOf(id) } : null;
   }
 
-  /** The traces still open, oldest first, each with its newest notes from one read of them all. */
+  /** The traces still open, oldest first, each with its newest notes from one read of them all; the CROSS JOIN keeps the traces the outer loop, so each one's newest notes are found by the index. */
   openTraces(): Trace[] {
     const traces = this.rows<Omit<Trace, "notes">>(
       `SELECT ${TRACE} FROM traces t WHERE t.closed_at IS NULL ORDER BY t.opened_at`,
     );
-    // CROSS JOIN keeps the traces the outer loop: each one's newest notes are found by the index
     const notes = this.rows<Trace["notes"][number] & { trace: number }>(
       `SELECT n.trace, n.at, n.kind, n.text FROM traces t CROSS JOIN trace_notes n ON n.trace = t.id
          AND n.id >= coalesce((SELECT id FROM trace_notes WHERE trace = t.id ORDER BY id DESC LIMIT 1 OFFSET ?), 0)
@@ -520,29 +503,22 @@ export class OperationsStore extends Sqlite {
     ).map(({ role, skill, loads }) => ({ role, skill, loads }));
   }
 
-  /** Drops, in slices, log lines past their days or the store's size, incidents not seen within the days and old closed traces; the record of changes stays. */
+  /** Drops, in slices, log lines past their days or the store's size (ids only grow, so the size is cut by id), incidents not seen within the days and old closed traces; the record of changes stays. */
   expire(before: Date, most: number, tracesBefore: Date): number {
     const cut = before.toISOString();
-    let gone = this.sliced("DELETE FROM log WHERE id IN (SELECT id FROM log WHERE at < ? LIMIT ?)", cut);
+    let gone = this.deleteInSlices("DELETE FROM log WHERE id IN (SELECT id FROM log WHERE at < ? LIMIT ?)", [cut]);
     const newest = this.row<{ id: number | null }>("SELECT max(id) AS id FROM log")!.id ?? 0;
-    // ids only grow: everything at or below the newest minus `most` is past the store's size
-    gone += this.sliced("DELETE FROM log WHERE id IN (SELECT id FROM log WHERE id <= ? LIMIT ?)", newest - most);
-    gone += this.sliced("DELETE FROM incidents WHERE id IN (SELECT id FROM incidents WHERE last_at < ? LIMIT ?)", cut);
-    gone += this.sliced(
-      "DELETE FROM traces WHERE id IN (SELECT id FROM traces WHERE closed_at < ? LIMIT ?)",
-      tracesBefore.toISOString(),
+    gone += this.deleteInSlices("DELETE FROM log WHERE id IN (SELECT id FROM log WHERE id <= ? LIMIT ?)", [
+      newest - most,
+    ]);
+    gone += this.deleteInSlices(
+      "DELETE FROM incidents WHERE id IN (SELECT id FROM incidents WHERE last_at < ? LIMIT ?)",
+      [cut],
     );
+    gone += this.deleteInSlices("DELETE FROM traces WHERE id IN (SELECT id FROM traces WHERE closed_at < ? LIMIT ?)", [
+      tracesBefore.toISOString(),
+    ]);
     this.reclaim(SLICE);
     return gone;
-  }
-
-  /** Runs a delete that ends in `LIMIT ?` until it removes fewer than a slice, each slice its own write. */
-  private sliced(sql: string, ...params: (string | number)[]): number {
-    let gone = 0;
-    for (;;) {
-      const done = this.transaction("write", () => this.run(sql, ...params, SLICE).changes);
-      gone += done;
-      if (done < SLICE) return gone;
-    }
   }
 }

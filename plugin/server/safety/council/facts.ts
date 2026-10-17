@@ -15,9 +15,6 @@ const NARROW = council.narrow.map(({ runner, flags }) => ({
 
 const squash = (command: string) => command.replace(/\s+/g, " ").trim();
 
-/** A text cut to `most` characters, with an ellipsis where it was cut. */
-export const clip = (text: string, most: number) => (text.length > most ? `${text.slice(0, most)}…` : text);
-
 /** Whether a command runs one of `wanted`, as the brief quotes them. */
 export function runsOneOf(command: string, wanted: readonly string[]): boolean {
   const flat = squash(command);

@@ -26,7 +26,7 @@ Options for a spending run:
 
 A run without `--spend` on a real CLI is refused.
 
-Results land in `evals/results/<label>/`, which git ignores: `report.md`, `summary.json`, and one folder per run. A run's folder holds:
+Results land in `evals/results/<label>/`, which git ignores; a run folder unchanged for 14 days (`evals/keep.cjs`) is deleted when the next run starts: `report.md`, `summary.json`, and one folder per run. A run's folder holds:
 - `system-prompt.md` and `prompt.md`;
 - `events.jsonl` or `script.jsonl`;
 - `paseo.jsonl`;

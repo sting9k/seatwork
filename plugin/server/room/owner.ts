@@ -69,7 +69,7 @@ export function jevView(room: RoomContext): {
 }
 
 /** One place the decision model works, as the Seatwork screen lists it. */
-export interface JevPlace {
+interface JevPlace {
   id: string;
   label: string;
   about: string;

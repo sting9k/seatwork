@@ -37,17 +37,14 @@ const store = new SafetyStore(join(ROOM_HOME, "metamorphic-guard"), 1000);
 const guard = new Guard({ store: () => store, policy: () => ({}), tools: () => tools, place: () => place });
 const seat = { id: "peer", role: "peer", project: PROJECT, tmp: null, start: PROJECT };
 
-const lastKept = () =>
-  ((store as unknown as { db: import("node:sqlite").DatabaseSync }).db
-    .prepare("SELECT id, pack, rule FROM decisions ORDER BY id DESC LIMIT 1")
-    .get() ?? null) as { id: number; pack: string; rule: string } | null;
+const keptCount = () => store.kept("", 100_000).length;
 
 /** What the guard keeps of a command: whether a rule caught it, and which; a line it could not read is kept as gate:unverified. */
 async function verdict(command: string): Promise<{ caught: boolean; rule: string | null }> {
-  const before = lastKept()?.id ?? 0;
+  const before = keptCount();
   await guard.check(seat, "claude", command, PROJECT);
-  const kept = lastKept();
-  return kept && kept.id > before ? { caught: true, rule: `${kept.pack}:${kept.rule}` } : { caught: false, rule: null };
+  const kept = store.kept("", 1)[0];
+  return keptCount() > before ? { caught: true, rule: `${kept.pack}:${kept.rule}` } : { caught: false, rule: null };
 }
 
 /** A text as one word in single quotes. */

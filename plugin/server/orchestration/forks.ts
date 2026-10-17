@@ -48,11 +48,6 @@ interface ForkDeps {
 const FORKS = catalog.forks;
 const READING_DAYS = 7;
 
-/** The head of a text a fork reads. */
-export function clip(text: string, most: number): string {
-  return text.length > most ? `${text.slice(0, most)}…` : text;
-}
-
 /** Whether the room needs a fork, so it is on whatever the policy lists. */
 export const required = (name: ForkName): boolean => "required" in FORKS[name] && FORKS[name].required === true;
 
@@ -107,7 +102,7 @@ export class Forks {
     return (await this.takeMany(name, state, ["fork"], labels))[0];
   }
 
-  /** Questions of one fork asked in one call, one per id; the sharp label of each in the same order, null where it is split. */
+  /** Questions of one fork asked in one call, one per id; the sharp label of each in the same order, null where it is split or the model fails (a fork only advises, so a failure never stops the mail or turn that asked). */
   async takeMany(
     name: ForkName,
     state: Record<string, unknown>,
@@ -126,7 +121,6 @@ export class Forks {
         deadlineMs: fork.deadlineMs,
       });
     } catch (error) {
-      // a fork only advises: a model that fails must not stop the mail or the turn that asked
       this.deps.log(
         `fork ${name}: the decision model failed: ${error instanceof Error ? error.message : String(error)}`,
       );

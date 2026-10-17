@@ -3,9 +3,11 @@ import { join } from "node:path";
 import { ROOM_DIR } from "../paths";
 import type { RoomParams } from "../policy";
 import { merge } from "../../shared/model-choices";
-import { rolesWhere, tableNote, traits, VARS } from "../../shared/workflow";
+import { rolesWhere, tableNote, traits } from "../../shared/workflow";
 import families from "../../shared/families.json";
-import { clip, type Asker } from "./forks";
+import { type Asker } from "./forks";
+import { isObject } from "../../shared/json";
+import { clip } from "../excerpt";
 
 /** room/models.json: every model id the room uses; role prompts carry {{placeholders}} filled from it. */
 
@@ -73,7 +75,7 @@ function paramVar(name: string, value: string | number): [string, string] {
   return [key, unit === "Tokens" ? `~${Math.round(value / 1000)}k` : value.toLocaleString("en-US")];
 }
 
-/** The placeholder map for role prompts. */
+/** The placeholder map for role prompts: seats, tiers, the table's own words about a role (reviewThinking is {{review_thinking}}) and the params. */
 export function promptVars(m: Models, params: RoomParams): Record<string, string> {
   const vars: Record<string, string> = {};
   const withMode = Object.entries(m.modes)
@@ -97,12 +99,7 @@ export function promptVars(m: Models, params: RoomParams): Record<string, string
     if (!group) continue;
     const models = new Set(Object.values(group.tiers).flatMap((tier) => tier.providers)).size;
     vars[`${role}_table`] = [tierTable(group.tiers), tableNote(role, models)].filter(Boolean).join("\n\n");
-    // the table's own words about a role: reviewThinking is {{review_thinking}}
     for (const [word, value] of Object.entries(group)) if (typeof value === "string") vars[snake(word)] = value;
-  }
-  for (const [name, from] of Object.entries(VARS)) {
-    const tiers = Object.entries(tiersOf(m, from.role)?.tiers ?? {});
-    vars[name] = quoted(tiers.filter(([tier]) => !from.except.includes(tier)).flatMap(([, t]) => t.providers));
   }
   for (const [name, value] of Object.entries(params))
     if (value !== undefined) {
@@ -120,9 +117,6 @@ export function render(text: string, vars: Record<string, string>, onMissing?: (
     return whole;
   });
 }
-
-type Json = Record<string, unknown>;
-const isObject = (v: unknown): v is Json => typeof v === "object" && v !== null && !Array.isArray(v);
 
 /** Every `<harness>-<role>/<model>` a role may run on, as the table names them. */
 export function allowed(m: Models): Record<string, string[]> {
@@ -186,8 +180,8 @@ export function missingSeats(override: unknown, enabledProviders: string[], wher
   return [...new Set(named)].filter((provider) => !enabledProviders.includes(provider));
 }
 
+/** A table entry as its provider and model; the model id may hold slashes of its own. */
 const split = (entry: string): [provider: string, model: string] => {
-  // the model id may hold slashes of its own
   const slash = entry.indexOf("/");
   return [entry.slice(0, slash), entry.slice(slash + 1)];
 };
@@ -198,7 +192,7 @@ const isModel = (model: string, id: string): boolean => model === id || model.st
 /** What the table in force makes of a seat about to be created. */
 export type SeatFit = { ok: true; model?: string; thinking?: string } | { ok: false; listed: string[] };
 
-/** Holds a new seat to the table in force, whatever model its creator's prompt names. */
+/** Holds a new seat to the table in force, whatever model its creator's prompt names; a role of several models asked for by provider alone starts on its first listed model. */
 export function fitSeat(m: Models, role: string, provider: string, model: string | undefined): SeatFit {
   const listed = allowed(m)[role] ?? [];
   const mine = listed.filter((entry) => split(entry)[0] === provider);
@@ -211,7 +205,6 @@ export function fitSeat(m: Models, role: string, provider: string, model: string
       ? { ok: true, model: id, thinking: seat.thinking }
       : { ok: true, model: split(mine[0])[1] };
   }
-  // a role of several models asked for by seat alone starts on that seat's first model in the table
   return model ? { ok: false, listed } : { ok: true, model: split(mine[0])[1] };
 }
 

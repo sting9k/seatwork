@@ -91,7 +91,6 @@ test("what a Lead recorded as a task's decision before its first claim is the cl
     "the move reads by index",
   );
 
-  // the next decision of the task is filed under the issue, beside the first
   await decide("lead-1", "index kind", "Use a covering index for the lookup.");
   assert.equal(inForce("lead-1").length, 2);
   assert.ok(inForce("lead-1").every((line) => line.includes("[task sw-a]")));

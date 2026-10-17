@@ -4,7 +4,7 @@ import type { KnowledgeStore } from "./store";
 /** Pairs of decisions: a new one beside older ones, with the seat's word and the model's on each, to be measured. */
 
 /** What the pair book takes: the decision model, and a log. */
-export interface PairDeps {
+interface PairDeps {
   judge: Judge | null;
   log(line: string): void;
 }

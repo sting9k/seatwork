@@ -76,7 +76,7 @@ interface PromptContext {
   models?: Models;
 }
 
-/** A seat's prompt: the room's layer, its agent CLI's part, then its role and spec; read on every call. */
+/** A seat's prompt: the room's layer and its agent CLI's part, the same word for word for every seat of that CLI, then its role and spec; read on every call, and only a seat at home in the room is shown the room's directories. */
 export function rolePrompt(role: string, context: PromptContext): string {
   const texts = [
     join(ROOM_DIR, "harness", "room.md"),
@@ -95,9 +95,7 @@ export function rolePrompt(role: string, context: PromptContext): string {
     if (missing.length) console.error(`seatwork: ${file} uses unknown placeholders: ${missing.join(", ")}`);
     return rendered;
   });
-  // a project seat is shown none of the room's directory
   const needsRoomDir = inRoom(role);
-  // what every seat of this CLI shares comes first, word for word the same; what is this seat's own follows
   const parts = [
     shared,
     cli,

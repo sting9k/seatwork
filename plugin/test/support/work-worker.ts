@@ -3,7 +3,7 @@ import { WorkError, WorkStore } from "../../server/tasks/store";
 
 /** One of several processes on the same work store: does one job, prints the result. */
 const [dir, job, ...rest] = process.argv.slice(2);
-const store = new WorkStore(dir, { busyTimeoutMs: 30_000, flushAfterMs: 5 });
+const store = new WorkStore(dir, { busyTimeoutMs: 30_000 });
 // with a gate, every process has its store open before any of them starts its job
 const gate = process.env.WORK_GATE;
 if (gate) {

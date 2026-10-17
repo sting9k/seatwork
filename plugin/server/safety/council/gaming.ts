@@ -38,11 +38,10 @@ export interface GamingEvidence {
 /** An assertion with its literals taken out, so two that differ only in an expected value read alike. */
 const shapeOf = (line: string): string => line.slice(0, SHAPE_CHARS).replace(LITERAL, "#").replace(/\s+/g, " ").trim();
 
-/** How many removed assertions came back with only a literal changed, each removed line paired once. */
+/** How many removed assertions came back with only a literal changed, each removed line paired once; a line removed and added as it was only moved. */
 function expectedChanged(removed: readonly string[], added: readonly string[]): number {
   const left = new Map<string, number>();
   for (const line of removed) left.set(line.trim(), (left.get(line.trim()) ?? 0) + 1);
-  // a line removed and added as it was only moved
   const fresh: string[] = [];
   for (const line of added) {
     const same = left.get(line.trim()) ?? 0;
@@ -62,7 +61,7 @@ function expectedChanged(removed: readonly string[], added: readonly string[]): 
   return paired;
 }
 
-/** The signs in a diff's files; `skipped` is how many skipped or focused tests the hand-in check found. Null when no test file changed. */
+/** The signs in a diff's files, the excerpt stopping at its limit while the signs keep counting; `skipped` is how many skipped or focused tests the hand-in check found. Null when no test file changed. */
 export function gamingOf(files: readonly GamingFile[], skipped: number): GamingEvidence | null {
   const evidence: GamingEvidence = {
     testFiles: 0,
@@ -77,7 +76,6 @@ export function gamingOf(files: readonly GamingFile[], skipped: number): GamingE
   };
   const lines: string[] = [];
   let used = 0;
-  // the excerpt stops growing once it holds what is shown; the signs go on being counted
   const add = (...more: string[]) => {
     for (const line of more) {
       if (used >= EXCERPT_CHARS) return;

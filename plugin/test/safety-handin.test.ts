@@ -14,8 +14,7 @@ import fs, {
 import { join } from "node:path";
 import { test } from "node:test";
 import { packsInForce } from "../server/safety/gate/packs";
-import { handInLine, handInReturn, inspectHandIn, workDigest, type Lookups } from "../server/safety/handin";
-import { Safety } from "../server/safety/index";
+import { handInLine, handInReturn, inspectHandIn, workDigest } from "../server/safety/handin";
 import { changedSince, snapshot } from "../server/safety/council/git";
 import { buildControl } from "../server/safety/control";
 import { SafetyStore } from "../server/safety/store";
@@ -53,7 +52,7 @@ function project(files: Record<string, string>, start = "") {
     config: { packs: packsInForce(), budgetMs: 1000, maxBytes: 65536 },
     tools: machineTools(() => null),
   };
-  return { dir, store, git, check: (lookups: Lookups = {}) => inspectHandIn("seat", store, gate, lookups) };
+  return { dir, store, git, check: () => inspectHandIn("seat", store, gate) };
 }
 
 function write(dir: string, files: Record<string, string>): void {
@@ -173,9 +172,7 @@ test("the hand-in counts test lines, names what decides the checks, a test's ans
       'export const ms = (s: string) => {\n  if (s === "2h") return 7200000;\n  if (process.env.NODE_ENV === "test") return 0;\n  return Number(s);\n};\n',
     "test/units.test.ts": 'import { ms } from "../src/units";\ntest("ms", () => expect(ms("2h")).toBe(7200000));\n',
   });
-  const result = await check({
-    firstRelease: async (_, name) => (name === "left-pad-x" ? "2026-10-10T00:00:00Z" : null),
-  });
+  const result = await check();
   assert.deepEqual(result.tests, { added: 2, removed: 0, files: 1, sources: 1 });
   assert.deepEqual(result.warnings.map((r) => `${r.rule} ${r.path}`).sort(), [
     "check-config jest.config.js",
@@ -185,28 +182,25 @@ test("the hand-in counts test lines, names what decides the checks, a test's ans
   ]);
   assert.deepEqual(
     result.dependencies
-      ?.map(({ manager, name, firstRelease }) => [manager, name, firstRelease])
+      ?.map(({ manager, name }) => [manager, name])
       .sort((a, b) => `${a[0]}:${a[1]}`.localeCompare(`${b[0]}:${b[1]}`)),
     [
-      ["cargo", "tokio", null],
-      ["go", "github.com/acme/kit", null],
-      ["maven", "com.google.guava:guava", null],
-      ["maven", "org.junit.jupiter:junit-jupiter", null],
-      ["npm", "left-pad-x", "2026-10-10T00:00:00Z"],
-      ["nuget", "Polly", null],
-      ["packagist", "guzzlehttp/guzzle", null],
-      ["pypi", "httpx", null],
-      ["pypi", "requests", null],
-      ["rubygems", "sinatra", null],
-      ["swift", "https://github.com/apple/swift-log.git", null],
+      ["cargo", "tokio"],
+      ["go", "github.com/acme/kit"],
+      ["maven", "com.google.guava:guava"],
+      ["maven", "org.junit.jupiter:junit-jupiter"],
+      ["npm", "left-pad-x"],
+      ["nuget", "Polly"],
+      ["packagist", "guzzlehttp/guzzle"],
+      ["pypi", "httpx"],
+      ["pypi", "requests"],
+      ["rubygems", "sinatra"],
+      ["swift", "https://github.com/apple/swift-log.git"],
     ],
   );
   const line = handInLine(result) ?? "";
   assert.match(line, /tests: \+2\/-0 lines in 1 file\(s\)/);
-  assert.match(
-    line,
-    /new dependencies: tokio \(cargo\), .*left-pad-x \(npm, first published 2026-10-10, \d+ day\(s\) ago\)/,
-  );
+  assert.match(line, /new dependencies: tokio \(cargo\), .*left-pad-x \(npm\)/);
 });
 
 test("a package added to NuGet's central package file is a new dependency", async () => {
@@ -432,6 +426,24 @@ test("a seat started below the repository root is read at the paths git names: t
   );
 });
 
+test("a line that runs on another machine, in CI or a container, is not read by the rules that keep this one", async () => {
+  const { dir, check } = project(START);
+  write(dir, {
+    Dockerfile: "FROM node:22\nRUN npm install -g typescript\nRUN rm -rf /\n",
+    ".github/workflows/ci.yml": "jobs:\n  test:\n    steps:\n      - run: git config --global user.name ci\n",
+    "scripts/setup.sh": "npm install -g typescript\n",
+  });
+  const result = await check();
+  assert.deepEqual(
+    result.open
+      .concat(result.warnings)
+      .filter((r) => r.rule === "destructive-script")
+      .map((r) => `${r.path}:${r.line}`)
+      .sort(),
+    ["Dockerfile:3", "scripts/setup.sh:1"],
+  );
+});
+
 test("a link in the work tree is not followed to a file outside it", async () => {
   const { dir, check } = project(START);
   const outside = join(ROOM_HOME, `handin-outside-${repos}.ts`);
@@ -528,33 +540,6 @@ test("the shell snapshot folder is listed once while it stands, and again when a
   assert.equal(listed.length, 4, "the second look at a folder that stood listed nothing");
 });
 
-test("the check reads scripts with the packs the project adds", async () => {
-  const { dir } = project({ "package.json": '{"name":"x","scripts":{"test":"jest"}}\n' });
-  mkdirSync(join(dir, ".seatwork"), { recursive: true });
-  writeFileSync(join(dir, ".seatwork", "safety.json"), JSON.stringify({ packs: { add: ["strict_git"] } }));
-  write(dir, { "package.json": '{"name":"x","scripts":{"test":"jest","ship":"git push origin --delete old"}}\n' });
-  const safety = new Safety({
-    dir: join(dir, ".store"),
-    userHome: "/Users/u",
-    daemon: "127.0.0.1:6767",
-    policy: () => ({}),
-    seat: () => ({ role: "peer", cwd: dir }),
-    projectOf: () => dir,
-    isAncestor: () => false,
-    tmpOf: () => join(dir, "tmp"),
-    guard: { paths: [], except: [] },
-    roomFolder: ".seatwork",
-    decider: null,
-    log: () => {},
-  });
-  const found = await safety.handIn("seat");
-  assert.deepEqual(
-    found?.open.map((r) => r.rule),
-    ["destructive-script"],
-  );
-  safety.close();
-});
-
 test("an added line that begins with ++ is a line like any other, and the lines after it keep their numbers", async () => {
   const { dir, check } = project({ "a.ts": "const i = 0;\n" });
   write(dir, { "a.ts": "const i = 0;\n++i;\ndebugger;\n" });
@@ -587,12 +572,13 @@ test("what a seat reads when its candidate comes back lists some of the problems
   const row = (n: number) =>
     ({ fingerprint: `f${n}`, rule: "debugger", path: "a.ts", line: n, text: "debugger;" }) as never;
   const open = Array.from({ length: 300 }, (_, n) => row(n + 1));
-  const text = handInReturn({ state: "blocked", files: 1, open, acknowledged: open, warnings: [], why: null });
+  const kept = open.map((one: object) => ({ ...one, ack: "kept on purpose" })) as never[];
+  const text = handInReturn({ state: "blocked", files: 1, open, acknowledged: [], warnings: [], why: null });
   assert.ok(text.split("\n").length <= 25, "a long list is cut");
   assert.match(text, /found 300 problem\(s\)/);
   assert.match(text, /and 280 more/);
   assert.ok(
-    (handInLine({ state: "clean", files: 1, open: [], acknowledged: open, warnings: [], why: null }) ?? "").length <
+    (handInLine({ state: "clean", files: 1, open: [], acknowledged: kept, warnings: [], why: null }) ?? "").length <
       4000,
   );
 });

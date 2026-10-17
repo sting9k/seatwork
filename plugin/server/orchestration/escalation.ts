@@ -1,8 +1,8 @@
 import catalog from "../../shared/forks.json";
 import { inRoom, routeOpen } from "../../shared/workflow";
 import type { MailEngine, NewMail, SeatRecord } from "../coordination/engine";
-import { clip, meanings, type Forks } from "./forks";
-import { excerpt } from "../excerpt";
+import { meanings, type Forks } from "./forks";
+import { clip, excerpt } from "../excerpt";
 
 /** A mail that asks its Owner for an answer may go on to the seat that must give it, the Owner copied. */
 
@@ -21,7 +21,7 @@ interface Rerouted {
   note: string;
 }
 
-/** Redirects a question to the seat that must answer it among those the workflow lets the sender mail, the Owner copied; null keeps the mail as sent. */
+/** Redirects a question to the seat that must answer it among those in its project the workflow lets the sender mail, the Owner copied; null keeps the mail as sent. */
 export async function routeUp(
   room: {
     engine: Pick<MailEngine, "seat" | "parentOf" | "folderOf" | "recipientStatus">;
@@ -44,7 +44,6 @@ export async function routeUp(
     above.push(seat);
   }
   if (above.length === 0) return null;
-  // a route the workflow closes, or a seat in another project, is never opened here
   const folder = engine.folderOf(owner);
   const open = above.filter((seat) => routeOpen(sender.role, seat.role) && engine.folderOf(seat.agentId) === folder);
   const targets = new Map<string, SeatRecord>([["owner", above[0]]]);

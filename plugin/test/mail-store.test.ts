@@ -7,7 +7,8 @@ import test from "node:test";
 import { DatabaseSync } from "node:sqlite";
 import config from "../shared/mail.json";
 import { readSettled } from "../server/coordination/archive";
-import { MailStore, MailStoreError, type NewMessage } from "../server/coordination/store";
+import { MailStore, type NewMessage } from "../server/coordination/store";
+import { StoreError } from "../server/sqlite";
 
 const base = mkdtempSync(join(tmpdir(), "seatwork-mail-store-"));
 process.on("exit", () => rmSync(base, { recursive: true, force: true }));
@@ -321,7 +322,7 @@ test("a mail written while another process writes the store is refused as one to
   other.exec("BEGIN IMMEDIATE");
   assert.throws(
     () => slow.insert(mail("lead", "FYI: one"), [{ seat: "p1", kind: "to", priority: "fyi" }]),
-    (error: unknown) => error instanceof MailStoreError && error.code === "DATABASE_LOCKED",
+    (error: unknown) => error instanceof StoreError && error.code === "DATABASE_LOCKED",
   );
   other.exec("COMMIT");
   other.close();

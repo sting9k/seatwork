@@ -1,20 +1,10 @@
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { SQL_DIR } from "../paths";
-import { Sqlite, type Param, type SqliteFailure } from "../sqlite";
+import { Sqlite } from "../sqlite";
 import type { Label } from "./council/calibration";
 
 /** The safety store in the room home: what the guard saw, start commits, hand-in findings, the council's log and its appeals to the chair. */
-
-/** A failure of the store itself: the file is held by another process, or its layout does not fit this plugin. */
-export class SafetyError extends Error {
-  constructor(
-    readonly code: SqliteFailure,
-    message: string,
-  ) {
-    super(message);
-  }
-}
 
 /** A call a rule of the guard held for, as the guard saw it. */
 interface DecisionRow {
@@ -27,6 +17,19 @@ interface DecisionRow {
   rule: string | null;
   severity: string | null;
   elapsedUs: number;
+}
+
+/** A call the guard kept: when, whose, where, the command as kept, and the rule that held for it. */
+export interface KeptCall {
+  at: string;
+  seat: string | null;
+  role: string | null;
+  cli: string;
+  cwd: string | null;
+  command: string;
+  pack: string | null;
+  rule: string | null;
+  severity: string | null;
 }
 
 /** A seat's work as kept: the digest handed in, the last verdict and the digest it was given on. */
@@ -51,7 +54,6 @@ export interface FindingRow {
   acked_at: string | null;
 }
 
-/** The store's file in a folder. */
 export const databaseIn = (dir: string): string => join(dir, "safety.db");
 
 function madeDatabaseIn(dir: string): string {
@@ -115,7 +117,6 @@ interface AppealRow {
   packet: string;
 }
 
-const PRUNE_BATCH = 2000;
 const SEEN_EVERY_MS = 86_400_000;
 const FINGERPRINT = /^[0-9a-f]{6,64}$/;
 
@@ -130,7 +131,6 @@ export class SafetyStore extends Sqlite {
     super(madeDatabaseIn(dir), {
       busyTimeoutMs,
       scripts,
-      fail: (code, message) => new SafetyError(code, message),
       name: "the safety store",
       now,
     });
@@ -157,6 +157,26 @@ export class SafetyStore extends Sqlite {
         d.severity,
         Math.round(d.elapsedUs),
       ),
+    );
+  }
+
+  /** The calls the guard kept since a time, of one seat when named, newest first and at most `most`: the guard's audit log. */
+  kept(since: string, most: number, seat: string | null = null): KeptCall[] {
+    return this.rows<KeptCall>(
+      `SELECT at, seat, role, cli, cwd, command, pack, rule, severity FROM decisions INDEXED BY decisions_by_at
+       WHERE at >= ?1 AND (?2 IS NULL OR seat = ?2) ORDER BY at DESC, id DESC LIMIT ?3`,
+      since,
+      seat,
+      most,
+    );
+  }
+
+  /** How many calls each rule held for since a time, most first. */
+  keptCounts(since: string): { rule: string; n: number }[] {
+    return this.rows<{ rule: string; n: number }>(
+      `SELECT coalesce(pack, '') || ':' || coalesce(rule, '') AS rule, count(*) AS n FROM decisions INDEXED BY decisions_by_at
+       WHERE at >= ? GROUP BY pack, rule ORDER BY n DESC, rule`,
+      since,
     );
   }
 
@@ -229,7 +249,6 @@ export class SafetyStore extends Sqlite {
     return this.row("SELECT cwd, start_head, started_at FROM seats WHERE agent_id = ?", agentId) ?? null;
   }
 
-  /** Keeps the digest of the work a seat handed in. */
   noteHandIn(agentId: string, digest: string): void {
     this.transaction("write", () => this.run("UPDATE seats SET handed_digest = ? WHERE agent_id = ?", digest, agentId));
   }
@@ -303,7 +322,7 @@ export class SafetyStore extends Sqlite {
     const at = before.toISOString();
     const gone = this.deleteInSlices(
       "DELETE FROM decisions WHERE id IN (SELECT id FROM decisions WHERE at < ? LIMIT ?)",
-      at,
+      [at],
     );
     return (
       gone +
@@ -440,7 +459,6 @@ export class SafetyStore extends Sqlite {
     );
   }
 
-  /** How many labels a member has for a version. */
   labelCount(member: string, version: number): number {
     return (
       this.row<{ n: number }>(
@@ -461,7 +479,6 @@ export class SafetyStore extends Sqlite {
     );
   }
 
-  /** Stores a member's state. */
   setMemberState(state: Omit<MemberState, "movedAt">): void {
     this.transaction("write", () =>
       this.run(
@@ -515,7 +532,6 @@ export class SafetyStore extends Sqlite {
     ).lastInsertRowid;
   }
 
-  /** One appeal, as it stands. */
   appeal(id: number): AppealRow | null {
     return this.row<AppealRow>("SELECT * FROM council_appeals WHERE id = ?", id) ?? null;
   }
@@ -572,18 +588,8 @@ export class SafetyStore extends Sqlite {
            SELECT r.id FROM council_readings r WHERE r.at < ?
              AND NOT EXISTS (SELECT 1 FROM council_labels l WHERE l.reading_id = r.id)
            LIMIT ?)`,
-        before.toISOString(),
+        [before.toISOString()],
       )
     );
-  }
-
-  /** Runs a delete whose last parameter is its `LIMIT`, a write lock to a slice, until a slice comes up short; the rows gone. */
-  private deleteInSlices(sql: string, ...params: Param[]): number {
-    let gone = 0;
-    for (;;) {
-      const slice = this.transaction("write", () => this.run(sql, ...params, PRUNE_BATCH).changes);
-      gone += slice;
-      if (slice < PRUNE_BATCH) return gone;
-    }
   }
 }

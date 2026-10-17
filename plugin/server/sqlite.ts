@@ -33,7 +33,7 @@ export function storeStats(): StoreStat[] {
 }
 
 /** One step of a store's layout, read from its file. */
-export interface Script {
+interface Script {
   version: number;
   description: string;
   name: string;
@@ -75,14 +75,24 @@ export function readScripts(dir: string): Script[] {
     .sort((a, b) => a.version - b.version);
 }
 
-/** `busyTimeoutMs`: how long a write waits on another process; `scripts`: the folder of `V<number>__<what>.sql` files; `fail`: the store's own error; `name`: the store as messages call it; `reclaims`: a new file gives freed pages back; `now`: the clock. */
-export interface SqliteOptions {
+/** `busyTimeoutMs`: how long a write waits on another process; `scripts`: the folder of `V<number>__<what>.sql` files; `fail`: the store's own error, a StoreError when not given; `name`: the store as messages call it; `reclaims`: a new file gives freed pages back; `now`: the clock. */
+interface SqliteOptions {
   busyTimeoutMs: number;
   scripts: string;
-  fail: (code: SqliteFailure, message: string) => Error;
+  fail?: (code: SqliteFailure, message: string) => Error;
   name: string;
   now?: () => Date;
   reclaims?: boolean;
+}
+
+/** A store that cannot be used: another process holds it, or its layout is newer or invalid; `code` says which. */
+export class StoreError extends Error {
+  constructor(
+    readonly code: SqliteFailure,
+    message: string,
+  ) {
+    super(message);
+  }
 }
 
 /** The file is damaged or no database: SQLITE_CORRUPT, SQLITE_NOTADB, a failed check. */
@@ -119,6 +129,21 @@ export class Sqlite {
       throw error;
     }
     OPEN.add(this);
+  }
+  /** Runs a delete whose last parameter is its `LIMIT`, a write lock to each slice of `slice` rows, until a slice comes up short or `slices` are used; the rows gone. */
+  protected deleteInSlices(sql: string, params: readonly Param[], slice = 2000, slices = Infinity): number {
+    let gone = 0;
+    for (let n = 0; n < slices; n += 1) {
+      const done = this.transaction("write", () => this.run(sql, ...params, slice).changes);
+      gone += done;
+      if (done < slice) break;
+    }
+    return gone;
+  }
+
+  /** The store's own error for a failure. */
+  private failure(code: SqliteFailure, message: string): Error {
+    return this.options.fail?.(code, message) ?? new StoreError(code, message);
   }
 
   /** How this store has done since it opened. */
@@ -158,15 +183,14 @@ export class Sqlite {
   }
 
   private locked(): Error {
-    return this.options.fail("DATABASE_LOCKED", `another process is writing ${this.options.name}; try again`);
+    return this.failure("DATABASE_LOCKED", `another process is writing ${this.options.name}; try again`);
   }
 
-  /** Opens the database; a damaged one is set aside and a new one started. */
+  /** Opens the database; a damaged one is set aside and a new one started, but a file the process merely cannot open stays where it is; auto_vacuum takes only on a file with no table yet. */
   private open(): { db: DatabaseSync; startedOver: boolean } {
     const attempt = () => {
       const db = new DatabaseSync(this.file);
       try {
-        // only a file with no table yet takes the setting; an older file keeps its own
         // the wait comes first: another process creating the same file holds it while it sets its layout
         db.exec(`PRAGMA busy_timeout = ${Math.trunc(this.options.busyTimeoutMs)}`);
         if (this.options.reclaims) db.exec("PRAGMA auto_vacuum = INCREMENTAL");
@@ -185,7 +209,6 @@ export class Sqlite {
       return { db: attempt(), startedOver: false };
     } catch (error) {
       if (isBusy(error)) throw this.locked();
-      // a file the process cannot open is no damaged one: it stays where it is
       if (!isDamaged(error)) throw error;
       const stamp = (this.options.now?.() ?? new Date()).toISOString().replace(/[:.]/g, "-");
       for (const suffix of ["", "-wal", "-shm"])
@@ -194,10 +217,10 @@ export class Sqlite {
     }
   }
 
-  /** Applies the scripts this file has not seen, in order; one changed after it ran is refused. */
+  /** Applies the scripts this file has not seen, in order; one changed after it ran is refused; of two processes on a new store, the one that waited finds the step done. */
   private migrate(): void {
     const { scripts: dir, name } = this.options;
-    const invalid = (message: string) => this.options.fail("MIGRATION_INVALID", `${name}: ${message}`);
+    const invalid = (message: string) => this.failure("MIGRATION_INVALID", `${name}: ${message}`);
     const scripts = readScripts(dir);
     if (scripts.length === 0) throw invalid(`no layout script in ${dir}; set the room up again`);
     const twice = scripts.find((script, index) => scripts[index + 1]?.version === script.version);
@@ -225,7 +248,7 @@ export class Sqlite {
     const latest = Math.max(version(), ...was.keys());
     const newest = scripts[scripts.length - 1].version;
     if (latest > newest)
-      throw this.options.fail(
+      throw this.failure(
         "SCHEMA_TOO_NEW",
         `${name} is at layout ${latest} and this plugin writes ${newest}: update the plugin`,
       );
@@ -237,7 +260,6 @@ export class Sqlite {
         throw invalid(`${script.name} is older than layout ${latest}, which is already applied`);
       if (checksum !== undefined) continue;
       this.transaction("write", () => {
-        // of two processes on a new store, the one that waited finds the step done
         if (applied().has(script.version)) return;
         this.db.exec(script.sql);
         record(script);
@@ -290,12 +312,10 @@ export class Sqlite {
     return { changes: Number(done.changes), lastInsertRowid: Number(done.lastInsertRowid) };
   }
 
-  /** Every row a read returns. */
   protected rows<T = Row>(sql: string, ...params: Param[]): T[] {
     return this.timed(sql, () => this.statement(sql).all(...params)) as T[];
   }
 
-  /** The first row a read returns, if any. */
   protected row<T = Row>(sql: string, ...params: Param[]): T | undefined {
     return this.timed(sql, () => this.statement(sql).get(...params)) as T | undefined;
   }

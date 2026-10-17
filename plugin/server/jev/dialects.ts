@@ -1,6 +1,6 @@
+import { isObject } from "../../shared/json";
 import {
   checkAnswers,
-  isRecord,
   DecisionError,
   type Answer,
   type Question,
@@ -61,8 +61,8 @@ function fromOpenAi(answers: unknown): Record<string, unknown> {
   if (!Array.isArray(answers)) throw new DecisionError("CONTRACT", "the reply holds no answer list");
   const out: Record<string, unknown> = {};
   for (const answer of answers) {
-    if (!isRecord(answer) || typeof answer.name !== "string") continue;
-    const listed = Array.isArray(answer.probabilities) ? answer.probabilities.filter(isRecord) : [];
+    if (!isObject(answer) || typeof answer.name !== "string") continue;
+    const listed = Array.isArray(answer.probabilities) ? answer.probabilities.filter(isObject) : [];
     if (answer.type === "predicate") out[answer.name] = { type: "noul", noul: answer.probability };
     else if (answer.type === "choice")
       out[answer.name] = {
@@ -107,8 +107,8 @@ export function requestOf(dialect: Dialect, wire: Wire, state: State, questions:
 
 /** A provider's JSON reply, checked against the questions asked. */
 export function replyOf(dialect: Dialect, questions: Questions, json: unknown): Reply {
-  if (!isRecord(json)) throw new DecisionError("CONTRACT", "the reply is no JSON object");
-  const usage = isRecord(json.usage) ? json.usage : {};
+  if (!isObject(json)) throw new DecisionError("CONTRACT", "the reply is no JSON object");
+  const usage = isObject(json.usage) ? json.usage : {};
   const count = (value: unknown) => (Number.isInteger(value) && (value as number) >= 0 ? (value as number) : 0);
   const cost = usage.cost;
   const answers: Record<string, Answer> = checkAnswers(

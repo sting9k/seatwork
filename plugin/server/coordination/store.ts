@@ -2,7 +2,7 @@ import { join } from "node:path";
 import config from "../../shared/mail.json";
 import { SQL_DIR } from "../paths";
 import { readJson, writeJson } from "../persisted";
-import { Sqlite, keptOutOfGit, type Row, type SqliteFailure } from "../sqlite";
+import { Sqlite, keptOutOfGit, type Row } from "../sqlite";
 import { noteSettled, type Settled, type SettledLine } from "./archive";
 
 /** A project's mail in SQLite: messages, how each recipient stands with them, what happened. */
@@ -10,7 +10,7 @@ import { noteSettled, type Settled, type SettledLine } from "./archive";
 export type Needs = "nothing" | "reply" | "decision";
 export type Priority = "blocking" | "action" | "fyi";
 export type Kind = "to" | "cc" | "team";
-export type State = "kept" | "queued" | "sending" | "delivered" | "read" | "bounced" | "replaced" | "withdrawn";
+type State = "kept" | "queued" | "sending" | "delivered" | "read" | "bounced" | "replaced" | "withdrawn";
 
 const SETTLED_STATES = config.settled as readonly State[];
 
@@ -98,16 +98,6 @@ export interface Hit {
   snippet: string;
 }
 
-export class MailStoreError extends Error {
-  constructor(
-    readonly code: SqliteFailure,
-    message: string,
-  ) {
-    super(message);
-    this.name = "MailStoreError";
-  }
-}
-
 export const DRAFT = "draft";
 export const TAKEN = "taken";
 
@@ -189,7 +179,6 @@ export class MailStore extends Sqlite {
     super(databaseIn(folder), {
       busyTimeoutMs,
       scripts: join(SQL_DIR, "mail"),
-      fail: (code, message) => new MailStoreError(code, message),
       name: "the mail store",
       now,
       reclaims: true,
@@ -217,7 +206,6 @@ export class MailStore extends Sqlite {
     this.transaction("write", () => this.event(kind, null, seat, detail));
   }
 
-  /** How many mails the store holds. */
   count(): number {
     return Number(this.row<{ n: number }>("SELECT count(*) AS n FROM messages")?.n ?? 0);
   }
@@ -328,7 +316,7 @@ export class MailStore extends Sqlite {
     });
   }
 
-  /** One message by id. */
+  /** One message by id; null when there is none. */
   get(id: number): Message | null {
     const row = this.row(`SELECT ${MESSAGE} FROM messages m WHERE m.id = ?`, id);
     return row ? toMessage(row) : null;
@@ -605,7 +593,7 @@ export class MailStore extends Sqlite {
     );
   }
 
-  /** A round's reports wait no longer. */
+  /** Lifts the hold on a seat's queued reports of a round; returns how many were held. */
   release(seat: string, round: string): number {
     return this.transaction(
       "write",
@@ -682,7 +670,7 @@ export class MailStore extends Sqlite {
     return added;
   }
 
-  /** One waiting wake-up by id. */
+  /** One waiting wake-up by id; null once it fired, was dropped or was canceled. */
   wakeUp(id: number): WakeUp | null {
     const row = this.row(`SELECT ${WAKEUP} FROM wakeups WHERE id = ?`, id);
     return row ? toWakeUp(row) : null;
@@ -850,7 +838,6 @@ export class MailStore extends Sqlite {
       .reverse();
   }
 
-  /** How many mails a thread holds. */
   threadCount(thread: string): number {
     return this.row<{ n: number }>("SELECT count(*) AS n FROM messages WHERE thread = ?", thread)?.n ?? 0;
   }

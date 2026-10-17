@@ -11,20 +11,12 @@ interface Task {
   at: number;
 }
 
-type Stored = Omit<Task, "at"> & { at?: number };
-
 /** Where each task stands since its last ACCEPT, kept on disk, by the task key a seat works under (TaskKeys). */
 export class Rounds {
   private readonly tasks = new Map<string, Task>();
 
   constructor(private readonly file: string) {
-    let undated = false;
-    for (const [key, task] of Object.entries(readJson<Record<string, Stored>>(file, {}))) {
-      undated ||= task.at === undefined;
-      this.tasks.set(key, { ...task, at: task.at ?? Date.now() });
-    }
-    // rounds an older file kept have no date: their keep starts now, and stays started across restarts
-    if (undated) this.save();
+    for (const [key, task] of Object.entries(readJson<Record<string, Task>>(file, {}))) this.tasks.set(key, task);
   }
 
   private save(): void {
@@ -55,7 +47,7 @@ export class Rounds {
     return task.rejected;
   }
 
-  /** The Owner's mail on this task: the rejections so far, counting this mail when it is one; `seat` is the key the task may also be counted under. */
+  /** The Owner's mail on this task: the rejections so far, counting this mail when it is one (a revised brief that answers a candidate sends it back, whatever its subject says); `seat` is the key the task may also be counted under. */
   answered(key: string, opening: string, seat?: string): number {
     const verdict = verdictOf(opening);
     if (verdict === "accepted" || verdict === "deferred") {
@@ -64,9 +56,7 @@ export class Rounds {
       return 0;
     }
     const task = this.stateOf(key);
-    // a revised brief that answers a candidate sends it back, whatever its subject calls itself
     if (verdict === "returned" && (task.pending || !onlyAfterCandidate(opening))) {
-      // the repair is a new candidate: it owes its own pass
       this.keep(key, { ...task, rejected: task.rejected + 1, pending: false, reread: false });
       return task.rejected + 1;
     }

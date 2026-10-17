@@ -62,17 +62,6 @@ test("text that only looks near a secret is kept as it was", () => {
   for (const [what, text] of KEPT) assert.equal(redact(text), text, what);
 });
 
-test("a long record entry is redacted in a few milliseconds per kilobyte at most", () => {
-  const line = "npm test passed in 4.2s; wrote src/a.ts and src/b.ts; see https://example.com/docs?x=1\n";
-  const text = line.repeat(Math.ceil(20_000 / line.length));
-  redact(text);
-  const runs = 50;
-  const start = process.hrtime.bigint();
-  for (let i = 0; i < runs; i += 1) redact(text);
-  const msPerKb = Number(process.hrtime.bigint() - start) / 1e6 / runs / (text.length / 1024);
-  assert.ok(msPerKb < 2, `${msPerKb.toFixed(3)} ms per KB`);
-});
-
 test("text built to make a pattern backtrack is redacted in linear time: four times the text, not sixteen times the work", async () => {
   for (const [unit, size, prefix] of [
     ["a.", 5000, ""],

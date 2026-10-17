@@ -24,14 +24,13 @@ export interface SeatRow {
 const minutesSince = (at: string | null, now: number) =>
   at ? Math.max(0, Math.floor((now - Date.parse(at)) / 60_000)) : null;
 
-/** What a seat is doing, in words: at work, waiting, failed, or at rest, and for how long. */
+/** What a seat is doing, in words: at work, waiting, failed, or at rest, and for how long; a planned retry is said in place of the failure it answers. */
 function state(row: SeatRow, now: number): string {
   if (row.waiting) return "waiting for a permission";
   if (row.status === "running") {
     const inTurn = minutesSince(row.turnStartedAt, now);
     return inTurn === null ? "at work" : `at work for ${inTurn} min`;
   }
-  // a retry the room has planned says more than the failure it answers
   if (row.retry) return row.retry;
   if (row.status === "error") return row.error ? `its last turn failed: ${row.error}` : "its last turn failed";
   if (row.status !== "idle" && row.status !== "closed") return "starting";

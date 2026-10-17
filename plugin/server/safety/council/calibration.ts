@@ -77,7 +77,6 @@ export function hiFor(labels: readonly Label[], current: number): number {
     (label): label is Label & { score: number } => label.tier === "juror" && typeof label.score === "number",
   );
   let lowest: number | null = null;
-  // fixed sequence: from the top down, stop at the first step that fails
   for (const step of GRID) {
     const above = scored.filter((label) => label.score >= step);
     if (above.length === 0) continue;

@@ -38,10 +38,9 @@ export function lowerBound(hits: number, n: number): number {
   return solve((p) => upperTail(hits, n, p, lf), 1 - CONFIDENCE);
 }
 
-/** The one-sided Clopper-Pearson upper bound of a rate with `hits` of `n`. */
+/** The one-sided Clopper-Pearson upper bound of a rate with `hits` of `n`, solved on the complement tail, which rises with p. */
 export function upperBound(hits: number, n: number): number {
   if (n === 0 || hits >= n) return 1;
   const lf = logFactorials(n);
-  // P(X <= hits) falls as p grows: its complement is the tail that rises
   return solve((p) => upperTail(hits + 1, n, p, lf), CONFIDENCE);
 }

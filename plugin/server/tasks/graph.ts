@@ -90,7 +90,6 @@ function betweenness(graph: Graph): Float64Array {
     far[source] = 0;
     paths[source] = 1;
     order[0] = source;
-    // the array is the queue: `head` reads where `tail` wrote
     let tail = 1;
     for (let head = 0; head < tail; head += 1) {
       const node = order[head];
@@ -114,47 +113,7 @@ function betweenness(graph: Graph): Float64Array {
   return score;
 }
 
-/** Tarjan's components, without recursion: the issues that wait for each other in a ring. */
-function rings(graph: Graph): number[][] {
-  const n = graph.issues.length;
-  const [low, seen, onStack] = [new Int32Array(n), new Int32Array(n).fill(-1), new Uint8Array(n)];
-  const stack: number[] = [];
-  const found: number[][] = [];
-  let counter = 0;
-  for (let root = 0; root < n; root += 1) {
-    if (seen[root] >= 0) continue;
-    const walk: [node: number, edge: number][] = [[root, 0]];
-    while (walk.length > 0) {
-      const frame = walk[walk.length - 1];
-      const [node] = frame;
-      if (frame[1] === 0) {
-        seen[node] = low[node] = counter++;
-        stack.push(node);
-        onStack[node] = 1;
-      }
-      const next = graph.blockers[node][frame[1]];
-      if (next !== undefined) {
-        frame[1] += 1;
-        if (seen[next] < 0) walk.push([next, 0]);
-        else if (onStack[next]) low[node] = Math.min(low[node], seen[next]);
-        continue;
-      }
-      walk.pop();
-      if (walk.length > 0) low[walk[walk.length - 1][0]] = Math.min(low[walk[walk.length - 1][0]], low[node]);
-      if (low[node] !== seen[node]) continue;
-      const ring: number[] = [];
-      for (let member = -1; member !== node;) {
-        member = stack.pop()!;
-        onStack[member] = 0;
-        ring.push(member);
-      }
-      if (ring.length > 1) found.push(ring);
-    }
-  }
-  return found;
-}
-
-/** Per issue, 1 plus the longest chain waiting behind it: Kahn's order, then one pass. */
+/** Per issue, 1 plus the longest chain waiting behind it (1 for an issue on a ring): Kahn's order, then one pass. */
 function depths(graph: Graph): Int32Array {
   const n = graph.issues.length;
   const waiting = Int32Array.from(graph.blockers, (list) => list.length);
@@ -163,7 +122,6 @@ function depths(graph: Graph): Int32Array {
   for (let i = 0; i < n; i += 1) if (waiting[i] === 0) order[tail++] = i;
   for (let head = 0; head < tail; head += 1)
     for (const next of graph.dependents[order[head]]) if ((waiting[next] -= 1) === 0) order[tail++] = next;
-  // an issue on a ring never reaches the order: it keeps depth 1
   const depth = new Int32Array(n).fill(1);
   for (let i = tail - 1; i >= 0; i -= 1) {
     const node = order[i];
@@ -186,7 +144,7 @@ function freedByEach(work: Work, graph: Graph): number[][] {
   return freed;
 }
 
-/** The largest of the values, 0 when none is above it. */
+/** The largest of the values, 0 when none is above it; a loop, since a spread of many thousand values overflows the call stack. */
 const peak = (values: ArrayLike<number>) => {
   let top = 0;
   for (let i = 0; i < values.length; i += 1) if (values[i] > top) top = values[i];
@@ -194,7 +152,7 @@ const peak = (values: ArrayLike<number>) => {
 };
 
 /** An open issue with its score, the reasons for it and what it frees. */
-export interface Scored {
+interface Scored {
   id: string;
   title: string;
   status: string;
@@ -215,7 +173,6 @@ function scoreAll(work: Work, now: Date): { graph: Graph; scored: Scored[] } {
   const [rank, bridge, depth] = [pagerank(graph), betweenness(graph), depths(graph)];
   const [topRank, topBridge] = [peak(rank), peak(bridge)];
   const freed = freedByEach(work, graph);
-  // a loop, not a spread: a spread of many thousand values overflows the call stack
   const mostHeld = Math.max(1, peak(graph.dependents.map((list) => list.length)));
   const mostFreed = Math.max(5, peak(freed.map((list) => list.length)));
   const scored: Scored[] = [];
@@ -263,7 +220,7 @@ const actionable = (scored: readonly Scored[]) =>
   scored.filter((one) => one.ready || (one.status === "in_progress" && one.blocked_by.every(holdsOnly)));
 
 /** What triage answers: the counts, the issues to do first and the blockers to clear first. */
-export interface Triage {
+interface Triage {
   counts: { open: number; ready: number; blocked: number; in_progress: number };
   recommendations: Scored[];
   blockers_to_clear: { id: string; title: string; holds_up: number; assignee: string | null; status: string }[];
@@ -379,7 +336,7 @@ export interface Plan {
   overlapsCut?: true;
 }
 
-/** Pairs of a plan's issues whose overlap no path can tell, one side's scope naming none; none when there are more than `most`. */
+/** Pairs of a plan's issues whose overlap no path can tell, one side's scope naming none (a prose scope pairs with each later issue, a path scope with the later prose ones); none when there are more than `most`. */
 export function unreadScopes(
   work: Work,
   plan: Plan,
@@ -397,7 +354,6 @@ export function unreadScopes(
     pairs.push({ a: planned[i].id, b: planned[j].id, scopes: [planned[i].write_scope, planned[j].write_scope] });
     return true;
   };
-  // an issue pairs with each later one when its own scope is prose, else with the later prose ones only
   let later = 0;
   for (let i = 0; i < planned.length; i += 1) {
     while (later < prose.length && prose[later] <= i) later += 1;
@@ -408,11 +364,10 @@ export function unreadScopes(
   return pairs;
 }
 
-/** Groups no dependency joins, which can run side by side, and the scopes that collide. */
+/** Groups no dependency joins (found by union-find), which can run side by side, and the scopes that collide. */
 export function plan(work: Work, now: Date): Plan {
   const { graph, scored } = scoreAll(work, now);
   const n = graph.issues.length;
-  // union-find, halving paths on the way up and hanging the smaller tree under the larger
   const [group, size] = [Int32Array.from({ length: n }, (_, i) => i), new Int32Array(n).fill(1)];
   const root = (node: number) => {
     while (group[node] !== node) node = group[node] = group[group[node]];
@@ -482,13 +437,13 @@ export function blockerChain(
 }
 
 /** Something that needs a look. */
-export interface Alert {
-  type: "stale_claim" | "blocking_cascade" | "cycle";
+interface Alert {
+  type: "stale_claim" | "blocking_cascade";
   id: string;
   message: string;
 }
 
-/** What needs a look: a stale claim, an issue holding many back, a ring of waits. */
+/** What needs a look: a stale claim, an issue holding many back. */
 export function alerts(work: Work, now: Date, staleMinutes: number): Alert[] {
   const graph = build(work);
   const found: Alert[] = [];
@@ -504,9 +459,5 @@ export function alerts(work: Work, now: Date, staleMinutes: number): Alert[] {
     if (held >= 3)
       found.push({ type: "blocking_cascade", id: issue.id, message: `${held} issues wait for it (${issue.status})` });
   });
-  for (const ring of rings(graph)) {
-    const ids = ring.map((index) => graph.issues[index].id).sort();
-    found.push({ type: "cycle", id: ids[0], message: `these wait for each other: ${ids.join(", ")}` });
-  }
   return found;
 }

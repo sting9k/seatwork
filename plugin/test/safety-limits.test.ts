@@ -41,7 +41,7 @@ test("a patch of any number of files runs, the guard reading a fixed number of t
   assert.equal((await answerHook(guard, "codex", applyPatch(patchOf(150)), seat)).text, "");
   assert.equal((await answerHook(guard, "codex", applyPatch(patchOf(100_000)), seat)).text, "");
   const pi = await answerHook(guard, "pi", { tool: "patch", input: { patchText: patchOf(5000) }, cwd: PROJECT }, seat);
-  assert.deepEqual(JSON.parse(pi.text), { block: false, note: null });
+  assert.equal(pi.text, "");
 });
 
 test("what the guard costs for a patch does not grow with the number of files it names", async () => {
@@ -80,9 +80,7 @@ test("a command too long to read is kept as unread from its start, whatever its 
     const long = `echo ${"x ".repeat(1990)}${secret} ${"y".repeat(4_000_000)}`;
     await guard.check(seat, "claude", long, PROJECT);
     assert.ok(Math.max(...lengths) <= 4000, `redaction read ${Math.max(...lengths)} characters`);
-    const kept = (store as unknown as { db: import("node:sqlite").DatabaseSync }).db
-      .prepare("SELECT rule, command FROM decisions ORDER BY id DESC LIMIT 1")
-      .get() as { rule: string; command: string };
+    const kept = store.kept("", 1)[0];
     assert.equal(kept.rule, "unverified");
     assert.ok(!kept.command.includes(secret));
     assert.ok(kept.command.length <= 2000);

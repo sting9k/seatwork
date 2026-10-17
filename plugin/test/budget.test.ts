@@ -101,11 +101,9 @@ test("a project's spend is the change in its seats' totals between turns, per UT
   assert.deepEqual(today(budget(), A), { usd: 2.65, turns: 7 });
   ops.close();
 
-  // a new process takes up each seat's last total from the store
   const again = rig({ dir, policy });
   again.ops.spent("a1", 0.9);
   assert.deepEqual(today(again.budget(), A), { usd: 3.15, turns: 8 });
-  // the next day starts at nothing; the day before stays in the reading
   again.at("2026-10-16T00:00:05.000Z");
   again.ops.spent("a1", 1.0);
   const view = again.budget();
@@ -274,7 +272,6 @@ test("the hold is kept by a restart, ends at the next UTC day, and ends at once 
   assert.deepEqual(lifted, [A], "once");
   ops.close();
 
-  // the same day, the cap raised
   const raised = rig({ dir: `${dir}-raised`, policy: { budget: { projects: { [A]: { dailyUsd: 5 } } } } });
   raised.ops.opened("a1");
   raised.ops.spent("a1", 6);
@@ -285,7 +282,6 @@ test("the hold is kept by a restart, ends at the next UTC day, and ends at once 
   assert.deepEqual(raised.lifted, [A]);
   raised.ops.spent("a1", 9);
   assert.ok(raised.ops.holds("a1"), "past the new cap it is held again");
-  // the cap removed
   delete (raised.policy.budget as { projects?: unknown }).projects;
   assert.equal(raised.ops.holds("a1"), null);
   raised.ops.close();
@@ -392,7 +388,6 @@ test("the operator may lower a cap and never raise one: not by a value, not by u
   tune("budget.projects[/work/beta].dailyUsd", 6);
   assert.deepEqual(Object.keys((policy.budget as { projects: object }).projects), [A, "/work/my.app", "/work/beta/"]);
   assert.deepEqual(persisted.at(-1), ["budget.projects[/work/beta/].dailyUsd", 6]);
-  // a cap where none stands is a lowering from none; the default's keys are tunable the same way
   assert.deepEqual(
     (ops.act("hq-1", { do: "policy" }).tunable as Record<string, { value: unknown }>)["budget.default.dailyTurns"]
       .value,

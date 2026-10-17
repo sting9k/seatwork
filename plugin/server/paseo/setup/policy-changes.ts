@@ -1,18 +1,16 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import { isObject } from "../../../shared/json";
 
 /** Changes made to a room home's policy, kept across setups. */
 
 type Json = Record<string, unknown>;
 
 /** One key changed since setup; no `value` is a key taken out. */
-export interface PolicyChange {
+interface PolicyChange {
   path: string[];
   value?: unknown;
 }
-
-const isObject = (value: unknown): value is Json =>
-  typeof value === "object" && value !== null && !Array.isArray(value);
 
 /** The keys `now` changed from `shipped`, `$comment` keys aside; an array is one key. */
 function changesSince(shipped: Json, now: Json, path: string[] = []): PolicyChange[] {
@@ -57,11 +55,6 @@ function readPolicyFile(file: string): Json | null {
       `seatwork: ${file} is not JSON (${error instanceof Error ? error.message : String(error)}): fix it, then set the room up again`,
     );
   }
-}
-
-/** Whether a room home's policy.json has no policy.shipped.json beside it, as one set up before setup kept that copy: what was changed in it cannot be known. */
-export function unshipped(roomHome: string): boolean {
-  return existsSync(join(roomHome, "policy.json")) && !existsSync(join(roomHome, "policy.shipped.json"));
 }
 
 /** What was changed in a room home's policy.json since setup wrote policy.shipped.json beside it. */

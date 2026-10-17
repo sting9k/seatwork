@@ -1,5 +1,5 @@
 {
-  "$comment": "What each seat may touch, written once. Setup (plugin screen or install.sh) builds the seats' Paseo providers from the paseo part and writes the file to ~/.config/seatwork/policy.json, where the plugin reads the harness part to build runtimes. A key changed there stays through later setups; the rest takes this file's values.",
+  "$comment": "What each seat may touch, written once. Setup (the plugin's screen) builds the seats' Paseo providers from the paseo part and writes the file to ~/.config/seatwork/policy.json, where the plugin reads the harness part to build runtimes. A key changed there stays through later setups; the rest takes this file's values.",
   "paseoTools": {
     "all": [
       "speak",
@@ -233,11 +233,9 @@
     }
   },
   "daemon": {
-    "$comment": "Daemon-wide switches applied at setup; they reach every agent on the host, not only seats. The setup screen sets browserTools, enableTerminalAgentHooks and bundledSkills and only reports dictation and voiceMode; install.sh sets all five.",
+    "$comment": "Daemon-wide switches applied at setup; they reach every agent on the host, not only seats. Setup sets all three; the setup screen also names dictation and voice mode when they are on, since the room keeps them off but cannot set them.",
     "browserTools": false,
     "enableTerminalAgentHooks": false,
-    "dictation": false,
-    "voiceMode": false,
     "bundledSkills": "none"
   },
   "mail": {
@@ -288,7 +286,7 @@
     }
   },
   "safety": {
-    "$comment": "The room's safety. The guard reads every call of a seat by the packs in force and keeps those a rule holds for; it stops none. packs: those turned on or off over the shipped ones. budgetMs: how long the guard reads one call. handin.mode: block, warn or off. handin.registry: a new dependency's first release is read from its public registry (npm, PyPI, crates.io).",
+    "$comment": "The room's safety. The guard reads every call of a seat by the packs in force and keeps those a rule holds for; it stops none. packs: those turned on or off over the shipped ones. budgetMs: how long the guard reads one call. handin.mode: block, warn or off.",
     "mode": "on",
     "packs": {
       "add": [],
@@ -296,8 +294,7 @@
     },
     "budgetMs": 1000,
     "handin": {
-      "mode": "block",
-      "registry": true
+      "mode": "block"
     },
     "council": {
       "$comment": "The council that reads each turn of a briefed, writing or reviewing seat (shared/safety/council.json). levels: a member's level on this machine, over the shipped one, at most 2 (labels alone earn the level that sends a hand-in back). Readings no label holds are kept keepDays; tickSeconds paces the look at running turns. chairMinutes: how long an appeal waits for the chair's ruling before it lapses, 30 when not set. jurors: the members that ask the decision model; one left out reads by facts alone.",
@@ -354,10 +351,9 @@
     "handin": {
       "freshEyes": true
     },
-    "$comment_work": "The work store in <project>/.seatwork/.work/ (work.db, with issues.jsonl as its text copy). busyTimeoutMs: a write waits this long on another process's, then fails as DATABASE_LOCKED. flushAfterMs: the text copy is written once per burst of writes, this long after the first. staleClaimMinutes: an issue in progress untouched this long shows in the graph's alerts. close.minReasonChars: a close says what was done and its commit or evidence. close.forbidSelfClose: an issue's holder cannot close it; its Owner does. A project's own .seatwork/.work/policy.json overrides any of these.",
+    "$comment_work": "The work store in <project>/.seatwork/.work/work.db. busyTimeoutMs: a write waits this long on another process's, then fails as DATABASE_LOCKED. staleClaimMinutes: an issue in progress untouched this long shows in the graph's alerts. close.minReasonChars: a close says what was done and its commit or evidence. close.forbidSelfClose: an issue's holder cannot close it; its Owner does. A project's own .seatwork/.work/policy.json overrides any of these.",
     "work": {
       "busyTimeoutMs": 5000,
-      "flushAfterMs": 250,
       "staleClaimMinutes": 120,
       "close": {
         "minReasonChars": 20,

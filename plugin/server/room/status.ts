@@ -120,7 +120,7 @@ function treeOf(members: readonly SeatRecord[], live: ReadonlyMap<string, LiveSe
   return seats;
 }
 
-/** The room as the app shows it: what waits on the Owner, and the seats by project. */
+/** The seats the app lists, grouped by project and in trees, with what waits on the Owner and the project each wait belongs to. */
 export async function roomStatus(live: ReadonlyMap<string, LiveSeat>, engine: MailEngine, owed: OwedList) {
   const registry = loadRegistry();
   const own = roomProjectIn(registry);

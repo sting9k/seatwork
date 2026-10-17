@@ -24,7 +24,7 @@ const output = { log: console.log, error: console.error };
 let dispose: () => Promise<void>;
 
 before(() => {
-  installRoom(["claude-hq", "claude-supervisor", "claude-lead", "claude-peer", "claude-lens"]);
+  installRoom(["claude-hq", "claude-supervisor", "claude-lead", "claude-peer"]);
   console.log = console.error = () => {};
   dispose = contribute(paseoSide.server);
 });

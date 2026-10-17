@@ -6,7 +6,7 @@ import { replyOf, requestOf, type Dialect, type Wire, type WireRequest } from ".
 /** One decision call: a deadline, retries on what may pass, the reply read into the room's shape. */
 
 /** How one call goes: time per attempt and in all, retries, the caller's signal, and stand-ins for fetch and sleep. */
-export interface CallOptions {
+interface CallOptions {
   attemptMs: number;
   retries: number;
   deadlineMs: number;
@@ -16,7 +16,7 @@ export interface CallOptions {
 }
 
 /** A reply with how long the call took and how many attempts it made. */
-export interface CallResult extends Reply {
+interface CallResult extends Reply {
   latencyMs: number;
   attempts: number;
 }

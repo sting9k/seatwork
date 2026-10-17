@@ -1,6 +1,6 @@
 import { existsSync, readFileSync, realpathSync, renameSync, statSync, writeFileSync } from "node:fs";
 import { basename, dirname, join, relative, resolve } from "node:path";
-import { REGISTRY_FILE, ROOM_PROJECT_DIR } from "../paths";
+import { REGISTRY_FILE, ROOM_FOLDER, ROOM_PROJECT_DIR } from "../paths";
 import { inRoom, ROOM_PROJECT } from "../../shared/workflow";
 
 /** The registry of projects (projects.json) and what each project keeps under .seatwork/. */
@@ -28,7 +28,7 @@ interface ProjectMatch extends ProjectFiles {
 
 /** The project's law: `.seatwork/<name>-law.md`, else `.seatwork/law.md`. */
 export function readLaw(root: string, name: string): string | null {
-  for (const file of [join(root, ".seatwork", `${name}-law.md`), join(root, ".seatwork", "law.md")]) {
+  for (const file of [join(root, ROOM_FOLDER, `${name}-law.md`), join(root, ROOM_FOLDER, "law.md")]) {
     if (existsSync(file)) return readFileSync(file, "utf8").trim();
   }
   return null;
@@ -36,12 +36,12 @@ export function readLaw(root: string, name: string): string | null {
 
 /** A project's room marker (.seatwork/room.json); empty where it has none. */
 export function readRoomJson(root: string): Record<string, unknown> {
-  const file = join(root, ".seatwork", "room.json");
+  const file = join(root, ROOM_FOLDER, "room.json");
   return existsSync(file) ? (JSON.parse(readFileSync(file, "utf8")) as Record<string, unknown>) : {};
 }
 
 function readProjectFiles(root: string, name: string): ProjectFiles {
-  const missionFile = join(root, ".seatwork", "mission.md");
+  const missionFile = join(root, ROOM_FOLDER, "mission.md");
   return {
     room: readRoomJson(root),
     mission: existsSync(missionFile) ? readFileSync(missionFile, "utf8").trim() : null,
@@ -127,7 +127,7 @@ export function findProject(registry: Registry, cwd: string): ProjectMatch | nul
 export function markerRoot(cwd: string): string | null {
   let dir = realOrSelf(cwd);
   for (let i = 0; i < 64; i += 1) {
-    if (existsSync(join(dir, ".seatwork", "room.json"))) return dir;
+    if (existsSync(join(dir, ROOM_FOLDER, "room.json"))) return dir;
     const parent = dirname(dir);
     if (parent === dir) break;
     dir = parent;

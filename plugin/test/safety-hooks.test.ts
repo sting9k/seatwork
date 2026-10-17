@@ -121,50 +121,61 @@ function load(name: string, text: string): any {
   return require(file);
 }
 
-test("Pi's extension asks the room about bash, write, edit and read calls, blocks with the room's reason, and lets a call run when no answer comes", async () => {
-  const live = await room(async (body) => ({
-    type: "application/json",
-    text: JSON.stringify(
-      JSON.parse(body).input.command === "rm -rf ~" ? { block: true, reason: "no" } : { block: false },
-    ),
-  }));
-  const handlers: Record<string, (event: object, ctx: object) => Promise<unknown>> = {};
+test("Pi's extension asks the room about bash, write, edit and read calls, and what the room says rides on the next result", async () => {
+  const live = await room(async (body) =>
+    JSON.parse(body).input.command === "rm -rf ~"
+      ? { type: "application/json", text: JSON.stringify({ note: "a decision changed" }) }
+      : { type: "text/plain", text: "" },
+  );
+  const handlers: Record<string, (event: object, ctx?: object) => Promise<unknown>> = {};
   load("pi-guard.ts", piExtension()).default({ on: (event: string, handler: never) => (handlers[event] = handler) });
   process.env[GATE_ENV.url] = live.url;
+  const result = { content: [{ type: "text", text: "done" }], structuredContent: { ok: true } };
   try {
     const call = (toolName: string, command: string) =>
       handlers.tool_call({ toolName, input: { command } }, { cwd: "/x" });
-    assert.deepEqual(await call("bash", "rm -rf ~"), { block: true, reason: "no" });
-    assert.equal(await call("bash", "ls"), undefined);
-    assert.deepEqual(await call("read", "rm -rf ~"), { block: true, reason: "no" }, "reading tools are asked about");
-    assert.equal(await call("todo", "rm -rf ~"), undefined, "other tools are not");
+    assert.equal(await call("bash", "ls"), undefined, "a call always runs");
+    assert.equal(await handlers.tool_result(result), undefined, "no note leaves the result as it is");
+    await call("read", "rm -rf ~");
+    assert.deepEqual(await handlers.tool_result(result), {
+      content: [
+        { type: "text", text: "done" },
+        { type: "text", text: "a decision changed" },
+      ],
+      structuredContent: { ok: true },
+    });
+    assert.equal(await handlers.tool_result(result), undefined, "a note rides once");
+    await call("todo", "rm -rf ~");
+    assert.equal(await handlers.tool_result(result), undefined, "other tools are not asked about");
     await live.close();
     assert.equal(await call("bash", "rm -rf ~"), undefined, "a room that is down");
-    delete process.env[GATE_ENV.url];
-    assert.equal(await call("bash", "rm -rf ~"), undefined, "a seat with no address");
   } finally {
     delete process.env[GATE_ENV.url];
     await live.close();
   }
 });
 
-test("OpenCode's plugin turns a blocked call into one that prints the room's reason and fails", async () => {
+test("OpenCode's plugin asks the room before a call and adds what the room says to the call's output", async () => {
   const live = await room(async () => ({
     type: "application/json",
-    text: JSON.stringify({ block: true, reason: "it's blocked" }),
+    text: JSON.stringify({ note: "a decision changed" }),
   }));
-  let hook: ((event: { tool: string; input: Record<string, unknown> }) => Promise<void>) | null = null;
+  const hooks: Record<string, (event: Record<string, any>) => Promise<void>> = {};
   load("opencode-guard.ts", openCodePlugin()).default.setup({
-    tool: { hook: (_: string, fn: typeof hook) => (hook = fn) },
+    tool: { hook: (name: string, fn: (event: Record<string, any>) => Promise<void>) => (hooks[name] = fn) },
     location: { directory: "/x" },
   });
   process.env[GATE_ENV.url] = live.url;
   try {
-    const event = { tool: "write", input: { path: "/Users/u/.zshrc" } as Record<string, unknown> };
-    await hook!(event);
-    assert.equal(event.tool, "shell");
-    const run = spawnSync("/bin/sh", ["-c", String(event.input.command)], { encoding: "utf8" });
-    assert.deepEqual([run.status, run.stderr.trim()], [1, "it's blocked"]);
+    const before = { tool: "write", input: { path: "/Users/u/.zshrc" } };
+    await hooks["execute.before"](before);
+    assert.deepEqual(before, { tool: "write", input: { path: "/Users/u/.zshrc" } }, "the call runs as it was asked");
+    const failed = { status: "error", result: { output: "no" } };
+    await hooks["execute.after"](failed);
+    assert.equal(failed.result.output, "no", "a failed call carries nothing more");
+    const done = { status: "completed", result: { output: "written" } };
+    await hooks["execute.after"](done);
+    assert.equal(done.result.output, "written\n\na decision changed");
   } finally {
     delete process.env[GATE_ENV.url];
     await live.close();

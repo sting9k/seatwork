@@ -153,11 +153,9 @@ export async function launch(
       `seatwork: ${seat.provider}/${request.model ?? "(default model)"} refused: ${table} for ${seat.role} only ${fit.listed.join(", ")} (${own ?? "the Seatwork screen sets it"}). Create the seat again on one of these.`,
     );
   }
-  // a creator that named a model has chosen it; for the rest the decision model may pick a tier
   const task = { title: request.title, spec, brief: request.systemPrompt };
   const picked = request.model || !forks ? undefined : await pickModel(forks, models, seat.role, seat.provider, task);
   if (picked) fit.model = picked;
-  // a model the table does not list is replaced by the table's
   if (fit.model)
     log(
       `${seat.provider}: asked for ${request.model ?? "its default model"}, starts on ${fit.model} as the model table says`,
@@ -197,7 +195,7 @@ export async function launch(
             dirs: [claudeRoleDir(seat.role)],
             args: {
               ...(policy.launch.claude.extraArgs ?? {}),
-              // the guard: a plugin whose hook checks each command and file write
+              // the guard: a plugin whose hook reads and records each command and file write
               ...(policy.safety?.mode !== "off" ? { "plugin-dir": join(SAFETY_DIR, "claude") } : {}),
             },
           },

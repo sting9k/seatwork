@@ -9,3 +9,8 @@ export function excerpt(text: string, most: number): string {
   const tail = most - head;
   return `${text.slice(0, head)} … (${text.length - most} characters cut) … ${text.slice(text.length - tail)}`;
 }
+
+/** The head of a text, `most` characters and an ellipsis when it is longer. */
+export function clip(text: string, most: number): string {
+  return text.length > most ? `${text.slice(0, most)}…` : text;
+}

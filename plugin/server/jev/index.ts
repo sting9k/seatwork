@@ -2,7 +2,6 @@ import { createHash } from "node:crypto";
 import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { firstNotEnglish } from "../english";
-import { probeChat, type ChatProbe } from "./chat";
 import { call } from "./client";
 import {
   checkRequest,
@@ -22,12 +21,12 @@ import { cleanState, guarded } from "./input";
 import { merged, REVERSED, withReversed } from "./order";
 import { JevStore, type CallRow } from "./store";
 
-/** The Jev district: decisions from the provider in force, input made safe, calls logged, costed, capped, and held off while it is down. */
+/** The Jev district: decisions from the provider in force, input made safe, calls logged and costed, and held off while it is down. */
 
 export type ProviderName = "jev" | "openrouter" | "custom";
 
 /** One provider's wire: url, model and dialect, the env variable of its key, and its price per million input tokens. */
-export interface ProviderPolicy {
+interface ProviderPolicy {
   url: string;
   model: string;
   dialect: Dialect;
@@ -47,7 +46,7 @@ export interface JevPolicy {
 }
 
 /** What the district takes: its folder and policy, and stand-ins for the environment, clock, network and log. */
-export interface JevDeps {
+interface JevDeps {
   dir: string;
   policy(): JevPolicy | undefined;
   env?: Record<string, string | undefined>;
@@ -57,7 +56,7 @@ export interface JevDeps {
 }
 
 /** A decision as its caller reads it: the answers, the ids they were logged under, the choices whose two orders chose apart, its cost, and whether memory gave it. */
-export interface Decision {
+interface Decision {
   model: string;
   answers: Record<string, Answer>;
   asks: Record<string, number>;
@@ -78,7 +77,7 @@ export interface JevCheck {
 }
 
 /** A fork the room takes on the model's word: `sharp` when the model is sure and the state gave it no orders. */
-export interface Fork {
+interface Fork {
   label: string | null;
   probability: number;
   sharp: boolean;
@@ -251,14 +250,6 @@ export class Jev {
     return this.lastCheck;
   }
 
-  /** What a Chat Completions provider's endpoint gives the wire, measured with two calls; null for another dialect or for no provider. */
-  async probeEndpoint(): Promise<ChatProbe | null> {
-    const found = this.provider();
-    if ("why" in found || found.settings.dialect !== "openai-chat") return null;
-    const { url, model } = found.settings;
-    return probeChat({ url, model, key: found.key }, this.deps.fetch ?? fetch);
-  }
-
   /** Why no decision can be asked now; null when one can. */
   why(): string | null {
     const found = this.provider();
@@ -400,7 +391,6 @@ export class Jev {
       Object.assign(this.down, { failures: 0, opens: 0, until: 0 });
       const { usd, usdSource } = costOf(reply, settings.usdPerMillionInput, () => tokensOf(sent, asked));
       const read = merged(reply.answers);
-      // the log keeps each choice as the room reads it, and the reversed order beside it
       const asks = this.store().record(
         {
           ...logged,

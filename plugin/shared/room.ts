@@ -76,3 +76,9 @@ export const roomStatus = defineRpc({
     ),
   }),
 });
+
+export const roomClean = defineRpc({
+  name: "room.clean",
+  input: z.object({}),
+  output: z.object({ lines: z.array(z.string()), running: z.boolean() }),
+});

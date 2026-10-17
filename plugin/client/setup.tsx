@@ -17,7 +17,9 @@ import {
   type ModelChoice,
   type Table,
 } from "../shared/model-choices";
+import settings from "../shared/settings.json";
 import { ROOM_PROJECT, ROOM_ROLE, traits } from "../shared/workflow";
+import { roomClean } from "../shared/room";
 import { roomSettings, setupInit, setupProject, setupRemove, setupState, type RoomChoices } from "../shared/setup";
 import {
   Badge,
@@ -257,7 +259,7 @@ function removedLine(done: RpcOutput<typeof setupRemove>): string {
     .filter((project) => project.left.length > 0)
     .map((project) => `${short(project.root)}/.seatwork (${project.left.join(", ")})`);
   return [
-    `The room was removed. Its folder is kept at ${short(done.movedTo)}${count ? `, with the room's notes from ${count} project${count === 1 ? "" : "s"}` : ""}, for 30 days.`,
+    `The room was removed. Its folder is kept at ${short(done.movedTo)}${count ? `, with the room's notes from ${count} project${count === 1 ? "" : "s"}` : ""}, for ${settings.keepRemovedDays} days.`,
     kept.length ? `Left in place, not the room's: ${kept.join("; ")}.` : "",
     ...done.notes,
   ]
@@ -376,6 +378,38 @@ function HostCard(props: { checks: State["checks"]; harnesses: Harness[]; colors
 }
 
 /** The way out of the room: a link, then a confirmation that says what Remove takes and keeps. */
+/** GC on demand: the pass the room runs on its own schedule, run now, and what it cleared. */
+function CleanCard(props: { colors: Colors }) {
+  const { colors: c } = props;
+  const run = useRpc(roomClean);
+  const clean = useMutation({ mutationFn: () => run({}) });
+  const done = clean.data as RpcOutput<typeof roomClean> | undefined;
+  const lines = done?.lines ?? [];
+  const shown = lines.slice(0, 12).join("\n") + (lines.length > 12 ? `\n… and ${lines.length - 12} more` : "");
+  return (
+    <Card colors={c} style={RAIL}>
+      <RailHead icon="Sparkles" title="Clean up" colors={c} />
+      <Text style={small(c)}>
+        The room clears what it no longer needs on its own schedule: idle seats, what closed seats left, finished mail,
+        old logs and records, and folders set aside by Remove after {settings.keepRemovedDays} days.
+      </Text>
+      <Btn
+        label={clean.isPending ? "Cleaning…" : "Clean up now"}
+        disabled={clean.isPending}
+        onPress={() => clean.mutate()}
+        colors={c}
+      />
+      {clean.error ? <Text style={{ ...small(c), color: c.statusDanger }}>{failed(clean.error)}</Text> : null}
+      {done ? (
+        <Text style={small(c)}>
+          {done.running ? "A pass was already running; what it clears goes to the log. " : ""}
+          {lines.length === 0 ? "Nothing to clear." : shown}
+        </Text>
+      ) : null}
+    </Card>
+  );
+}
+
 function RemoveCard(props: {
   confirming: boolean;
   setConfirming(on: boolean): void;
@@ -390,9 +424,11 @@ function RemoveCard(props: {
     <Card colors={c} style={{ ...RAIL, borderColor: tint(c.statusDanger, 0.5) }}>
       <Text style={{ color: c.foreground, fontSize: 13, lineHeight: 18, fontWeight: "600" }}>Remove the room?</Text>
       <Text style={small(c)}>
-        Its seats, its profiles and the {ROOM_PROJECT} project leave Paseo. The room's folder is moved aside with its
-        mail and logs, and with it the notes the room kept in each project's .seatwork folder; it is deleted 30 days
-        later. Your projects and their code stay as they are. Archive the room's agents first.
+        Its seats, its profiles, the {ROOM_PROJECT} project and the records of its archived seats leave Paseo, and the
+        switches Init set for every agent go back to what they were. The room's folder is moved aside with its mail,
+        logs and its seats' Claude sessions, and with it the notes the room kept in each project's .seatwork folder; it
+        is deleted {settings.keepRemovedDays} days later. Your projects and their code stay as they are. Archive the
+        room's agents first.
       </Text>
       <View style={{ flexDirection: "row", gap: 8 }}>
         <Btn
@@ -424,7 +460,7 @@ function RemoveCard(props: {
 function RoomStanding(props: {
   applied: State["applied"];
   waiting: string[];
-  stale: boolean;
+  stale: { detail: string } | null;
   version: string;
   home: string;
   pending: boolean;
@@ -486,7 +522,7 @@ function RoomStanding(props: {
           <Standing
             tone="warn"
             title="The room's files are older"
-            sub={`Set up by ${applied.version || "an earlier version"}. No new seat opens until they are applied.`}
+            sub={`${stale.detail} No new seat opens until they are applied.`}
             colors={c}
           />
           <Btn label={pending ? "Working…" : "Apply"} kind="primary" disabled={busy} onPress={onApply} colors={c} />
@@ -569,7 +605,7 @@ function RoomSetup({
           ),
           ...(values.chime !== applied.chime ? ["Chime"] : []),
         ];
-  const stale = applied !== null && applied.version !== data.version;
+  const stale = data.checks.find((check) => check.id === "version") ?? null;
   const sharing = data.projects.filter((project) => !project.own).length;
   const apply = () => {
     remove.reset();
@@ -670,7 +706,9 @@ function RoomSetup({
         <Toggle label="Chime" value={values.chime} onChange={(chime) => save({ ...values, chime })} colors={c} />
       </Card>
 
-      <HostCard checks={data.checks} harnesses={data.harnesses} colors={c} />
+      <HostCard checks={data.checks.filter((check) => check !== stale)} harnesses={data.harnesses} colors={c} />
+
+      <CleanCard colors={c} />
 
       {applied ? (
         <RemoveCard

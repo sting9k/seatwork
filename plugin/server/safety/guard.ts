@@ -1,5 +1,3 @@
-import { readFileSync, statSync } from "node:fs";
-import { join } from "node:path";
 import { evaluate, type Evaluation, type GateConfig, type Tools } from "./gate/evaluate";
 import { packsInForce, ruleOf } from "./gate/packs";
 import { ATTRIBUTES_FILE, namesDriver } from "./gate/rules/attributes";
@@ -20,7 +18,7 @@ export interface SafetyPolicy {
   packs?: { add?: string[]; remove?: string[] };
   budgetMs?: number;
   maxBytes?: number;
-  handin?: { mode: "block" | "warn" | "off"; registry?: boolean };
+  handin?: { mode: "block" | "warn" | "off" };
   council?: CouncilPolicy;
 }
 
@@ -52,18 +50,15 @@ interface Call {
 
 const DEFAULTS = { budgetMs: 1000, maxBytes: 64 * 1024 };
 const SHOWN_CHARS = 4000;
-const PACKS_LOOKED_MS = 3000;
 
 /** Reads each shell command, file write and file read of a seat by the packs in force, and keeps the calls a rule held for. */
 export class Guard {
-  private projectPacks = new Map<string, { mtime: number; at: number; add: string[] }>();
-
   constructor(private readonly deps: GuardDeps) {}
 
   /** One shell command a seat is about to run; true when the line writes or removes a file of the seat's tree. */
   async check(seat: SeatRef | null, cli: string, command: string, cwd: string | null): Promise<boolean> {
     return this.read({ seat, cli, command, cwd, began: process.hrtime.bigint() }, async (place) =>
-      evaluate(command, cwd, place, this.gateConfig(place), this.deps.tools(seat)),
+      evaluate(command, cwd, place, this.gateConfig(), this.deps.tools(seat)),
     );
   }
 
@@ -93,11 +88,11 @@ export class Guard {
     });
   }
 
-  /** The gate's settings at a place: the policy's, with the packs the place's project adds. */
-  gateConfig(place: Place): GateConfig {
+  /** The gate's settings, as the policy sets them. */
+  gateConfig(): GateConfig {
     const policy = this.deps.policy() ?? {};
     return {
-      packs: packsInForce([...(policy.packs?.add ?? []), ...this.packsOf(place.project)], policy.packs?.remove ?? []),
+      packs: packsInForce(policy.packs?.add ?? [], policy.packs?.remove ?? []),
       budgetMs: policy.budgetMs ?? DEFAULTS.budgetMs,
       maxBytes: policy.maxBytes ?? DEFAULTS.maxBytes,
     };
@@ -107,31 +102,9 @@ export class Guard {
   private async read(call: Call, look: (place: Place) => Promise<Evaluation>): Promise<boolean> {
     const found = await look(this.deps.place(call.seat));
     const top = [...found.findings].sort((a, b) => SEVERITY_RANK[b.severity] - SEVERITY_RANK[a.severity])[0] ?? null;
-    // a call no rule holds for is no news: what is kept is what a rule said something of
     if (top) this.record(call, top.pack, top.rule, top.severity);
     else if (found.doubts.length) this.record(call, "gate", "unverified", null);
     return found.changes;
-  }
-
-  /** The packs a project's `.seatwork/safety.json` turns on; the file is looked at again every few seconds, not on every call. */
-  private packsOf(project: string | null): string[] {
-    if (!project) return [];
-    const file = join(project, ".seatwork", "safety.json");
-    const cached = this.projectPacks.get(file);
-    if (cached && Date.now() - cached.at < PACKS_LOOKED_MS) return cached.add;
-    let mtime = -1;
-    try {
-      mtime = statSync(file).mtimeMs;
-    } catch {
-      // no file turns no pack on
-    }
-    if (cached && cached.mtime === mtime) {
-      cached.at = Date.now();
-      return cached.add;
-    }
-    const add = mtime < 0 ? [] : readPacks(file);
-    this.projectPacks.set(file, { mtime, at: Date.now(), add });
-    return add;
   }
 
   /** Keeps a call a rule held for. */
@@ -148,16 +121,6 @@ export class Guard {
       severity,
       elapsedUs: Number(process.hrtime.bigint() - call.began) / 1000,
     });
-  }
-}
-
-/** The packs a project file turns on; an unreadable file turns none on. */
-function readPacks(file: string): string[] {
-  try {
-    const add = (JSON.parse(readFileSync(file, "utf8")) as { packs?: { add?: unknown } }).packs?.add;
-    return Array.isArray(add) ? add.filter((pack): pack is string => typeof pack === "string") : [];
-  } catch {
-    return [];
   }
 }
 

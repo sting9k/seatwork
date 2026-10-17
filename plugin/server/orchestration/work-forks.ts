@@ -1,11 +1,12 @@
 import type { MailEngine, NewMail } from "../coordination/engine";
 import { CHILD_OPEN, refIssue, type Issue, type WorkStore } from "../tasks/store";
 import { routeUp } from "./escalation";
-import { clip, type Asker } from "./forks";
+import { type Asker } from "./forks";
+import { ROOM_SENDER } from "../coordination/address";
+import { clip } from "../excerpt";
 
 /** The forks that read the work store: what a claimed issue lacks, and whether a new issue repeats an open one. */
 
-const ROOM = { agentId: "room", role: "system" } as const;
 const RESEARCH = "Research: ";
 const READ = /\sroom\] gaps: /;
 const POOL = 100;
@@ -49,7 +50,7 @@ function research(deps: WorkForkDeps, store: WorkStore, issue: Issue, seat: stri
         issue_type: "question",
         priority: issue.priority,
       },
-      ROOM.agentId,
+      ROOM_SENDER.agentId,
     );
     try {
       child = store.claim(child.id, seat);
@@ -66,7 +67,7 @@ function research(deps: WorkForkDeps, store: WorkStore, issue: Issue, seat: stri
 /** A room mail to `to` about an issue; false, said in the log, when it could not be posted. */
 async function mailed(deps: WorkForkDeps, mail: Omit<NewMail, "from" | "needs"> & { needs?: NewMail["needs"] }) {
   try {
-    await deps.engine.post({ from: ROOM, needs: "nothing", ...mail });
+    await deps.engine.post({ from: ROOM_SENDER, needs: "nothing", ...mail });
     return true;
   } catch (error) {
     deps.log(`fork gaps: the mail "${mail.subject}" was not posted: ${error instanceof Error ? error.message : error}`);
@@ -104,7 +105,7 @@ async function askDecision(deps: WorkForkDeps, issue: Issue, seat: string) {
   const owner = deps.engine.parentOf(seat);
   if (!owner) return null;
   const draft: NewMail = {
-    from: ROOM,
+    from: ROOM_SENDER,
     to: [owner],
     priority: "action",
     subject: `ISSUE NEEDS A DECISION: ${issue.id} "${clip(issue.title, 80)}"`,
@@ -168,7 +169,7 @@ async function readGaps(deps: WorkForkDeps, store: WorkStore, seat: string, id: 
             : null;
   if (!done) return null;
   try {
-    store.update(issue.id, { append_notes: `gaps: ${done.marked}` }, ROOM.agentId);
+    store.update(issue.id, { append_notes: `gaps: ${done.marked}` }, ROOM_SENDER.agentId);
   } catch (error) {
     deps.log(`fork gaps: ${issue.id} was not marked as read: ${error instanceof Error ? error.message : error}`);
   }
@@ -238,7 +239,7 @@ async function readDuplicates(
   asked.forEach(({ made }, at) => {
     const twin = labels[at] ? open.get(labels[at]!) : undefined;
     if (!twin) return;
-    store.addDependency(made.id, twin.id, "related", ROOM.agentId);
+    store.addDependency(made.id, twin.id, "related", ROOM_SENDER.agentId);
     found.set(made.id, {
       duplicate_of: twin.id,
       note: `${twin.id} "${clip(twin.title, 100)}" is open and looks like the same work. The two are linked as related. Read it before you start, and tell your Owner if they are one.`,

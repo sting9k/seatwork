@@ -2,6 +2,11 @@
 
 A Paseo plugin that runs a room of coding agents. This file is for an agent changing the plugin; what seats read lives in `plugin/room/`.
 
+## Branches
+
+- `dev/main` is where the plugin is changed, tested and evaluated; pull requests go to it.
+- `main` holds releases only. `node scripts/release.cjs --push` makes one from `dev/main`: the same tree without `plugin/test`, `plugin/tools`, `evals` and `scripts`, its package and TypeScript files trimmed to compile without them, committed on top of `main`. Nothing is edited or merged on `main` by hand, and `main` is never merged back.
+
 ## Layout
 
 | Path | Holds |
@@ -10,6 +15,8 @@ A Paseo plugin that runs a room of coding agents. This file is for an agent chan
 | `plugin/shared/` | Tables the code imports: `workflow.json` (roles, routes, spawn), `tools.json`, `signals.json`, `settings.json`… |
 | `plugin/paseo/` | A machine's policy, seats and profiles, written into `~/.config/seatwork` at setup |
 | `plugin/room/` | What seats read: `harness/`, `roles/`, `specs/`, `skills/`, `models.json`, and `sql/` migrations. Copied whole to `~/.config/seatwork/room/` |
+| `evals/`, `plugin/tools/` | Eval cases and runners, the decision model's eval tool: on `dev/main` only |
+| `scripts/release.cjs` | Makes a release on `main` |
 | `research/` | Notes, gitignored |
 
 ## Checks

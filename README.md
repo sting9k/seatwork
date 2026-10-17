@@ -115,8 +115,7 @@ seatwork/
 │   ├── paseo/           what setup writes for a machine: policy.json, seats.json, profiles.json
 │   ├── shared/          what the plugin itself defines: workflow.json, tools.json, settings.json
 │   ├── server/          mail, tasks, safety, the decision model, knowledge, operations, orchestration
-│   ├── client/          the Seatwork screen and the Room screen
-│   └── test/
+│   └── client/          the Seatwork screen and the Room screen
 └── AGENTS.md            the rules for changing the plugin
 ```
 
@@ -124,7 +123,8 @@ seatwork/
   source: `paseo plugin install <clone>/plugin`, then Init on the Seatwork
   screen. After an edit, run `paseo plugin reload seatwork`, then press
   **Apply**: it lays the room's files into `~/.config/seatwork` again.
-- Tests: `npm test` in `plugin/` (Node 22.15 or later).
+- `main` holds releases only. The work, the tests and the evals are on the
+  `dev/main` branch: `npm test` in `plugin/` there (Node 22.15 or later).
 - Format: `npm run format` in `plugin/` (Prettier, 120 columns; code only).
 - Logs: `paseo plugin logs seatwork`.
 

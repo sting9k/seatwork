@@ -68,10 +68,13 @@ export class Lifecycle {
     return this.room;
   }
 
-  /** A seat the app creates: a room seat is set up by the room, which must be set up and on this version; any other agent passes. */
+  /** An agent the app creates: a room seat is set up by the room, which must be set up and on this version; any other agent passes, in the room's mode for its harness where the policy says so. */
   async seatCreated(paseo: PaseoApi, request: CreateRequest): Promise<CreateRequest | undefined> {
     const provider = request.config.provider;
-    if (!parseSeat(provider)) return undefined;
+    if (!parseSeat(provider)) {
+      const mode = this.room?.ownMode(provider);
+      return mode ? { ...request, config: { ...request.config, modeId: mode } } : undefined;
+    }
     await this.bringUp(paseo, true);
     if (!this.room)
       throw new Error(

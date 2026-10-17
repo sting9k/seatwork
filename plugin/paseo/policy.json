@@ -233,12 +233,13 @@
     }
   },
   "daemon": {
-    "$comment": "Daemon-wide switches set at setup and given back at Remove while the room's value still stands; they reach every agent on the host, not only seats. browserTools and enableTerminalAgentHooks: Paseo's browser tools and terminal agent hooks. bundledSkills none: Paseo's bundled skills kept out of agents. voice false: dictation and voice mode off, from the daemon's next restart. ownAgentTools roles: an agent of the owner's own claude, codex, pi or opencode keeps the Paseo tools the room's roles use and no other; any other value leaves them as the owner has them.",
+    "$comment": "Daemon-wide switches set at setup and given back at Remove while the room's value still stands; they reach every agent on the host, not only seats. browserTools and enableTerminalAgentHooks: Paseo's browser tools and terminal agent hooks. bundledSkills none: Paseo's bundled skills kept out of agents. voice false: dictation and voice mode off, from the daemon's next restart. ownAgentTools roles: an agent of the owner's own claude, codex, pi or opencode keeps the Paseo tools the room's roles use and no other; any other value leaves them as the owner has them. ownAgentMode room: such an agent starts in the mode the room's seats run in (room/models.json modes), as a seat does whatever mode its creator asked; any other value leaves the mode its creator picked.",
     "browserTools": true,
     "enableTerminalAgentHooks": true,
     "bundledSkills": "none",
     "voice": false,
-    "ownAgentTools": "roles"
+    "ownAgentTools": "roles",
+    "ownAgentMode": "room"
   },
   "mail": {
     "$comment": "The room's MCP server (seatwork_mail, seatwork_inbox) and delivery rules. A project's mail is kept in <project>/.seatwork/.mail/: mail.db, a file per mail, a file per thread; mail of a seat in no project is kept in the room home. Seats never use send_agent_prompt; the plugin delivers each mail and interrupts only for a STOP order. A CANDIDATE, REVIEW or DONE to a parent waits for the sender's turn end and is its one report. Starting no turn, read with the next mail: an ACK; a copy (cc); a mail to the team; a DONE repeated after mail that asked nothing; a Lead's STATUS after its first (only the newest waits); a HOLD or NOTED asking nothing of a Peer under review; the bounce of a mail that asked nothing. gatherReviews: the read-only seats one Owner turn launches (search, scout and review Peers) are one round: their REVIEWs wait for the last one, or room.params.reviewStallMinutes, and reach the Owner in one turn. quietChars: how much of a mail that starts no turn is shown; the rest is in its file. dedupeSeconds: the same text from the same sender within this long is one mail. keepDays (optional): finished mail older than this is cleared by GC; without it, as long as logs are kept. expireUnreadDays (optional): mail that asked nothing and started no turn, still unread after this long, is withdrawn as expired; an ask never is.",

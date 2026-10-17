@@ -100,6 +100,32 @@ test("a Claude seat is created with the policy's launch flags and its role's ski
   ]);
 });
 
+test("every agent starts in its harness's mode from the room's table, whatever mode its creator asked for: room seats and the owner's own agents alike", async () => {
+  const modeOf = async (provider: string, modeId?: string) =>
+    (
+      (await call("before agent.create", {
+        request: { config: { provider, cwd: PROJECT, title: "[Peer] task", ...(modeId ? { modeId } : {}) }, env: {} },
+      })) as { config: { modeId?: string } } | undefined
+    )?.config.modeId;
+  assert.deepEqual(
+    [
+      await modeOf("claude-peer", "default"),
+      await modeOf("codex-peer"),
+      await modeOf("opencode-peer", "plan"),
+      await modeOf("claude", "plan"),
+      await modeOf("codex", "auto-review"),
+      await modeOf("opencode"),
+    ],
+    ["bypassPermissions", "full-access", "build", "bypassPermissions", "full-access", "build"],
+  );
+  assert.equal(await modeOf("pi"), undefined, "a harness with no modes is given none");
+  assert.equal(
+    await modeOf("copilot", "agent"),
+    "agent",
+    "a provider of no harness the room knows keeps the mode asked",
+  );
+});
+
 test("an OpenCode seat is created with the policy's permissions and its role's skills only, over what its creator asked for", async () => {
   const request = {
     request: {

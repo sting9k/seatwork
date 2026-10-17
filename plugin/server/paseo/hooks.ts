@@ -67,6 +67,7 @@ export async function seatRequest(room: Room, request: CreateRequest): Promise<C
     env: { ...(request.env ?? {}), ...start.env },
     config: {
       ...config,
+      modeId: start.mode,
       ...(start.model
         ? {
             model: start.model.id,

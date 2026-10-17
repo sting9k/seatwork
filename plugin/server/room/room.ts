@@ -49,7 +49,7 @@ import { WorkStores } from "../tasks/stores";
 import { Callers, serverToken } from "./callers";
 import { errorText, fromRoom, releaseWork, sweepLeases, taskOf, type RoomContext } from "./context";
 import { lookAtRunningTurns } from "./council";
-import { fitAt, launch, type Launched, type SeatLaunch } from "./launch";
+import { fitAt, launch, ownAgentMode, type Launched, type SeatLaunch } from "./launch";
 import { mailHealth, registerTools } from "./tools";
 import { rotationFailed, turnEnded, type SeatEvent, type TurnEnd } from "./turns";
 import { excerpt } from "../excerpt";
@@ -71,6 +71,7 @@ export interface Room {
   policy: RuntimePolicy;
   filesFrom: string | undefined;
   launch(request: SeatLaunch): Promise<SeatStart>;
+  ownMode(provider: string): string | undefined;
   opened(agentId: string, provider: string, nonce: string | undefined, created: boolean): Record<string, string> | null;
   created(seat: SeatEvent): Promise<void>;
   turnStarted(seat: SeatEvent): void;
@@ -683,6 +684,7 @@ export function startRoom(input: {
       if (decisions) launched.systemPrompt = `${launched.systemPrompt}\n\n${decisions}`;
       return { ...launched, env: { SEATWORK_NONCE: nonce }, mcpUrl: served.mcp.urlFor(served.port(), nonce) };
     },
+    ownMode: (provider) => ownAgentMode(provider, policy),
     opened(agentId, provider, nonce, created) {
       if (nonce && created) room.callers.bind(nonce, agentId);
       timers.touch();

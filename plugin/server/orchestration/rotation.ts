@@ -240,7 +240,7 @@ export async function rotate(
   const id = await host.create({
     key: `rotation:${old.agentId}:${stamp}`,
     provider: old.provider,
-    ...(model ? { model } : {}),
+    model,
     ...(now.mode ? { mode: now.mode } : {}),
     ...(thinking ? { thinking } : {}),
     cwd: now.cwd,

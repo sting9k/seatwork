@@ -32,7 +32,7 @@ export interface LiveSeat {
 export interface NewSeat {
   key: string;
   provider: string;
-  model?: string;
+  model: string;
   mode?: string;
   thinking?: string;
   cwd: string;

@@ -49,7 +49,7 @@ import { WorkStores } from "../tasks/stores";
 import { Callers, serverToken } from "./callers";
 import { errorText, fromRoom, releaseWork, sweepLeases, taskOf, type RoomContext } from "./context";
 import { lookAtRunningTurns } from "./council";
-import { launch, type Launched, type SeatLaunch } from "./launch";
+import { fitAt, launch, type Launched, type SeatLaunch } from "./launch";
 import { mailHealth, registerTools } from "./tools";
 import { rotationFailed, turnEnded, type SeatEvent, type TurnEnd } from "./turns";
 import { excerpt } from "../excerpt";
@@ -322,6 +322,7 @@ function startTimers(room: RoomContext, gc: Collector): { touch(): void; stop():
       {
         host: room.host,
         provider: () => enabledSeats().find((seat) => inRoom(seat.role))?.provider,
+        fit: fitAt,
         folder: roomProjectDir(),
         log,
       },

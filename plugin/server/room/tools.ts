@@ -1,6 +1,5 @@
 import { owns, ROLES } from "../../shared/workflow";
 import type { SeatRecord } from "../coordination/engine";
-import { KEEP_LOG_DAYS } from "../gc";
 import type { LiveSeat } from "../host";
 import type { McpHttpServer, McpToolHandler } from "../mcp-http";
 
@@ -185,9 +184,7 @@ export function registerTools(room: RoomContext, mcp: McpHttpServer): void {
   const { engine } = room;
   const vars = {
     signals: SUBJECT_SIGNALS.join(", "),
-    keep_log_days: String(KEEP_LOG_DAYS),
     rotate_k: String(Math.round(room.rotateAt / 1000)),
-    mail_chars: room.policy.room.params.mailChars.toLocaleString("en-US"),
   };
   const callerOf = (tool: string, nonce: string): string => {
     const me = room.callers.seatOf(nonce);

@@ -15,7 +15,7 @@ import { catalogFrom, harnessStates } from "./setup/catalog";
 import { setupChecks } from "./setup/checks";
 import { addSeats, setUpRoom, sourceOf } from "./setup/init";
 import { keepSwitches, leaveAtUninstall, takeRoomOut } from "./setup/leave";
-import { applyWithSdk, turnBundledSkillsOff } from "./setup/paseo-config";
+import { applyWithSdk, writeFileSwitches } from "./setup/paseo-config";
 import { roomModels, type Setup } from "./setup/plan";
 import { isSetUp, readSetup } from "./setup/room-home";
 
@@ -152,17 +152,15 @@ export class Lifecycle {
       const { plan, removed, pluginDir } = await this.settle(paseo, setup, true);
       this.behind = null;
       const notes = [...plan.warnings];
-      // the one switch the SDK has no call for: written into config.json, then reloaded
-      if ((plan.policy.daemon?.bundledSkills ?? "none") === "none" && turnBundledSkillsOff(PASEO_HOME, pluginDir)) {
+      // the switches the SDK has no call for: written into config.json, then reloaded
+      const wrote = writeFileSwitches(PASEO_HOME, pluginDir, plan.policy.daemon ?? {});
+      if (wrote.changed)
         await paseoCli(["daemon", "reload"]).then(
+          () => notes.push("Paseo's config.json has the room's switches now; the old file is beside it."),
           () =>
-            notes.push("Paseo's bundled skills are now kept out of agents (config.json; the old file is beside it)."),
-          () =>
-            notes.push(
-              "Paseo's bundled skills are switched off in config.json; `paseo daemon reload` makes it take effect.",
-            ),
+            notes.push("Paseo's config.json has the room's switches; `paseo daemon reload` makes them take effect."),
         );
-      }
+      if (wrote.voice) notes.push("Dictation and voice mode are off from the daemon's next restart.");
       await this.restart(paseo);
       return { seats: Object.keys(plan.providers), removed, notes };
     });

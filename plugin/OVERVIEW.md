@@ -44,7 +44,7 @@ Removing the plugin does not undo Init. Use "Remove the room" on the same screen
 
 ## What it touches
 
-- Paseo's daemon config: the room's providers and profiles, the switch that gives agents Paseo's tools, and three daemon-wide switches (browser tools off, terminal agent hooks off, Paseo's bundled skills kept out of agents). The last one is written into `config.json` directly, with a backup beside it.
+- Paseo's daemon config: the room's providers and profiles, the switch that gives agents Paseo's tools, the daemon-wide switches (browser tools and terminal agent hooks on, Paseo's bundled skills kept out of agents, dictation and voice mode off), and the Paseo tools of the owner's own agents (those the room's roles use). The skills and voice switches are written into `config.json` directly, with a backup beside it. Remove gives each back while it still holds the room's value.
 - A local server on `127.0.0.1` for the room's tools.
 - In each project, a `.seatwork/` folder: its mission and law, and the stores of its mail, work and record. The stores keep themselves out of the project's git.
 - The room's folder: the room's files, logs, the mail of seats outside a project, and the copies of your agent CLI config. It is readable by your user only.

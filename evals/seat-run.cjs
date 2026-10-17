@@ -129,6 +129,8 @@ function standInPaseo() {
     projects: {
       list: async () => ({ projects: [{ projectDisplayName: c.project?.name ?? "app", projectRootPath: PROJECT }] }),
     },
+    // the plugin stays installed when the run stops it: the room has nothing to take out of this Paseo
+    config: { get: async () => ({ config: { plugins: { seatwork: { path: PLUGIN } } } }) },
     workspaces: {
       list: async () => ({ entries: [...workspaces] }),
       open: async ({ cwd }) =>
@@ -274,12 +276,11 @@ async function runClaude(seat, prompt, paseoServer) {
     "--max-budget-usd",
     String(run.budget),
   ];
-  const { events, code } = await harnessProcess("claude", argv, {
-    ...process.env,
-    ...seat.env,
-    ...(dry ? { ANTHROPIC_BASE_URL: dry.url } : {}),
-    ...claudeLogin(),
-  });
+  const { events, code } = await harnessProcess(
+    "claude",
+    argv,
+    claudeEnv({ ...process.env, ...seat.env, ...(dry ? { ANTHROPIC_BASE_URL: dry.url } : {}) }),
+  );
   const calls = [];
   let result = null;
   const init = events.find((event) => event.type === "system" && event.subtype === "init") ?? null;
@@ -306,16 +307,13 @@ async function runClaude(seat, prompt, paseoServer) {
   };
 }
 
-/** How a Claude seat logs in without the user's own Claude folder: a folder of the run's, and the token Paseo gives its seats (a fake key on a dry run, whose calls go nowhere). */
-function claudeLogin() {
-  const own = { CLAUDE_CONFIG_DIR: join(workDir, "claude") };
-  if (run.dry) return { ...own, ANTHROPIC_API_KEY: "dry-run" };
-  if (process.env.CLAUDE_CODE_OAUTH_TOKEN) return own;
-  const config = JSON.parse(fs.readFileSync(join(process.env.HOME, ".paseo", "config.json"), "utf8"));
-  const token = config.agents?.providers?.claude?.env?.CLAUDE_CODE_OAUTH_TOKEN;
-  if (!token)
-    throw new Error("no Claude login for the seat: set CLAUDE_CODE_OAUTH_TOKEN, or Paseo's claude provider env");
-  return { ...own, CLAUDE_CODE_OAUTH_TOKEN: token };
+/** The environment a Claude seat logs in with: on a spending run, as a real seat, the terminal's sign-in in the user's ~/.claude, so a token or key the run inherits is dropped (the seat keeps no session there: --no-session-persistence); on a dry run, a Claude folder of the run's own and a fake key, whose calls go nowhere. */
+function claudeEnv(env) {
+  if (run.dry) return { ...env, CLAUDE_CONFIG_DIR: join(workDir, "claude"), ANTHROPIC_API_KEY: "dry-run" };
+  const signedIn = { ...env };
+  delete signedIn.CLAUDE_CODE_OAUTH_TOKEN;
+  delete signedIn.ANTHROPIC_API_KEY;
+  return signedIn;
 }
 
 let dry = null;

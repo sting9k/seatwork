@@ -63,7 +63,7 @@ What a run leaves out against a real seat:
 - Paseo's permission flow;
 - other seats acting: fixture seats only hold state.
 
-A Claude seat runs with a Claude folder of the run's own and the login Paseo gives its seats (`CLAUDE_CODE_OAUTH_TOKEN`, from the environment or Paseo's `claude` provider); the user's `~/.claude` is not touched. A dry run's Codex seat talks to a provider of its own, the run's endpoint. Codex in code mode lists the room's MCP tools to its model only on request (`ALL_TOOLS` in its `exec` tool), so a dry run shows its own tools, not the room's.
+A Claude seat of a spending run runs as a real seat does: on the user's `~/.claude` and the terminal's sign-in (`claude auth login`), keeping no session there (`--no-session-persistence`); a token or API key the run inherits is dropped. A dry run's Claude seat has a Claude folder of the run's own and a fake key. A dry run's Codex seat talks to a provider of its own, the run's endpoint. Codex in code mode lists the room's MCP tools to its model only on request (`ALL_TOOLS` in its `exec` tool), so a dry run shows its own tools, not the room's.
 
 Run a spending run from a clean environment (`env -i HOME=… USER=… PATH=… TMPDIR=…`): an agent CLI started from inside another agent's session inherits that session's variables.
 

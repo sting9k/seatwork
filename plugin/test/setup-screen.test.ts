@@ -14,19 +14,27 @@ import {
 import { basename, dirname, join } from "node:path";
 import { test } from "node:test";
 import { pluginRoom } from "./support/plugin";
+import { PASEO_HOME } from "../server/paths";
 
+const paseoFile = join(PASEO_HOME, "config.json");
 const { call, names, restart, stop } = pluginRoom(null, {
   before: () => {
     // this machine keeps the room's mail server off the port the policy names
     writeFileSync(join(ROOM_HOME, "setup.json"), JSON.stringify({ mailPort: 0 }));
     // a folder Remove set aside long ago: the plugin deletes it as it starts, room or no room
     mkdirSync(`${ROOM_HOME}.removed-20260101-000000`);
+    // the daemon's own config.json, which holds what the SDK cannot set: the owner dictates, and picked no skills
+    mkdirSync(PASEO_HOME, { recursive: true });
+    writeFileSync(
+      paseoFile,
+      JSON.stringify({ plugins: { seatwork: { path: PLUGIN_DIR } }, features: { dictation: { enabled: true } } }),
+    );
   },
 });
 
 const daemon = {
   config: {
-    providers: { "my-own": { extends: "claude" } } as Record<string, unknown>,
+    providers: { "my-own": { extends: "claude" }, claude: { enabled: true } } as Record<string, unknown>,
     agentProfiles: [{ id: "mine" }] as { id: string }[],
     // the owner's own switches, before the room sets its own
     mcp: { enabled: true, injectIntoAgents: false } as Record<string, boolean>,
@@ -55,7 +63,9 @@ const paseo = {
       daemon.patches.push(patch);
       if (daemon.refuses) throw new Error(daemon.refuses);
       for (const id of patch.removeProviders ?? []) delete daemon.config.providers[id];
-      Object.assign(daemon.config.providers, patch.providers ?? {});
+      // as Paseo does, a patched provider is merged into the one it has
+      for (const [id, entry] of Object.entries(patch.providers ?? {}))
+        daemon.config.providers[id] = { ...(daemon.config.providers[id] as object), ...(entry as object) };
       if (patch.agentProfiles) daemon.config.agentProfiles = patch.agentProfiles;
       if (patch.mcp) Object.assign(daemon.config.mcp, patch.mcp);
       if (patch.browserTools) daemon.config.browserTools = patch.browserTools;
@@ -167,6 +177,21 @@ test("Init sets the room up and starts it without a reload; Apply restarts it on
   assert.deepEqual(daemon.workspaces, [realpathSync(join(ROOM_HOME, "hq-seatwork"))]);
   const policy = () => JSON.parse(readFileSync(join(ROOM_HOME, "policy.json"), "utf8"));
   assert.deepEqual([policy().owner.chime, policy().mail.port], [false, 0]);
+  // the daemon as the room's policy has it: browser tools and terminal hooks on, and the owner's own agents keep
+  // the Paseo tools the room's roles use and no other
+  assert.deepEqual([daemon.config.browserTools.enabled, daemon.config.enableTerminalAgentHooks], [true, true]);
+  const own = daemon.config.providers.claude as { enabled: boolean; paseoTools: { disabledTools: string[] } };
+  assert.equal(own.enabled, true, "the owner's own entry keeps what it had");
+  assert.ok(own.paseoTools.disabledTools.includes("send_agent_prompt"));
+  assert.ok(!own.paseoTools.disabledTools.includes("create_agent"));
+  for (const harness of ["codex", "pi", "opencode"])
+    assert.deepEqual(daemon.config.providers[harness], { paseoTools: own.paseoTools }, harness);
+  // what the SDK cannot set is written into config.json: none of Paseo's bundled skills, no dictation or voice mode
+  const written = JSON.parse(readFileSync(paseoFile, "utf8"));
+  assert.deepEqual(
+    [written.agents.skills.selection, written.features.dictation.enabled, written.features.voiceMode.enabled],
+    [{ mode: "custom", skills: [] }, false, false],
+  );
   // the room runs: a seat created now gets its role and the room's mail server
   const seat = await createPeer();
   assert.match(seat.config.systemPrompt, /^# The room\n[\s\S]*\n# Seat: peer\n/);
@@ -382,7 +407,10 @@ test("removing the room waits for its seats, then takes it out of Paseo and out 
     notes: string[];
   };
 
-  assert.deepEqual([Object.keys(daemon.config.providers), daemon.config.agentProfiles], [["my-own"], [{ id: "mine" }]]);
+  assert.deepEqual(
+    [Object.keys(daemon.config.providers), daemon.config.agentProfiles],
+    [["my-own", "claude"], [{ id: "mine" }]],
+  );
   assert.ok(removed.includes("claude-hq") && !removed.includes("my-own"));
   assert.deepEqual(
     [existsSync(ROOM_HOME), dirname(movedTo), existsSync(join(movedTo, "room", "models.json"))],
@@ -393,6 +421,10 @@ test("removing the room waits for its seats, then takes it out of Paseo and out 
     [daemon.config.mcp.injectIntoAgents, daemon.config.browserTools.enabled, daemon.config.enableTerminalAgentHooks],
     [false, true, true],
   );
+  // the owner's agents have Paseo's whole set again, and an entry the room added for one goes
+  assert.deepEqual(daemon.config.providers.claude, { enabled: true, paseoTools: { enabled: true, disabledTools: [] } });
+  const back = JSON.parse(readFileSync(paseoFile, "utf8"));
+  assert.deepEqual([back.agents, back.features], [undefined, { dictation: { enabled: true } }]);
   // the HQ seat's session goes with the room; the owner's own stays; the CLI that deletes the record fails here
   assert.deepEqual(readdirSync(sessions), ["own-session.jsonl"]);
   assert.ok(existsSync(join(movedTo, "claude-sessions", hqDir.replace(/[^A-Za-z0-9]/g, "-"), "hq-session.jsonl")));
@@ -445,7 +477,10 @@ test("removing the plugin takes the room out of Paseo by itself, and puts its ho
   daemon.config.plugins = {};
   await stop();
 
-  assert.deepEqual([Object.keys(daemon.config.providers), daemon.config.agentProfiles], [["my-own"], [{ id: "mine" }]]);
+  assert.deepEqual(
+    [Object.keys(daemon.config.providers), daemon.config.agentProfiles],
+    [["my-own", "claude"], [{ id: "mine" }]],
+  );
   assert.deepEqual(
     [daemon.config.mcp.injectIntoAgents, daemon.config.browserTools.enabled, daemon.config.enableTerminalAgentHooks],
     [false, true, true],

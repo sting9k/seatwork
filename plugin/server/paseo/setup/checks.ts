@@ -95,7 +95,8 @@ export async function setupChecks(
         id,
         label,
         ok: false,
-        detail: "On for every agent on this host; the room keeps it off. Turn it off in Paseo's settings.",
+        detail:
+          "On for every agent on this host; the room keeps it off: Apply turns it off, from the daemon's next restart.",
       });
   }
   return checks;

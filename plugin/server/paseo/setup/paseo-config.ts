@@ -9,6 +9,7 @@ import { isObject } from "../../../shared/json";
 /** Whether a profile is the room's own, by the id prefixes the room has written. */
 const isOwnProfile = (id: string) => id.startsWith("agent_profile_seatwork_");
 const NO_BUNDLED_SKILLS = { mode: "custom", skills: [] as string[] };
+const VOICE = ["dictation", "voiceMode"] as const;
 
 type Json = Record<string, any>;
 /** Whether `before` holds a key, at any depth of plain objects, that `after` no longer has. */
@@ -24,7 +25,7 @@ const sameDir = (a: string, b: string) => {
   return real(a) === real(b);
 };
 
-/** Writes the plan's seats and profiles into a running daemon through the SDK; the user's own stay. */
+/** Writes the plan's seats and profiles into a running daemon through the SDK, the user's own staying; with `daemonPolicy`, also the daemon-wide switches and the Paseo tools of the owner's own agents. */
 export async function applyWithSdk(
   paseo: PaseoApi,
   plan: RoomPlan,
@@ -44,8 +45,12 @@ export async function applyWithSdk(
     (profile) => !isOwnProfile(profile.id) && !owned.has(profile.id),
   );
   const daemon = (plan.policy.daemon ?? {}) as Json;
+  // Paseo merges each into the owner's own entry for that agent CLI
+  const ownTools = options.daemonPolicy
+    ? Object.fromEntries(Object.entries(plan.ownTools).map(([id, paseoTools]) => [id, { paseoTools }]))
+    : {};
   await paseo.config.patch({
-    providers: plan.providers as never,
+    providers: { ...ownTools, ...plan.providers } as never,
     agentProfiles: [...kept, ...plan.profiles] as never,
     mcp: { injectIntoAgents: true },
     ...(options.daemonPolicy
@@ -114,36 +119,78 @@ export function readSwitches(paseoHome: string, pluginDir: string): DaemonSwitch
 const noBundled = (selection: any) =>
   selection?.mode === "custom" && Array.isArray(selection.skills) && selection.skills.length === 0;
 
-/** Paseo's skill selection and the config.json that holds it, when the file is surely this daemon's; null where it names none. */
-export function skillSelection(paseoHome: string, pluginDir: string): { file: string; selection: unknown } | null {
-  const own = ownConfig(paseoHome, pluginDir);
-  return own ? { file: own.file, selection: own.config.agents?.skills?.selection ?? null } : null;
+/** What this daemon's config.json held of the switches the room sets there because the SDK cannot: the skill selection, and dictation and voice mode; null where the file names none. */
+export interface FileSwitches {
+  path: string;
+  skills: unknown;
+  dictation: boolean | null;
+  voiceMode: boolean | null;
 }
 
-/** Puts a skill selection back into the config.json the room found its daemon's, while the room's own still stands there; null takes the key out. True when a daemon reload is due. */
-export function restoreSkillSelection(file: string, selection: unknown): boolean {
+/** Those switches as this daemon's config.json has them; null when the file is not surely this daemon's. */
+export function readFileSwitches(paseoHome: string, pluginDir: string): FileSwitches | null {
+  const own = ownConfig(paseoHome, pluginDir);
+  if (!own) return null;
+  const { config } = own;
+  return {
+    path: own.file,
+    skills: config.agents?.skills?.selection ?? null,
+    dictation: config.features?.dictation?.enabled ?? null,
+    voiceMode: config.features?.voiceMode?.enabled ?? null,
+  };
+}
+
+/** Writes into this daemon's config.json, in one write, what the policy asks there: Paseo's bundled skills kept out of agents, dictation and voice mode off; whether the file changed, and whether a voice switch did, which waits for the daemon's next restart. */
+export function writeFileSwitches(
+  paseoHome: string,
+  pluginDir: string,
+  daemon: Json,
+): { changed: boolean; voice: boolean } {
+  const own = ownConfig(paseoHome, pluginDir);
+  if (!own) return { changed: false, voice: false };
+  const next = structuredClone(own.config);
+  let skills = false;
+  let voice = false;
+  if ((daemon.bundledSkills ?? "none") === "none" && !noBundled(next.agents?.skills?.selection)) {
+    next.agents = { ...(next.agents ?? {}), skills: { ...(next.agents?.skills ?? {}), selection: NO_BUNDLED_SKILLS } };
+    skills = true;
+  }
+  if (daemon.voice === false)
+    for (const key of VOICE)
+      if (next.features?.[key]?.enabled !== false) {
+        next.features = { ...(next.features ?? {}), [key]: { ...(next.features?.[key] ?? {}), enabled: false } };
+        voice = true;
+      }
+  if (skills || voice) writeConfig(own.file, next);
+  return { changed: skills || voice, voice };
+}
+
+/** Puts back into the config.json the room found its daemon's what the file held before setup, each switch only while the room's value still stands there; true when a daemon reload is due. */
+export function restoreFileSwitches(before: FileSwitches): boolean {
   let config: Json;
   try {
-    config = JSON.parse(readFileSync(file, "utf8")) as Json;
+    config = JSON.parse(readFileSync(before.path, "utf8")) as Json;
   } catch {
     return false;
   }
-  if (noBundled(selection) || !noBundled(config.agents?.skills?.selection)) return false;
   const next = structuredClone(config);
-  if (selection !== null) next.agents.skills.selection = selection;
-  else if (Object.keys(next.agents.skills).length > 1) delete next.agents.skills.selection;
-  else delete next.agents.skills;
-  writeConfig(file, next);
-  return true;
-}
-
-/** Keeps Paseo's bundled skills out of agents by writing config.json; true when a daemon reload is now due. */
-export function turnBundledSkillsOff(paseoHome: string, pluginDir: string): boolean {
-  const own = ownConfig(paseoHome, pluginDir);
-  if (!own) return false;
-  if (noBundled(own.config.agents?.skills?.selection)) return false;
-  const next = structuredClone(own.config);
-  next.agents = { ...(next.agents ?? {}), skills: { ...(next.agents?.skills ?? {}), selection: NO_BUNDLED_SKILLS } };
-  writeConfig(own.file, next);
-  return true;
+  let changed = false;
+  if (!noBundled(before.skills) && noBundled(next.agents?.skills?.selection)) {
+    if (before.skills !== null) next.agents.skills.selection = before.skills;
+    else if (Object.keys(next.agents.skills).length > 1) delete next.agents.skills.selection;
+    else if (Object.keys(next.agents).length > 1) delete next.agents.skills;
+    else delete next.agents;
+    changed = true;
+  }
+  for (const key of VOICE) {
+    const was = before[key];
+    if (was === false || next.features?.[key]?.enabled !== false) continue;
+    if (was !== null) next.features[key].enabled = was;
+    else if (Object.keys(next.features[key]).length > 1) delete next.features[key].enabled;
+    else if (Object.keys(next.features).length > 1) delete next.features[key];
+    else delete next.features;
+    changed = true;
+  }
+  if (changed) writeConfig(before.path, next);
+  return changed;
 }

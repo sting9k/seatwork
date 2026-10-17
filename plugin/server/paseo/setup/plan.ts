@@ -28,12 +28,15 @@ export interface CatalogModel {
 /** A harness's live model catalog by model id, or null when it cannot be read. */
 export type Catalog = (harness: Harness) => Promise<Record<string, CatalogModel> | null>;
 
+/** The Paseo tools a provider gives its agents: all of them but `disabledTools`, or none when not `enabled`. */
+type PaseoTools = { enabled: boolean; disabledTools: string[] };
+
 /** A seat's provider as Paseo's config holds it. */
 interface ProviderEntry {
   extends: string;
   label: string;
   description: string;
-  paseoTools: { enabled: boolean; disabledTools: string[] };
+  paseoTools: PaseoTools;
   env: Record<string, string>;
   options?: { extraArgs?: Record<string, string | null>; permission?: Record<string, unknown> };
   disallowedTools?: string[];
@@ -59,10 +62,11 @@ interface ProfileSpec {
   [key: string]: unknown;
 }
 
-/** Everything setting the room up writes, worked out before anything is written. */
+/** Everything setting the room up writes, worked out before anything is written; `ownTools` is the Paseo tools of the owner's own agents, by agent CLI. */
 export interface RoomPlan {
   seats: Record<string, string[]>;
   providers: Record<string, ProviderEntry>;
+  ownTools: Record<string, PaseoTools>;
   profiles: Profile[];
   models: Models;
   policy: Record<string, any>;
@@ -345,5 +349,14 @@ export async function planRoom(input: {
   for (const id of enabled) providers[id] = await providerFor(id, context);
   const profiles = await profilesFor(shown, models, providers, catalogOf);
 
-  return { seats, providers, profiles, models, policy, shipped, warnings };
+  return { seats, providers, profiles, models, policy, shipped, warnings, ownTools: ownAgentTools(policy) };
+}
+
+/** The Paseo tools of an agent of the owner's own CLIs, by CLI, when the policy keeps them to those the room's roles use; empty when it leaves them as the owner has them. */
+export function ownAgentTools(policy: Record<string, any>): Record<string, PaseoTools> {
+  if (policy.daemon?.ownAgentTools !== "roles") return {};
+  const tools = policy.paseoTools as Tools;
+  const used = new Set(Object.values(tools.allow).flat());
+  const paseoTools = { enabled: true, disabledTools: tools.all.filter((tool) => !used.has(tool)) };
+  return Object.fromEntries(HARNESSES.map((harness) => [harness, paseoTools]));
 }

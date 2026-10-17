@@ -3,10 +3,11 @@ import { basename, dirname, join } from "node:path";
 import type { PaseoApi } from "../api";
 import { paseoCli } from "../cli";
 import { removeRoomProject } from "../room-project";
-import { removeWithSdk, restoreSkillSelection, skillSelection } from "./paseo-config";
+import { readFileSwitches, removeWithSdk, restoreFileSwitches, type FileSwitches } from "./paseo-config";
+import { ownAgentTools } from "./plan";
 import { keptAt, roomFolders, takeRoomFiles, type ProjectFiles } from "./project-files";
 import { isSetUp, moveRoomHomeAside } from "./room-home";
-import { parseSeat } from "../../orchestration/seats";
+import { HARNESSES, parseSeat } from "../../orchestration/seats";
 import { CLAUDE_HOME, PASEO_HOME, ROOM_HOME, USER_HOME } from "../../paths";
 import { ROOM_PROJECT } from "../../../shared/workflow";
 
@@ -16,12 +17,13 @@ const SWITCHES_FILE = "daemon-before.json";
 const LIST_PAGES = 50;
 const DELETES_AT_ONCE = 4;
 
-/** The daemon-wide switches as they stood before the room first set them, null where the daemon named none; `skills` is the selection in the config.json at `file`. */
+/** The daemon-wide switches as they stood before the room first set them, null where the daemon named none: three the SDK sets; for each agent CLI of the owner's, whether the daemon had an entry for it and the Paseo tools it gave its agents; and what config.json held of the rest. */
 interface Before {
   injectIntoAgents: boolean | null;
   browserTools: boolean | null;
   terminalHooks: boolean | null;
-  skills: { file: string; selection: unknown } | null;
+  ownTools: Record<string, { listed: boolean; paseoTools: Record<string, unknown> | null }>;
+  file: FileSwitches | null;
 }
 
 /** What taking the room out did: the providers it removed, where the room home went, what it took from each project, and what it could not do. */
@@ -47,11 +49,15 @@ export async function keepSwitches(paseo: PaseoApi, pluginDir: string): Promise<
   if (existsSync(file)) return;
   const { config } = await paseo.config.get();
   const now = config as Record<string, any>;
+  const providers = (now.providers ?? {}) as Record<string, any>;
   const before: Before = {
     injectIntoAgents: now.mcp?.injectIntoAgents ?? null,
     browserTools: now.browserTools?.enabled ?? null,
     terminalHooks: now.enableTerminalAgentHooks ?? null,
-    skills: skillSelection(PASEO_HOME, pluginDir),
+    ownTools: Object.fromEntries(
+      HARNESSES.map((cli) => [cli, { listed: cli in providers, paseoTools: providers[cli]?.paseoTools ?? null }]),
+    ),
+    file: readFileSwitches(PASEO_HOME, pluginDir),
   };
   mkdirSync(ROOM_HOME, { recursive: true, mode: 0o700 });
   writeFileSync(file, `${JSON.stringify(before, null, 2)}\n`, { mode: 0o600 });
@@ -61,7 +67,8 @@ export async function keepSwitches(paseo: PaseoApi, pluginDir: string): Promise<
 async function restoreSwitches(paseo: PaseoApi): Promise<boolean> {
   const before = readRoomFile<Before>(SWITCHES_FILE);
   if (!before) return false;
-  const policy = readRoomFile<{ daemon?: Record<string, unknown> }>("policy.json")?.daemon ?? {};
+  const room = readRoomFile<Record<string, any>>("policy.json") ?? {};
+  const policy = (room.daemon ?? {}) as Record<string, unknown>;
   const { config } = await paseo.config.get();
   const now = config as Record<string, any>;
   const patch: Record<string, unknown> = {};
@@ -73,8 +80,29 @@ async function restoreSwitches(paseo: PaseoApi): Promise<boolean> {
     patch.browserTools = { enabled: before.browserTools };
   if (ours(before.terminalHooks, now.enableTerminalAgentHooks, policy.enableTerminalAgentHooks ?? false))
     patch.enableTerminalAgentHooks = before.terminalHooks;
+  const tools = ownToolsBack(before.ownTools ?? {}, (now.providers ?? {}) as Record<string, any>, room);
+  if (tools.remove.length) await paseo.config.patch({ removeProviders: tools.remove } as never);
+  if (Object.keys(tools.back).length) patch.providers = tools.back;
   if (Object.keys(patch).length > 0) await paseo.config.patch(patch as never);
-  return before.skills !== null && restoreSkillSelection(before.skills.file, before.skills.selection);
+  return !!before.file && restoreFileSwitches(before.file);
+}
+
+/** How the owner's agents get their Paseo tools back where the room's still stand: an entry the room added goes, another gets what it had, or Paseo's whole set where it named none. */
+function ownToolsBack(
+  was: Before["ownTools"],
+  providers: Record<string, any>,
+  policy: Record<string, any>,
+): { remove: string[]; back: Record<string, { paseoTools: unknown }> } {
+  const set = policy.paseoTools ? ownAgentTools(policy) : {};
+  const remove: string[] = [];
+  const back: Record<string, { paseoTools: unknown }> = {};
+  for (const [cli, before] of Object.entries(was)) {
+    const now = providers[cli];
+    if (!set[cli] || JSON.stringify(now?.paseoTools) !== JSON.stringify(set[cli])) continue;
+    if (!before.listed && Object.keys(now).length === 1) remove.push(cli);
+    else back[cli] = { paseoTools: { enabled: true, disabledTools: [], ...before.paseoTools } };
+  }
+  return { remove, back };
 }
 
 /** The room's archived seats as Paseo keeps them, with the Claude session each wrote. */
@@ -143,7 +171,7 @@ export async function takeRoomOut(paseo: PaseoApi, records: boolean): Promise<Le
     removeRoomProject(paseo),
     reload &&
       paseoCli(["daemon", "reload"]).catch(() =>
-        notes.push("Paseo's bundled skills are back in config.json; `paseo daemon reload` makes it take effect."),
+        notes.push("Paseo's config.json has the owner's switches back; `paseo daemon reload` makes them take effect."),
       ),
   ]);
   if (!projectGone)

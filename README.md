@@ -88,10 +88,12 @@ its own schedule.
 
 - Paseo's config: the room's providers and profiles, and the switch that
   gives agents Paseo's tools.
-- Three switches for every agent on the machine, not only the room's:
-  Paseo's browser tools off, terminal agent hooks off, Paseo's bundled
-  skills kept out of agents. Dictation and voice mode are left as they are;
-  the Seatwork screen names them when they are on.
+- Switches for every agent on the machine, not only the room's: Paseo's
+  browser tools and terminal agent hooks on, Paseo's bundled skills kept out
+  of agents, dictation and voice mode off (from the daemon's next restart).
+  Your own Claude, Codex, Pi and OpenCode agents keep the Paseo tools the
+  room's roles use, creating and managing agents among them, and no other.
+  Remove gives each switch back while it still holds the room's value.
 - A mail server on `127.0.0.1` for the agents' mail tool.
 - `~/.config/seatwork`: logs, copies of your agent CLI config and each
   agent's temporary files, readable by your user only. Its `policy.json`

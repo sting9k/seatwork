@@ -52,6 +52,6 @@ One line, at the head of a file, class or function. Fields, constants and variab
 
 - Secrets stay out of the repo, notes and logs. Scan the diff for the OpenRouter key prefix before a commit; a fake key in a test is built from parts.
 - Installs, global npm packages and downloads wait for the owner's word.
-- Code under test or in a script writes only to throwaway homes, never `~/.config/seatwork`, `~/.paseo`, `~/.claude` or `~/.codex`.
+- Code under test or in a script writes only to throwaway homes, never `~/.config/seatwork`, `~/.paseo`, `~/.claude` or `~/.codex`. One exception: a spending eval run's Claude seat signs in through `~/.claude`, as a real seat does, and keeps no session there.
 - The owner's files go to the Trash, never a hard delete.
 - Commit, push or open a pull request when the owner asks.

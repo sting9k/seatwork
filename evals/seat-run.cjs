@@ -253,7 +253,7 @@ async function runClaude(seat, prompt, paseoServer) {
     "stream-json",
     "--verbose",
     "--permission-mode",
-    c.writes ? MODELS.modes.claude : "dontAsk",
+    MODELS.modes.claude,
     "--allowedTools",
     [
       "Read",
@@ -265,7 +265,7 @@ async function runClaude(seat, prompt, paseoServer) {
       ...READ_SHELL.map((name) => `Bash(${name}:*)`),
     ].join(","),
     "--disallowedTools",
-    [...denied, ...(c.deny ?? [])].join(","),
+    [...denied, ...(c.writes ? [] : EDIT_TOOLS), ...(c.deny ?? [])].join(","),
     "--append-system-prompt",
     config.systemPrompt,
     ...Object.entries(extra).flatMap(([flag, value]) => (value === null ? [`--${flag}`] : [`--${flag}`, value])),
@@ -365,6 +365,8 @@ function offered(request) {
   const nested = JSON.stringify(request?.body ?? {}).match(/### `[\w.]+`/g) ?? [];
   return [...names, ...nested.map((heading) => `exec.${heading.slice(5, -1)}`)];
 }
+
+const EDIT_TOOLS = ["Edit", "Write", "NotebookEdit"];
 
 const READ_SHELL = [
   "cd",

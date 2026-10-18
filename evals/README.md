@@ -45,7 +45,7 @@ Cases live in `cases.cjs`. A case has:
 - `prompt`: text, or `ctx.delivered()` for the mail the room handed the seat;
 - `grades`: built with `g` from `graders.cjs`;
 - `script`: the turn a right answer takes, and `wrong`: one that breaks the rule;
-- `writes`: true for a seat that may edit; it then runs in the real seat's permission mode, and every other case is held to reading;
+- `writes`: true for a seat that may edit. A Claude seat always runs in the real seat's permission mode; one that may not edit has no Edit, Write or NotebookEdit; a write through the shell shows in the project after the turn, and a case whose rule forbids writing grades it (`UNTOUCHED`). A Codex seat that may not edit runs `read-only`;
 - `policy`: keys laid over the room's policy for this case.
 
 Add a case when a rule of a role page, spec or skill has no run that would catch its loss.

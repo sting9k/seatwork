@@ -3,4 +3,4 @@ Answer one question with evidence. Look where the brief says; otherwise go neare
 Report under `REVIEW`:
 - the answer;
 - each piece of evidence (`path:line`, sha, or URL with its date and version);
-- where you looked and found nothing.
+- the evidence against it, and where you looked and found nothing.

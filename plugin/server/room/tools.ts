@@ -126,7 +126,7 @@ async function safetyTool(room: RoomContext, me: string, args: Record<string, un
     return room.safety.rule(me, id, args.send_back, reason);
   }
   if (action === "control" || action === "copy") {
-    const writer = said(args.seat);
+    const writer = said(args.seat) || me;
     const owner = room.engine.parentOf(writer);
     if (!room.engine.seat(writer) || !owner || (me !== owner && room.engine.parentOf(me) !== owner))
       throw new Error(

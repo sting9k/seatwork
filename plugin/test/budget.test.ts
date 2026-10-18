@@ -399,10 +399,10 @@ test("a project held to the default's cap cannot be given a cap above it", () =>
 
 test("the policy listing shows each project's cap under the key that tunes it", () => {
   const { ops } = rig({ policy: { budget: { projects: { [A]: { dailyUsd: 5 }, [B]: { dailyTurns: 90 } } } } });
-  const tunable = ops.act("hq-1", { do: "policy" }).tunable as Record<string, { value: unknown; lowerOnly?: boolean }>;
+  const tunable = ops.act("hq-1", { do: "policy" }).tunable as Record<string, { value: unknown; only?: string }>;
   assert.deepEqual(tunable["budget.projects[*].dailyUsd"].value, { [A]: 5 });
   assert.deepEqual(tunable["budget.projects[*].dailyTurns"].value, { [B]: 90 });
-  assert.equal(tunable["budget.projects[*].dailyUsd"].lowerOnly, true);
+  assert.equal(tunable["budget.projects[*].dailyUsd"].only, "lower");
   ops.close();
 });
 

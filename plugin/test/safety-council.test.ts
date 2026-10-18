@@ -18,6 +18,7 @@ import {
   unborneIn,
 } from "../server/safety/council/facts";
 import { snapshot } from "../server/safety/council/git";
+import { narrowingOf } from "../server/safety/council/narrowing";
 import type { ReadingRow } from "../server/safety/store";
 import { standIn, storeIn } from "./support/council";
 import { repoWith } from "./support/git";
@@ -303,6 +304,65 @@ test("a candidate's turn is held to the unchanged tests that name what it change
   assert.deepEqual(
     await council.endOfTurn(candidate([change(`${ROOT}/src/duration.js`), shell("npm test")], "r2")),
     [],
+  );
+});
+
+test("a diff narrows the outcome when guard lines leave the code and do not come back; tests and moved lines are not", () => {
+  const evidence = narrowingOf([
+    {
+      path: "src/duration.js",
+      test: false,
+      deleted: false,
+      removed: [
+        '  if (!Number.isFinite(n)) throw new Error("not a number");',
+        "  if (n < 0) return null;",
+        "  total += n;",
+      ],
+      added: ["  total += n | 0;"],
+    },
+    {
+      path: "src/units.js",
+      test: false,
+      deleted: false,
+      removed: ["  if (unit === undefined) return MINUTES;"],
+      added: ["  if (unit === undefined) return MINUTES;"],
+    },
+    { path: "test/duration.test.js", test: true, deleted: false, removed: ["  if (skip) return;"], added: [] },
+  ]);
+  assert.equal(evidence?.removed, 2);
+  assert.deepEqual(evidence?.files, ["src/duration.js"]);
+  assert.match(evidence!.excerpt, /throw new Error\("not a number"\)/);
+  assert.equal(narrowingOf([{ path: "src/a.js", test: false, deleted: false, removed: ["x = 1;"], added: [] }]), null);
+});
+
+test("a candidate that claims a better number while guard lines left the code is said under it, when the juror reads a narrowed outcome", async () => {
+  const narrowing = narrowingOf([
+    {
+      path: "src/duration.js",
+      test: false,
+      deleted: false,
+      removed: ['  if (!Number.isFinite(n)) throw new Error("not a number");'],
+      added: [],
+    },
+  ]);
+  const { council, asked } = councilWith(
+    { narrowing: 1 },
+    () => 0.95,
+    () => ({ gaming: null, returned: false, narrowing }),
+  );
+  const turn = (text: string, id: string) => ({ ...peerTurn([change(`${ROOT}/src/duration.js`)], text), turn: id });
+  const found = await council.endOfTurn(turn("CANDIDATE: parseDuration is 3x faster on long inputs", "n1"));
+  assert.match(found.at(-1)?.line ?? "", /^narrowing #\d+: .*3x faster.* src\/duration\.js/);
+  const narrowed = asked.filter((state) => "removed" in state);
+  assert.equal(narrowed.length, 1);
+  assert.match(String(narrowed[0].removed), /not a number/);
+  assert.deepEqual(narrowed[0].claims, ["CANDIDATE: parseDuration is 3x faster on long inputs"]);
+  assert.deepEqual(
+    (await council.endOfTurn(turn("CANDIDATE: hours added as asked", "n2"))).filter((one) =>
+      /^narrowing/.test(one.line),
+    ),
+    [],
+    "no number claimed, nothing to weigh",
   );
 });
 

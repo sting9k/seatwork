@@ -1,5 +1,5 @@
 {
-  "$comment": "The room's operations: when its operator seat is told of incidents and gets its digest; how long its log, closed traces and days of spend are kept, and how long an open trace nobody touched stays open (the log's days); how many new incidents the decision model reads in a minute and the heading of each kind it reads them as; how much of the spend the budget reading shows; how a change is weighed (its baseline, the reverts it must answer, the undone changes after which a trace goes to the owner); and the policy keys the seat may tune, each with its range. lowerOnly: the seat may lower the key and never revert a change to it. [*] in a key stands for one project's folder. A key not listed here is changed by the owner only. vitals: an event loop held past heldMs and a write-ahead log past walMb are trouble at once; each measure is also kept a minute at a time for keepMinutes, and one whose lowest value over the last lowPointMinutes of a windowMinutes window stands its kind's `rise` above the lowest at the window's start is trouble too: a level says little, a low point that keeps rising is a leak or a backlog.",
+  "$comment": "The room's operations: when its operator seat is told of incidents and gets its digest; how long its log, closed traces and days of spend are kept, and how long an open trace nobody touched stays open (the log's days); how many new incidents the decision model reads in a minute and the heading of each kind it reads them as; how much of the spend the budget reading shows; how a change is weighed (its baseline, the reverts it must answer, the undone changes after which a trace goes to the owner); and the policy keys the seat may tune, each with its range. only: the one way the seat may move the key, lower or raise, never reverting a change to it; a fork's threshold only rises, since no reading shows whether an answer acted on was right. [*] in a key stands for one project's folder. A key not listed here is changed by the owner only. vitals: an event loop held past heldMs and a write-ahead log past walMb are trouble at once; each measure is also kept a minute at a time for keepMinutes, and one whose lowest value over the last lowPointMinutes of a windowMinutes window stands its kind's `rise` above the lowest at the window's start is trouble too: a level says little, a low point that keeps rising is a leak or a backlog.",
   "incidentMinutes": 15,
   "retellHours": 1,
   "digestHours": 24,
@@ -26,37 +26,37 @@
     "knowledge.keepDays": { "district": "knowledge", "type": "integer", "min": 7, "max": 365 },
     "knowledge.maxEntries": { "district": "knowledge", "type": "integer", "min": 10000, "max": 2000000 },
     "jev.forks": { "district": "jev", "type": "forks" },
-    "jev.sharpAt.report": { "district": "jev", "type": "number", "min": 0.5, "max": 0.99 },
-    "jev.sharpAt.wake": { "district": "jev", "type": "number", "min": 0.5, "max": 0.99 },
-    "jev.sharpAt.failure": { "district": "jev", "type": "number", "min": 0.5, "max": 0.99 },
-    "jev.sharpAt.answers": { "district": "jev", "type": "number", "min": 0.5, "max": 0.99 },
-    "jev.sharpAt.overlap": { "district": "jev", "type": "number", "min": 0.5, "max": 0.99 },
-    "jev.sharpAt.incident": { "district": "jev", "type": "number", "min": 0.5, "max": 0.99 },
-    "jev.sharpAt.tier": { "district": "jev", "type": "number", "min": 0.5, "max": 0.99 },
-    "jev.sharpAt.gaps": { "district": "jev", "type": "number", "min": 0.5, "max": 0.99 },
-    "jev.sharpAt.escalate": { "district": "jev", "type": "number", "min": 0.5, "max": 0.99 },
-    "jev.sharpAt.duplicate": { "district": "jev", "type": "number", "min": 0.5, "max": 0.99 },
-    "budget.default.dailyUsd": { "district": "budget", "type": "number", "min": 1, "max": 10000, "lowerOnly": true },
+    "jev.sharpAt.report": { "district": "jev", "type": "number", "min": 0.5, "max": 0.99, "only": "raise" },
+    "jev.sharpAt.wake": { "district": "jev", "type": "number", "min": 0.5, "max": 0.99, "only": "raise" },
+    "jev.sharpAt.failure": { "district": "jev", "type": "number", "min": 0.5, "max": 0.99, "only": "raise" },
+    "jev.sharpAt.answers": { "district": "jev", "type": "number", "min": 0.5, "max": 0.99, "only": "raise" },
+    "jev.sharpAt.overlap": { "district": "jev", "type": "number", "min": 0.5, "max": 0.99, "only": "raise" },
+    "jev.sharpAt.incident": { "district": "jev", "type": "number", "min": 0.5, "max": 0.99, "only": "raise" },
+    "jev.sharpAt.tier": { "district": "jev", "type": "number", "min": 0.5, "max": 0.99, "only": "raise" },
+    "jev.sharpAt.gaps": { "district": "jev", "type": "number", "min": 0.5, "max": 0.99, "only": "raise" },
+    "jev.sharpAt.escalate": { "district": "jev", "type": "number", "min": 0.5, "max": 0.99, "only": "raise" },
+    "jev.sharpAt.duplicate": { "district": "jev", "type": "number", "min": 0.5, "max": 0.99, "only": "raise" },
+    "budget.default.dailyUsd": { "district": "budget", "type": "number", "min": 1, "max": 10000, "only": "lower" },
     "budget.default.dailyTurns": {
       "district": "budget",
       "type": "integer",
       "min": 10,
       "max": 100000,
-      "lowerOnly": true
+      "only": "lower"
     },
     "budget.projects[*].dailyUsd": {
       "district": "budget",
       "type": "number",
       "min": 1,
       "max": 10000,
-      "lowerOnly": true
+      "only": "lower"
     },
     "budget.projects[*].dailyTurns": {
       "district": "budget",
       "type": "integer",
       "min": 10,
       "max": 100000,
-      "lowerOnly": true
+      "only": "lower"
     },
     "knowledge.gateAt": { "district": "knowledge", "type": "number", "min": 0.5, "max": 0.95 }
   },

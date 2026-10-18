@@ -25,7 +25,7 @@ Take each fact as far down this ladder as is cheap, and say where it stopped:
 2. **Find the one fact** it is safe because of ("this only drops entries that are already dead"). If it holds, most risks clear at once.
 3. **Look where search stops**: the library's source at the pinned version, when things run (async order, teardown), a JSON field, a database column, a wire format, another language reading the same bytes, a flag, code three hops downstream. Fix the class: the same fault elsewhere is part of this change.
 4. **Run what passed before.** The tests that passed on the base must still pass on your head: run the tests that use what you changed. A test that newly fails is yours until shown otherwise; a failure already on the base is named as such.
-5. **Control.** Undo the fix and run the new test: it must go red for the bug's reason, then green with the fix back.
+5. **Control.** The new test goes red on the code without the fix, for the bug's reason, and green with it.
 6. **Mutate once** when a single test is the only proof of a contract: break the behaviour it guards, see it go red, restore byte for byte.
 
 ## Report

@@ -145,8 +145,12 @@ const ORDERED = "priority, created_at, id";
 const EXPIRE_BATCH = 500;
 const LEASE_MS = config.leaseMinutes * 60_000;
 const ID_PREFIX = new RegExp(`^${config.idPrefix}-?`);
+const ISSUE_ID = new RegExp(`\\b${config.idPrefix}-[0-9a-z]+(?:\\.\\d+)*\\b`, "g");
 export const PARENT_BLOCKED = ":parent-blocked";
 export const CHILD_OPEN = ":child-open";
+
+/** The issue ids a text names. */
+export const issueIdsIn = (text: string): string[] => text.match(ISSUE_ID) ?? [];
 
 /** The issue a blocker ref names, without the suffix that says it only holds back. */
 export const refIssue = (ref: string): string => ref.replace(/:(parent-blocked|child-open)$/, "");

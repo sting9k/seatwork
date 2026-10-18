@@ -145,7 +145,7 @@ function standInPaseo() {
   return { agents, sent, context: { paseo } };
 }
 
-/** What the room holds after the turn: its mail with who each went to, its issues, what Paseo was asked to send each agent, and the agents the seat created. */
+/** What the room holds after the turn: its mail with who each went to, its issues and what each depends on, what Paseo was asked to send each agent, and the agents the seat created. */
 function roomNow(stand, created, seats) {
   const rows = (file, sql) => {
     if (!fs.existsSync(file)) return [];
@@ -167,6 +167,10 @@ function roomNow(stand, created, seats) {
     seats,
     mail: [...mailOf(join(PROJECT, ".seatwork", ".mail", "mail.db")), ...mailOf(join(HOME, "mail", "mail.db"))],
     issues: rows(join(PROJECT, ".seatwork", ".work", "work.db"), "SELECT * FROM issues ORDER BY created_at, id"),
+    dependencies: rows(
+      join(PROJECT, ".seatwork", ".work", "work.db"),
+      "SELECT issue_id, depends_on_id, type FROM dependencies ORDER BY issue_id, depends_on_id",
+    ),
     sent: Object.fromEntries([...stand.sent].map(([id, texts]) => [id, texts])),
     created,
   };

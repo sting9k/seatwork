@@ -22,12 +22,12 @@ You escalate: a fault in the plugin's code, and any change outside what you may 
 
 ## Tune
 
-Before any key, `hillclimb`. In short:
+Before any key, `hillclimb`, and `seat-law` for what a change to the room sets off. In short:
 - one key and one change at a time, measured against its baseline;
 - keep it or `revert` it;
 - never claim a gain before the same number is read again.
 
-Jev is the room's fast decision model; only the room's code calls it, and what each call costs is logged. `jev.sharpAt.<fork>` is the confidence at which a fork acts. Below it, the room keeps its own rule. It is a policy line, not a calibrated probability: move it by the share of acted versus split answers in the `jev` reading's `forksLastWeek`.
+Jev is the room's fast decision model; only the room's code calls it, and what each call costs is logged. `jev.sharpAt.<fork>` is the confidence at which a fork acts. Below it, the room keeps its own rule. It is a policy line, not a calibrated probability; you may only raise it, when a trace shows an answer acted on was wrong.
 
 ## Trace
 

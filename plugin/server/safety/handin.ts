@@ -4,7 +4,8 @@ import { createHash } from "node:crypto";
 import { lstatSync, readFileSync } from "node:fs";
 import { basename, dirname, extname, join, resolve } from "node:path";
 import table from "../../shared/safety/handin.json";
-import { ASSERTION, gamingOf, type GamingEvidence } from "./council/gaming";
+import { ASSERTION, gamingOf, type GamingEvidence, type GamingFile } from "./council/gaming";
+import { narrowingOf, type NarrowingEvidence } from "./council/narrowing";
 import { evaluate, type GateConfig, type Tools } from "./gate/evaluate";
 import type { Place } from "./gate/types";
 import type { FindingRow, SafetyStore } from "./store";
@@ -23,7 +24,7 @@ interface Found {
   hint: string;
 }
 
-/** The check's result for a seat; `partial` is never read as clean; `left`: findings past the most one pass keeps, by level; `gaming`: tests bent to pass; `related`: unchanged tests naming a change. */
+/** The check's result for a seat; `partial` is never read as clean; `left`: findings past the most one pass keeps, by level; `gaming`: tests bent to pass; `narrowing`: guard lines the code lost; `related`: unchanged tests naming a change. */
 export interface HandIn {
   state: "clean" | "blocked" | "partial" | "empty";
   files: number;
@@ -33,6 +34,7 @@ export interface HandIn {
   why: string | null;
   left?: Record<Level, number>;
   gaming?: GamingEvidence | null;
+  narrowing?: NarrowingEvidence | null;
   related?: string[];
   tests?: TestCount;
   dependencies?: Dependency[];
@@ -361,6 +363,13 @@ export async function inspectHandIn(seat: string, store: SafetyStore, gate: Gate
     }),
   );
   const open = rows.filter((r) => r.severity === "block" && !r.ack);
+  const diffed: GamingFile[] = changes.map((change) => ({
+    path: change.path,
+    test: isTestPath(change.path),
+    deleted: change.deleted,
+    added: change.added.map(([, line]) => line),
+    removed: change.removed,
+  }));
   const [related, dependencies] = await Promise.all([
     testsNaming(changes, start.cwd),
     newDependencies(changes, start.cwd, start.start_head),
@@ -376,16 +385,8 @@ export async function inspectHandIn(seat: string, store: SafetyStore, gate: Gate
         ? null
         : `${left.block} blocking finding(s) past the first ${FINDINGS_MOST} were left out`,
     left,
-    gaming: gamingOf(
-      changes.map((change) => ({
-        path: change.path,
-        test: isTestPath(change.path),
-        deleted: change.deleted,
-        added: change.added.map(([, line]) => line),
-        removed: change.removed,
-      })),
-      skipped,
-    ),
+    gaming: gamingOf(diffed, skipped),
+    narrowing: narrowingOf(diffed),
     related,
     tests: testCount(changes),
     dependencies,

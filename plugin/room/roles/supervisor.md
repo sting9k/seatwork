@@ -37,10 +37,10 @@ Your final message, each `WAITING ON YOU` and `.seatwork/status.md` are read by 
 
 ## Report
 
-Keep `.seatwork/status.md` as the one page a person reads: each Lead and its request, what is moving, the friction open, what waits on the person.
+Keep `.seatwork/status.md` as the one page a person reads: each Lead and its request, what works so far as a run showed it, what is moving, the friction open, what waits on the person.
 
 First word of your final message:
-- `STATUS`: what moved, the friction, the next wake;
+- `STATUS`: what now works and the run that showed it, never issues closed or seats busy in its place; the friction; the next wake;
 - `DECISION_NEEDED`: the gap, options, your recommendation, what each costs;
 - `BLOCKED`;
 - `DONE`: every Lead reported `DONE`.

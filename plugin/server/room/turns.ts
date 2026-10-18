@@ -12,7 +12,7 @@ import { parseSeat } from "../orchestration/seats";
 import { handInLine, handInReturn, type HandIn } from "../safety/handin";
 import { asksOwner, CLOSES_WORK, DECIDES, signalOf, subjectSignal } from "../signals";
 import type { Finding } from "../safety/council/council";
-import { errorText, fromRoom, releaseWork, taskOf, type RoomContext } from "./context";
+import { errorText, fromRoom, namesOpenIssue, releaseWork, taskOf, type RoomContext } from "./context";
 import { councilLine, councilRead } from "./council";
 import { fitAt, promptMark, stepUpAt } from "./launch";
 import { clip, excerpt } from "../excerpt";
@@ -561,7 +561,8 @@ async function readDone(
   if (end.outcome.kind !== "completed" || traits(role).briefs !== true || !signal || !CLOSES_WORK.has(signal))
     return null;
   const id = end.seat.id;
-  const gate = await room.safety.done({ seat: id, cwd: end.seat.cwd, events: end.events }).catch((error) => {
+  const backed = (line: string) => namesOpenIssue(room, id, line);
+  const gate = await room.safety.done({ seat: id, cwd: end.seat.cwd, events: end.events, backed }).catch((error) => {
     room.log(`safety: the done gate on ${id} could not run: ${errorText(error)}`);
     return null;
   });

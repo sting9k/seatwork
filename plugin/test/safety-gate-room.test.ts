@@ -186,6 +186,46 @@ test("a Paseo command is caught whichever agent CLI asks", async () => {
   assert.deepEqual(keptRules(store), Array(payloads.length).fill("room:paseo-cli"));
 });
 
+test("a git line that moves the tree every seat shares is told to its seat inside its turn, however it is spelled or hidden; one that names its files, reads, or runs elsewhere is not", async () => {
+  const { guard } = guardAt("moves-tree", tools);
+  const told = async (command: string, cli: Cli = "claude", note?: string) => {
+    const body = { tool_name: cli === "claude" ? "Bash" : "bash", tool_input: { command }, cwd: PROJECT };
+    const { text } = await answerHook(guard, cli, body, SEAT, note);
+    if (!text) return "";
+    const read = JSON.parse(text);
+    return String(read.note ?? read.hookSpecificOutput?.additionalContext ?? "");
+  };
+  for (const line of [
+    "npm test 2>&1 | tail -15; git stash -q 2>/dev/null; true",
+    "node -e 'x'; git -C . checkout -q 00fb9ea -- 2>/dev/null; true",
+    "git checkout 00fb9ea",
+    "git checkout -b try",
+    "git switch main",
+    "git stash pop",
+    "git reset --hard HEAD~1",
+    "git reset -q HEAD~1",
+  ])
+    assert.match(await told(line), /moves the tree every seat in this project works in/, line);
+  for (const line of [
+    "git stash list",
+    "git status --short",
+    "git commit -qm x",
+    "git checkout -- src/parse.js",
+    "git restore src/parse.js",
+    "git reset -q src/parse.js",
+    "git -C /tmp/base checkout 00fb9ea",
+  ])
+    assert.equal(await told(line), "", line);
+  assert.match(
+    await told("node -e 'x'; git -C . checkout -q 00fb9ea -- 2>/dev/null; true"),
+    /^`git -C \. checkout -q 00fb9ea -- 2>\/dev\/null` moves/,
+  );
+  assert.match(await told("git stash", "pi"), /moves the tree/);
+  const both = await told("git stash", "claude", "A notice for this seat.");
+  assert.match(both, /moves the tree/);
+  assert.match(both, /A notice for this seat\./);
+});
+
 test("a command named like a property of every object is read as any other command", async () => {
   for (const line of ["constructor x", "__proto__ x", "env constructor x", "npx toString a", "npx hasOwnProperty@1 a"])
     assert.deepEqual(await rules(line), [], line);

@@ -1,4 +1,5 @@
 import knowledge from "../../shared/knowledge.json";
+import { thresholdOf } from "../threshold";
 import type { KnowledgeStore, PairChoice } from "./store";
 
 /** The keep gate: the decision model reads a decision before it is kept, and turns away noise and repeats. */
@@ -70,8 +71,7 @@ export class Gate {
       store.tally("gate-unread");
       return { kept: true, reading: null };
     }
-    const set = this.deps.at();
-    const at = typeof set === "number" && set >= 0.5 && set <= 1 ? set : GATE.at;
+    const at = thresholdOf(this.deps.at(), GATE.at);
     if (!reading.parted && reading.keep < at) {
       store.tally("gate-noise");
       const criteria: Record<string, string> = GATE.question.criteria;

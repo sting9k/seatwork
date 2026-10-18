@@ -4,6 +4,7 @@ import { notEnglish } from "../english";
 import { readJson, writeJson } from "../persisted";
 import { hasSecret } from "../redact";
 import type { NextCall } from "../refusal";
+import { thresholdOf } from "../threshold";
 import { Budget, type MailMore } from "./budget";
 import { districtOf, incidentOf } from "./lines";
 import type { Vitals } from "./vitals";
@@ -49,17 +50,19 @@ export class OperationsRefused extends Error {
   }
 }
 
-/** A policy key the operator may tune, with its range and whether it may only be lowered; `[*]` in a path stands for every project's folder. */
+/** A policy key the operator may tune, with its range and the one way it may move when it may not move both; `[*]` in a path stands for every project's folder. */
 interface Tunable {
   district: string;
   type: "integer" | "number" | "forks";
   min?: number;
   max?: number;
-  lowerOnly?: boolean;
+  only?: "lower" | "raise";
 }
 
 const TUNABLES = settings.tunables as Record<string, Tunable>;
-const FORK_NAMES = Object.keys(forkCatalog.forks);
+const FORKS = forkCatalog.forks as Record<string, { sharpAt: number }>;
+const FORK_NAMES = Object.keys(FORKS);
+const FORK_THRESHOLD = /^jev\.sharpAt\.([^.]+)$/;
 const KINDS = settings.incidentKinds as Record<string, string>;
 const PATH_PART = /\[[^\]]*\]|[^.[\]]+/g;
 const ONE_PROJECT = /^([^[\]]*)\[([^\]]+)\]([^[\]]*)$/;
@@ -582,10 +585,14 @@ export class Operations {
           .join("; ")}. Give evidence that answers these, and revisit true.`,
       );
     const before = valueAt(this.deps.policy(), path);
-    // a project with no cap of its own is held to the default's, so a cap above that would raise it
-    const inForce = project === undefined ? before : this.budget.limitOf(project, pathKeys(path).at(-1) as "dailyUsd");
-    if (tunable.lowerOnly && typeof inForce === "number" && (value as number) >= inForce)
-      throw new OperationsRefused(`${path} is ${inForce}: you may only lower it; the person raises it`);
+    const inForce = this.inForce(path, project, before);
+    if (tunable.only && typeof inForce === "number") {
+      const lower = tunable.only === "lower";
+      if (lower ? (value as number) >= inForce : (value as number) <= inForce)
+        throw new OperationsRefused(
+          `${path} is ${inForce}: you may only ${tunable.only} it; the person ${lower ? "raises" : "lowers"} it`,
+        );
+    }
     if (JSON.stringify(before) === JSON.stringify(value))
       throw new OperationsRefused(`${path} is ${JSON.stringify(value)} already`);
     const baseline = this.readingOf(tunable.district);
@@ -609,14 +616,23 @@ export class Operations {
     };
   }
 
+  /** What a key holds now as its district reads it: a project with no cap of its own is held to the default's, an unset fork threshold is the catalog's. */
+  private inForce(path: string, project: string | undefined, before: unknown): unknown {
+    if (project !== undefined) return this.budget.limitOf(project, pathKeys(path).at(-1) as "dailyUsd");
+    const fork = FORK_THRESHOLD.exec(path)?.[1];
+    return fork && FORK_NAMES.includes(fork) ? thresholdOf(before, FORKS[fork].sharpAt) : before;
+  }
+
   /** Puts a key back as it was before a change, when nothing changed it since. */
   private revert(agent: string, args: Record<string, unknown>): Record<string, unknown> {
     const change = this.store.tune(Number(args.id));
     if (!change) throw new OperationsRefused(`no change #${String(args.id)}`);
     const tunable = tunableOf(change.path)?.tunable;
     if (!tunable) throw new OperationsRefused(`${change.path} is no longer tunable`);
-    if (tunable.lowerOnly)
-      throw new OperationsRefused(`only the person raises ${change.path}: undoing a change would raise it`);
+    if (tunable.only) {
+      const back = tunable.only === "lower" ? "raise" : "lower";
+      throw new OperationsRefused(`only the person ${back}s ${change.path}: undoing a change would ${back} it`);
+    }
     const { reason, evidence } = this.grounds(agent, tunable.district, args, false);
     const now = valueAt(this.deps.policy(), change.path);
     if (JSON.stringify(now ?? null) !== (change.after ?? "null"))

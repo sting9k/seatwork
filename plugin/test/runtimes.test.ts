@@ -1,4 +1,4 @@
-import { installRoom, USER_CODEX, USER_HOME, USER_PI } from "./support/room";
+import { installRoom, PLUGIN_DIR, USER_CODEX, USER_HOME, USER_PI } from "./support/room";
 import assert from "node:assert/strict";
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -175,11 +175,19 @@ test("a Claude seat's skill folder holds the role's skills as they are named now
 });
 
 test("a skill several roles share is given to each role the room's map names, and to no other", () => {
-  for (const role of ["lead", "peer"]) ensureRuntime({ harness: "claude", role }, loadPolicy());
+  const map = JSON.parse(readFileSync(join(PLUGIN_DIR, "room", "skills", "shared.json"), "utf8")) as Record<
+    string,
+    unknown
+  >;
   const skills = (role: string) => readdirSync(join(claudeRoleDir(role), ".claude", "skills")).sort();
+  for (const role of ["hq", "supervisor", "lead", "peer"]) {
+    ensureRuntime({ harness: "claude", role }, loadPolicy());
+    for (const [skill, roles] of Object.entries(map))
+      if (Array.isArray(roles))
+        assert.equal(skills(role).includes(skill), roles.includes(role), `${skill} for ${role}`);
+  }
   assert.deepEqual(skills("lead"), ["lenses", "seat-law"]);
-  assert.ok(existsSync(join(claudeRoleDir("lead"), ".claude", "skills", "seat-law", "SKILL.md")));
-  assert.ok(!skills("peer").includes("seat-law"));
+  assert.ok(existsSync(join(claudeRoleDir("lead"), ".claude", "skills", "seat-law", "references", "room-law.md")));
 });
 
 test("a seat's home holds the guard's hook when the guard is on: Codex's hooks.json with its trust, Pi's extension, OpenCode's plugin", () => {
@@ -254,7 +262,7 @@ test("a Codex, Pi or OpenCode seat is shown the room's skills only: the user's o
       todowrite: "deny",
       repo_clone: "deny",
       repo_overview: "deny",
-      skill: { "*": "deny", "blast-radius": "allow", "test-audit": "allow" },
+      skill: { "*": "deny", "blast-radius": "allow", "seat-law": "allow", "test-audit": "allow" },
     });
   } finally {
     rmSync(join(USER_HOME, ".agents"), { recursive: true, force: true });

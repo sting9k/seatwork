@@ -146,7 +146,12 @@ test("an OpenCode seat is created with the policy's permissions and its role's s
   assert.equal(permission.webfetch, "allow");
   assert.equal(permission.task, "deny", "the room's denial holds over the creator's");
   assert.equal(permission.question, "deny");
-  assert.deepEqual(permission.skill, { "*": "deny", "blast-radius": "allow", "test-audit": "allow" });
+  assert.deepEqual(permission.skill, {
+    "*": "deny",
+    "blast-radius": "allow",
+    "seat-law": "allow",
+    "test-audit": "allow",
+  });
 });
 
 test("a new seat is held to the model table in force, whatever its creator's prompt still says", async () => {
@@ -939,7 +944,7 @@ test("the last answer of a round says when answers to one question came from one
   assert.doesNotMatch(other.inbox[0], /model family/);
 });
 
-test("a control of a writer's tests is built for its Owner and the seats beside it, and for no other seat", async () => {
+test("a control of a writer's tests is built for the writer itself, its Owner and the seats beside it, and for no other seat", async () => {
   const lead = await seat("lead-control", "claude-lead", null, "[Lead] stream");
   const writer = await seat("peer-control-w", "claude-peer", lead.agent.id, "[Peer] store");
   const reviewer = await seat("peer-control-r", "claude-peer", lead.agent.id, "[Peer:review] store");
@@ -947,6 +952,11 @@ test("a control of a writer's tests is built for its Owner and the seats beside 
   const stranger = await seat("peer-control-x", "claude-peer", other.agent.id, "[Peer] other");
   for (const who of [lead, reviewer])
     assert.match(await who.call("seatwork_safety", { action: "control", seat: writer.agent.id }), /control|no start/i);
+  assert.match(
+    await writer.call("seatwork_safety", { action: "control" }),
+    /peer-control-w/,
+    "a writer that names no seat gets a control of its own work",
+  );
   for (const who of [stranger, other])
     assert.match(
       await who
@@ -1693,7 +1703,7 @@ test("the room's own seat runs the room through its tool", async () => {
     skills.loads.filter((one: { skill: string }) => one.skill === "test-audit"),
     [{ role: "peer", skill: "test-audit", loads: 1 }],
   );
-  assert.deepEqual(skills.never.peer, ["blast-radius"]);
+  assert.deepEqual(skills.never.peer, ["blast-radius", "seat-law"]);
   const policy = JSON.parse(await hq.call("seatwork_room", { do: "policy" }));
   assert.equal(policy.tunable["knowledge.keepDays"].value, 60);
   const refused = await hq

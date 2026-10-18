@@ -15,6 +15,7 @@ All must hold:
 - **Decision-changing**: with the skill, a seat would act differently, not just read more.
 - **Durable**: still true when paths, versions and shas change.
 - **Specific**: broad enough to recur, narrow enough that a seat knows the moment it applies.
+- **Worth its listing**: every seat of the role reads its description at every turn; a skill that changes no decision costs all of them.
 - **No home yet**: no existing skill or prompt line already says it. If one does, the failure is in following it: tune that skill's description instead.
 
 Where it belongs instead:

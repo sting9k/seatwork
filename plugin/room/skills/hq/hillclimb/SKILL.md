@@ -9,13 +9,14 @@ Tuning the room is an experiment: one key, one measurement against its baseline,
 
 ## Before the first change
 
-1. **Name the metric and the direction** that counts as better (a share of split forks, incidents a day, rejections per task). Use your Owner's numbers when given.
+1. **Name the metric and the direction** that counts as better (incidents a day, rejections per task, answers acted on that a trace later found wrong). Use your Owner's numbers when given.
 2. **Set the stop**: a target and a floor on attempts, so one lucky reading does not end it.
 3. **Read the baseline** over days, not one sample: the district's reading and its log, in the same turn. The room refuses a tune without both.
 
 ## Vet the number
 
 Before you trust a number, or act on it:
+- **Does the key move it by itself?** A share the key sets directly (answers acted on above a threshold) measures the key, not the outcome: read a number the key cannot move unless the outcome moves.
 - **What limits it?** If a change did not move it, find the limiter before calling the change useless.
 - **Did it error?** Count failures and refusals; fast rejections fake a better rate.
 - **Does it reproduce?** Several readings across days. A gap smaller than the day-to-day spread is no difference.

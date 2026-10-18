@@ -1,5 +1,6 @@
 import catalog from "../../shared/forks.json";
 import type { Meaning } from "../jev/contract";
+import { thresholdOf } from "../threshold";
 
 /** Small choices about mail and work put to the decision model: a sharp answer is acted on, a split one keeps the room's rule. */
 
@@ -62,8 +63,7 @@ export class Forks {
 
   /** A fork's threshold: the policy's when it is one, from a half up to certainty, else the catalog's. */
   private sharpAtOf(name: ForkName): number {
-    const set = this.deps.sharpAt?.(name);
-    return typeof set === "number" && set >= 0.5 && set <= 1 ? set : FORKS[name].sharpAt;
+    return thresholdOf(this.deps.sharpAt?.(name), FORKS[name].sharpAt);
   }
 
   /** Each fork that is on or was asked in the last week: its threshold, its answers acted on and left split, its failed calls. */

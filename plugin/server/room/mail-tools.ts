@@ -354,6 +354,11 @@ async function acceptanceGate(
         brief: await briefOf(room, writer),
         text,
         turn,
+        reviews: (since, limit) =>
+          room.engine
+            .storeOf(sender.agentId, false)
+            ?.received(sender.agentId, limit, { since, signal: "REVIEW" })
+            .map((mail) => ({ id: mail.id, text: `${mail.subject}\n${mail.body}` })) ?? [],
       })
       .catch((error) => {
         room.log(`the acceptance gate on ${writer} could not run: ${errorText(error)}`);

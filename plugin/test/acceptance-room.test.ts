@@ -43,9 +43,13 @@ async function handIn(peer: TestSeat, turnId: string): Promise<void> {
   );
 }
 
-/** A Supervisor, its Lead and a briefed Peer, the Peer's work committed. */
-async function briefed(name: string, left: Record<string, string> = {}, brief = BRIEF) {
+/** A Supervisor, its Lead and a briefed Peer, the Peer's work committed; `project` makes the folder a project of the room, with a work store. */
+async function briefed(name: string, left: Record<string, string> = {}, brief = BRIEF, project = false) {
   const dir = parserRepo(name);
+  if (project) {
+    mkdirSync(join(dir, ".seatwork"), { recursive: true });
+    writeFileSync(join(dir, ".seatwork", "room.json"), "{}");
+  }
   const remote = `${dir}-remote.git`;
   rmSync(remote, { recursive: true, force: true });
   git(dir, "init", "-q", "--bare", remote);
@@ -197,6 +201,28 @@ test("work handed in uncommitted goes back to its writer, and the finding it ack
   assert.equal(accepts(peer.agent.id).length, 1);
 });
 
+test("an ACCEPT over a review's P0 or P1 finding on that head names it until the ACCEPT waives it by name", async () => {
+  const { dir, lead, peer } = await handedIn("accept-reviewed");
+  const head = git(dir, "rev-parse", "HEAD");
+  const reviewer = await seat("rev-accept-reviewed", "claude-peer", lead.agent.id, "[Peer:review] parser", dir);
+  await turnOf(
+    reviewer,
+    "r1",
+    [],
+    `REVIEW: NOT YET: the new constant breaks the order\nRead ${head.slice(0, 8)}.\n- P1 src/parse.js:10 n9 sorts before n8; repair: keep the order\n- P3 src/parse.js:1 a comment would help\nNo P0.`,
+  );
+  history(lead, [shell("npm test", 0)]);
+  const note = noteOf((await accept(lead, peer)).receipt);
+  const found = /review finding\(s\) on this head not waived: ([0-9a-f]{12}) /.exec(note);
+  assert.ok(found, note);
+  assert.match(note, /n9 sorts before n8/);
+  assert.doesNotMatch(note, /a comment would help|No P0/, "only P0 and P1 lines are findings");
+  const waived = noteOf(
+    (await accept(lead, peer, `Read and run.\nwaive ${found![1]}: the order is free, the spec says so`)).receipt,
+  );
+  assert.doesNotMatch(waived, /review finding/);
+});
+
 test("an acceptance copy is the commit the candidate was handed in at, with what the tree gained since left out", async () => {
   const { dir, lead, peer } = await handedIn("accept-copy");
   mkdirSync(join(dir, "node_modules"));
@@ -250,6 +276,28 @@ test("a DONE over an accepted file changed and left uncommitted says the task re
   appendFileSync(join(dir, "src", "parse.js"), "const n10 = 10;\n");
   await turnOf(lead, "l1", [shell("npm test", 0).item], "DONE: one more constant");
   assert.match(dones(sup)[0], /\[room\] done gate: task .* reopens: src\/parse\.js changed after its ACCEPT/);
+});
+
+test("a DONE over accepted work whose TEMPORARY line names no open issue says where, and one that names an open issue passes", async () => {
+  const { dir, sup, lead, peer } = await briefed("done-temporary", {}, BRIEF, true);
+  const issue = (
+    JSON.parse(await lead.call("seatwork_work", { do: "create", title: "drop the fallback" })) as {
+      id: string;
+    }
+  ).id;
+  appendFileSync(
+    join(dir, "src", "parse.js"),
+    `// TEMPORARY: until ${issue} lands\nconst n10 = 10;\n// TEMPORARY: until the cache is fixed\n`,
+  );
+  git(dir, "commit", "-qam", "a fallback");
+  await handIn(peer, "p1");
+  await handIn(peer, "p2");
+  history(lead, [shell("npm test", 0)]);
+  await accept(lead, peer);
+  await turnOf(lead, "l1", [shell("npm test", 0).item], "DONE: one more constant");
+  const line = dones(sup)[0].match(/\[room\] done gate: .*/)?.[0] ?? "";
+  assert.match(line, /`TEMPORARY` .*src\/parse\.js:13/);
+  assert.doesNotMatch(line, /src\/parse\.js:11/, "a line naming an open issue stands");
 });
 
 test("a push of commits no ACCEPT covers is an incident for HQ and a notice to the pusher's Owner", async () => {

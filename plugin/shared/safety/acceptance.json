@@ -1,5 +1,5 @@
 {
-  "$comment": "Gates on accepted work, by facts only. keepDays: how long covered ACCEPTs, DONEs and pushes stay; openMost: open ACCEPTs kept at most, the oldest dropped first. turnEntries: history entries read for the accepting turn. acceptsRead, filesRead, headsRead, pushesRead, uncoveredShown: bounds on what one gate reads or names. waive: an ACCEPT line that keeps a blocking finding. rules: each gap's line.",
+  "$comment": "Gates on accepted work, by facts only. keepDays: how long covered ACCEPTs, DONEs and pushes stay; openMost: open ACCEPTs kept at most, the oldest dropped first. turnEntries: history entries read for the accepting turn. acceptsRead, filesRead, headsRead, pushesRead, uncoveredShown: bounds on what one gate reads or names. waive: an ACCEPT line that keeps a blocking finding, of the hand-in or of a review. reviewsRead: the REVIEWs since the hand-in read for P0 and P1 findings on the head handed in; reviewLineChars: how much of a finding's line is named. rules: each gap's line.",
   "keepDays": 30,
   "openMost": 2000,
   "turnEntries": 500,
@@ -8,6 +8,8 @@
   "headsRead": 200,
   "pushesRead": 10,
   "uncoveredShown": 20,
+  "reviewsRead": 20,
+  "reviewLineChars": 120,
   "waive": "^\\s*(?:[-*]\\s*)?waive\\s+([0-9a-f]{6,64})\\s*:\\s*\\S.{9,}$",
   "rules": {
     "unread": "the room could not read {turn}, so no run of {command} is seen",
@@ -18,10 +20,12 @@
     "unreadWork": "the room could not read the work as it stands",
     "changed": "the work changed after it was handed in",
     "unwaived": "blocking finding(s) of the hand-in not waived: {findings}; name each in the ACCEPT as `waive <id>: <why it may stay>`",
+    "unweighed": "review finding(s) on this head not waived: {findings}; repair it, or name each in the ACCEPT as `waive <id>: <why it may stay>`",
     "unreadHead": "the room could not read HEAD",
     "many": "only the first {n} accepted tasks were read",
     "missing": "task {task}: its accepted head {head} is not in HEAD",
     "untold": "task {task}: the room could not tell whether HEAD holds its accepted head {head} as accepted",
-    "altered": "task {task} reopens: {files} changed after its ACCEPT"
+    "altered": "task {task} reopens: {files} changed after its ACCEPT",
+    "temporary": "a `TEMPORARY` line names no open issue that removes it: {items}"
   }
 }

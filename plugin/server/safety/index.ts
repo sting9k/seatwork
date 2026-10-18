@@ -15,8 +15,10 @@ import {
   isPush,
   pushedBy,
   PUSHES_READ,
+  REVIEWS_READ,
   TURN_ENTRIES,
   type Gate,
+  type ReviewMail,
   type Pushed,
 } from "./acceptance";
 import { stamp } from "../gc";
@@ -151,6 +153,7 @@ export class Safety {
     if (this.council.on)
       this.keepDiff(agentId, {
         gaming: result.gaming ?? null,
+        narrowing: result.narrowing ?? null,
         related: result.related ?? [],
         returned: result.state === "blocked" && this.handInBlocks,
       });
@@ -196,7 +199,7 @@ export class Safety {
     ].join("\n");
   }
 
-  /** The gate before `accepter`'s ACCEPT of a writer's work; null when off. */
+  /** The gate before `accepter`'s ACCEPT of a writer's work; null when off. `reviews` gives the REVIEWs the accepter received since a time, newest first. */
   async acceptance(a: {
     accepter: string;
     writer: string;
@@ -204,6 +207,7 @@ export class Safety {
     brief: string | null;
     text: string;
     turn: (entries: number) => Promise<readonly TurnEvent[] | null>;
+    reviews: (since: string, limit: number) => readonly ReviewMail[];
   }): Promise<Gate | null> {
     const mode = this.deps.policy()?.acceptance?.mode ?? "off";
     if (!this.on || mode === "off") return null;
@@ -217,7 +221,8 @@ export class Safety {
       start ? commonDirOf(start.cwd) : Promise.resolve(null),
     ]);
     const blocking = handed ? store.blockingSince(a.writer, handed.at, BLOCKING_READ) : [];
-    const gaps = gapsOf({ wanted, events, handed, now, blocking, text: a.text });
+    const reviews = handed?.head ? a.reviews(handed.at, REVIEWS_READ) : [];
+    const gaps = gapsOf({ wanted, events, handed, now, blocking, reviews, text: a.text });
     return {
       mode,
       gaps,
@@ -237,14 +242,25 @@ export class Safety {
     };
   }
 
-  /** The gate before `seat`'s DONE; null when off or nothing is open. */
-  async done(a: { seat: string; cwd: string; events: readonly TurnEvent[] }): Promise<Gate | null> {
+  /** The gate before `seat`'s DONE; null when off or nothing is open. `backed` says whether a line names an open issue. */
+  async done(a: {
+    seat: string;
+    cwd: string;
+    events: readonly TurnEvent[];
+    backed: (line: string) => boolean;
+  }): Promise<Gate | null> {
     const mode = this.deps.policy()?.done?.mode ?? "off";
     if (!this.on || mode === "off") return null;
     const store = this.store();
     const open = store.openAccepts(a.seat, ACCEPTS_READ + 1);
     if (open.length === 0) return null;
-    const { gaps, head } = await doneGaps(a.cwd, open.slice(0, ACCEPTS_READ), open.length > ACCEPTS_READ, a.events);
+    const { gaps, head } = await doneGaps(
+      a.cwd,
+      open.slice(0, ACCEPTS_READ),
+      open.length > ACCEPTS_READ,
+      a.events,
+      a.backed,
+    );
     const repo = head ? await commonDirOf(a.cwd) : null;
     return {
       mode,

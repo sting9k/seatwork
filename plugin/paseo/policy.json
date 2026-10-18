@@ -310,7 +310,7 @@
       "keepDays": 90,
       "tickSeconds": 60,
       "levels": {},
-      "jurors": ["claims", "scope", "gaming"]
+      "jurors": ["claims", "scope", "gaming", "narrowing"]
     }
   },
   "jev": {

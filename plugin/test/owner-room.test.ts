@@ -62,7 +62,7 @@ test("the person turns the room's optional Jev places on and off, kept in the ro
   );
   const file = JSON.parse(readFileSync(join(ROOM_HOME, "policy.json"), "utf8"));
   assert.ok(file.jev.forks.includes("tier"));
-  assert.deepEqual(file.safety.council.jurors, ["claims", "gaming"]);
+  assert.deepEqual(file.safety.council.jurors, ["claims", "gaming", "narrowing"]);
   await assert.rejects(call("rpc jev.place", { id: "forks.answers", on: false }, context), /the room needs it/);
   await assert.rejects(call("rpc jev.place", { id: "forks.nope", on: true }, context), /no place/);
 });

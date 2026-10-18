@@ -1,5 +1,5 @@
-import { installRoom, PROJECT, ROOM_HOME, USER_HOME } from "./support/room";
-import { existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { installRoom, PLUGIN_DIR, PROJECT, ROOM_HOME, USER_HOME } from "./support/room";
+import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { CLAUDE_HOME } from "../server/paths";
 import { roleSkillNames, runtimeDir } from "../server/orchestration/runtimes";
@@ -7,6 +7,7 @@ import { refusedCaller } from "../server/room/tool-table";
 import { incidentOf } from "../server/operations/lines";
 import assert from "node:assert/strict";
 import { before, test } from "node:test";
+import signals from "../shared/signals.json";
 import tools from "../shared/tools.json";
 import { ROLES } from "../shared/workflow";
 import { HARNESSES, knownSpecs, rolePrompt } from "../server/orchestration/seats";
@@ -42,6 +43,41 @@ test("a role's prompt names only skills that role is given", () => {
     for (const [, name] of text.matchAll(/`([a-z][a-z-]*)`/g))
       if (all.has(name)) assert.ok(own.has(name), `the ${role} prompt names ${name}, a skill the ${role} is not given`);
   }
+});
+
+/** The text of every file under a folder of the plugin whose name ends in `suffix`, keyed by its path. */
+const filesUnder = (folder: string, suffix: string): [string, string][] =>
+  (readdirSync(join(PLUGIN_DIR, folder), { recursive: true }) as string[])
+    .filter((path) => path.endsWith(suffix))
+    .map((path) => [join(folder, path), readFileSync(join(PLUGIN_DIR, folder, path), "utf8")]);
+
+/** Whether some string literal in `code` opens with `start`. */
+const opens = (code: string, start: string): boolean =>
+  new RegExp(`[\`"']${start.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`).test(code);
+
+test("a notice or line tag a prompt or skill quotes is one the room's code sends, so a seat's reaction cannot outlive a rename", () => {
+  const listed = new Set([...signals.signals, ...signals.notices].map((row) => row.name));
+  const code = filesUnder("server", ".ts")
+    .map(([, text]) => text)
+    .join("\n");
+  const texts: [string, string][] = [
+    ...ROLES.map((role): [string, string] => [role, rolePrompt(role, { harness: "claude", params: params() })]),
+    ...filesUnder("room/skills", ".md"),
+    ...filesUnder("room/specs", ".md"),
+  ];
+  let quoted = 0;
+  for (const [where, text] of texts) {
+    for (const [, name] of text.matchAll(/`([A-Z][A-Z_ -]*[A-Z])(?: #n)?:`/g)) {
+      quoted += 1;
+      assert.ok(listed.has(name), `${where} quotes ${name}, which shared/signals.json does not list`);
+      assert.ok(opens(code, `${name}:`) || opens(code, `${name} #`), `${where} quotes ${name}, which no code sends`);
+    }
+    for (const [, tag] of text.matchAll(/`(\[[a-z]+\])`/g)) {
+      quoted += 1;
+      assert.ok(opens(code, `${tag} `), `${where} quotes the line tag ${tag}, which no code writes`);
+    }
+  }
+  assert.ok(quoted >= 8, `${quoted} quoted names`);
 });
 
 test("the specs the Lead may open all have a sheet, and a seat on a spec the room lacks is refused with the ones it has", async () => {

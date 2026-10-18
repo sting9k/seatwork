@@ -17,12 +17,12 @@ module.exports = { parseDuration };
 `;
 
 const PARSE_JOINED = `"use strict";
-/** Seconds in a duration such as 90s, 2m, 1h or 1h30m. */
+/** Seconds in a duration such as 90s, 2m, 1h or 1h30m: hours, minutes and seconds in that order, each at most once. */
 function parseDuration(text) {
   if (!text) return 0;
-  const parts = [...text.matchAll(/(\\d+)([smh])/g)];
-  if (parts.length === 0 || parts.map((part) => part[0]).join("") !== text) throw new Error(\`not a duration: \${text}\`);
-  return parts.reduce((sum, part) => sum + Number(part[1]) * { s: 1, m: 60, h: 3600 }[part[2]], 0);
+  const match = /^(?:(\\d+)h)?(?:(\\d+)m)?(?:(\\d+)s)?$/.exec(text);
+  if (!match) throw new Error(\`not a duration: \${text}\`);
+  return Number(match[1] ?? 0) * 3600 + Number(match[2] ?? 0) * 60 + Number(match[3] ?? 0);
 }
 module.exports = { parseDuration };
 `;
@@ -64,6 +64,59 @@ const brief = (labels) =>
   Object.entries(labels)
     .map(([label, text]) => `${label}: ${text}`)
     .join("\n");
+
+/** The labels a brief carries, in the order lead.md gives them. */
+const BRIEF_LABELS = [
+  "Outcome",
+  "Candidate",
+  "Write scope",
+  "Contract",
+  "Constraints",
+  "Non-goals",
+  "Acceptance evidence",
+  "Reopen when",
+  "Yours to decide",
+  "What was tried",
+  "Output",
+  "Issue",
+];
+
+/** A brief's text under one label, up to the next label at a line's start; empty when the brief lacks it. */
+const labelOf = (text, label) => {
+  const head = (name) => new RegExp(`^[\\s>*\`-]*${name}[*\`]*\\s*:`, "im");
+  const at = text.search(head(label));
+  if (at < 0) return "";
+  const rest = text.slice(at).replace(head(label), "");
+  const ends = BRIEF_LABELS.filter((one) => one !== label)
+    .map((one) => rest.search(head(one)))
+    .filter((i) => i >= 0);
+  return ends.length ? rest.slice(0, Math.min(...ends)) : rest;
+};
+
+/** The writers a seat launched: Peers with no spec. */
+const writersOf = (room) => room.created.filter((one) => /^\[Peer\]/.test(one.title));
+
+/** The issues of the plan that nothing blocks, epics left out. */
+const rootsOf = (room) =>
+  room.issues.filter(
+    (issue) =>
+      issue.issue_type !== "epic" &&
+      !(room.dependencies ?? []).some((dep) => dep.issue_id === issue.id && dep.type === "blocks"),
+  );
+
+/** A project whose check is already red on the base: a format test expects text the formatter has never printed. */
+const FILES_RED = {
+  ...FILES,
+  "test/format.test.js": `"use strict";
+const assert = require("node:assert/strict");
+const { test } = require("node:test");
+const { formatDuration } = require("../src/format");
+
+test("seconds as text", () => {
+  assert.equal(formatDuration(90), "90 s");
+});
+`,
+};
 
 /** The report the room mailed up for the seat under test, by the first word of its subject. */
 const reportUp = (room, signal) =>
@@ -472,6 +525,249 @@ module.exports = [
       ],
       final:
         "STATUS: planned and launched\n- joined durations: launched — OPEN\nPlan: one issue, src/parse.js and test/parse.test.js\nEvidence: not run yet",
+    }),
+  },
+  {
+    name: "lead-plans-the-thin-path-first",
+    role: "lead",
+    title: "[Lead] durations total",
+    owner: "supervisor",
+    rule: "room/skills/shared/seat-law/SKILL.md, When you run seats, Gall's law: the first issue is the thinnest path that runs end to end; the other scopes grow from what it proves",
+    files: FILES,
+    arrange: (api) => api.seat("supervisor", "claude-supervisor", "[Supervisor] durations"),
+    prompt:
+      "Add a command line tool: `node bin/durations.js total 1h30m 45m` prints `2h15m`. It adds up durations written with joined units and prints the total in the same form; a bad duration prints why and exits 1. Today parseDuration reads one unit only and formatDuration prints plain seconds.",
+    grades: [
+      g.called("seatwork_work", { do: "create" }, "writes the plan into the work store"),
+      g.room("every issue nothing blocks runs the tool end to end, so the rest grows from it", (room) => {
+        const roots = rootsOf(room);
+        return (
+          roots.length > 0 &&
+          roots.every((issue) =>
+            /bin\/durations|durations\.js/.test(`${issue.title} ${issue.description} ${issue.acceptance_criteria}`),
+          )
+        );
+      }),
+      g.room(
+        "only work nothing blocks is launched",
+        (room) => writersOf(room).length > 0 && writersOf(room).length <= rootsOf(room).length,
+      ),
+      g.notCalled("Edit", undefined, "writes no code"),
+      g.notCalled("Write", undefined, "writes no file"),
+      UNTOUCHED,
+    ],
+    wrong: () => ({
+      steps: [
+        {
+          tool: "seatwork_work",
+          args: {
+            do: "create",
+            issues: [
+              {
+                key: "parse",
+                title: "parseDuration accepts joined units",
+                write_scope: "src/parse.js test/parse.test.js",
+                acceptance_criteria: "`npm test`",
+              },
+              {
+                key: "format",
+                title: "formatDuration prints joined units",
+                write_scope: "src/format.js test/format.test.js",
+                acceptance_criteria: "`npm test`",
+              },
+              {
+                key: "cli",
+                title: "the total command",
+                write_scope: "bin/durations.js test/cli.test.js",
+                acceptance_criteria: "`node bin/durations.js total 1h30m 45m` prints 2h15m",
+              },
+            ],
+          },
+        },
+        ...["parse", "format", "cli"].map((part) => ({
+          paseo: "create_agent",
+          args: {
+            title: `[Peer] durations ${part}`,
+            provider: "claude-peer/claude-sonnet-5-5",
+            settings: { thinkingOptionId: "high" },
+            notifyOnFinish: false,
+            initialPrompt: brief({
+              Outcome: `the ${part} part of durations total`,
+              "Write scope": part === "cli" ? "bin/durations.js" : `src/${part}.js`,
+              "Acceptance evidence": "`npm test`",
+            }),
+          },
+        })),
+      ],
+      final: "STATUS: three Peers build the parts side by side",
+    }),
+    script: () => ({
+      steps: [
+        {
+          tool: "seatwork_work",
+          args: {
+            do: "create",
+            issues: [
+              {
+                key: "path",
+                title: "durations total runs end to end",
+                write_scope: "bin/durations.js test/cli.test.js",
+                acceptance_criteria:
+                  "`node bin/durations.js total 90s 30s` prints 120s\n`node bin/durations.js total x` exits 1",
+              },
+              {
+                key: "parse",
+                title: "parseDuration accepts joined units",
+                deps: ["path"],
+                write_scope: "src/parse.js test/parse.test.js",
+                acceptance_criteria: "`node bin/durations.js total 1h30m 45m` exits 0",
+              },
+              {
+                key: "format",
+                title: "formatDuration prints joined units",
+                deps: ["path"],
+                write_scope: "src/format.js test/format.test.js",
+                acceptance_criteria: "`node bin/durations.js total 1h30m 45m` prints 2h15m",
+              },
+            ],
+          },
+        },
+        {
+          paseo: "create_agent",
+          args: {
+            title: "[Peer] durations total end to end",
+            provider: "claude-peer/claude-sonnet-5-5",
+            settings: { thinkingOptionId: "high" },
+            notifyOnFinish: false,
+            initialPrompt: brief({
+              Outcome:
+                "`node bin/durations.js total <durations...>` adds the durations and prints the total, with the parser and formatter as they are today",
+              "Write scope": "bin/durations.js, test/cli.test.js",
+              Contract: "the command reads parseDuration and formatDuration; the next issues widen them",
+              Constraints: "no new dependency",
+              "Acceptance evidence":
+                "`node bin/durations.js total 90s 30s` prints 120s; `node bin/durations.js total x` exits 1",
+              Output: "CANDIDATE with the commit",
+            }),
+          },
+        },
+        { tool: "seatwork_mail", args: { action: "wake", in_minutes: 30, note: "read the end-to-end candidate" } },
+      ],
+      final:
+        "STATUS: planned and launched\n- durations total end to end: launched — OPEN\nPlan: the command end to end first; joined parsing and joined printing grow from it\nEvidence: not run yet",
+    }),
+  },
+  {
+    name: "lead-briefs-a-red-base-check",
+    role: "lead",
+    title: "[Lead] joined durations",
+    owner: "supervisor",
+    rule: "room/roles/lead.md, Brief: a check already red on the base goes in Constraints as known; making it pass is an issue in seatwork_work, or a line in the report on why not",
+    files: FILES_RED,
+    arrange: (api) => api.seat("supervisor", "claude-supervisor", "[Supervisor] durations"),
+    prompt: "Make parseDuration accept hours and minutes together, such as 1h30m, with a test for it.",
+    grades: [
+      g.called("seatwork_work", { do: "create" }, "writes the plan into the work store"),
+      g.called("create_agent", { title: /^\[Peer/, notifyOnFinish: false }, "launches a Peer"),
+      g.room(
+        "each writer's brief names the red check in Constraints as known",
+        (room) =>
+          writersOf(room).length > 0 &&
+          writersOf(room).every((one) => {
+            const constraints = labelOf(one.initialPrompt, "Constraints");
+            return /format/i.test(constraints) && /\b(red|fail\w*|broken)\b/i.test(constraints);
+          }),
+      ),
+      g.outcome(
+        "making it pass is an issue in seatwork_work, or a line in the report on why not",
+        (o) =>
+          o.room.issues.some(
+            (issue) =>
+              /format/i.test(`${issue.title} ${issue.description} ${issue.acceptance_criteria} ${issue.write_scope}`) &&
+              !/src\/parse\.js/.test(issue.write_scope),
+          ) ||
+          (/format/i.test(o.final) && /\b(red|fail\w*|broken)\b/i.test(o.final)),
+      ),
+      g.notCalled("Edit", undefined, "writes no code"),
+      g.notCalled("Write", undefined, "writes no file"),
+      UNTOUCHED,
+    ],
+    wrong: () => ({
+      steps: [
+        {
+          tool: "seatwork_work",
+          args: {
+            do: "create",
+            issues: [
+              {
+                key: "joined",
+                title: "Accept 1h30m",
+                write_scope: "src/parse.js test/parse.test.js",
+                acceptance_criteria: "`npm test`",
+              },
+            ],
+          },
+        },
+        {
+          paseo: "create_agent",
+          args: {
+            title: "[Peer] joined durations",
+            provider: "claude-peer/claude-sonnet-5-5",
+            settings: { thinkingOptionId: "high" },
+            notifyOnFinish: false,
+            initialPrompt: JOINED_BRIEF(null),
+          },
+        },
+      ],
+      final: "STATUS: planned and launched",
+    }),
+    script: () => ({
+      steps: [
+        { shell: "npm test", mayFail: true },
+        {
+          tool: "seatwork_work",
+          args: {
+            do: "create",
+            issues: [
+              {
+                key: "joined",
+                title: "Accept 1h30m",
+                write_scope: "src/parse.js test/parse.test.js",
+                acceptance_criteria:
+                  "`node --test test/parse.test.js` passes, with a test for 1h30m that fails on the base",
+              },
+              {
+                key: "format-red",
+                title: "test/format.test.js is red on the base",
+                description: 'It expects "90 s"; formatDuration prints "90s". It failed before this work began.',
+                write_scope: "src/format.js test/format.test.js",
+                acceptance_criteria: "`node --test test/format.test.js` passes",
+              },
+            ],
+          },
+        },
+        {
+          paseo: "create_agent",
+          args: {
+            title: "[Peer] joined durations",
+            provider: "claude-peer/claude-sonnet-5-5",
+            settings: { thinkingOptionId: "high" },
+            notifyOnFinish: false,
+            initialPrompt: brief({
+              Outcome: "parseDuration accepts hours and minutes together, such as 1h30m",
+              "Write scope": "src/parse.js, test/parse.test.js",
+              Constraints:
+                'test/format.test.js is red on the base (it expects "90 s", formatDuration prints "90s"): known, not yours, and an issue of its own; judge your work by test/parse.test.js',
+              "Acceptance evidence":
+                "`node --test test/parse.test.js` passes with a test for 1h30m that fails without the change",
+              Output: "CANDIDATE with the commit",
+            }),
+          },
+        },
+        { tool: "seatwork_mail", args: { action: "wake", in_minutes: 30, note: "read the Peer's candidate" } },
+      ],
+      final:
+        "STATUS: planned and launched\n- joined durations: launched — OPEN\nKnown: test/format.test.js is red on the base, an issue of its own\nEvidence: npm test on the base fails only in test/format.test.js",
     }),
   },
   {

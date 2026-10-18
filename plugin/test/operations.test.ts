@@ -19,13 +19,16 @@ let homes = 0;
 /** An operations district over its own folder, a policy object, a clock, a mailbox it can be read from, and the decision model's spend of the day. */
 function operations(operators: string[] = ["hq-1"]) {
   const spent = { today: 0.01 };
+  const noise = { kept: 2 };
   const rig = operationsAt(`operations-${(homes += 1)}`, {
     start: "2026-10-15T00:00:00.000Z",
     policy: { jev: { forks: ["report"], sharpAt: { wake: 0.8 } }, knowledge: { keepDays: 60 } },
     operators,
-    deps: { readings: { jev: () => ({ spentToday: spent.today }), knowledge: () => ({ gateNoise: 2 }) } },
+    deps: {
+      readings: { jev: () => ({ spentToday: spent.today }), knowledge: () => ({ gateNoise: noise.kept }) },
+    },
   });
-  return { ...rig, spent };
+  return { ...rig, spent, noise };
 }
 
 const GROUNDS = {
@@ -37,6 +40,12 @@ const GROUNDS = {
 const readJev = (ops: Operations) => {
   ops.act("hq-1", { do: "jev" });
   ops.act("hq-1", { do: "log", district: "jev" });
+};
+
+/** The operator reads knowledge and its log in this turn, as a change needs. */
+const readKnowledge = (ops: Operations) => {
+  ops.act("hq-1", { do: "knowledge" });
+  ops.act("hq-1", { do: "log", district: "knowledge" });
 };
 
 test("a log line is read for its district, and lines that report the same fault share one incident key", () => {
@@ -205,25 +214,25 @@ test("with no operator nothing is mailed and nothing is lost; the digest comes o
 
 test("a tune rests on a reading and the log of its district in the same turn, stays in range, and can be reverted while nothing changed it since", () => {
   const { ops, policy, persisted } = operations();
-  const tune = { do: "tune", path: "jev.sharpAt.report", value: 0.5, ...GROUNDS };
-  assert.throws(() => ops.act("hq-1", tune), /read jev in this turn first/);
-  ops.act("hq-1", { do: "jev" });
-  assert.throws(() => ops.act("hq-1", tune), /read the log of jev in this turn too/);
-  ops.act("hq-1", { do: "log", district: "jev" });
-  assert.throws(() => ops.act("hq-1", { ...tune, value: 50 }), /from 0.5 to 0.99/);
+  const tune = { do: "tune", path: "knowledge.maxEntries", value: 50_000, ...GROUNDS };
+  assert.throws(() => ops.act("hq-1", tune), /read knowledge in this turn first/);
+  ops.act("hq-1", { do: "knowledge" });
+  assert.throws(() => ops.act("hq-1", tune), /read the log of knowledge in this turn too/);
+  ops.act("hq-1", { do: "log", district: "knowledge" });
+  assert.throws(() => ops.act("hq-1", { ...tune, value: 50 }), /from 10000 to 2000000/);
   assert.throws(() => ops.act("hq-1", { ...tune, path: "safety.guard" }), /not one the room tunes on its own/);
   assert.throws(() => ops.act("hq-1", { ...tune, evidence: "đã đo rồi, ổn" }), /evidence: (say it|in English)/);
   const done = ops.act("hq-1", tune);
-  assert.deepEqual((policy.jev as { sharpAt: object }).sharpAt, { wake: 0.8, report: 0.5 });
-  assert.deepEqual(persisted, [["jev.sharpAt.report", 0.5]]);
-  assert.match(String(done.line), /jev\.sharpAt\.report: unset -> 0\.5/);
-  assert.equal(done.baseline, '{"spentToday":0.01}', "the district's reading is kept with the change");
+  assert.deepEqual(policy.knowledge, { keepDays: 60, maxEntries: 50_000 });
+  assert.deepEqual(persisted, [["knowledge.maxEntries", 50_000]]);
+  assert.match(String(done.line), /knowledge\.maxEntries: unset -> 50000/);
+  assert.equal(done.baseline, '{"gateNoise":2}', "the district's reading is kept with the change");
   ops.turnStarted("hq-1");
-  assert.throws(() => ops.act("hq-1", { do: "revert", id: done.id, ...GROUNDS }), /read jev in this turn first/);
-  ops.act("hq-1", { do: "jev" });
+  assert.throws(() => ops.act("hq-1", { do: "revert", id: done.id, ...GROUNDS }), /read knowledge in this turn first/);
+  ops.act("hq-1", { do: "knowledge" });
   ops.act("hq-1", { do: "revert", id: done.id, ...GROUNDS });
-  assert.equal((policy.jev as { sharpAt: Record<string, unknown> }).sharpAt.report, undefined);
-  assert.deepEqual(persisted.at(-1), ["jev.sharpAt.report", undefined]);
+  assert.equal((policy.knowledge as Record<string, unknown>).maxEntries, undefined);
+  assert.deepEqual(persisted.at(-1), ["knowledge.maxEntries", undefined]);
   assert.throws(() => ops.act("hq-1", { do: "revert", id: done.id, ...GROUNDS }), /changed again after #1/);
   assert.throws(
     () => ops.act("hq-1", { do: "tune", path: "jev.forks", value: ["report", "nope"], ...GROUNDS }),
@@ -234,22 +243,47 @@ test("a tune rests on a reading and the log of its district in the same turn, st
   ops.close();
 });
 
-test("the digest weighs each change still standing against its baseline; a key reverted twice needs evidence that answers why", async () => {
-  const { ops, mailed, at, spent } = operations();
+test("the operator may only raise a fork's threshold, from the one in force: a lower one acts on answers no reading judges right", () => {
+  const { ops, policy } = operations();
   readJev(ops);
-  const tune = { do: "tune", path: "jev.sharpAt.wake", ...GROUNDS };
-  for (const value of [0.82, 0.84]) {
+  const tune = { do: "tune", ...GROUNDS };
+  assert.throws(
+    () => ops.act("hq-1", { ...tune, path: "jev.sharpAt.wake", value: 0.7 }),
+    /jev\.sharpAt\.wake is 0\.8: you may only raise it; the person lowers it/,
+  );
+  const catalog = forkCatalog.forks.report.sharpAt;
+  assert.throws(
+    () => ops.act("hq-1", { ...tune, path: "jev.sharpAt.report", value: catalog - 0.05 }),
+    new RegExp(`jev\\.sharpAt\\.report is ${catalog}: you may only raise it`),
+    "an unset threshold is the catalog's",
+  );
+  const done = ops.act("hq-1", { ...tune, path: "jev.sharpAt.report", value: 0.95 });
+  assert.equal((policy.jev as { sharpAt: Record<string, unknown> }).sharpAt.report, 0.95);
+  assert.throws(
+    () => ops.act("hq-1", { do: "revert", id: done.id, ...GROUNDS }),
+    /only the person lowers jev\.sharpAt\.report: undoing a change would lower it/,
+  );
+  const tunable = ops.act("hq-1", { do: "policy" }).tunable as Record<string, { only?: string }>;
+  assert.equal(tunable["jev.sharpAt.report"].only, "raise");
+  ops.close();
+});
+
+test("the digest weighs each change still standing against its baseline; a key reverted twice needs evidence that answers why", async () => {
+  const { ops, mailed, at, noise } = operations();
+  readKnowledge(ops);
+  const tune = { do: "tune", path: "knowledge.keepDays", ...GROUNDS };
+  for (const value of [50, 40]) {
     const done = ops.act("hq-1", { ...tune, value });
     ops.act("hq-1", { do: "revert", id: done.id, ...GROUNDS });
   }
-  assert.throws(() => ops.act("hq-1", { ...tune, value: 0.86 }), /reverted 2 times in 30 days: #\d+ .*revisit true/);
-  ops.act("hq-1", { ...tune, value: 0.86, revisit: true });
-  spent.today = 0.09;
+  assert.throws(() => ops.act("hq-1", { ...tune, value: 30 }), /reverted 2 times in 30 days: #\d+ .*revisit true/);
+  ops.act("hq-1", { ...tune, value: 30, revisit: true });
+  noise.kept = 9;
   at("2026-10-16T00:00:00.000Z");
   await ops.tick();
   assert.match(
     mailed.at(-1)!.body,
-    /jev\.sharpAt\.wake: 0\.8 -> 0\.86[^\n]*\n {2}then: \{"spentToday":0\.01\}\n {2}now: \{"spentToday":0\.09\}/,
+    /knowledge\.keepDays: 60 -> 30[^\n]*\n {2}then: \{"gateNoise":2\}\n {2}now: \{"gateNoise":9\}/,
   );
   ops.close();
 });
@@ -274,11 +308,11 @@ test("a trace keeps its hypothesis and what it learned; after three undone chang
     kind: "hypothesis",
     text: "The minute's pass and the GC run at the same moment.",
   });
-  readJev(ops);
-  for (const value of [0.81, 0.82, 0.83]) {
+  readKnowledge(ops);
+  for (const value of [50, 40, 30]) {
     const done = ops.act("hq-1", {
       do: "tune",
-      path: "jev.sharpAt.wake",
+      path: "knowledge.keepDays",
       value,
       trace: opened.id,
       revisit: true,
@@ -298,8 +332,8 @@ test("a trace keeps its hypothesis and what it learned; after three undone chang
     () =>
       ops.act("hq-1", {
         do: "tune",
-        path: "jev.sharpAt.wake",
-        value: 0.79,
+        path: "knowledge.keepDays",
+        value: 20,
         trace: opened.id,
         revisit: true,
         ...GROUNDS,

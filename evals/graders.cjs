@@ -33,9 +33,12 @@ const firstLine = (text) =>
     .trim()
     .split("\n")[0] ?? "";
 
+/** The first line as the room reads a report's signal there: the marks before its first word left off. */
+const openingOf = (text) => firstLine(text).replace(/^\W+/, "");
+
 /** The graders a case may list; each returns `{ ok, why }`. */
 const GRADERS = {
-  first: (g, o) => ({ ok: g.re.test(firstLine(o.final)), why: `first line: ${firstLine(o.final).slice(0, 160)}` }),
+  first: (g, o) => ({ ok: g.re.test(openingOf(o.final)), why: `first line: ${firstLine(o.final).slice(0, 160)}` }),
   says: (g, o) => ({
     ok: g.re.test(o.final),
     why: g.re.test(o.final) ? "said" : `the final message does not match ${g.re}`,

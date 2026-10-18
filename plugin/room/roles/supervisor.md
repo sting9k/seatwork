@@ -27,7 +27,9 @@ A Lead's `DECISION_NEEDED` is your Owner's to answer: carry it to them with what
 - From the room:
   - a `COUNCIL:` mail → `seatwork_safety` `label` it right or wrong;
   - a Lead past the context line → `seatwork_rotate` it;
-  - `LEASE:` → tell the Lead whose work went back.
+  - `LEASE:` → tell the Lead whose work went back;
+  - `UNACCEPTED PUSH:` → ask the Lead what went out and why, and tell your Owner when users may see it;
+  - a `[room]` gate line under a Lead's report → friction: work accepted or done without its proof.
 
 ## Words a person reads
 

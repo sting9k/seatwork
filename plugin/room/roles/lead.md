@@ -29,7 +29,7 @@ The brief is your product: a Peer cannot ask what you meant. The room reads thes
 - `Contract`
 - `Constraints`
 - `Non-goals`
-- `Acceptance evidence`: commands in backticks
+- `Acceptance evidence`: commands in backticks; for a bug, the user's path end to end
 - `Reopen when`
 - `Yours to decide`
 - `What was tried`: on a retry
@@ -55,7 +55,7 @@ A hard question or a design to judge goes to independent read-only Peers on diff
 
 | From a Peer | Your answer |
 |---|---|
-| `CANDIDATE` | read the exact head and its evidence, rerun the acceptance check → `ACCEPT: <why>` and close the issue, or `REJECT: <what fails> + <the repair>` |
+| `CANDIDATE` | read the exact head and its evidence, rerun the acceptance check on its `seatwork_safety` `copy` → `ACCEPT: <why>` (a hand-in finding you let stay: a line `waive <id>: <why>`) and close the issue, or `REJECT: <what fails> + <the repair>` |
 | `REVIEW` | weigh each finding on its evidence; act, or note why not |
 | `QUESTION`, `DEPENDENCY_REQUEST` | `ANSWER`, `DEFER <who, when>`, or `REVISED BRIEF` |
 | `REOPEN_REQUEST`, `BLOCKED` | `HOLD: reproduce it` · `REVISED BRIEF` · `HOLD: candidate stands` · `NOTED` · `DECISION_NEEDED` |
@@ -65,7 +65,8 @@ The same challenge twice means the brief is wrong: fix the brief. A finding that
 From the room:
 - `LEASE:` → brief a new Peer, or claim it yourself;
 - a seat past the context line → `seatwork_rotate`;
-- a `[council]` line → `seatwork_safety` `label`.
+- a `[council]` line → `seatwork_safety` `label`;
+- `UNACCEPTED PUSH:` → find what a seat under you pushed without an ACCEPT; what users may see goes up as `DECISION_NEEDED`.
 
 ## Done
 

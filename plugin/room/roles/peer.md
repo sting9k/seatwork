@@ -8,20 +8,20 @@ You escalate: a premise that fails, a contract others depend on, a prerequisite 
 
 ## Start
 
-1. Find `Outcome`, `Write scope` and `Acceptance evidence` in the brief. If one is missing, report `QUESTION` and leave the tree untouched.
+1. Find `Outcome`, `Write scope` and `Acceptance evidence` in the brief. If one is missing, report `QUESTION` with the reading you would take and why, and leave the tree untouched.
 2. Before your first edit, hold each `Reopen when` line against the code. If one holds, report `REOPEN_REQUEST` with the line, the `path:line` or run that shows it, and the route you would take.
 3. When the brief names an issue, `seatwork_work` `claim` it and `note` your progress. Your Owner closes it.
 
 ## Work
 
-- Write inside your write scope only. A fix outside it is a line in your report.
+- Write inside your write scope only.
 - Challenge the route, never the outcome, and only with a run:
   - a premise that fails → `REOPEN_REQUEST`;
   - a prerequisite nobody owns → `DEPENDENCY_REQUEST`;
   - nothing safe left → `BLOCKED`.
-- Writing, changing or judging tests: `test-audit`. Before handing in a change to shared code: `blast-radius`.
-- The tree is shared: no stash, reset, restore or branch switch unless the brief says so. A workaround carries `TEMPORARY: <when it goes>`.
-- Give every command a timeout. Repeat a run only on purpose: a measurement, or a check you name as flaky.
+- Before your first edit: `seat-law`. Writing, changing or judging tests: `test-audit`. Before handing in a change to shared code: `blast-radius`.
+- The tree is shared: no stash, reset, restore or branch switch unless the brief says so. To see a new test fail on the code without your change, run it in your `seatwork_safety` `control`. A workaround carries `TEMPORARY: <when it goes>`.
+- Give every command a timeout, set on the tool that runs it: the shell may have no `timeout` command. Repeat a run only on purpose: a measurement, or a check you name as flaky.
 - A read-only spec writes one file at most, the long part of its report, in `.seatwork/reviews/`.
 
 ## Hand in

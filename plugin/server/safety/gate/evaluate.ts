@@ -68,11 +68,12 @@ export interface GateConfig {
   maxBytes: number;
 }
 
-/** What a line did that the guard keeps, what the gate could not read, and whether the line writes or removes a file of the seat's tree. */
+/** What a line did that the guard keeps, what the gate could not read, whether the line writes or removes a file of the seat's tree, and the git command in it that moves that tree's HEAD or stash for every seat in it. */
 export interface Evaluation {
   findings: Finding[];
   doubts: Doubt[];
   changes: boolean;
+  moves?: string | null;
 }
 
 const MAX_DEPTH = 8;
@@ -149,6 +150,7 @@ class Walk implements Reader {
   private callsCut = false;
   private outOfTime = false;
   private changes = false;
+  private moves: string | null = null;
 
   constructor(
     private readonly place: Place,
@@ -158,7 +160,7 @@ class Walk implements Reader {
   ) {}
 
   result(): Evaluation {
-    return { findings: this.out.found, doubts: this.out.doubts, changes: this.changes };
+    return { findings: this.out.found, doubts: this.out.doubts, changes: this.changes, moves: this.moves };
   }
 
   /** Notes a file the line writes or removes in the seat's tree, outside the room's folder and git's; null is a program's write whose path waits for run time, counted where the program runs. */
@@ -664,6 +666,11 @@ class Walk implements Reader {
         else this.out.effect(hit.effect, repo, scene.text, hit.detail);
       for (const doubt of outcome.doubts) this.out.doubt(doubt, scene.text);
       if (outcome.changes) this.noteChange(null, { ...this.known(state), cwd: outcome.changes });
+      if (
+        outcome.moves &&
+        [this.place.project, this.place.start].some((root) => root !== null && within(outcome.moves!, root))
+      )
+        this.moves ??= scene.text;
       for (const shell of outcome.shells) await this.text(shell, fork(state), ctx.depth + 1);
       for (const shell of this.gitPrograms(scene, state)) await this.text(shell, fork(state), ctx.depth + 1);
     }

@@ -14,7 +14,7 @@ import type { TaskKeys } from "../orchestration/task-keys";
 import type { RuntimePolicy } from "../policy";
 import type { Safety } from "../safety/index";
 import type { OwedList } from "./status";
-import type { Lapsed, Seating } from "../tasks/store";
+import { issueIdsIn, type Lapsed, type Seating } from "../tasks/store";
 import type { WorkStores } from "../tasks/stores";
 import type { Callers } from "./callers";
 import { ROOM_SENDER } from "../coordination/address";
@@ -65,6 +65,25 @@ function held(room: RoomContext, seat: string): string[] {
     );
   } catch {
     return [];
+  }
+}
+
+/** Whether a text names an issue still open in a seat's project's work store; false when the store cannot be read. */
+export function namesOpenIssue(room: RoomContext, seat: string, text: string): boolean {
+  const ids = issueIdsIn(text);
+  if (ids.length === 0) return false;
+  try {
+    const store = room.works.existing(room.engine.projectOf(seat));
+    if (!store) return false;
+    return ids.some((id) => {
+      try {
+        return store.get(id).status !== "closed";
+      } catch {
+        return false;
+      }
+    });
+  } catch {
+    return false;
   }
 }
 

@@ -652,6 +652,7 @@ export function startRoom(input: {
     { what: "guard records", expire: (before) => safety.expire(before) },
     { what: "decision states", expire: (before) => jev.expire(before) },
     { what: "council readings", expire: () => safety.expireCouncil() },
+    { what: "gate records (accepts, dones, pushes)", expire: () => safety.expireGates(new Date()) },
     { what: "knowledge record", expire: () => knowledge.expire() },
     { what: "task rounds", expire: (before) => room.rounds.expire(before) },
     { what: "task keys", expire: () => room.taskKeys.expire((seat) => engine.seat(seat) !== undefined) },

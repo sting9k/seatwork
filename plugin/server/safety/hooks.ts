@@ -24,6 +24,8 @@ const READ_TOOLS: Record<string, boolean> = {
 const QUESTION_TOOLS = new Set(["request_user_input", "request_user_input_async"]);
 const ASK_BY_MAIL =
   "Ask in your final message, or by mail with seatwork_mail: a question asked here keeps you in your turn, and nobody in the room sees it.";
+const MOVES_TREE =
+  "`{command}` moves the tree every seat in this project works in: their uncommitted work moves with it. Unless your brief asked for it, put it back now. The code without a change is in a `seatwork_safety` `control`.";
 
 interface Call {
   shell: string | null;
@@ -99,7 +101,7 @@ function patchTargets(patch: string): string[] {
   return [...out];
 }
 
-/** Reads one hook payload and answers in the shape that CLI reads: a refusal of a question meant for the room's mail, or the note that rides on the call; `wrote` is the shell line that runs and writes the seat's tree. */
+/** Reads one hook payload and answers in the shape that CLI reads: a refusal of a question meant for the room's mail, or the notes that ride on the call (a git command that moves the shared tree, then `note`); `wrote` is the shell line that runs and writes the seat's tree, `noted` whether `note` went out. */
 export async function answerHook(
   guard: Guard,
   cli: Cli,
@@ -110,14 +112,20 @@ export async function answerHook(
   const call = callOf(body);
   if (call.refused) return { ...render(cli, { refused: call.refused }), noted: false, wrote: null };
   let wrote: string | null = null;
-  if (call.shell !== null && (await guard.check(seat, cli, call.shell, call.cwd))) wrote = call.shell;
+  let moved: string | null = null;
+  if (call.shell !== null) {
+    const checked = await guard.check(seat, cli, call.shell, call.cwd);
+    if (checked.writes) wrote = call.shell;
+    if (checked.moves) moved = MOVES_TREE.replace("{command}", checked.moves.slice(0, 200));
+  }
   if (call.read) {
     const { path, whole } = call.read;
     await guard.checkRead(seat, cli, absolute(path, call.cwd), call.cwd, whole);
   }
   for (const path of call.writes)
     await guard.checkWrite(seat, cli, absolute(path, call.cwd), call.cwd, call.texts.get(path));
-  return { ...render(cli, { note }), noted: Boolean(note), wrote };
+  const notes = [moved, note].filter(Boolean).join("\n\n");
+  return { ...render(cli, { note: notes || undefined }), noted: Boolean(note), wrote };
 }
 
 const absolute = (path: string, cwd: string | null) => (path.startsWith("/") || !cwd ? path : `${cwd}/${path}`);

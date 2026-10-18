@@ -12,12 +12,15 @@ import type { CouncilPolicy } from "./council/council";
 
 /** The command guard: reads each call of a seat and keeps what it did that the owner would want to see; it stops nothing. */
 
-/** The owner's settings for the guard, the council and the hand-in check, as the policy file holds them. */
+/** The owner's safety settings, as the policy file holds them. */
 export interface SafetyPolicy {
   mode?: "on" | "off";
   budgetMs?: number;
   maxBytes?: number;
   handin?: { mode: "block" | "warn" | "off" };
+  acceptance?: { mode: "block" | "warn" | "off" };
+  done?: { mode: "block" | "warn" | "off" };
+  push?: { mode: "warn" | "off" };
   council?: CouncilPolicy;
 }
 
@@ -54,11 +57,17 @@ const SHOWN_CHARS = 4000;
 export class Guard {
   constructor(private readonly deps: GuardDeps) {}
 
-  /** One shell command a seat is about to run; true when the line writes or removes a file of the seat's tree. */
-  async check(seat: SeatRef | null, cli: string, command: string, cwd: string | null): Promise<boolean> {
-    return this.read({ seat, cli, command, cwd, began: process.hrtime.bigint() }, async (place) =>
+  /** One shell command a seat is about to run: whether the line writes or removes a file of the seat's tree, and the git command in it that moves that tree for every seat in it. */
+  async check(
+    seat: SeatRef | null,
+    cli: string,
+    command: string,
+    cwd: string | null,
+  ): Promise<{ writes: boolean; moves: string | null }> {
+    const found = await this.read({ seat, cli, command, cwd, began: process.hrtime.bigint() }, async (place) =>
       evaluate(command, cwd, place, this.gateConfig(), this.deps.tools(seat)),
     );
+    return { writes: found.changes, moves: found.moves ?? null };
   }
 
   /** A file an editing tool is about to write (Write, Edit, apply_patch, a plugin's write), with the text it adds when the call shows it. */
@@ -97,13 +106,13 @@ export class Guard {
     };
   }
 
-  /** Reads a call and keeps the gravest thing it did, or that the gate could not read it; true when the call writes the seat's tree. */
-  private async read(call: Call, look: (place: Place) => Promise<Evaluation>): Promise<boolean> {
+  /** Reads a call and keeps the gravest thing it did, or that the gate could not read it. */
+  private async read(call: Call, look: (place: Place) => Promise<Evaluation>): Promise<Evaluation> {
     const found = await look(this.deps.place(call.seat));
     const top = [...found.findings].sort((a, b) => SEVERITY_RANK[b.severity] - SEVERITY_RANK[a.severity])[0] ?? null;
     if (top) this.record(call, top.effect, top.rule, top.severity);
     else if (found.doubts.length) this.record(call, "unread", "command", null);
-    return found.changes;
+    return found;
   }
 
   /** Keeps a call, under its effect and rule. */

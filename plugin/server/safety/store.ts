@@ -4,7 +4,7 @@ import { SQL_DIR } from "../paths";
 import { Sqlite } from "../sqlite";
 import type { Label } from "./council/calibration";
 
-/** The safety store in the room home: what the guard saw, start commits, hand-in findings, the council's log and its appeals to the chair. */
+/** The safety store: guard record, starts, hand-ins, gate records, council log. */
 
 /** A call a rule of the guard held for, as the guard saw it. */
 interface DecisionRow {
@@ -37,6 +37,36 @@ interface SeatWork {
   handed: string | null;
   verdict: "accepted" | "returned" | null;
   verdictDigest: string | null;
+}
+
+/** The work a seat handed in: digest, HEAD (null when unread), and when. */
+export interface HandedWork {
+  digest: string;
+  head: string | null;
+  at: string;
+}
+
+/** An ACCEPT the gate passed; `repo` is the git common folder, `base` the start. */
+export interface AcceptRow {
+  id: number;
+  accepter: string;
+  task: string;
+  writer: string;
+  repo: string;
+  base: string;
+  head: string;
+  digest: string;
+  commands: string;
+}
+
+/** A push; `uncovered` counts commits no gate holds, -1 when unknown. */
+export interface PushRow {
+  seat: string;
+  repo: string;
+  remote: string;
+  ref: string;
+  sha: string;
+  uncovered: number;
 }
 
 /** A hand-in finding of a seat, told apart by its fingerprint; `ack` is the seat's reason to keep it. */
@@ -119,6 +149,7 @@ interface AppealRow {
 
 const SEEN_EVERY_MS = 86_400_000;
 const FINGERPRINT = /^[0-9a-f]{6,64}$/;
+const ACCEPT_COMMANDS = 20;
 
 /** The Safety district's SQLite store; every statement it runs has an index. */
 export class SafetyStore extends Sqlite {
@@ -249,8 +280,127 @@ export class SafetyStore extends Sqlite {
     return this.row("SELECT cwd, start_head, started_at FROM seats WHERE agent_id = ?", agentId) ?? null;
   }
 
-  noteHandIn(agentId: string, digest: string): void {
-    this.transaction("write", () => this.run("UPDATE seats SET handed_digest = ? WHERE agent_id = ?", digest, agentId));
+  /** Keeps the work a seat hands in: digest, HEAD and time. */
+  noteHandIn(agentId: string, digest: string, head: string | null): void {
+    this.transaction("write", () =>
+      this.run(
+        "UPDATE seats SET handed_digest = ?, handed_head = ?, handed_at = ? WHERE agent_id = ?",
+        digest,
+        head,
+        this.stamp(),
+        agentId,
+      ),
+    );
+  }
+
+  /** The work a seat handed in last; null when none is on record. */
+  handedOf(agentId: string): HandedWork | null {
+    return (
+      this.row<HandedWork>(
+        "SELECT handed_digest AS digest, handed_head AS head, handed_at AS at FROM seats WHERE agent_id = ? AND handed_digest IS NOT NULL AND handed_at IS NOT NULL",
+        agentId,
+      ) ?? null
+    );
+  }
+
+  /** The blocking findings of the hand-in pass begun at `at`. */
+  blockingSince(seat: string, at: string, most: number): FindingRow[] {
+    return this.rows<FindingRow>(
+      "SELECT * FROM findings WHERE seat = ? AND severity = 'block' AND last_at >= ? ORDER BY path, line LIMIT ?",
+      seat,
+      at,
+      most,
+    );
+  }
+
+  /** Keeps an ACCEPT the gate passed, its commands cut to size. */
+  noteAccept(a: Omit<AcceptRow, "id" | "commands"> & { commands: readonly string[] }): void {
+    this.transaction("write", () =>
+      this.run(
+        "INSERT INTO accepts (at, accepter, task, writer, repo, base, head, digest, commands) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        this.stamp(),
+        a.accepter,
+        a.task.slice(0, 255),
+        a.writer,
+        a.repo,
+        a.base,
+        a.head,
+        a.digest,
+        JSON.stringify(a.commands.slice(0, ACCEPT_COMMANDS).map((command) => command.slice(0, 200))),
+      ),
+    );
+  }
+
+  /** The newest open ACCEPT of each task `accepter` gave. */
+  openAccepts(accepter: string, most: number): AcceptRow[] {
+    return this.rows<AcceptRow>(
+      `SELECT id, accepter, task, writer, repo, base, head, digest, commands FROM accepts
+         WHERE id IN (SELECT max(id) FROM accepts WHERE accepter = ?1 AND done_at IS NULL GROUP BY task)
+         ORDER BY id LIMIT ?2`,
+      accepter,
+      most,
+    );
+  }
+
+  /** Keeps a DONE and marks its seat's ACCEPTs before it covered. */
+  noteDone(seat: string, repo: string, head: string): void {
+    this.transaction("write", () => {
+      const at = this.stamp();
+      this.run("INSERT INTO dones (at, seat, repo, head) VALUES (?, ?, ?, ?)", at, seat, repo, head);
+      this.run("UPDATE accepts SET done_at = ? WHERE accepter = ? AND done_at IS NULL", at, seat);
+    });
+  }
+
+  /** The newest ACCEPT and DONE heads of a repository. */
+  headsIn(repo: string, most: number): string[] {
+    const heads = this.rows<{ head: string }>(
+      `SELECT head FROM (SELECT head FROM accepts WHERE repo = ?1 ORDER BY id DESC LIMIT ?2)
+       UNION SELECT head FROM (SELECT head FROM dones WHERE repo = ?1 ORDER BY id DESC LIMIT ?2)`,
+      repo,
+      most,
+    );
+    return heads.map(({ head }) => head);
+  }
+
+  /** Keeps a push a seat made. */
+  notePush(p: PushRow): void {
+    this.transaction("write", () =>
+      this.run(
+        "INSERT INTO pushes (at, seat, repo, remote, ref, sha, uncovered) VALUES (?, ?, ?, ?, ?, ?, ?)",
+        this.stamp(),
+        p.seat,
+        p.repo,
+        p.remote.slice(0, 255),
+        p.ref.slice(0, 255),
+        p.sha,
+        p.uncovered,
+      ),
+    );
+  }
+
+  /** Drops covered records before `before`, and open ACCEPTs past `openMost`. */
+  expireGates(before: Date, openMost: number): { gone: number; dropped: number } {
+    const at = [before.toISOString()];
+    const gone =
+      this.deleteInSlices(
+        "DELETE FROM accepts WHERE id IN (SELECT id FROM accepts WHERE done_at IS NOT NULL AND done_at < ? LIMIT ?)",
+        at,
+      ) +
+      this.deleteInSlices("DELETE FROM dones WHERE id IN (SELECT id FROM dones WHERE at < ? LIMIT ?)", at) +
+      this.deleteInSlices("DELETE FROM pushes WHERE id IN (SELECT id FROM pushes WHERE at < ? LIMIT ?)", at);
+    const open = this.row<{ n: number }>("SELECT count(*) AS n FROM accepts WHERE done_at IS NULL")?.n ?? 0;
+    const over = Math.max(0, open - openMost);
+    const dropped = over
+      ? this.transaction(
+          "write",
+          () =>
+            this.run(
+              "DELETE FROM accepts WHERE id IN (SELECT id FROM accepts WHERE done_at IS NULL ORDER BY id LIMIT ?)",
+              over,
+            ).changes,
+        )
+      : 0;
+    return { gone, dropped };
   }
 
   /** Keeps a verdict and the work's digest; returns what was kept before, null for a seat never seen. */

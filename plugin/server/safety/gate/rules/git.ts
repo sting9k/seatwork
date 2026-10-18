@@ -13,13 +13,14 @@ export interface GitTools {
   external(name: string): Promise<boolean>;
 }
 
-/** What a git command does; `repo` is the folder it runs in, null when not known; `shells` are the lines it runs through the shell (an alias, a program a `-c` option names), which are judged too; `changes` is the folder whose files it rewrites; `doubts` what the room could not read. */
+/** What a git command does; `repo` is the folder it runs in, null when not known; `shells` are the lines it runs through the shell (an alias, a program a `-c` option names), which are judged too; `changes` is the folder whose files it rewrites; `moves` the folder whose HEAD or stash it moves for everyone working there; `doubts` what the room could not read. */
 interface GitOutcome {
   hits: GitHit[];
   doubts: string[];
   shells: string[];
   repo: string | null;
   changes: string | null;
+  moves: string | null;
 }
 
 const BUILTIN = new Set(
@@ -92,7 +93,7 @@ export async function gitEffects(scene: Scene, tools: GitTools): Promise<GitOutc
     words = [textWord(sub), ...words];
   }
   const aliases = new Map<string, string>();
-  const given: GitOutcome = { hits: [], doubts: [], shells: [], repo: scene.cwd, changes: null };
+  const given: GitOutcome = { hits: [], doubts: [], shells: [], repo: scene.cwd, changes: null, moves: null };
   let cwd = scene.cwd;
   const seen = new Set<string>();
   for (let depth = 0; depth <= MAX_ALIAS; depth += 1) {
@@ -108,6 +109,7 @@ export async function gitEffects(scene: Scene, tools: GitTools): Promise<GitOutc
       const line: Line = { sub, args: words.slice(1), texts: words.slice(1).map(literal), cwd };
       given.hits.push(...effects(line));
       if (changesTree(line)) given.changes = cwd;
+      if (movesHead(line)) given.moves = cwd;
       return given;
     }
     const key = sub.toLowerCase();
@@ -132,7 +134,7 @@ export async function gitEffects(scene: Scene, tools: GitTools): Promise<GitOutc
   return unverified(given, "the alias goes deeper than the room reads");
 }
 
-const NOTHING: GitOutcome = { hits: [], doubts: [], shells: [], repo: null, changes: null };
+const NOTHING: GitOutcome = { hits: [], doubts: [], shells: [], repo: null, changes: null, moves: null };
 
 /** The outcome for a subcommand the room cannot read. */
 function unverified(given: GitOutcome, detail: string): GitOutcome {
@@ -401,6 +403,35 @@ function changesTree(line: Line): boolean {
         opts.some((x) => abbrev(x, "force", 1) || (isCluster(x) && x.includes("f"))) &&
         !opts.some((x) => x === "--dry-run" || (isCluster(x) && x.includes("n")))
       );
+  }
+  return false;
+}
+
+/** Whether a git subcommand moves what everyone in its work tree stands on: the stash, or HEAD to another commit or branch; one that names the files it restores does not. */
+function movesHead(line: Line): boolean {
+  const t = line.texts;
+  const opts = beforeEnd(t);
+  const has = (...flags: string[]) => opts.some((x) => x !== null && flags.includes(x));
+  if (has("-h", "--help")) return false;
+  switch (line.sub) {
+    case "stash":
+      return STASH_WRITES.has(t[0] && !t[0].startsWith("-") ? t[0] : "push");
+    case "switch":
+      return true;
+    case "checkout": {
+      if (has("-b", "-B", "--orphan", "--detach")) return true;
+      const words = operands(t, ["-b", "-B", "--orphan"]);
+      if (t.includes("--")) return words.length > 0 && t.indexOf("--") === t.length - 1;
+      return words.length === 1 && words[0] !== null && !/[./]/.test(words[0]);
+    }
+    case "reset": {
+      if (
+        opts.some((x) => abbrev(x, "hard", 1) || abbrev(x, "merge", 2) || abbrev(x, "keep", 1) || abbrev(x, "soft", 1))
+      )
+        return true;
+      const words = t.filter((x) => x !== null && !x.startsWith("-"));
+      return !t.includes("--") && words.length === 1 && /^(HEAD|@|ORIG_HEAD|[0-9a-f]{7,40})([~^]\d*)*$/.test(words[0]!);
+    }
   }
   return false;
 }

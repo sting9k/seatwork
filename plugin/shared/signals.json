@@ -41,6 +41,8 @@
     { "name": "ROTATED" },
     { "name": "ROTATION FAILED" },
     { "name": "HAND-IN RETURNED" },
+    { "name": "DONE RETURNED" },
+    { "name": "UNACCEPTED PUSH" },
     { "name": "COUNCIL" },
     { "name": "APPEAL" },
     { "name": "INCIDENT" },

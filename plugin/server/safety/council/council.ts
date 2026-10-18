@@ -23,11 +23,12 @@ import {
 } from "./facts";
 import { gamingLine, hardSigns, softSigns, type GamingEvidence } from "./gaming";
 import { changedSince, type Snapshot } from "./git";
+import { gainsIn, type NarrowingEvidence } from "./narrowing";
 
 /** The council: each member reads a turn for one concern, and speaks at the level it has earned. */
 
 type MemberName = keyof typeof council.members;
-type Juror = "claims" | "scope" | "gaming";
+type Juror = "claims" | "scope" | "gaming" | "narrowing";
 const MEMBERS = Object.keys(council.members) as MemberName[];
 const MAILS_LEVEL = 2;
 const SEND_BACK_LEVEL = 3;
@@ -47,6 +48,7 @@ export interface HandInDiff {
   gaming: GamingEvidence | null;
   returned: boolean;
   related?: readonly string[];
+  narrowing?: NarrowingEvidence | null;
 }
 
 /** The decision district as the council uses it; any provider of typed decisions fits, one that answers a repeated question from memory too. */
@@ -135,8 +137,9 @@ const lineKey = (command: string) =>
   );
 const namedChecks = (fields: BriefFields) =>
   quotedCommands([fields.acceptance, fields.contract].filter(Boolean).join("\n"));
-const acceptanceOf = (verdict: Verdict) =>
-  verdict.brief ? quotedCommands(briefFields(verdict.brief).acceptance ?? "") : [];
+/** The commands a brief quotes as its acceptance evidence. */
+export const acceptanceOf = (brief: string | null): string[] =>
+  brief ? quotedCommands(briefFields(brief).acceptance ?? "") : [];
 
 /** A reading made at once, or a juror's question to ask when its caller says so. */
 type Pending = Reading | (() => Promise<Reading>);
@@ -338,7 +341,7 @@ export class Council {
     const store = this.deps.store();
     const touched = new Set<MemberName>();
     for (const verdict of input.verdicts) {
-      const wanted = acceptanceOf(verdict);
+      const wanted = acceptanceOf(verdict.brief);
       const runs = input.events.filter(
         (event): event is Extract<TurnEvent, { kind: "shell" }> =>
           event.kind === "shell" &&
@@ -542,6 +545,8 @@ export class Council {
         return this.readScope(input, fields);
       case "gaming":
         return this.readGaming(fields, diff);
+      case "narrowing":
+        return this.readNarrowing(input, fields, diff);
       case "radius":
         return readRadius(input, fields, diff);
       case "report":
@@ -661,6 +666,24 @@ export class Council {
       },
     ];
   }
+
+  /** A gain the report claims while guard lines left the code goes to a juror: was the outcome narrowed to win it? */
+  private readNarrowing(input: TurnInput, fields: BriefFields, diff: HandInDiff | null): Pending[] {
+    const evidence = diff?.narrowing ?? null;
+    if (!evidence) return [];
+    const gains = gainsIn(input.text);
+    const signs = { removed: evidence.removed, files: evidence.files, gains };
+    if (gains.length === 0 || !this.jurorReady("narrowing")) return [{ tier: "fact", zone: "clear", evidence: signs }];
+    const state = {
+      removed: evidence.excerpt,
+      claims: gains,
+      outcome: fields.outcome ? clip(fields.outcome, 600) : null,
+    };
+    const line = (score: number) =>
+      `narrowing: the report claims "${clip(gains[0], 80)}" while ${evidence.removed} guard line(s) left ${evidence.files.join(", ")} (${score.toFixed(2)})`;
+    const common = { fingerprint: shortHash(evidence.excerpt), diff: evidence.excerpt, returned: diff!.returned };
+    return [async () => ({ ...(await this.ask("narrowing", state, line, signs)), ...common })];
+  }
 }
 
 /** A task sent back as often as the member allows is a finding: a fresh seat may do better. */
@@ -736,7 +759,7 @@ function readVerdicts(input: TurnInput): Reading[] {
 
 /** Work accepted without a run of its own acceptance check is a finding. */
 function acceptanceRun(input: TurnInput, verdict: Verdict): Reading {
-  const wanted = acceptanceOf(verdict);
+  const wanted = acceptanceOf(verdict.brief);
   if (wanted.length === 0) return { tier: "fact", zone: "skipped" };
   const passed = input.events.filter(
     (event): event is Extract<TurnEvent, { kind: "shell" }> =>

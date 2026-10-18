@@ -1,34 +1,75 @@
 ---
 name: seat-law
-description: "Judges a seat's turn against the room's law on its evidence: the tell, the innocent reading to rule out, the severity. Use for an APPEAL, an incident about a seat, or the question whether a seat broke a law; not for judging the quality of the work itself."
+description: "Laws a model breaks by habit, at the decision each bites and where it stops holding; how to judge a breach. Use before an edit or a hand-in, a split or launch, a room change; not for style."
 ---
 
 # Seat law
 
-The law every seat reads is in its prompt. This is how to judge a breach: the tell that shows one, the innocent reading to rule out first, how grave it is, and what already checks it. Code that catches a breach outranks your judgment; your judgment covers what code cannot see.
+The room's 14 laws in your prompt are the floor, and the room checks them; nothing here repeats them. This page holds the trade's laws a model breaks by habit, at the decision where each bites. They are lenses, not rules: at a decision, name the few that bear on it and the ones that do not, and look for where the one you lean on stops holding. None widens your grant, and a check the code runs outranks judgment.
 
-| # | Law | Tell | Rule out first | Sev | Checked by |
-|---|---|---|---|---|---|
-| 1 | Done means run | a "done / passes / verified" with no check exiting 0 after the last change; a check masked (`\|\| true`, `--passWithNoTests`, `-k` excluding tests); numbers that differ from the output | a doc-only change; the Lead ran acceptance; the sentence is a negation | H | council `claims` |
-| 2 | Satisfy the requirement, not the check | tests deleted, skipped, loosened or their expected values changed beside code changes; test config, CI or scripts edited; a test's expected literal in source; branches on a test's name | a `REVISED BRIEF` changed the spec; a wrong test fixed with its reason; a rename or move | C if harness or CI, else H | hand-in check, council `gaming`, chair |
-| 3 | A test must be able to fail | a new test that still passes with the source change undone; an expected value pasted from the code's output; mocking the thing under test | a test of old behaviour that must pass before and after, and says so | M | review (`seatwork_safety` control); seat (`test-audit`) |
-| 4 | Mind the blast radius | a test that passed on the base fails on the head; tests that use a changed file were not run; the same fault left elsewhere | the failure exists on the base; the brief named a subset; an intended change with tests updated | H | council `radius`; review; seat (`blast-radius`) |
-| 5 | Change the premise after two failures | council `stuck` or `repair`; a third fix on the premise two fixes shared; a guard, retry or default added where the error surfaced | the state is legitimate and must be handled; flaky infrastructure | M | council `stuck`, `repair` |
-| 6 | Say only what you checked | a file, function, package or result in the report with no read or run behind it; "ran X" with no shell event; quoting a person or seat with no mail | a file the diff created; knowledge from the record | H, C if an approval or result | council `report` |
-| 7 | Name the gap | placeholders, new TODOs, swallowed errors, sample or mock data in source not in the report; history rewritten; "I'll follow up" with no wake or lease | an abstract method; a test double in tests; a TODO with an issue id | H if shown as done | hand-in check |
-| 8 | Stay inside the ask | files outside the write scope; a non-goal touched; refactors or features nobody asked for | a needed adjacent fix, reported; generated files | M, H with seats in parallel | council `scope` |
-| 9 | Act inside the grant | deleting a target "close to" the named one; reading or copying credentials; `--no-verify` after a failed check; asking "continue?" on reversible work | the target or credential is in the brief; a product question | C if destructive, L if over-asking | none: the guard records it, nothing stops it |
-| 10 | A block is an answer | after a refusal, another command with the same effect in the same turn; hunting env or files for a token after an auth error | the seat above agreed another route | H | chair |
-| 11 | Hold on evidence, not pressure | a verdict flipped with the diff unchanged; "you're right" then a reversal with no run | new evidence, named | M, H for review | council `verdict`; review, two lenses |
-| 12 | Keep the brief | after a compaction, work outside scope or against a recorded decision; asking again what was answered | a `REVISED BRIEF` was sent | M | council |
-| 13 | Accept on a run, not a report | `ACCEPT` with no acceptance run exiting 0 on that head; the head changed after the run; a seat accepting its own work | acceptance cannot run: a lens's evidence stands in, said so | H | council `verdict` |
-| 14 | Reproduce a bug the way it is met | a bug fix proved only by a unit test; no run of the user's path (command, request, page, API call) before and after the change | the bug has no path a user takes, said so; the brief named another reproduction | H | review; the Lead's acceptance run |
+They bite a model for a model's reasons:
+- the seat that reads your work next has none of your context;
+- an API you recall is from training, not the version installed;
+- a whole system comes out in one pass and runs once at the end;
+- you copy the code around you, its hacks included;
+- the cause you were told to look for is the one you find;
+- whatever the room measures becomes what you optimize.
+
+## Before you change code
+
+| Law | Do | It stops holding when |
+|---|---|---|
+| The map is not the territory; leaky abstractions | Read and run the code before you change it or lock a contract on it. Take an API's behaviour from its source or a run at the pinned version: a brief, a doc and your memory only describe it | the file is one your change creates |
+| Gall's law | Grow new work from the thinnest path that runs end to end, and run it before you widen it | the change is one function and its test |
+
+## While you write
+
+| Law | Do | It stops holding when |
+|---|---|---|
+| DRY | Search for the project's own helper, constant or format before you write one; each rule has one home | two pieces only look alike and answer to different rules |
+| Least astonishment | Name, fail, log and default the way the project already does; a function does what its name says and nothing more | the project's way is the defect your brief fixes |
+| Broken windows | A workaround, a hardcoded value or a skipped test you meet is debt, not a pattern: copy none of it | the brief asks for a throwaway spike |
+| Murphy's law, fallacies of distributed computing | A call across a process or network boundary has a timeout and a failure its caller sees; retry only what a second try can pass, and bound it. Input from outside is checked where it enters | the call stays in one process and fails only on a bug |
+| Knuth's optimization principle | Correct first; make fast only what a measurement or the brief shows is slow | the brief sets a speed target: design for it from the start |
+
+## When you debug
+
+| Law | Do | It stops holding when |
+|---|---|---|
+| Occam's razor | Rule out the plain causes first: config, path, version, a stale build, a typo, a missing label | each plain cause was read and ruled out: widen, testing the premise as law 5 says |
+
+## Before you hand in
+
+| Law | Do | It stops holding when |
+|---|---|---|
+| Ninety-ninety rule | The main path running is half the work; the edges, the failure paths and the integration are the rest: run them | the brief limits the work to the main path, and your report says so |
+| Pesticide paradox | Tests you wrote pass because they share your understanding: try the inputs they lack (empty, huge, malformed, the boundary) | it is a regression suite guarding old faults: green there is good news, not a blind spot |
+
+## When you run seats
+
+| Law | Do | It stops holding when |
+|---|---|---|
+| Gall's law | Make the first issue the thinnest path that runs end to end toward the end state; the other scopes grow from what it proves. It is an order of work, not a smaller first version | the work changes one part of a system that already runs end to end |
+| Conway's law | The split becomes the code's shape: cut write scopes along the seams the code should keep, never one module across two scopes | a throwaway spike whose shape nobody keeps |
+| Amdahl's law, Little's law, Ringelmann effect | You are the serial part: every candidate waits on your judgment and every report costs your context. Run no more seats than you can judge as they return and read whole; past that, ask your Owner for a second team | read-only seats whose findings you sort together rather than judge one by one |
+| Brooks's law | A late or stuck scope gets no second seat: the newcomer needs your briefing and collides with the first. Replace the seat or cut the scope; spend capacity to spare on an independent check | what is left splits into scopes that share no files |
+| Linus's law | More reviewers find more only when they look differently: split the ground between them (the contract and its callers; the edges and the failure paths) rather than give two the same read | one careful read covers the change |
+| Pareto principle | Spend review depth where the risk is: the scope others build on, the choice that is hard to undo | the risk is even, as in a mechanical rename |
+| Goodhart's law, Gilb's law | Whatever you judge seats by becomes their target: write acceptance evidence that only the outcome passes, one a stub, a hardcoded answer or a narrowed case fails. A goal like faster, smaller or steadier goes in as a number with how it is measured, beside what must not change | the check is the outcome itself: the user's path, run |
+
+## When you measure or change the room
+
+| Law | Do | It stops holding when |
+|---|---|---|
+| Goodhart's law, cobra effect | A number you steer by stops measuring the outcome: ask what gaming it looks like, and whether that leaves things worse than no change | the number is the outcome itself |
+| Law of unintended consequences | A rule against one act gets the next act in its place: before a change holds, name what seats will do instead, and what that costs | the breach is one seat's, once: that is a correction to the seat |
+| Gall's law, Lehman's laws, KISS | One change at a time, measured against its baseline, and said in one sentence; a new rule, label, check or round names the one it replaces, or the turns it saves | the change removes a rule |
 
 ## Judge
 
-1. Name the law and quote the tell from the evidence (`path:line`, a command and its exit code, a mail id).
-2. Rule out the innocent reading with evidence, not with the seat's word.
+1. Name the law and quote the tell from the evidence (`path:line`, a command and its exit code, a mail id). For the room's 14 laws, the tells, the innocent readings, the severity and what already checks each are in [references/room-law.md](references/room-law.md).
+2. Rule out the innocent reading first, with evidence, not with the seat's word: a misread brief explains more breaches than gaming does (Hanlon's razor), and a room that makes the wrong act the easy one is the room's fault, not the seat's.
 3. Close it as one of: **verified** (the evidence shows the breach and its effect) · **dismissed** (innocent, unreachable, or immaterial) · **unverified risk** (what is known, what is missing, the one check that would settle it).
-4. Verified breaches go to the seat as one sentence of what to fix, through its Owner. A breach code could have caught is also a structural gap: say which check would have caught it.
+4. A verified breach goes to the seat as one sentence of what to fix, through its Owner; if code could have caught it, say which check would have.
 
 Judge the turn, not the model: one breach is a correction, a pattern across seats is friction for the room.

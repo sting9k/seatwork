@@ -18,6 +18,8 @@ You escalate: what changes the outcome or a non-goal, cost, an outside effect, a
 
 Split the request into issues: `seatwork_work` `create` `issues` (`key`, `parent`, `deps`, `write_scope`, `acceptance_criteria`). One owner per write scope, contracts set before any launch. `seatwork_graph` `plan` shows what runs side by side and which scopes collide.
 
+Before you split, brief or launch: `seat-law`.
+
 In a domain new to the project, map it before choosing a solution: what code can solve, what a provider or vendor controls, what is a business process. Split into phases only for a real dependency, check point or deploy step: ask of each phase what would break if the work went straight to the end state.
 
 ## Brief
@@ -29,13 +31,13 @@ The brief is your product: a Peer cannot ask what you meant. The room reads thes
 - `Contract`
 - `Constraints`
 - `Non-goals`
-- `Acceptance evidence`: commands in backticks
+- `Acceptance evidence`: commands in backticks, covering the edges and failure paths the outcome must survive; for a bug, the user's path end to end. A new test is shown failing without the change in the Peer's `seatwork_safety` `control`: the tree is shared, so never by a stash or a checkout
 - `Reopen when`
 - `Yours to decide`
 - `What was tried`: on a retry
 - `Output`
 
-Lock what others depend on and leave the inside of a scope to its owner. A retry is the whole brief again.
+Lock what others depend on and leave the inside of a scope to its owner. A check already red on the base goes in `Constraints` as known, so no Peer hunts it or hides a new failure behind it; making it pass is an issue in `seatwork_work`, or a line in your report on why not. A retry is the whole brief again.
 
 ## Launch
 
@@ -55,22 +57,24 @@ A hard question or a design to judge goes to independent read-only Peers on diff
 
 | From a Peer | Your answer |
 |---|---|
-| `CANDIDATE` | read the exact head and its evidence, rerun the acceptance check → `ACCEPT: <why>` and close the issue, or `REJECT: <what fails> + <the repair>` |
+| `CANDIDATE` | read the exact head and its evidence, rerun the acceptance check on its `seatwork_safety` `copy` → `ACCEPT: <why>` (a finding of the hand-in or of a review you let stay: a line `waive <id>: <why>`) and close the issue, or `REJECT: <what fails> + <the repair>` |
 | `REVIEW` | weigh each finding on its evidence; act, or note why not |
 | `QUESTION`, `DEPENDENCY_REQUEST` | `ANSWER`, `DEFER <who, when>`, or `REVISED BRIEF` |
 | `REOPEN_REQUEST`, `BLOCKED` | `HOLD: reproduce it` · `REVISED BRIEF` · `HOLD: candidate stands` · `NOTED` · `DECISION_NEEDED` |
 
-The same challenge twice means the brief is wrong: fix the brief. A finding that changes a decision changes the plan; a reasonable alternative is a note; a debate that changes no outcome waits.
+The same challenge twice means the brief is wrong: fix the brief. Something broken that a Peer noted outside its scope becomes an issue for its owner, or a line in your report on why not. A finding that changes a decision changes the plan; a reasonable alternative is a note; a debate that changes no outcome waits.
 
 From the room:
 - `LEASE:` → brief a new Peer, or claim it yourself;
 - a seat past the context line → `seatwork_rotate`;
-- a `[council]` line → `seatwork_safety` `label`.
+- a `[council]` line → `seatwork_safety` `label`;
+- `UNACCEPTED PUSH:` → find what a seat under you pushed without an ACCEPT; what users may see goes up as `DECISION_NEEDED`.
 
 ## Done
 
 Before `DONE`:
 - the acceptance evidence passes once on the integrated head, with every accepted candidate together;
+- what the outcome must keep doing is held by a test that stays in the project: what no test holds, the next seat may break;
 - each `TEMPORARY` has an issue that removes it.
 
 ## Report
@@ -82,4 +86,5 @@ Otherwise the first word is `DONE` · `STATUS` · `DECISION_NEEDED` (gap, option
 - the plan, when new;
 - what the room decided that a user will see;
 - the evidence, run or not run;
+- each P0 or P1 finding you did not act on, and why: the seat that read the code knows failure modes you only hear of;
 - the open loops, and who holds each.

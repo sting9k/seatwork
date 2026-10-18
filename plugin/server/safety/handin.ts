@@ -4,7 +4,8 @@ import { createHash } from "node:crypto";
 import { lstatSync, readFileSync } from "node:fs";
 import { basename, dirname, extname, join, resolve } from "node:path";
 import table from "../../shared/safety/handin.json";
-import { ASSERTION, gamingOf, type GamingEvidence } from "./council/gaming";
+import { ASSERTION, gamingOf, type GamingEvidence, type GamingFile } from "./council/gaming";
+import { narrowingOf, type NarrowingEvidence } from "./council/narrowing";
 import { evaluate, type GateConfig, type Tools } from "./gate/evaluate";
 import type { Place } from "./gate/types";
 import type { FindingRow, SafetyStore } from "./store";
@@ -23,7 +24,7 @@ interface Found {
   hint: string;
 }
 
-/** The check's result for a seat; `partial` is never read as clean; `left`: findings past the most one pass keeps, by level; `gaming`: tests bent to pass; `related`: unchanged tests naming a change. */
+/** The check's result for a seat; `partial` is never read as clean; `left`: findings past the most one pass keeps, by level; `gaming`: tests bent to pass; `narrowing`: guard lines the code lost; `related`: unchanged tests naming a change. */
 export interface HandIn {
   state: "clean" | "blocked" | "partial" | "empty";
   files: number;
@@ -33,6 +34,7 @@ export interface HandIn {
   why: string | null;
   left?: Record<Level, number>;
   gaming?: GamingEvidence | null;
+  narrowing?: NarrowingEvidence | null;
   related?: string[];
   tests?: TestCount;
   dependencies?: Dependency[];
@@ -319,9 +321,14 @@ export async function inspectHandIn(seat: string, store: SafetyStore, gate: Gate
   if (!start) return { ...base, state: "partial", why: "the room has no record of where this seat started" };
   if (!start.start_head)
     return { ...base, state: "partial", why: `${start.cwd} was not a git repository when the seat started` };
-  const changes = await changesSince(start.cwd, start.start_head);
+  const [changes, head, loose] = await Promise.all([
+    changesSince(start.cwd, start.start_head),
+    git(["rev-parse", "HEAD"], start.cwd),
+    uncommitted(start.cwd),
+  ]);
   if (typeof changes === "string") return { ...base, state: "partial", why: changes };
-  store.noteHandIn(seat, digestOf(changes));
+  if (loose === null) return { ...base, state: "partial", why: "git status failed" };
+  store.noteHandIn(seat, digestOf(changes), head.ok ? head.out.trim() || null : null);
   if (!changes.length) return { ...base, state: "empty", why: null };
   const found: Found[] = [];
   const seen: Record<Level, number> = { block: 0, warn: 0 };
@@ -330,6 +337,7 @@ export async function inspectHandIn(seat: string, store: SafetyStore, gate: Gate
     if (one.rule === "test-skipped" || one.rule === "test-focused") skipped += 1;
     if ((seen[one.level] += 1) <= FINDINGS_MOST) found.push(one);
   };
+  if (loose.length) keep(uncommittedFinding(loose));
   for (const change of changes) for (const one of await inspectFile(change, start.cwd, gate)) keep(one);
   for (const change of changes) checkConfigFindings(change).forEach(keep);
   answersInSource(changes).forEach(keep);
@@ -355,6 +363,13 @@ export async function inspectHandIn(seat: string, store: SafetyStore, gate: Gate
     }),
   );
   const open = rows.filter((r) => r.severity === "block" && !r.ack);
+  const diffed: GamingFile[] = changes.map((change) => ({
+    path: change.path,
+    test: isTestPath(change.path),
+    deleted: change.deleted,
+    added: change.added.map(([, line]) => line),
+    removed: change.removed,
+  }));
   const [related, dependencies] = await Promise.all([
     testsNaming(changes, start.cwd),
     newDependencies(changes, start.cwd, start.start_head),
@@ -370,19 +385,46 @@ export async function inspectHandIn(seat: string, store: SafetyStore, gate: Gate
         ? null
         : `${left.block} blocking finding(s) past the first ${FINDINGS_MOST} were left out`,
     left,
-    gaming: gamingOf(
-      changes.map((change) => ({
-        path: change.path,
-        test: isTestPath(change.path),
-        deleted: change.deleted,
-        added: change.added.map(([, line]) => line),
-        removed: change.removed,
-      })),
-      skipped,
-    ),
+    gaming: gamingOf(diffed, skipped),
+    narrowing: narrowingOf(diffed),
     related,
     tests: testCount(changes),
     dependencies,
+  };
+}
+
+/** The files that differ from HEAD, tracked or new; null when git cannot say. */
+async function uncommitted(cwd: string): Promise<string[] | null> {
+  const status = await git(
+    [
+      "-c",
+      "core.quotePath=false",
+      "status",
+      "--porcelain=v1",
+      "-z",
+      "--no-renames",
+      "--untracked-files=all",
+      "--",
+      NOT_ROOM_FOLDER,
+    ],
+    cwd,
+  );
+  if (!status.ok) return null;
+  return status.out
+    .split("\0")
+    .map((entry) => entry.slice(3))
+    .filter((path) => path && !SKIP.some((p) => p.test(path)));
+}
+
+/** Work handed in with files no commit holds. */
+function uncommittedFinding(paths: readonly string[]): Found {
+  return {
+    rule: "uncommitted",
+    level: "block",
+    path: paths[0],
+    line: 0,
+    text: `${paths.length} file(s) not committed: ${paths.slice(0, 5).join(", ")}${paths.length > 5 ? ", …" : ""}`,
+    hint: "Commit the work, then hand in: an ACCEPT is kept with the commit HEAD names.",
   };
 }
 

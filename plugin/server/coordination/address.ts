@@ -42,6 +42,7 @@ type MailErrorCode =
   | "WAKE_LIMIT"
   | "UNKNOWN_WAKE"
   | "INVALID_ARGUMENT"
+  | "ACCEPT_UNPROVEN"
   | "STORE_UNAVAILABLE";
 
 /** The room itself as a mail's sender: no seat, the role no seat holds. */

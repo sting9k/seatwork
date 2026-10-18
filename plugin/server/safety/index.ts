@@ -4,17 +4,34 @@ import { dirname, join } from "node:path";
 import { Guard, type SafetyPolicy, type SeatRef } from "./guard";
 import type { Place } from "./gate/types";
 import { inspectHandIn, workDigest, type HandIn } from "./handin";
-import { buildControl } from "./control";
+import { buildControl, buildCopy } from "./control";
+import {
+  ACCEPTS_READ,
+  doneGaps,
+  GATE_KEEP_DAYS,
+  OPEN_MOST,
+  gapsOf,
+  HEADS_READ,
+  isPush,
+  pushedBy,
+  PUSHES_READ,
+  REVIEWS_READ,
+  TURN_ENTRIES,
+  type Gate,
+  type ReviewMail,
+  type Pushed,
+} from "./acceptance";
 import { stamp } from "../gc";
 import { CONTROLS_DIR } from "../paths";
 import { Chair, type ChairDeps } from "./council/chair";
-import { Council, type Decider, type HandInDiff, type VerdictWork } from "./council/council";
+import { acceptanceOf, Council, type Decider, type HandInDiff, type VerdictWork } from "./council/council";
 import { snapshot } from "./council/git";
 import { answerHook, claudePlugin, GATE_ENV, type Cli } from "./hooks";
+import type { TurnEvent } from "../host";
 import { databaseIn, SafetyStore } from "./store";
 import { machineTools } from "./system";
 
-/** The Safety district: the command guard that reads each call, the hand-in check, the control, the council and its chair. */
+/** The Safety district: guard, hand-in check, control, gates, council and chair. */
 
 /** What the district needs of the room: a folder for its store and hooks, the app's listen address, the room's own files the guard watches, and the seat that rules on appeals. */
 export interface SafetyDeps {
@@ -35,6 +52,9 @@ export interface SafetyDeps {
 
 const BUSY_MS = 2000;
 const DIFFS_KEPT = 64;
+const BLOCKING_READ = 100;
+const OWED_MOST = 8;
+const GUARD_READ = 200;
 
 export class Safety {
   private storeHandle: SafetyStore | null = null;
@@ -43,6 +63,7 @@ export class Safety {
   private readonly chair: Chair | null;
   private readonly starts = new Map<string, number>();
   private readonly diffs = new Map<string, HandInDiff>();
+  private readonly owed = new Map<string, string[]>();
 
   constructor(private readonly deps: SafetyDeps) {
     this.guard = new Guard({
@@ -132,6 +153,7 @@ export class Safety {
     if (this.council.on)
       this.keepDiff(agentId, {
         gaming: result.gaming ?? null,
+        narrowing: result.narrowing ?? null,
         related: result.related ?? [],
         returned: result.state === "blocked" && this.handInBlocks,
       });
@@ -163,6 +185,151 @@ export class Safety {
     ].join("\n");
   }
 
+  /** A copy of the commit a writer handed in, for an acceptance run apart. */
+  async copy(writer: string): Promise<string> {
+    const start = this.store().startOf(writer);
+    const handed = this.store().handedOf(writer);
+    if (!start || !handed?.head)
+      return `The room holds no hand-in of ${writer} with its commit: there is nothing to copy.`;
+    const made = await buildCopy(start.cwd, handed.head, join(CONTROLS_DIR, stamp(), `${writer.slice(0, 8)}-head`));
+    if (typeof made === "string") return `No copy of ${writer}'s candidate: ${made}.`;
+    return [
+      `A copy of ${writer}'s candidate at ${made.path}: the commit ${handed.head.slice(0, 8)} HEAD named when it handed in, with the project's installed dependency folders linked.`,
+      "Run the brief's acceptance evidence there: what other seats leave in the shared tree is not in it. The copy is cleared in a few days.",
+    ].join("\n");
+  }
+
+  /** The gate before `accepter`'s ACCEPT of a writer's work; null when off. `reviews` gives the REVIEWs the accepter received since a time, newest first. */
+  async acceptance(a: {
+    accepter: string;
+    writer: string;
+    task: string;
+    brief: string | null;
+    text: string;
+    turn: (entries: number) => Promise<readonly TurnEvent[] | null>;
+    reviews: (since: string, limit: number) => readonly ReviewMail[];
+  }): Promise<Gate | null> {
+    const mode = this.deps.policy()?.acceptance?.mode ?? "off";
+    if (!this.on || mode === "off") return null;
+    const store = this.store();
+    const wanted = acceptanceOf(a.brief);
+    const handed = store.handedOf(a.writer);
+    const start = store.startOf(a.writer);
+    const [events, now, repo] = await Promise.all([
+      wanted.length ? a.turn(TURN_ENTRIES).catch(() => null) : Promise.resolve([]),
+      workDigest(a.writer, store).catch(() => null),
+      start ? commonDirOf(start.cwd) : Promise.resolve(null),
+    ]);
+    const blocking = handed ? store.blockingSince(a.writer, handed.at, BLOCKING_READ) : [];
+    const reviews = handed?.head ? a.reviews(handed.at, REVIEWS_READ) : [];
+    const gaps = gapsOf({ wanted, events, handed, now, blocking, reviews, text: a.text });
+    return {
+      mode,
+      gaps,
+      keep: () => {
+        if (gaps.length === 0 && handed?.head && start?.start_head && repo)
+          store.noteAccept({
+            accepter: a.accepter,
+            task: a.task,
+            writer: a.writer,
+            repo,
+            base: start.start_head,
+            head: handed.head,
+            digest: handed.digest,
+            commands: wanted,
+          });
+      },
+    };
+  }
+
+  /** The gate before `seat`'s DONE; null when off or nothing is open. `backed` says whether a line names an open issue. */
+  async done(a: {
+    seat: string;
+    cwd: string;
+    events: readonly TurnEvent[];
+    backed: (line: string) => boolean;
+  }): Promise<Gate | null> {
+    const mode = this.deps.policy()?.done?.mode ?? "off";
+    if (!this.on || mode === "off") return null;
+    const store = this.store();
+    const open = store.openAccepts(a.seat, ACCEPTS_READ + 1);
+    if (open.length === 0) return null;
+    const { gaps, head } = await doneGaps(
+      a.cwd,
+      open.slice(0, ACCEPTS_READ),
+      open.length > ACCEPTS_READ,
+      a.events,
+      a.backed,
+    );
+    const repo = head ? await commonDirOf(a.cwd) : null;
+    return {
+      mode,
+      gaps,
+      keep: () => {
+        if (gaps.length === 0 && head && repo) store.noteDone(a.seat, repo, head);
+      },
+    };
+  }
+
+  /** The pushes a seat's turn made, each kept; none when the record is off. */
+  async pushes(a: { seat: string; cwd: string; events: readonly TurnEvent[] }): Promise<Pushed[]> {
+    if (!this.on || (this.deps.policy()?.push?.mode ?? "off") === "off") return [];
+    const runs = a.events.filter(isPush).slice(0, PUSHES_READ);
+    if (runs.length === 0) return [];
+    const store = this.store();
+    const seen = store.kept(new Date(Date.now() - 86_400_000).toISOString(), GUARD_READ, a.seat);
+    const flat = (command: string) => command.replace(/\s+/g, " ").trim();
+    const repos = new Map<string, string | null>();
+    const repoOf = async (dir: string) => {
+      if (!repos.has(dir)) repos.set(dir, await commonDirOf(dir));
+      return repos.get(dir)!;
+    };
+    const out: Pushed[] = [];
+    for (const run of runs) {
+      const cwd = seen.find((call) => flat(call.command) === flat(run.command))?.cwd ?? a.cwd;
+      const pushed = await pushedBy(run.command, cwd, async (dir) => {
+        const repo = await repoOf(dir);
+        return repo ? { base: store.baseOf(repo), heads: store.headsIn(repo, HEADS_READ) } : null;
+      });
+      for (const push of pushed) {
+        const repo = await repoOf(push.dir);
+        if (!repo) continue;
+        store.notePush({
+          seat: a.seat,
+          repo,
+          remote: push.remote,
+          ref: push.ref,
+          sha: push.sha,
+          uncovered: push.uncovered === null ? -1 : push.uncovered.length + (push.more ? 1 : 0),
+        });
+        out.push(push);
+      }
+    }
+    return out;
+  }
+
+  /** Keeps a gate's line for `seat`'s next report up, the newest few only. */
+  oweUp(seat: string, line: string): void {
+    this.owed.set(seat, [...(this.owed.get(seat) ?? []), line].slice(-OWED_MOST));
+  }
+
+  /** The gates' lines owed under `seat`'s report up, given once. */
+  owedUp(seat: string): string[] {
+    const lines = this.owed.get(seat) ?? [];
+    this.owed.delete(seat);
+    return lines;
+  }
+
+  /** Drops gate records past their keep; dropped open ACCEPTs are logged. */
+  expireGates(now: Date): number {
+    const store = this.existing();
+    if (!store) return 0;
+    const { gone, dropped } = store.expireGates(new Date(now.getTime() - GATE_KEEP_DAYS * 86_400_000), OPEN_MOST);
+    if (dropped)
+      this.deps.log(`safety: ${dropped} open ACCEPT(s) past the ${OPEN_MOST} kept were dropped, oldest first`);
+    return gone + dropped;
+  }
+
   /** The chair's word on an appeal of the council's: the candidate goes back to its seat, or stays. */
   async rule(by: string, id: number, sendBack: boolean, reason: string): Promise<string> {
     return this.chair ? this.chair.rule(by, id, sendBack, reason) : "This room has no chair: nothing to rule on.";
@@ -182,6 +349,7 @@ export class Safety {
   forget(agentId: string): void {
     this.starts.delete(agentId);
     this.diffs.delete(agentId);
+    this.owed.delete(agentId);
     this.council.forget(agentId);
     this.existing()?.forgetSeat(agentId);
   }

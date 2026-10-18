@@ -12,7 +12,11 @@ import type { TurnEnd } from "./turns";
 const HISTORY = 4000;
 
 /** A seat's brief in force: kept from its own turns as they pass, else read once from its history. */
-async function briefOf(room: RoomContext, seat: string, prompts: readonly string[] = []): Promise<string | null> {
+export async function briefOf(
+  room: RoomContext,
+  seat: string,
+  prompts: readonly string[] = [],
+): Promise<string | null> {
   const fresh = prompts.findLast(fromTemplate);
   if (fresh) room.briefs.set(seat, fresh);
   else if (!room.briefs.has(seat)) {

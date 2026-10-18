@@ -10,7 +10,7 @@ import { skillsLoaded } from "../orchestration/runtimes";
 import { FRESH_EYES, ownerNote } from "../orchestration/rounds";
 import { parseSeat } from "../orchestration/seats";
 import { handInLine, handInReturn, type HandIn } from "../safety/handin";
-import { asksOwner, DECIDES, signalOf, subjectSignal } from "../signals";
+import { asksOwner, CLOSES_WORK, DECIDES, signalOf, subjectSignal } from "../signals";
 import type { Finding } from "../safety/council/council";
 import { errorText, fromRoom, releaseWork, taskOf, type RoomContext } from "./context";
 import { councilLine, councilRead } from "./council";
@@ -112,6 +112,7 @@ const REPORTS: Record<
 };
 
 const ALIKE_SHARE = 0.6;
+const UNACCEPTED_PUSH = "safety|unaccepted push";
 
 /** True when a turn was started by mail and none of it asked the seat for anything. */
 function askedNothing(wake: readonly Mail[]): boolean {
@@ -314,18 +315,21 @@ async function findingsOf(room: RoomContext, end: TurnEnd, role: string, task: s
   }
 }
 
-/** Puts the room's own lines under what goes up (the guard's, the council's, the round's, the context's); true when the council's is among them, and a line that cannot be made is left out. */
+/** Puts the room's lines under what goes up; true when the council's is one. */
 function addRoomLines(
   room: RoomContext,
   up: NewMail,
   turn: Gathered,
   check: HandIn | null,
   findings: readonly Finding[],
+  gates: readonly string[],
 ): boolean {
   const { role, task, contextTokens } = turn;
   let lined = false;
   try {
-    const guarded = [check ? handInLine(check) : null, councilLine(findings)].filter((line): line is string => !!line);
+    const guarded = [check ? handInLine(check) : null, ...gates, councilLine(findings)].filter(
+      (line): line is string => !!line,
+    );
     if (guarded.length) up.why = [up.why, ...guarded].filter(Boolean).join("; ");
     lined = findings.length > 0;
     const candidate = subjectSignal(up.subject) === "CANDIDATE";
@@ -437,6 +441,7 @@ export async function turnEnded(room: RoomContext, end: TurnEnd): Promise<void> 
   const turn = await gather(room, end, role);
   if (!turn.reportsTo) oweOwner(room, turn);
   const out = await outgoing(room, turn);
+  await readPushes(room, turn);
   if (await rotationAnswered(room, turn, out)) return;
   await sendOut(room, turn, out);
 }
@@ -533,13 +538,76 @@ async function outgoing(room: RoomContext, turn: Gathered): Promise<Outgoing> {
   const canceled = end.outcome.kind === "canceled";
   let kept = turn.kept;
   let report = reportsTo && !canceled ? reportOf(room, turn, reportsTo, await nothingNew(room, turn)) : null;
-  const { check, returned } = await readHandIn(room, turn, kept ?? report);
+  const { check, returned: handedBack } = await readHandIn(room, turn, kept ?? report);
+  const done = handedBack ? null : await readDone(room, turn, kept ?? report);
   const findings = canceled ? [] : await findingsOf(room, end, role, task);
+  const returned = handedBack ?? done?.returned ?? null;
   if (returned) kept = report = null;
   const up = kept ?? report;
-  const lined = up ? addRoomLines(room, up, turn, check, findings) : false;
+  const gates = up ? [done?.line, ...room.safety.owedUp(end.seat.id)].filter((line): line is string => !!line) : [];
+  const lined = up ? addRoomLines(room, up, turn, check, findings, gates) : false;
   if (up && subjectSignal(up.subject) === "REVIEW") await holdForRound(room, up, end.seat.id);
   return { kept, report, returned, findings, lined };
+}
+
+/** The DONE gate's line under the report, or the DONE sent back when it blocks. */
+async function readDone(
+  room: RoomContext,
+  turn: Gathered,
+  up: NewMail | null,
+): Promise<{ line: string | null; returned: NewMail | null } | null> {
+  const { end, role } = turn;
+  const signal = up ? subjectSignal(up.subject) : undefined;
+  if (end.outcome.kind !== "completed" || traits(role).briefs !== true || !signal || !CLOSES_WORK.has(signal))
+    return null;
+  const id = end.seat.id;
+  const gate = await room.safety.done({ seat: id, cwd: end.seat.cwd, events: end.events }).catch((error) => {
+    room.log(`safety: the done gate on ${id} could not run: ${errorText(error)}`);
+    return null;
+  });
+  if (!gate) return null;
+  if (gate.gaps.length === 0) {
+    gate.keep();
+    return null;
+  }
+  const lines = gate.gaps.map((gap) => gap.line);
+  if (gate.mode === "warn") return { line: `[room] done gate: ${lines.join("; ")}`, returned: null };
+  return {
+    line: null,
+    returned: returnOf(
+      id,
+      `DONE RETURNED: ${lines.length} gap(s) from the room's done gate`,
+      lines.map((line) => `- ${line}`).join("\n"),
+    ),
+  };
+}
+
+/** Keeps a turn's pushes; tells HQ and the Owner of commits no gate holds. */
+async function readPushes(room: RoomContext, turn: Gathered): Promise<void> {
+  const { end, role } = turn;
+  const id = end.seat.id;
+  const pushed = await room.safety.pushes({ seat: id, cwd: end.seat.cwd, events: end.events }).catch((error) => {
+    room.log(`safety: the pushes of ${id} were not read: ${errorText(error)}`);
+    return [];
+  });
+  const owner = room.engine.parentOf(id);
+  for (const push of pushed) {
+    if (!push.uncovered?.length) continue;
+    const count = push.more ? `more than ${push.uncovered.length}` : String(push.uncovered.length);
+    room.operations.raise(
+      `safety: ${role} ${id} pushed ${count} commit(s) no ACCEPT covers to ${push.remote} ${push.ref}`,
+      UNACCEPTED_PUSH,
+    );
+    if (!owner || !room.engine.seat(owner)) continue;
+    await room.engine.post({
+      from: fromRoom,
+      to: owner,
+      priority: "action",
+      subject: `UNACCEPTED PUSH: ${end.seat.title ?? id} pushed ${count} commit(s) no ACCEPT covers`,
+      body: `${push.remote} ${push.ref} at ${push.sha.slice(0, 8)}: ${push.uncovered.map((sha) => sha.slice(0, 8)).join(", ")}${push.more ? ", …" : ""}`,
+      needs: "nothing",
+    });
+  }
 }
 
 /** The room's read of a candidate before its Owner's: one pass with fresh eyes first, then the hand-in check, whose blocking findings return it; the check, and the mail that returns the candidate. */

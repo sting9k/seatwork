@@ -79,6 +79,11 @@ test("a .gitattributes line that names a filter or a driver of the repository's 
   assert.equal(result.state, "blocked");
   assert.deepEqual(
     result.open.map((row) => `${row.rule} ${row.path}:${row.line}`),
-    ["attributes-driver .gitattributes:8", "attributes-driver .gitattributes:9", "attributes-driver .gitattributes:10"],
+    [
+      "uncommitted .gitattributes:0",
+      "attributes-driver .gitattributes:8",
+      "attributes-driver .gitattributes:9",
+      "attributes-driver .gitattributes:10",
+    ],
   );
 });

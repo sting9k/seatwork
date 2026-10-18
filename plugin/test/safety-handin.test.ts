@@ -69,7 +69,11 @@ test("the check reads what the seat changed since it started, committed or not, 
     "hardcoded-secret src/sum.ts",
     "test-deleted test/old.test.ts",
     "test-focused test/sum.test.ts",
+    "uncommitted package.json",
   ]);
+  const loose = result.open.find((r) => r.rule === "uncommitted")!.text;
+  assert.match(loose, /^4 file\(s\) not committed: /);
+  assert.doesNotMatch(loose, /src\/sum\.ts/, "the committed file is not named");
   assert.deepEqual(result.warnings.map((r) => r.rule).sort(), ["new-todo", "weak-assertion"]);
   assert.ok(!result.open.some((r) => r.text.includes("sk-proj-Abcdefghijklmnop")), "the secret itself is not kept");
   assert.match(handInReturn(result), /Fix each one, or acknowledge it/);
@@ -300,8 +304,9 @@ test("the work a seat hands in keeps its digest: the same work reads the same, a
 });
 
 test("a finding the seat acknowledges rides up with its reason; the same finding keeps its id across hand-ins", async () => {
-  const { dir, check, store } = project(START);
+  const { dir, check, store, git } = project(START);
   writeFiles(dir, { "test/sum.test.ts": START["test/sum.test.ts"].replace('test("sum"', 'test.skip("sum"') });
+  git("commit", "-qam", "skip");
   const first = await check();
   assert.deepEqual(
     first.open.map((r) => r.rule),
@@ -355,8 +360,9 @@ test("a file with a name git would quote is read under its own name, and costs t
   const result = await check();
   assert.deepEqual(
     result.open.map((r) => `${r.rule} ${r.path}:${r.line}`),
-    ["debugger tést.ts:1"],
+    ["uncommitted a.ts:0", "debugger tést.ts:1"],
   );
+  assert.match(result.open[0].text, /^3 file\(s\) not committed: a\.ts, tést\.ts, z\.ts ::/);
 });
 
 test("a seat started below the repository root is read at the paths git names: tracked, new and outside its folder", async () => {
@@ -395,6 +401,7 @@ test("a seat started below the repository root is read at the paths git names: t
         "destructive-script app/package.json:1",
         "new-todo app/a.ts:2",
         "new-todo app/b.ts:1",
+        "uncommitted app/a.ts:0",
       ],
       dependencies: ["left-pad-x"],
       related: ["app/test/sum.test.ts"],
@@ -488,8 +495,10 @@ test("a hand-in with more new files than the check reads is not verified, and no
 });
 
 test("one pass keeps a bounded number of findings and says how many it left out; blocking ones left out are not read as clean", async () => {
-  const { dir, check, store } = project(START);
+  const { dir, check, store, git } = project(START);
   writeFiles(dir, { "src/noisy.ts": "debugger;\n".repeat(5000), "src/notes.ts": "// TODO later\n".repeat(5000) });
+  git("add", "-A");
+  git("commit", "-qm", "noise");
   const first = await check();
   const [kept, noted] = [first.open.length, first.warnings.length];
   assert.equal(first.state, "blocked");
@@ -534,8 +543,9 @@ test("the shell snapshot folder is listed once while it stands, and again when a
 });
 
 test("an added line that begins with ++ is a line like any other, and the lines after it keep their numbers", async () => {
-  const { dir, check } = project({ "a.ts": "const i = 0;\n" });
+  const { dir, check, git } = project({ "a.ts": "const i = 0;\n" });
   writeFiles(dir, { "a.ts": "const i = 0;\n++i;\ndebugger;\n" });
+  git("commit", "-qam", "count");
   assert.deepEqual(
     (await check()).open.map((r) => `${r.rule}:${r.line}`),
     ["debugger:3"],
@@ -543,13 +553,15 @@ test("an added line that begins with ++ is a line like any other, and the lines 
 });
 
 test("a rule reads the part of a line its language says it is: code, comment or string", async () => {
-  const { dir, check } = project({});
+  const { dir, check, git } = project({});
   writeFiles(dir, {
     "a.py": 's = "breakpoint()"  # breakpoint()\n"""\nbreakpoint()\n"""\nbreakpoint()  # TODO real\n',
     "b.ts": "const t = `\ndebugger;\n`;\n// debugger;\ndebugger; // TODO real\n",
     "c.rs": "fn f<'a>(x: &'a str) { todo!() }\nlet s = \"todo!()\";\n",
     "d.sh": "echo '#' # TODO real\n",
   });
+  git("add", "-A");
+  git("commit", "-qm", "layers");
   const found = (await check()).open.concat((await check()).warnings).map((r) => `${r.rule} ${r.path}:${r.line}`);
   assert.deepEqual(found.sort(), [
     "debugger a.py:5",

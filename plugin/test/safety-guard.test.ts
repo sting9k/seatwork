@@ -113,10 +113,21 @@ test("every statement the safety store runs uses an index", async () => {
     { fingerprint: "f1", rule: "debugger", severity: "block", path: "a.ts", line: 1, text: "debugger" },
   ]);
   store.acknowledge("peer", "f1", "kept on purpose for the demo");
+  store.noteHandIn("peer", "d1", "abc");
+  store.blockingSince("peer", store.handedOf("peer")!.at, 10);
+  const accepted = { task: "t", writer: "peer", repo: "/r", base: "a0", head: "abc", digest: "d1" };
+  store.noteAccept({ ...accepted, accepter: "lead", commands: ["npm test"] });
+  store.openAccepts("lead", 10);
+  store.noteDone("lead", "/r", "abd");
+  store.headsIn("/r", 10);
+  store.notePush({ seat: "lead", repo: "/r", remote: "origin", ref: "main", sha: "abd", uncovered: 0 });
+  store.expireGates(new Date(0), 0);
   store.kept("", 5, "peer");
   store.keptCounts("");
   store.expire(new Date(0));
-  const scans = store.plans().filter(({ plan }) => /\bSCAN (decisions|seats|findings)\b(?! USING)/.test(plan));
+  const scans = store
+    .plans()
+    .filter(({ plan }) => /\bSCAN (decisions|seats|findings|accepts|dones|pushes)\b(?! USING)/.test(plan));
   assert.deepEqual(scans, []);
   const plans = store.plans().map(({ plan }) => plan);
   const indexes = (store as unknown as { db: import("node:sqlite").DatabaseSync }).db

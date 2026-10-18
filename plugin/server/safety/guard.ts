@@ -12,12 +12,15 @@ import type { CouncilPolicy } from "./council/council";
 
 /** The command guard: reads each call of a seat and keeps what it did that the owner would want to see; it stops nothing. */
 
-/** The owner's settings for the guard, the council and the hand-in check, as the policy file holds them. */
+/** The owner's safety settings, as the policy file holds them. */
 export interface SafetyPolicy {
   mode?: "on" | "off";
   budgetMs?: number;
   maxBytes?: number;
   handin?: { mode: "block" | "warn" | "off" };
+  acceptance?: { mode: "block" | "warn" | "off" };
+  done?: { mode: "block" | "warn" | "off" };
+  push?: { mode: "warn" | "off" };
   council?: CouncilPolicy;
 }
 

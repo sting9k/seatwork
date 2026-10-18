@@ -219,6 +219,11 @@ export class Operations {
     this.keep(line, undefined, true);
   }
 
+  /** An incident a district raises on purpose, under its own key. */
+  raise(line: string, key: string): void {
+    this.keep(line, key, false);
+  }
+
   /** Echoes and keeps a line under an incident `key` given, else under the key its words make; `ask` false keeps the decision model from reading a new incident; a store that cannot keep the line is said on the app's log only, never through the store again. */
   private keep(line: string, key: string | null | undefined, ask: boolean): void {
     this.deps.echo(line);

@@ -265,7 +265,7 @@ export function collectFiles(
   for (const folder of sweepRemoved(roomHome, KEEP_REMOVED_DAYS, now))
     done.push(`deleted ${folder}, set aside more than ${KEEP_REMOVED_DAYS} days ago`);
   for (const folder of dropStamped(join(roomHome, "controls"), [""], KEEP_LOG_DAYS, now))
-    done.push(`deleted ${folder}, a control older than ${KEEP_LOG_DAYS} days`);
+    done.push(`deleted ${folder}, a control or acceptance copy older than ${KEEP_LOG_DAYS} days`);
   for (const folder of dropStamped(join(roomHome, "skills-local", "removed"), [""], KEEP_REMOVED_DAYS, now))
     done.push(`deleted ${folder}, local skills taken out more than ${KEEP_REMOVED_DAYS} days ago`);
   return done;

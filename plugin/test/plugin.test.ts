@@ -7,7 +7,7 @@ import { incidentOf } from "../server/operations/lines";
 import { loadPolicy } from "../server/policy";
 import { rolePrompt } from "../server/orchestration/seats";
 import { test } from "node:test";
-import { repoWith } from "./support/git";
+import { git, repoWith } from "./support/git";
 import { earnLevel3 } from "./support/council";
 import { pluginRoom, withPlugin } from "./support/plugin";
 import { SafetyStore } from "../server/safety/store";
@@ -1133,6 +1133,7 @@ test("a focused test sends the candidate back until acknowledged, and its reason
   await new Promise((resolve) => setTimeout(resolve, 300));
 
   writeFileSync(join(repo, "test", "a.test.ts"), 'test.only("a", () => expect(1).toBe(1));\n');
+  git(repo, "commit", "-qam", "focus");
   await turnEnds(peer, "CANDIDATE g1\nthe store holds");
   assert.match(peer.inbox.at(-1)!, /HAND-IN RETURNED: one pass with fresh eyes/);
   await turnEnds(peer, "CANDIDATE g2\nFresh eyes: checked again");
@@ -1234,6 +1235,7 @@ test("a council member that has earned the level that sends work back asks the r
   // the Peer bends its tests: the room's own check returns the hand-in, the Peer keeps the finding on purpose
   writeFileSync(join(repo, "src", "sum.ts"), "export const sum = (a: number, b: number) => a + b + 0;\n");
   writeFileSync(join(repo, "test", "sum.test.ts"), 'test("sum", () => {\n  expect(sum(1, 2)).toBe(3);\n});\n');
+  git(repo, "commit", "-qam", "bend");
   let id: string | undefined;
   for (let tries = 0; tries < 3 && !id; tries += 1) {
     await turnEnds(peer, "CANDIDATE: sum fixed");

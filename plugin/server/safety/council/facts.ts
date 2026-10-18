@@ -14,11 +14,22 @@ const NARROW = council.narrow.map(({ runner, flags }) => ({
 }));
 
 const squash = (command: string) => command.replace(/\s+/g, " ").trim();
+const EDGE = /[\s;&|()<>"'`]/;
 
-/** Whether a command runs one of `wanted`, as the brief quotes them. */
+/** Whether a command runs one of `wanted` whole: `e2e:unit` is no run of `e2e`. */
 export function runsOneOf(command: string, wanted: readonly string[]): boolean {
   const flat = squash(command);
-  return wanted.some((one) => flat.includes(squash(one)));
+  return wanted.some((one) => standsIn(flat, squash(one)));
+}
+
+/** Whether `part` stands in `text` as whole words. */
+function standsIn(text: string, part: string): boolean {
+  if (!part) return false;
+  for (let at = text.indexOf(part); at >= 0; at = text.indexOf(part, at + 1)) {
+    const [before, after] = [text[at - 1], text[at + part.length]];
+    if ((before === undefined || EDGE.test(before)) && (after === undefined || EDGE.test(after))) return true;
+  }
+  return false;
 }
 
 /** Whether a command runs a check: a known runner, or one of the commands its brief names. */
@@ -85,7 +96,7 @@ export function maskOf(command: string, named: readonly string[] = []): string |
 }
 
 /** The paths a check names after its runner, relative to `root`; null when it names none and so runs the whole suite. */
-function pathsOf(command: string, named: readonly string[], root: string): string[] | null {
+export function pathsOf(command: string, named: readonly string[], root: string): string[] | null {
   const flat = oneLine(command);
   const end = checkEnd(unquoted(flat), flat, named);
   const words = flat.slice(Math.max(end, 0)).split(" ");

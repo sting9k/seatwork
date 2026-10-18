@@ -439,7 +439,7 @@ test("a store made before appeals named their readings keeps those whose reading
   rmSync(scripts, { recursive: true, force: true });
   mkdirSync(scripts, { recursive: true });
   const shipped = join(ROOM_HOME, "room", "sql", "safety");
-  for (const name of readdirSync(shipped).filter((script) => !/^V10__/.test(script)))
+  for (const name of readdirSync(shipped).filter((script) => Number(/^V(\d+)__/.exec(script)?.[1]) < 10))
     copyFileSync(join(shipped, name), join(scripts, name));
   const before = new SafetyStore(dir, 1000, () => new Date("2026-02-01T00:00:00Z"), scripts);
   const appeal = (readingId: number, finding: string) =>

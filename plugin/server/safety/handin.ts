@@ -319,9 +319,14 @@ export async function inspectHandIn(seat: string, store: SafetyStore, gate: Gate
   if (!start) return { ...base, state: "partial", why: "the room has no record of where this seat started" };
   if (!start.start_head)
     return { ...base, state: "partial", why: `${start.cwd} was not a git repository when the seat started` };
-  const changes = await changesSince(start.cwd, start.start_head);
+  const [changes, head, loose] = await Promise.all([
+    changesSince(start.cwd, start.start_head),
+    git(["rev-parse", "HEAD"], start.cwd),
+    uncommitted(start.cwd),
+  ]);
   if (typeof changes === "string") return { ...base, state: "partial", why: changes };
-  store.noteHandIn(seat, digestOf(changes));
+  if (loose === null) return { ...base, state: "partial", why: "git status failed" };
+  store.noteHandIn(seat, digestOf(changes), head.ok ? head.out.trim() || null : null);
   if (!changes.length) return { ...base, state: "empty", why: null };
   const found: Found[] = [];
   const seen: Record<Level, number> = { block: 0, warn: 0 };
@@ -330,6 +335,7 @@ export async function inspectHandIn(seat: string, store: SafetyStore, gate: Gate
     if (one.rule === "test-skipped" || one.rule === "test-focused") skipped += 1;
     if ((seen[one.level] += 1) <= FINDINGS_MOST) found.push(one);
   };
+  if (loose.length) keep(uncommittedFinding(loose));
   for (const change of changes) for (const one of await inspectFile(change, start.cwd, gate)) keep(one);
   for (const change of changes) checkConfigFindings(change).forEach(keep);
   answersInSource(changes).forEach(keep);
@@ -383,6 +389,41 @@ export async function inspectHandIn(seat: string, store: SafetyStore, gate: Gate
     related,
     tests: testCount(changes),
     dependencies,
+  };
+}
+
+/** The files that differ from HEAD, tracked or new; null when git cannot say. */
+async function uncommitted(cwd: string): Promise<string[] | null> {
+  const status = await git(
+    [
+      "-c",
+      "core.quotePath=false",
+      "status",
+      "--porcelain=v1",
+      "-z",
+      "--no-renames",
+      "--untracked-files=all",
+      "--",
+      NOT_ROOM_FOLDER,
+    ],
+    cwd,
+  );
+  if (!status.ok) return null;
+  return status.out
+    .split("\0")
+    .map((entry) => entry.slice(3))
+    .filter((path) => path && !SKIP.some((p) => p.test(path)));
+}
+
+/** Work handed in with files no commit holds. */
+function uncommittedFinding(paths: readonly string[]): Found {
+  return {
+    rule: "uncommitted",
+    level: "block",
+    path: paths[0],
+    line: 0,
+    text: `${paths.length} file(s) not committed: ${paths.slice(0, 5).join(", ")}${paths.length > 5 ? ", …" : ""}`,
+    hint: "Commit the work, then hand in: an ACCEPT is kept with the commit HEAD names.",
   };
 }
 

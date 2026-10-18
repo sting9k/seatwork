@@ -441,13 +441,13 @@
     },
     "seatwork_safety": {
       "callers": "any",
-      "description": "The room's checks on the work: the hand-in check and the council. ack: keep on purpose one finding of the hand-in check that sent your candidate back; your Owner reads why. council: how each member of the council has read turns lately. label: say whether a `[council]` finding about a seat under you was right. rule: the room's own seat rules on an APPEAL mail. control: for a writer `seat`, a copy of its project at the commit it started on with only its candidate's tests laid in; a new test that passes there does not test the change.",
+      "description": "The room's checks on the work: the hand-in check and the council. ack: keep on purpose one finding of the hand-in check that sent your candidate back; your Owner reads why. council: how each member of the council has read turns lately. label: say whether a `[council]` finding about a seat under you was right. rule: the room's own seat rules on an APPEAL mail. control: for a writer `seat`, a copy of its project at the commit it started on with only its candidate's tests laid in; a new test that passes there does not test the change. copy: for a writer `seat`, the commit it handed in, to run the acceptance evidence apart from the shared tree.",
       "inputSchema": {
         "type": "object",
         "properties": {
           "action": {
             "type": "string",
-            "enum": ["ack", "council", "label", "rule", "control"]
+            "enum": ["ack", "council", "label", "rule", "control", "copy"]
           },
           "id": {
             "type": "string",
@@ -470,7 +470,7 @@
             "type": "number",
             "description": "council: how many days back; 30 when not given."
           },
-          "seat": { "type": "string", "description": "control: the writer's id." }
+          "seat": { "type": "string", "description": "control, copy: the writer's id." }
         },
         "required": ["action"]
       }

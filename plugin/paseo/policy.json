@@ -289,11 +289,20 @@
     }
   },
   "safety": {
-    "$comment": "The room's safety. The guard reads every call of a seat and keeps what it did to files, git, the room's controls, the machine and state off it, graded by how hard it is to undo (shared/safety/grades.json, commands.json); it stops none. budgetMs: how long the guard reads one call. handin.mode: block, warn or off.",
+    "$comment": "The room's safety. The guard reads every call of a seat and keeps what it did to files, git, the room's controls, the machine and state off it, graded by how hard it is to undo (shared/safety/grades.json, commands.json); it stops none. budgetMs: how long the guard reads one call. handin.mode: block, warn or off. acceptance.mode, done.mode: the gates before ACCEPT and DONE block, warn or are off. push.mode: warn keeps and tells, off does nothing; no push is stopped.",
     "mode": "on",
     "budgetMs": 1000,
     "handin": {
       "mode": "block"
+    },
+    "acceptance": {
+      "mode": "warn"
+    },
+    "done": {
+      "mode": "warn"
+    },
+    "push": {
+      "mode": "warn"
     },
     "council": {
       "$comment": "The council that reads each turn of a briefed, writing or reviewing seat (shared/safety/council.json). levels: a member's level on this machine, over the shipped one, at most 2 (labels alone earn the level that sends a hand-in back). Readings no label holds are kept keepDays; tickSeconds paces the look at running turns. chairMinutes: how long an appeal waits for the chair's ruling before it lapses, 30 when not set. jurors: the members that ask the decision model; one left out reads by facts alone.",

@@ -1,16 +1,25 @@
 import { existsSync } from "node:fs";
 import mailConfig from "../../shared/mail.json";
 import { isAbsolute, join } from "node:path";
-import { note, owns } from "../../shared/workflow";
+import { note, owns, traits } from "../../shared/workflow";
 import { exactSeat, MailError, namesTeam, reachable, resolve, shown } from "../coordination/address";
 import { refusal, type NextCall } from "../refusal";
 import type { Mail, MailEngine, NewMail, Needs, SeatRecord } from "../coordination/engine";
 import { inbox } from "../coordination/reader";
 import { StoreError } from "../sqlite";
-import type { LiveSeat } from "../host";
+import type { LiveSeat, TurnEvent } from "../host";
 import { routeUp } from "../orchestration/escalation";
-import { CLOSES_WORK, isReceiptWord, priorityOf, SUBJECT_SIGNALS, subjectOpening, subjectSignal } from "../signals";
-import { fromRoom, taskOf, type RoomContext } from "./context";
+import {
+  CLOSES_WORK,
+  isReceiptWord,
+  priorityOf,
+  SUBJECT_SIGNALS,
+  subjectOpening,
+  subjectSignal,
+  verdictOf,
+} from "../signals";
+import { errorText, fromRoom, taskOf, type RoomContext } from "./context";
+import { briefOf } from "./council";
 import { tierUpNote } from "./launch";
 import { excerpt } from "../excerpt";
 
@@ -280,6 +289,7 @@ export async function sendMail(room: RoomContext, from: string, args: Record<str
   const { draft, opening, stops, toWorker } = drafted(eng, sender, args, where);
   const again = stops ? null : eng.repeatOf(draft);
   if (again) return replay(again);
+  const gate = await acceptanceGate(room, sender, draft, opening);
   const signal = subjectSignal(draft.subject);
   const kept = keptUp(room, from, draft, signal);
   if (kept) return kept;
@@ -302,15 +312,75 @@ export async function sendMail(room: RoomContext, from: string, args: Record<str
     .map((seat) => (eng.isAncestor(seat, from) && !routed ? "owner" : `${eng.seat(seat)?.role ?? "seat"} ${seat}`));
   const to = where.to[0];
   if (stops) return stopBelow(room, mail, to, draft.subject, where.states.get(to), sentTo, await seats.live());
+  gate?.keep();
+  for (const line of gate?.up ?? []) room.safety.oweUp(from, line);
   const held = mail.state === "queued" || mail.state === "sending";
   const round = await roundNote(room, from, where.to, opening);
+  const notes = [round, routed?.note, gate?.line].filter(Boolean);
   return JSON.stringify({
     sent: mail.id,
     to: sentTo,
     thread: mail.thread,
     state: waits ? "read with the recipient's next mail" : held ? "held until the recipient can take it" : "delivered",
-    ...(round || routed ? { note: [round, routed?.note].filter(Boolean).join("; ") } : {}),
+    ...(notes.length ? { note: notes.join("; ") } : {}),
   });
+}
+
+/** The gate before an ACCEPT going down: the Lead's line, lines owed up, records. */
+async function acceptanceGate(
+  room: RoomContext,
+  sender: SeatRecord,
+  draft: NewMail,
+  opening: string,
+): Promise<{ line: string | null; up: string[]; keep(): void } | null> {
+  if (verdictOf(opening) !== "accepted" || traits(sender.role).briefs !== true) return null;
+  const writers = [draft.to].flat().filter((seat) => room.engine.parentOf(seat) === sender.agentId);
+  if (writers.length === 0) return null;
+  let read: Promise<readonly TurnEvent[] | null> | undefined;
+  const turn = (entries: number) => (read ??= room.host.turn(sender.agentId, entries));
+  const text = `${draft.subject}\n${draft.body}`;
+  const said: string[] = [];
+  const up: string[] = [];
+  const keeps: (() => void)[] = [];
+  let blocks = false;
+  let unrun: string | null = null;
+  for (const writer of writers) {
+    const on = writers.length > 1 ? `on ${writer}: ` : "";
+    const gate = await room.safety
+      .acceptance({
+        accepter: sender.agentId,
+        writer,
+        task: taskOf(room, writer),
+        brief: await briefOf(room, writer),
+        text,
+        turn,
+      })
+      .catch((error) => {
+        room.log(`the acceptance gate on ${writer} could not run: ${errorText(error)}`);
+        said.push(`${on}not checked, the gate could not run`);
+        return null;
+      });
+    if (!gate) continue;
+    keeps.push(gate.keep);
+    if (gate.gaps.length === 0) continue;
+    blocks ||= gate.mode === "block";
+    if (gate.gaps.some((gap) => gap.rule === "unrun" || gap.rule === "masked")) unrun ??= writer;
+    const gaps = gate.gaps.map((gap) => gap.line).join("; ");
+    said.push(`${on}${gaps}`);
+    up.push(`[room] acceptance gate on ${room.engine.seat(writer)?.title ?? writer}: ${gaps}`);
+  }
+  if (blocks)
+    throw new MailError(
+      "ACCEPT_UNPROVEN",
+      `the room did not send this ACCEPT: ${said.join(" | ")}`,
+      undefined,
+      unrun ? { tool: "seatwork_safety", args: { action: "copy", seat: unrun } } : undefined,
+    );
+  return {
+    line: said.length ? `[room] acceptance gate: ${said.join(" | ")}` : null,
+    up,
+    keep: () => keeps.forEach((keep) => keep()),
+  };
 }
 
 /** The seats a mail goes to and is copied to, each one the routes let the sender write to and the app still has. */

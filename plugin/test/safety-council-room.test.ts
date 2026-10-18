@@ -4,6 +4,7 @@ import { appendFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { test } from "node:test";
+import { git } from "./support/git";
 import { parserRepo, type TestSeat } from "./support/seats";
 import type { LiveSeat } from "../server/host";
 import { TaskKeys } from "../server/orchestration/task-keys";
@@ -61,6 +62,7 @@ test("a finding held back with a candidate the hand-in check sends back is told 
   const peer = await seat("peer-check", "claude-peer", lead.agent.id, "[Peer] parser check", dir);
   await new Promise((resolve) => setTimeout(resolve, 300));
   writeFileSync(join(dir, "test", "a.test.ts"), 'test.only("a", () => expect(1).toBe(1));\n');
+  git(dir, "commit", "-qam", "focus");
 
   await turn(peer, MESSAGE, "t1");
   assert.match(peer.inbox.at(-1)!, /HAND-IN RETURNED: one pass with fresh eyes/);

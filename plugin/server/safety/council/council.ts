@@ -135,8 +135,9 @@ const lineKey = (command: string) =>
   );
 const namedChecks = (fields: BriefFields) =>
   quotedCommands([fields.acceptance, fields.contract].filter(Boolean).join("\n"));
-const acceptanceOf = (verdict: Verdict) =>
-  verdict.brief ? quotedCommands(briefFields(verdict.brief).acceptance ?? "") : [];
+/** The commands a brief quotes as its acceptance evidence. */
+export const acceptanceOf = (brief: string | null): string[] =>
+  brief ? quotedCommands(briefFields(brief).acceptance ?? "") : [];
 
 /** A reading made at once, or a juror's question to ask when its caller says so. */
 type Pending = Reading | (() => Promise<Reading>);
@@ -338,7 +339,7 @@ export class Council {
     const store = this.deps.store();
     const touched = new Set<MemberName>();
     for (const verdict of input.verdicts) {
-      const wanted = acceptanceOf(verdict);
+      const wanted = acceptanceOf(verdict.brief);
       const runs = input.events.filter(
         (event): event is Extract<TurnEvent, { kind: "shell" }> =>
           event.kind === "shell" &&
@@ -736,7 +737,7 @@ function readVerdicts(input: TurnInput): Reading[] {
 
 /** Work accepted without a run of its own acceptance check is a finding. */
 function acceptanceRun(input: TurnInput, verdict: Verdict): Reading {
-  const wanted = acceptanceOf(verdict);
+  const wanted = acceptanceOf(verdict.brief);
   if (wanted.length === 0) return { tier: "fact", zone: "skipped" };
   const passed = input.events.filter(
     (event): event is Extract<TurnEvent, { kind: "shell" }> =>

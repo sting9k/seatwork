@@ -1,11 +1,12 @@
 import type { GitEffect } from "../findings";
+import { valueOf } from "../paths";
 import { literal, textWord, type Word } from "../shell";
 import type { Scene } from "../types";
 
 /** git read as git reads its line (global options, subcommand, aliases), and what it does that the guard keeps. */
 
-/** What a git command does that the guard keeps: an effect on the repository it runs in, or a named rule. */
-type GitHit = { effect: GitEffect; detail: string } | { id: string; detail: string };
+/** What a git command does that the guard keeps: an effect on the repository it runs in, or on the path `at` names, or a named rule. */
+type GitHit = { effect: GitEffect; detail: string; at?: Word } | { id: string; detail: string };
 
 /** What the git reading asks of the machine: an alias in git config, a `git-<name>` program. */
 export interface GitTools {
@@ -96,8 +97,9 @@ export async function gitEffects(scene: Scene, tools: GitTools): Promise<GitOutc
   const given: GitOutcome = { hits: [], doubts: [], shells: [], repo: scene.cwd, changes: null, moves: null };
   let cwd = scene.cwd;
   const seen = new Set<string>();
+  const dir = (word: Word) => valueOf(word, scene).text;
   for (let depth = 0; depth <= MAX_ALIAS; depth += 1) {
-    const read = readGlobals(words, aliases, cwd, given);
+    const read = readGlobals(words, aliases, cwd, given, dir);
     if (read === "exit") return given;
     if (read === "dynamic")
       return unverified(given, "a word only known at run time stands where git reads its subcommand");
@@ -142,12 +144,13 @@ function unverified(given: GitOutcome, detail: string): GitOutcome {
   return given;
 }
 
-/** Steps over git's global options; notes `-c alias.x=...`, the programs other `-c` options name, and `-C dir`. */
+/** Steps over git's global options; notes `-c alias.x=...`, the programs other `-c` options name, and `-C dir` with its variables filled in by `dir`. */
 function readGlobals(
   words: Word[],
   aliases: Map<string, string>,
   cwd: string | null,
   given: GitOutcome,
+  dir: (word: Word) => string | null,
 ): { rest: Word[]; cwd: string | null } | "exit" | "dynamic" {
   let i = 0;
   while (i < words.length) {
@@ -164,7 +167,8 @@ function readGlobals(
     if (valued) {
       const glued =
         text.length > valued.length ? text.slice(valued.length + (text[valued.length] === "=" ? 1 : 0)) : null;
-      const value = glued ?? (words[i + 1] ? literal(words[i + 1]) : null);
+      const next = words[i + 1];
+      const value = glued ?? (next ? (valued === "-C" ? dir(next) : literal(next)) : null);
       if (glued === null && !words[i + 1]) return "exit";
       if (valued === "-c") {
         if (value !== null) {
@@ -276,7 +280,8 @@ function skipsHooks(sub: string, texts: (string | null)[]): boolean {
 /** What one subcommand does to the repository's work and history, to a remote, or to the room's controls. */
 function effects(line: Line): GitHit[] {
   const hits: GitHit[] = [];
-  const effect = (kind: GitEffect, detail = `git ${line.sub}`) => hits.push({ effect: kind, detail });
+  const effect = (kind: GitEffect, detail = `git ${line.sub}`, at?: Word) =>
+    hits.push({ effect: kind, detail, ...(at ? { at } : {}) });
   const named = (id: string, detail = `git ${line.sub}`) => hits.push({ id, detail });
   const t = line.texts;
   const opts = beforeEnd(t);
@@ -318,7 +323,10 @@ function effects(line: Line): GitHit[] {
       if (long("reset", 3) && short("u")) effect("discard");
       break;
     case "worktree":
-      if (t[0] === "remove" && t.some((x) => x === "--force" || x === "-f")) effect("discard");
+      if (t[0] === "remove" && t.some((x) => x === "--force" || x === "-f")) {
+        const tree = line.args.findIndex((_, i) => i > 0 && !(t[i] ?? "").startsWith("-"));
+        effect("discard", undefined, tree > 0 ? line.args[tree] : undefined);
+      }
       break;
     case "branch":
       if (forcesBranch(line.args)) effect("refs");

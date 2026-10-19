@@ -43,7 +43,7 @@ Lock what others depend on and leave the inside of a scope to its owner. A check
 
 `create_agent` with:
 - `title` `[Peer:<spec>] <task>`. The spec is `search`, `scout`, `review` or `arch`, or none for work inside a write scope.
-- `provider` and thinking from the table.
+- `provider`, its mode as `settings.modeId` and thinking, from the table.
 - the brief as `initialPrompt`.
 - `notifyOnFinish: false`.
 

@@ -252,7 +252,12 @@ export function registerTools(room: RoomContext, mcp: McpHttpServer): void {
   add("seatwork_safety", (args, me) => safetyTool(room, me, args));
 
   add("seatwork_seats", async (_args, me) =>
-    describeSeats(seatRows(room, me, await room.host.live()), room.rotateAt, Date.now()),
+    describeSeats(
+      seatRows(room, me, await room.host.live()),
+      room.rotateAt,
+      Date.now(),
+      room.operations.projectDay(me),
+    ),
   );
 
   add("seatwork_rotate", async (args, me) => {

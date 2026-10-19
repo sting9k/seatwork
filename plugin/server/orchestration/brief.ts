@@ -1,4 +1,4 @@
-/** A brief as the room's template writes it: `Label: value` lines, read into fields. */
+/** A brief as the room's template writes it, `Label: value` lines, or as a seat writes it with each label alone on its line, read into fields. */
 
 type BriefField =
   | "project"
@@ -43,16 +43,20 @@ const LABELS: readonly [RegExp, BriefField][] = [
   [/^lane$/, "lane"],
 ];
 const LABEL_LINE = /^\s*(?:[-*>]\s+)?[*_`"']*([a-z][a-z /_-]{0,40}?)[*_]*(?:\s*\([^()\n]{0,80}\))?[*_]*\s*:\s*(.*)$/i;
+const HEADING_LINE = /^(?:#{1,6} +)?[*_`]*([a-z][a-z /_-]{0,40}?)[*_`]*:?$/i;
+const HEADING_MOST = 60;
 
-/** The fields a brief holds; a label may carry a note in brackets, a value runs to the next label with its blank lines kept as one, and a later label of a field wins. */
+/** The fields a brief holds; a label may carry a note in brackets or stand alone on its line as a heading, a value runs to the next label with its blank lines kept as one, and a later label of a field wins. */
 export function briefFields(text: string): Partial<Record<BriefField, string>> {
   const lines: Partial<Record<BriefField, string[]>> = {};
   let open: string[] | null = null;
   for (const line of text.split("\n")) {
-    const match = LABEL_LINE.exec(line);
+    const bare = line.trim();
+    const match = LABEL_LINE.exec(line) ?? (bare.length <= HEADING_MOST ? HEADING_LINE.exec(bare) : null);
     const label = match?.[1].trim().toLowerCase();
     const field = label ? LABELS.find(([pattern]) => pattern.test(label))?.[1] : undefined;
-    if (field) open = lines[field] = match![2].trim() ? [match![2].trim()] : [];
+    const value = match?.[2]?.trim() ?? "";
+    if (field) open = lines[field] = value ? [value] : [];
     else if (open && (line.trim() || open.at(-1))) open.push(line.trim());
   }
   return Object.fromEntries(Object.entries(lines).map(([field, own]) => [field, own.join("\n").trim()]));

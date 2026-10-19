@@ -139,6 +139,22 @@ export class Budget {
     return this.capOf(project)?.[field];
   }
 
+  /** What a project spent today, in all and by role (the most first), and its cap. */
+  projectDay(project: string): {
+    usd: number;
+    turns: number;
+    byRole: { role: string; usd: number }[];
+    cap: Cap | null;
+  } {
+    const day = this.day();
+    const sums = this.today(day).get(project);
+    const byRole = this.deps.store
+      .spendByRole(day, [project])
+      .map(({ role, usd }) => ({ role, usd: rounded(usd) }))
+      .sort((a, b) => b.usd - a.usd || a.role.localeCompare(b.role));
+    return { usd: rounded(sums?.usd ?? 0), turns: sums?.turns ?? 0, byRole, cap: this.capOf(project) };
+  }
+
   /** Whether a project is one the room knows: it has a cap of its own, or it has spent. */
   knows(project: string): boolean {
     return this.keyOf(project) !== null || this.deps.store.knowsProject(project);

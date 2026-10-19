@@ -92,3 +92,14 @@ export function latestTurn(entries: readonly { item: unknown; timestamp?: string
       );
   return entries.slice(from).flatMap((entry) => eventOf(entry.item, entry.timestamp) ?? []);
 }
+
+/** The events of the entries dated `since` or later, across turns; the latest turn's when no entry is dated. */
+export function eventsSince(
+  entries: readonly { item: unknown; timestamp?: string; turnId?: string }[],
+  since: string,
+): TurnEvent[] {
+  if (!entries.some((entry) => entry.timestamp)) return latestTurn(entries);
+  return entries
+    .filter((entry) => entry.timestamp !== undefined && entry.timestamp >= since)
+    .flatMap((entry) => eventOf(entry.item, entry.timestamp) ?? []);
+}

@@ -42,13 +42,28 @@ function gitWhere(inside: string[]): Where {
   return GIT_RUNS.some((test) => test.test(lower(inside.join("/")))) ? "startup" : "git";
 }
 
+/** The seat's trees: its start folder, its project and the project's other worktrees. */
+const treesOf = (place: Place): string[] =>
+  [place.start, place.project, ...(place.trees ?? [])].filter((root): root is string => root !== null);
+
+/** Whether a path lies in one of the seat's trees that the app put inside a folder the room keeps (a Paseo worktree under its home). */
+function inOwnTree(path: string, place: Place): boolean {
+  return treesOf(place).some(
+    (root) => within(path, root) && (place.guard?.paths.some((kept) => within(root, kept)) ?? false),
+  );
+}
+
 /** The place of an absolute path. */
 export function whereOfPath(path: string, place: Place): Where | null {
   const norm = posix.normalize(path).replace(/(.)\/+$/, "$1");
   const inside = (root: string) => norm !== root && within(norm, root);
   if (tempPath(norm) || (place.tmp !== null && inside(place.tmp)) || place.guard?.copies?.some(inside)) return null;
   if (norm.startsWith("/dev/")) return DISK.test(norm) ? "device" : null;
-  if (place.guard?.paths.some((g) => within(norm, g)) && !place.guard.except.some((e) => within(norm, e)))
+  if (
+    place.guard?.paths.some((g) => within(norm, g)) &&
+    !place.guard.except.some((e) => within(norm, e)) &&
+    !inOwnTree(norm, place)
+  )
     return "room";
   const parts = norm.split("/").filter(Boolean);
   if (place.roomFolder) {
@@ -66,7 +81,7 @@ export function whereOfPath(path: string, place: Place): Where | null {
   }
   if (parts.length <= 1 || low === home || HOME_ROOT.test(norm) || SYSTEM.some((root) => within(norm, root)))
     return "system";
-  if ([place.project, place.start].some((root) => root !== null && within(norm, root))) return "seat";
+  if (treesOf(place).some((root) => within(norm, root))) return "seat";
   return "outside";
 }
 
@@ -148,7 +163,9 @@ const TESTS_KEPT = 512;
 function protectedReach(pattern: string, cut: boolean, place: Place): Where | null {
   const want = pattern.split("/").filter(Boolean);
   const bare = pattern.replace(/\/+$/, "");
-  const kept = [...(place.guard?.except ?? []), ...(place.guard?.copies ?? [])].some((e) => within(bare, e));
+  const kept =
+    [...(place.guard?.except ?? []), ...(place.guard?.copies ?? [])].some((e) => within(bare, e)) ||
+    inOwnTree(bare, place);
   for (const entry of entries(place)) {
     if (kept && entry.where === "room") continue;
     const folder = entry.path.endsWith("/");

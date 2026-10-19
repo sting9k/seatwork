@@ -3,7 +3,7 @@ import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "n
 import { dirname, join } from "node:path";
 import { Guard, type SafetyPolicy, type SeatRef } from "./guard";
 import type { Place } from "./gate/types";
-import { inspectHandIn, workDigest, type HandIn } from "./handin";
+import { inspectHandIn, workDigest, type HandIn, type HandInHint } from "./handin";
 import { buildControl, buildCopy } from "./control";
 import {
   ACCEPTS_READ,
@@ -29,7 +29,7 @@ import { snapshot } from "./council/git";
 import { answerHook, claudePlugin, GATE_ENV, type Cli } from "./hooks";
 import type { TurnEvent } from "../host";
 import { databaseIn, SafetyStore } from "./store";
-import { machineTools } from "./system";
+import { machineTools, worktreesOf } from "./system";
 
 /** The Safety district: guard, hand-in check, control, gates, council and chair. */
 
@@ -141,15 +141,20 @@ export class Safety {
   }
 
   /** The hand-in check of a seat's candidate, its diff kept for the council's reading of the same turn; null when the check is off. */
-  async handIn(agentId: string): Promise<HandIn | null> {
+  async handIn(agentId: string, hint: HandInHint = {}): Promise<HandIn | null> {
     this.diffs.delete(agentId);
     if (!this.on || this.deps.policy()?.handin?.mode === "off") return null;
     const place = this.placeOf(this.seatRef(agentId));
-    const result = await inspectHandIn(agentId, this.store(), {
-      place,
-      config: this.guard.gateConfig(),
-      tools: machineTools(() => this.startedAt(agentId), this.baseOf),
-    });
+    const result = await inspectHandIn(
+      agentId,
+      this.store(),
+      {
+        place,
+        config: this.guard.gateConfig(),
+        tools: machineTools(() => this.startedAt(agentId), this.baseOf),
+      },
+      hint,
+    );
     if (this.council.on)
       this.keepDiff(agentId, {
         gaming: result.gaming ?? null,
@@ -206,7 +211,7 @@ export class Safety {
     task: string;
     brief: string | null;
     text: string;
-    turn: (entries: number) => Promise<readonly TurnEvent[] | null>;
+    turn: (entries: number, since?: string) => Promise<readonly TurnEvent[] | null>;
     reviews: (since: string, limit: number) => readonly ReviewMail[];
   }): Promise<Gate | null> {
     const mode = this.deps.policy()?.acceptance?.mode ?? "off";
@@ -216,7 +221,7 @@ export class Safety {
     const handed = store.handedOf(a.writer);
     const start = store.startOf(a.writer);
     const [events, now, repo] = await Promise.all([
-      wanted.length ? a.turn(TURN_ENTRIES).catch(() => null) : Promise.resolve([]),
+      wanted.length ? a.turn(TURN_ENTRIES, handed?.at).catch(() => null) : Promise.resolve([]),
       workDigest(a.writer, store).catch(() => null),
       start ? commonDirOf(start.cwd) : Promise.resolve(null),
     ]);
@@ -458,6 +463,7 @@ export class Safety {
       project: seat?.project ?? null,
       tmp: seat?.tmp ?? null,
       start: seat?.start ?? null,
+      trees: worktreesOf(seat?.project ?? null),
       guard: this.deps.guard,
       roomFolder: this.deps.roomFolder,
       daemon: this.deps.daemon,

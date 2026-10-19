@@ -9,7 +9,7 @@ import { familyOf } from "../orchestration/models";
 import { skillsLoaded } from "../orchestration/runtimes";
 import { FRESH_EYES, ownerNote } from "../orchestration/rounds";
 import { parseSeat } from "../orchestration/seats";
-import { handInLine, handInReturn, type HandIn } from "../safety/handin";
+import { handInLine, handInReturn, type HandIn, type HandInHint } from "../safety/handin";
 import { asksOwner, CLOSES_WORK, DECIDES, signalOf, subjectSignal } from "../signals";
 import type { Finding } from "../safety/council/council";
 import { errorText, fromRoom, namesOpenIssue, releaseWork, taskOf, type RoomContext } from "./context";
@@ -296,9 +296,9 @@ export async function rotationFailed(room: RoomContext, by: string, seat: SeatRe
 }
 
 /** The hand-in check of a candidate, null when it is off; a check that fails to run says so and leaves the candidate to its Owner. */
-async function checkHandIn(room: RoomContext, id: string): Promise<HandIn | null> {
+async function checkHandIn(room: RoomContext, id: string, hint: HandInHint): Promise<HandIn | null> {
   try {
-    return await room.safety.handIn(id);
+    return await room.safety.handIn(id, hint);
   } catch (error) {
     room.log(`the hand-in check of ${id} failed: ${errorText(error)}`);
     return { state: "partial", files: 0, open: [], acknowledged: [], warnings: [], why: "the check failed" };
@@ -630,7 +630,10 @@ async function readHandIn(
       check: null,
       returned: returnOf(id, "HAND-IN RETURNED: one pass with fresh eyes, then hand in again", FRESH_EYES),
     };
-  const check = await checkHandIn(room, id);
+  const check = await checkHandIn(room, id, {
+    text: `${handIn!.subject}\n${handIn!.body}`,
+    paths: end.events.flatMap((event) => (event.kind === "change" ? [event.path] : [])),
+  });
   if (check?.state !== "blocked" || !room.safety.handInBlocks) return { check, returned: null };
   return {
     check,

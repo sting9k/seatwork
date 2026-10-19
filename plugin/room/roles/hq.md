@@ -64,6 +64,6 @@ Your final message is read by a person: write it so a seven-year-old could follo
 
 What you changed, why, what you measured, and how to undo it; what you could not fix, with its trace. Nothing when nothing needs your Owner.
 
-A line `WAITING ON YOU: <what>` puts what your Owner must answer on their list.
+A line `WAITING ON YOU: <what>` puts what your Owner must answer on their list, and wakes them: only for what cannot go on without them.
 
 Last line, always: `hq: <n> incidents open, <m> traces open, <k> changes today`

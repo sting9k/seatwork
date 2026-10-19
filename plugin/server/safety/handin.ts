@@ -1,7 +1,7 @@
 import { runGit } from "../git";
 import { NOT_ROOM_FOLDER } from "../paths";
 import { createHash } from "node:crypto";
-import { lstatSync, readFileSync } from "node:fs";
+import { lstatSync, readFileSync, realpathSync } from "node:fs";
 import { basename, dirname, extname, join, resolve } from "node:path";
 import table from "../../shared/safety/handin.json";
 import { ASSERTION, gamingOf, type GamingEvidence, type GamingFile } from "./council/gaming";
@@ -314,21 +314,71 @@ const fingerprint = (rule: string, path: string, text: string, ordinal: number) 
     .digest("hex")
     .slice(0, 12);
 
-/** Reads what a seat changed since its starting commit and stores what it finds. */
-export async function inspectHandIn(seat: string, store: SafetyStore, gate: Gate): Promise<HandIn> {
+/** What a hand-in tells of where its work is: the report's words and the files its turn changed. */
+export interface HandInHint {
+  text?: string;
+  paths?: readonly string[];
+}
+
+const WORKTREES_LISTED = 64;
+const SHAS_NAMED = 20;
+
+/** A path with its links followed, as git names worktrees; the path itself when it cannot be read. */
+function realOf(path: string): string {
+  try {
+    return realpathSync.native(path);
+  } catch {
+    return path;
+  }
+}
+
+/** The worktree of the seat's repository its hand-in is in: the one whose HEAD a commit of the report names, else the one holding most files its turn changed, else where the seat started. */
+async function workTreeOf(cwd: string, hint: HandInHint): Promise<string> {
+  const listed = await git(["worktree", "list", "--porcelain"], cwd);
+  if (!listed.ok) return cwd;
+  const trees = listed.out
+    .split("\n\n")
+    .slice(0, WORKTREES_LISTED)
+    .flatMap((block) => {
+      const path = /^worktree (.+)$/m.exec(block)?.[1];
+      const head = /^HEAD ([0-9a-f]{40})$/m.exec(block)?.[1];
+      return path && head ? [{ path, head }] : [];
+    });
+  const shas = [...(hint.text ?? "").matchAll(/\b[0-9a-f]{7,40}\b/g)].slice(0, SHAS_NAMED).map((match) => match[0]);
+  const named = trees.find((tree) => shas.some((sha) => tree.head.startsWith(sha)));
+  if (named) return named.path;
+  const holds = new Map<string, number>();
+  for (const path of (hint.paths ?? []).map(realOf)) {
+    const tree = trees
+      .filter((one) => path === one.path || path.startsWith(`${one.path}/`))
+      .sort((a, b) => b.path.length - a.path.length)[0];
+    if (tree) holds.set(tree.path, (holds.get(tree.path) ?? 0) + 1);
+  }
+  const most = [...holds].sort((a, b) => b[1] - a[1])[0];
+  return most && realOf(most[0]) !== realOf(cwd) ? most[0] : cwd;
+}
+
+/** Reads what a seat changed since its starting commit, in the worktree its hand-in is in, and stores what it finds. */
+export async function inspectHandIn(
+  seat: string,
+  store: SafetyStore,
+  gate: Gate,
+  hint: HandInHint = {},
+): Promise<HandIn> {
   const start = store.startOf(seat);
   const base = { files: 0, open: [], acknowledged: [], warnings: [] };
   if (!start) return { ...base, state: "partial", why: "the room has no record of where this seat started" };
   if (!start.start_head)
     return { ...base, state: "partial", why: `${start.cwd} was not a git repository when the seat started` };
+  const tree = await workTreeOf(start.cwd, hint);
   const [changes, head, loose] = await Promise.all([
-    changesSince(start.cwd, start.start_head),
-    git(["rev-parse", "HEAD"], start.cwd),
-    uncommitted(start.cwd),
+    changesSince(tree, start.start_head),
+    git(["rev-parse", "HEAD"], tree),
+    uncommitted(tree),
   ]);
   if (typeof changes === "string") return { ...base, state: "partial", why: changes };
   if (loose === null) return { ...base, state: "partial", why: "git status failed" };
-  store.noteHandIn(seat, digestOf(changes), head.ok ? head.out.trim() || null : null);
+  store.noteHandIn(seat, digestOf(changes), head.ok ? head.out.trim() || null : null, tree === start.cwd ? null : tree);
   if (!changes.length) return { ...base, state: "empty", why: null };
   const found: Found[] = [];
   const seen: Record<Level, number> = { block: 0, warn: 0 };
@@ -338,7 +388,7 @@ export async function inspectHandIn(seat: string, store: SafetyStore, gate: Gate
     if ((seen[one.level] += 1) <= FINDINGS_MOST) found.push(one);
   };
   if (loose.length) keep(uncommittedFinding(loose));
-  for (const change of changes) for (const one of await inspectFile(change, start.cwd, gate)) keep(one);
+  for (const change of changes) for (const one of await inspectFile(change, tree, gate)) keep(one);
   for (const change of changes) checkConfigFindings(change).forEach(keep);
   answersInSource(changes).forEach(keep);
   const left: Record<Level, number> = {
@@ -371,8 +421,8 @@ export async function inspectHandIn(seat: string, store: SafetyStore, gate: Gate
     removed: change.removed,
   }));
   const [related, dependencies] = await Promise.all([
-    testsNaming(changes, start.cwd),
-    newDependencies(changes, start.cwd, start.start_head),
+    testsNaming(changes, tree),
+    newDependencies(changes, tree, start.start_head),
   ]);
   return {
     state: open.length ? "blocked" : left.block ? "partial" : "clean",
@@ -618,11 +668,11 @@ function digestOf(changes: readonly Change[]): string {
   return hash.digest("hex");
 }
 
-/** The digest of a seat's work as it stands, against the commit it started on; null when the room cannot read it. */
+/** The digest of a seat's work as it stands in the folder it handed in from, against the commit it started on; null when the room cannot read it. */
 export async function workDigest(seat: string, store: SafetyStore): Promise<string | null> {
   const start = store.startOf(seat);
   if (!start?.start_head) return null;
-  const changes = await changesSince(start.cwd, start.start_head);
+  const changes = await changesSince(store.handedOf(seat)?.cwd ?? start.cwd, start.start_head);
   return typeof changes === "string" ? null : digestOf(changes);
 }
 

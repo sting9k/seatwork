@@ -27,6 +27,7 @@ interface OperationsDeps {
   projectOf?(seat: string): string | null;
   topSeat?(project: string): string | null;
   lifted?(project: string): Promise<void>;
+  registered?(project: string): boolean;
   labeler?: {
     open(): boolean;
     take(state: Record<string, unknown>, ids: readonly string[]): Promise<(string | null)[]>;
@@ -203,6 +204,7 @@ export class Operations {
       raise: (line, key) => this.keep(line, key, false),
       log: (line) => this.log(line),
       lifted: async (project) => void (await deps.lifted?.(project)),
+      registered: (project) => deps.registered?.(project) ?? false,
     });
     const vitals = deps.vitals;
     this.readings = {

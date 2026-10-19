@@ -42,11 +42,12 @@ const LABELS: readonly [RegExp, BriefField][] = [
   [/^inputs$/, "inputs"],
   [/^lane$/, "lane"],
 ];
-const LABEL_LINE = /^\s*(?:[-*>]\s+)?[*_`"']*([a-z][a-z /_-]{0,40}?)[*_]*(?:\s*\([^()\n]{0,80}\))?[*_]*\s*:\s*(.*)$/i;
-const HEADING_LINE = /^(?:#{1,6} +)?[*_`]*([a-z][a-z /_-]{0,40}?)[*_`]*:?$/i;
-const HEADING_MOST = 60;
+const LABEL_LINE =
+  /^\s*(?:[-*>]\s+)?[*_`"']*([a-z][a-z /_-]{0,40}?)[*_]*(?:\s*\([^()\n]{0,200}\))?[*_]*(?:\s*:|\s+[—–](?=\s))\s*(.*)$/i;
+const HEADING_LINE = /^(?:#{1,6} +)?[*_`]*([a-z][a-z /_-]{0,40}?)[*_`]*(?:\s*\([^()\n]{0,200}\))?[*_`]*:?$/i;
+const HEADING_MOST = 260;
 
-/** The fields a brief holds; a label may carry a note in brackets or stand alone on its line as a heading, a value runs to the next label with its blank lines kept as one, and a later label of a field wins. */
+/** The fields a brief holds; a label may carry a note in brackets, end in a colon or a dash, or stand alone on its line as a heading; a value runs to the next label with its blank lines kept as one, and a later label of a field wins. */
 export function briefFields(text: string): Partial<Record<BriefField, string>> {
   const lines: Partial<Record<BriefField, string[]>> = {};
   let open: string[] | null = null;
@@ -75,6 +76,25 @@ export function quotedCommands(text: string): string[] {
       const [first, ...rest] = command.split(/\s+/);
       return PROGRAM.test(first) && (rest.length > 0 || /^\.{0,2}\//.test(first) || !/\.\w+$/.test(first));
     });
+}
+
+const ITEM_HEAD = /^\s*(?:[-*+]|\d+[.)])?\s*(?:run(?:ning)?\s+)?[*_]*`([^`\n]+)`[*_]*/i;
+const AND_NEXT = /^\s*(?:,|and|&)\s*[*_]*`([^`\n]+)`[*_]*/i;
+const PLACEHOLDER = /<[A-Za-z][^<>\n]*>/;
+
+/** The commands an acceptance evidence asks for: those in backticks at the head of its lines or list items, after a "run" and joined by "and"; a quote inside a sentence names a thing, and one with a `<placeholder>` is a form to fill, not a check. */
+export function acceptanceCommands(text: string): string[] {
+  const heads: string[] = [];
+  for (const line of text.split("\n")) {
+    let match = ITEM_HEAD.exec(line);
+    let rest = line;
+    while (match) {
+      heads.push(`\`${match[1]}\``);
+      rest = rest.slice(rest.indexOf(match[0]) + match[0].length);
+      match = AND_NEXT.exec(rest);
+    }
+  }
+  return quotedCommands(heads.join("\n")).filter((command) => !PLACEHOLDER.test(command));
 }
 
 /** The globs of a write scope's first paragraph: its parts, split on commas, semicolons and new lines, each giving the paths it names before any word that turns it down (not, never, except, nothing). */

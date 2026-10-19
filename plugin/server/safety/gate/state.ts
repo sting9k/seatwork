@@ -2,10 +2,11 @@ import type { Findings } from "./findings";
 import type { Command, Pipeline, Simple, Word } from "./shell";
 import type { Known, Value, Variable } from "./types";
 
-/** A function the line defined: its body, and the text the body's positions point into. */
+/** A function the line defined: its body, the text the body's positions point into, and the folder the shell was in where it was defined. */
 export interface Def {
   body: Command;
   src: string;
+  cwd?: string | null;
 }
 
 /** The definitions a function name may have where branches of the line disagree, and whether it may be undefined. */
@@ -74,6 +75,14 @@ const sameVar = (a: Variable | undefined, b: Variable | undefined): boolean =>
 
 const identical = (a: unknown, b: unknown): boolean => a === b;
 
+/** What a variable holds where branches disagree: a temporary folder, or unset too, when every branch that set it set one; else nothing known. */
+function joined(values: readonly (Variable | undefined)[]): Variable {
+  const set = values.filter((value): value is Variable => value !== undefined);
+  if (!set.length || !set.every((value) => value.temp)) return UNKNOWN;
+  const orUnset = set.length < values.length || set.some((value) => value.orUnset === true);
+  return { value: null, temp: true, ...(orUnset ? { orUnset } : {}) };
+}
+
 /** The names one table does not hold alike in every state; a state that lacks a name disagrees with one that has it. */
 function disagreeing<V>(
   states: readonly State[],
@@ -100,7 +109,8 @@ export function meet(base: State, others: readonly State[]): void {
   const split = others.some((s) => s.cwd !== base.cwd);
   if (split) base.cwd = null;
   base.moved = split || all.some((s) => s.moved);
-  for (const name of disagreeing(all, (s) => s.vars, sameVar)) base.vars.set(name, UNKNOWN);
+  for (const name of disagreeing(all, (s) => s.vars, sameVar))
+    base.vars.set(name, joined(all.map((s) => s.vars.get(name))));
   for (const name of disagreeing(all, (s) => s.funcs, identical)) {
     const entries = all.map((s) => s.funcs.get(name));
     const defs = [...new Set(entries.flatMap((e) => e?.defs ?? []))];

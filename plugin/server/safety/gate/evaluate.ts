@@ -295,7 +295,7 @@ class Walk implements Reader {
     if (command.kind === "function") {
       const body = ctx.src.slice(command.body.start, command.body.end);
       if (forkBomb(command.name, body)) this.bombs.set(command.name, ctx.src.slice(command.start, command.end));
-      state.funcs.set(command.name, { defs: [{ body: command.body, src: ctx.src }], maybe: false });
+      state.funcs.set(command.name, { defs: [{ body: command.body, src: ctx.src, cwd: state.cwd }], maybe: false });
       return this.command(command.body, fork(state), ctx);
     }
     for (const word of command.words) await this.substitutions(word.parts, state, ctx);
@@ -483,6 +483,11 @@ class Walk implements Reader {
     try {
       for (const def of entry.defs) {
         const shell = lone ? state : fork(state);
+        // a function some branches never defined runs only where one did: in the folder it was defined in, when the caller's is not known
+        if (entry.maybe && shell.cwd === null && def.cwd) {
+          shell.cwd = def.cwd;
+          shell.moved = def.cwd !== this.place.start;
+        }
         await this.run(def, shell, ctx);
         ends.push(shell);
       }

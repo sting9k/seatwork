@@ -1,5 +1,5 @@
 {
-  "$comment": "Gates on accepted work, by facts only. keepDays: how long covered ACCEPTs, DONEs and pushes stay; openMost: open ACCEPTs kept at most, the oldest dropped first. turnEntries: history entries read for the accepting turn. acceptsRead, filesRead, headsRead, pushesRead, uncoveredShown: bounds on what one gate reads or names. waive: an ACCEPT line that keeps a blocking finding, of the hand-in or of a review. reviewsRead: the REVIEWs since the hand-in read for P0 and P1 findings on the head handed in; reviewLineChars: how much of a finding's line is named. rules: each gap's line.",
+  "$comment": "Gates on accepted work, by facts only. keepDays: how long covered ACCEPTs, DONEs and pushes stay; openMost: open ACCEPTs kept at most, the oldest dropped first. turnEntries: history entries read for the accepter's work since the hand-in. acceptsRead, filesRead, headsRead, pushesRead, uncoveredShown: bounds on what one gate reads or names. waive: an ACCEPT line that keeps a blocking finding, of the hand-in or of a review. reviewsRead: the REVIEWs since the hand-in read for P0 and P1 findings on the head handed in; reviewLineChars: how much of a finding's line is named. rules: each gap's line.",
   "keepDays": 30,
   "openMost": 2000,
   "turnEntries": 500,

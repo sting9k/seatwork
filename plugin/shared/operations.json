@@ -67,7 +67,7 @@
       "keepMinutes": 1440,
       "windowMinutes": 60,
       "lowPointMinutes": 15,
-      "rise": { "heapMb": 50, "rssMb": 100, "walMb": 32, "fileMb": 100, "mail waiting": 20 }
+      "rise": { "heapMb": 50, "rssMb": 100, "externalMb": 100, "walMb": 32, "fileMb": 100, "mail waiting": 20 }
     }
   }
 }

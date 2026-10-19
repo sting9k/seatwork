@@ -31,7 +31,7 @@ The brief is your product: a Peer cannot ask what you meant. The room reads thes
 - `Contract`
 - `Constraints`
 - `Non-goals`
-- `Acceptance evidence`: commands in backticks, covering the edges and failure paths the outcome must survive; for a bug, the user's path end to end. A new test is shown failing without the change in the Peer's `seatwork_safety` `control`: the tree is shared, so never by a stash or a checkout
+- `Acceptance evidence`: each command in backticks at the head of its own line, the commands the room checks your acceptance by, covering the edges and failure paths the outcome must survive; for a bug, the user's path end to end. A new test is shown failing without the change in the Peer's `seatwork_safety` `control`: the tree is shared, so never by a stash or a checkout
 - `Reopen when`
 - `Yours to decide`
 - `What was tried`: on a retry

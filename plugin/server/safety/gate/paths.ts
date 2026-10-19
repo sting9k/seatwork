@@ -6,13 +6,15 @@ import type { Known, Value, Variable } from "./types";
 
 const GLOB = /[*?[]|[@!?*+]\(/;
 
-/** A word's value, with `~`, `$HOME`, `$TMPDIR`, `$PWD` and earlier variables filled in. */
+/** A word's value, with `~`, `$HOME`, `$TMPDIR`, `$PWD` and earlier variables filled in; a temporary folder that may be unset is temporary only as the whole word, since around other text an unset one leaves a path from the root. */
 export function valueOf(word: Word, known: Known): Value {
   let text: string | null = "";
   let prefix = "";
   let quoted = false;
   let glob = false;
   let temp = false;
+  let orUnset = false;
+  let around = false;
   const add = (piece: string) => {
     if (text !== null) text += piece;
     if (text !== null) prefix = text;
@@ -21,8 +23,10 @@ export function valueOf(word: Word, known: Known): Value {
     if (part.kind === "text") {
       if (part.quote !== "none") quoted = true;
       else if (GLOB.test(part.text)) glob = true;
+      if (part.text) around = true;
       add(part.text);
     } else if (part.kind === "tilde") {
+      around = true;
       const home = part.user ? `~${part.user}` : homeOf(known);
       if (home === null) {
         if (text !== null) prefix = text;
@@ -31,13 +35,15 @@ export function valueOf(word: Word, known: Known): Value {
     } else {
       const found = fill(part, known);
       if (found.temp) temp = true;
+      if (found.orUnset) orUnset = true;
+      else around = true;
       if (found.text === null) {
         if (text !== null) prefix = text;
         text = null;
       } else add(found.text);
     }
   }
-  return { text, prefix: text ?? prefix, quoted, glob, temp, word };
+  return { text, prefix: text ?? prefix, quoted, glob, temp: temp && !(orUnset && around), word };
 }
 
 /** The folder `~` stands for: the machine's home unless the line set `HOME`; null when it set it to something not known. */

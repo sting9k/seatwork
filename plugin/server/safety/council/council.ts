@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import council from "../../../shared/safety/council.json";
 import type { RoleTraits } from "../../../shared/workflow";
 import type { TurnEvent } from "../../host";
-import { briefFields, quotedCommands, scopeGlobs } from "../../orchestration/brief";
+import { acceptanceCommands, briefFields, quotedCommands, scopeGlobs } from "../../orchestration/brief";
 import { clip, excerpt } from "../../excerpt";
 import { redact } from "../../redact";
 import { CLOSES_WORK, signalOf } from "../../signals";
@@ -139,7 +139,7 @@ const namedChecks = (fields: BriefFields) =>
   quotedCommands([fields.acceptance, fields.contract].filter(Boolean).join("\n"));
 /** The commands a brief quotes as its acceptance evidence. */
 export const acceptanceOf = (brief: string | null): string[] =>
-  brief ? quotedCommands(briefFields(brief).acceptance ?? "") : [];
+  brief ? acceptanceCommands(briefFields(brief).acceptance ?? "") : [];
 
 /** A reading made at once, or a juror's question to ask when its caller says so. */
 type Pending = Reading | (() => Promise<Reading>);

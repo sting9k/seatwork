@@ -1,3 +1,4 @@
+import { PerformanceObserver } from "node:perf_hooks";
 import settings from "../../shared/operations.json";
 import { storeStats, type StoreStat } from "../sqlite";
 
@@ -10,7 +11,32 @@ const RISE = TREND.rise as Record<string, number>;
 
 const round = (value: number): number => Math.round(value * 10) / 10;
 
-/** The vital signs of the process: lines of trouble each minute, a series of each measure, and a reading on demand; the event loop's hold is a short timer's lateness, since Node's own delay histogram misses one long hold. */
+/** The process's memory as Node reports it: `external` and `arrayBuffers`, in bytes, are what lives outside the heap. */
+interface Memory {
+  heapUsed: number;
+  rss: number;
+  external?: number;
+  arrayBuffers?: number;
+}
+
+/** The longest garbage collection Node reported since the last ask, in ms, and the observer to let go of. */
+function collections(): { longest: () => number; close: () => void } {
+  let longest = 0;
+  const observer = new PerformanceObserver((list) => {
+    for (const entry of list.getEntries()) longest = Math.max(longest, entry.duration);
+  });
+  observer.observe({ entryTypes: ["gc"] });
+  return {
+    longest: () => {
+      const taken = longest;
+      longest = 0;
+      return taken;
+    },
+    close: () => observer.disconnect(),
+  };
+}
+
+/** The vital signs of the process: lines of trouble each minute, a series of each measure, and a reading on demand; the event loop's hold is a short timer's lateness, since Node's own delay histogram misses one long hold, and a slow minute names its longest garbage collection. */
 export class Vitals {
   private readonly seen = new Map<string, number>();
   private readonly series = new Map<string, { kind: string; values: number[]; at: number }>();
@@ -18,13 +44,16 @@ export class Vitals {
   private readonly timer: NodeJS.Timeout;
   private lagMs = 0;
   private minutes = 0;
-  private last = { maxMs: 0 };
+  private last = { maxMs: 0, gcMs: 0 };
+  private readonly gc: { longest: () => number; close: () => void } | null;
 
   constructor(
     private readonly stats: () => StoreStat[] = storeStats,
     private readonly gauges: () => Record<string, number> = () => ({}),
-    private readonly memory: () => { heapUsed: number; rss: number } = () => process.memoryUsage(),
+    private readonly memory: () => Memory = () => process.memoryUsage(),
+    pauses?: () => number,
   ) {
+    this.gc = pauses ? { longest: pauses, close: () => {} } : collections();
     let expected = Date.now() + LAG_TICK_MS;
     this.timer = setInterval(() => {
       const now = Date.now();
@@ -37,15 +66,18 @@ export class Vitals {
   /** The minute's lines of trouble: an event loop held too long, new slow statements, a large write-ahead log, a measure whose low point keeps rising; a store that closed, or a measure no longer given, takes its counts and series with it. */
   minute(): string[] {
     const lines: string[] = [];
-    this.last = { maxMs: this.lagMs };
+    this.last = { maxMs: this.lagMs, gcMs: Math.round(this.gc?.longest() ?? 0) };
     this.lagMs = 0;
     this.minutes += 1;
     if (this.last.maxMs >= HELD_MS)
-      lines.push(`room: the event loop was slow, held up to ${this.last.maxMs} ms in the last minute`);
+      lines.push(
+        `room: the event loop was slow, held up to ${this.last.maxMs} ms in the last minute; its longest garbage collection took ${this.last.gcMs} ms`,
+      );
     const memory = this.memory();
     this.sample("room loop ms", "loopMs", this.last.maxMs);
     this.sample("room heap MB", "heapMb", memory.heapUsed / MB);
     this.sample("room rss MB", "rssMb", memory.rss / MB);
+    if (memory.external !== undefined) this.sample("room external MB", "externalMb", memory.external / MB);
     for (const [name, value] of Object.entries(this.gauges())) this.sample(name, name, value);
     const open = new Set<string>();
     for (const store of this.stats()) {
@@ -110,6 +142,8 @@ export class Vitals {
       loop: this.last,
       heapMb: Math.round(memory.heapUsed / MB),
       rssMb: Math.round(memory.rss / MB),
+      ...(memory.external !== undefined ? { externalMb: Math.round(memory.external / MB) } : {}),
+      ...(memory.arrayBuffers !== undefined ? { buffersMb: Math.round(memory.arrayBuffers / MB) } : {}),
       stores: this.stats().map(({ name, file, calls, slow, slowestMs, walBytes, fileBytes }) => ({
         name,
         file,
@@ -131,5 +165,6 @@ export class Vitals {
 
   close(): void {
     clearInterval(this.timer);
+    this.gc?.close();
   }
 }

@@ -75,6 +75,18 @@ const cases: [string, string[]][] = [
   ['git worktree remove --force "$TMPDIR/taskq-old"', []],
   ["git worktree remove -f /Users/u/.config/room/tmp/abcd1234/review/head", []],
   ['git -C "$TMPDIR/review" checkout ab4d37d -- .', []],
+  // a folder made by mktemp in a chain is that folder or unset after it: the word alone is nothing either way, more around it may be a root path
+  [
+    'git log --oneline | head -3 && D=$(mktemp -d) && git worktree add -q --detach "$D" HEAD && cd "$D" && npm test; cd /Users/u/proj && git worktree remove --force "$D"',
+    [],
+  ],
+  ['true && D=$(mktemp -d); rm -rf "$D"', []],
+  ['true && D=$(mktemp -d); rm -rf "$D/x"', ["delete:unknown"]],
+  // a function defined only where the chain went through runs where it was defined
+  [
+    'M=$TMPDIR/mut && rm -rf $M && mkdir -p $M && cp -R src $M/ && cd $M &&\nmut() { rm -rf src/cli && cp -R /Users/u/proj/src/cli src/cli; }\nmut "a"',
+    [],
+  ],
   ["git -C $TMPDIR/review reset --hard", []],
   ["git branch -d old", []],
   ["git branch -D old", ["refs:seat"]],
@@ -536,6 +548,38 @@ test("git is asked once which of the seat's folders a line removes it ignores", 
   };
   assert.deepEqual(await hits("rm -rf dist node_modules", counting), []);
   assert.deepEqual(asked, [[`${PROJECT}/dist`, `${PROJECT}/node_modules`]]);
+});
+
+test("a worktree of the project that the app puts inside a folder the room keeps is graded as the project's tree", async () => {
+  const worktree = "/Users/u/.paseo/worktrees/ab12/perf-bench";
+  const inside: Place = {
+    ...place,
+    trees: [worktree, "/Users/u/.paseo/worktrees/ab12/perf-speed"],
+    guard: { ...place.guard!, paths: [...place.guard!.paths, "/Users/u/.paseo"] },
+  };
+  const lines = (root: string) => [
+    `cd ${root} && cat >> README.md <<'EOF'\n## Benchmark\nEOF`,
+    `mkdir -p ${root}/scripts && cat > ${root}/src/book/limits.js <<'EOF'\nx\nEOF`,
+    `cd ${root} && git checkout -- src/book/book.js`,
+    `rm -rf ${root}/build/*`,
+    `sed -i '' 's/a/b/' ${root}/package.json`,
+  ];
+  const here = lines(PROJECT);
+  for (const [i, line] of lines(worktree).entries())
+    assert.deepEqual(
+      await keptOf(line, tools(), { cwd: worktree, place: inside }),
+      await keptOf(here[i], tools(), { cwd: PROJECT, place }),
+      line,
+    );
+  assert.deepEqual(
+    await keptOf("echo x > /Users/u/.paseo/plugins/settings.json", tools(), { cwd: worktree, place: inside }),
+    ["overwrite:room"],
+  );
+  assert.deepEqual(
+    await keptOf("echo x > /Users/u/.paseo/worktrees/zz99/other/a.js", tools(), { cwd: worktree, place: inside }),
+    ["overwrite:room"],
+    "a worktree of another repository stays the room's",
+  );
 });
 
 test("a line that writes or removes a file of the seat's tree is told apart from one that only reads it", async () => {

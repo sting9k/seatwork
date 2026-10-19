@@ -79,8 +79,8 @@ export interface Host {
   seat(agentId: string): Promise<LiveSeat | null>;
   create(seat: NewSeat): Promise<string>;
   archive(agentId: string): Promise<void>;
-  /** The steps of a seat's latest turn among its last `limit` history entries; null when unread. */
-  turn(agentId: string, limit: number): Promise<TurnEvent[] | null>;
+  /** The steps of a seat's latest turn among its last `limit` history entries, or of all its turns from the time `since`; null when unread. */
+  turn(agentId: string, limit: number, since?: string): Promise<TurnEvent[] | null>;
   /** The prompts a seat was given among its last `limit` history entries, oldest first; null when unread. */
   prompts(agentId: string, limit: number): Promise<string[] | null>;
   /** The projects the app knows, by folder. */

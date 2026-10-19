@@ -5,7 +5,7 @@ import { MailEngine, ROOM_MAIL } from "../coordination/engine";
 import { Collector } from "../gc";
 import { HostNotReady, type Host } from "../host";
 import { McpHttpServer, type Route } from "../mcp-http";
-import { projectRootOf, roomProjectDir } from "../orchestration/registry";
+import { findProject, loadRegistry, projectRootOf, roomProjectDir } from "../orchestration/registry";
 import { Forks } from "../orchestration/forks";
 import { Recovery, resumeDue } from "../orchestration/recovery";
 import { ReviewGate } from "../orchestration/review-gate";
@@ -522,6 +522,10 @@ function startOperations(policy: RuntimePolicy, operators: ReadonlySet<string>, 
     projectOf: (seat) => (inRoom(room().engine.seat(seat)?.role) ? null : room().engine.projectOf(seat)),
     topSeat: (project) => topSeatOf(room().engine, project),
     lifted: () => room().engine.sweep(),
+    registered: (project) => {
+      const registry = loadRegistry();
+      return registry !== null && findProject(registry, project) !== null;
+    },
     labeler: {
       open: () => room().forks.open("incident"),
       take: (state, ids) => room().forks.takeMany("incident", state, ids),

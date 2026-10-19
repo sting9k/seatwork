@@ -149,10 +149,59 @@ test("the acceptance gate's line goes to the Lead and under its next report up, 
   await turnOf(lead, "l1", [], "DONE: one more constant");
   assert.match(
     dones(sup)[0],
-    /\[room\] acceptance gate on \[Peer\] accept-reader: the accepting turn has no passing run/,
+    /\[room\] acceptance gate on \[Peer\] accept-reader: the accepter.s work since the hand-in has no passing run/,
   );
   await turnOf(lead, "l2", [], "DONE: one more constant, again");
   assert.doesNotMatch(dones(sup).at(-1)!, /acceptance gate/, "and it is said once");
+});
+
+test("a passing run of the brief's check by the accepter since the hand-in counts, in an earlier turn too; one before the hand-in does not", async () => {
+  const before = new Date(Date.now() - 60_000).toISOString();
+  const { lead, peer } = await handedIn("accept-earlier");
+  const later = (ms: number) => new Date(Date.now() + ms).toISOString();
+  const dated = (entry: object, timestamp: string, turnId: string) => ({ ...entry, timestamp, turnId });
+  const mail = { item: { type: "user_message", text: "<mail>REVIEW</mail>" } };
+  history(lead, [dated(shell("npm test", 0), before, "lead-0"), dated(mail, later(2000), "lead-2")]);
+  assert.match(noteOf((await accept(lead, peer, "Stale run.")).receipt), /no passing run of `npm test`/);
+  history(lead, [dated(shell("npm test", 0), later(1000), "lead-1"), dated(mail, later(2000), "lead-2")]);
+  assert.doesNotMatch(noteOf((await accept(lead, peer, "Run in the turn the candidate came.")).receipt), /`npm test`/);
+});
+
+test("a writer that works in a worktree of its project hands in the work there, whatever main does after", async () => {
+  const dir = parserRepo("accept-tree");
+  const sup = await seat("sup-accept-tree", "claude-supervisor", null, "[Supervisor] project", dir);
+  const lead = await seat("lead-accept-tree", "claude-lead", sup.agent.id, "[Lead] stream", dir);
+  const peer = await seat("peer-accept-tree", "claude-peer", lead.agent.id, "[Peer] accept-tree", dir);
+  history(peer, [{ item: { type: "user_message", text: BRIEF } }]);
+  await new Promise((resolve) => setTimeout(resolve, 300));
+  const tree = `${dir}-wt`;
+  rmSync(tree, { recursive: true, force: true });
+  git(dir, "worktree", "add", "-q", "-b", "peer/tree", tree);
+  appendFileSync(join(tree, "src", "parse.js"), "const n9 = 9;\n");
+  git(tree, "commit", "-qam", "one more constant");
+  const sha = git(tree, "rev-parse", "HEAD");
+  for (const turnId of ["t1", "t2"]) {
+    await call("on agent.turn_started", { agent: peer.agent, turnId }, context);
+    await call(
+      "on agent.turn_ended",
+      {
+        agent: peer.agent,
+        turnId,
+        outcome: { kind: "completed" },
+        timeline: [
+          { type: "assistant_message", text: `CANDIDATE: one more constant\ncommit ${sha.slice(0, 7)} on peer/tree` },
+        ],
+      },
+      context,
+    );
+  }
+  assert.match(candidates(lead)[0], /hand-in check over 1 file/);
+  writeFileSync(join(dir, "NOTES.md"), "main moves on\n");
+  git(dir, "add", "NOTES.md");
+  git(dir, "commit", "-qm", "main moves on");
+  history(lead, [shell("npm test", 0)]);
+  assert.doesNotMatch(noteOf((await accept(lead, peer)).receipt), /changed after it was handed in/);
+  assert.equal(accepts(peer.agent.id)[0]?.head, sha);
 });
 
 test("an ACCEPT on work that changed after it was handed in says so to its Lead", async () => {
@@ -379,7 +428,7 @@ test("when the gate blocks, an ACCEPT it finds a gap in is refused with the reas
     ).message,
   ).error;
   assert.equal(refused.code, "ACCEPT_UNPROVEN");
-  assert.match(refused.message, /the accepting turn has no passing run of `npm test`/);
+  assert.match(refused.message, /the accepter.s work since the hand-in has no passing run of `npm test`/);
   assert.deepEqual(refused.next, { tool: "seatwork_safety", args: { action: "copy", seat: peer.agent.id } });
   assert.equal(peer.inbox.length, before);
   assert.doesNotMatch(await peer.held(), /ACCEPT/);

@@ -15,7 +15,9 @@ const A = "/work/alpha";
 const B = "/work/beta";
 
 /** An operations district over its own folder, with seats placed in projects, a clock, and a mailbox. */
-function rig(options: { dir?: string; policy?: Record<string, unknown>; operators?: string[] } = {}) {
+function rig(
+  options: { dir?: string; policy?: Record<string, unknown>; operators?: string[]; registered?: string[] } = {},
+) {
   const state = {
     projects: { a1: A, a2: A, b1: B, hq: null } as Record<string, string | null>,
     tops: { [A]: "a1", [B]: "b1" } as Record<string, string>,
@@ -40,6 +42,7 @@ function rig(options: { dir?: string; policy?: Record<string, unknown>; operator
       projectOf: (seat) => state.projects[seat] ?? null,
       topSeat: (project) => state.tops[project] ?? null,
       lifted: async (project) => void lifted.push(project),
+      registered: (project) => options.registered?.includes(project) ?? false,
       labeler,
     },
   });
@@ -376,6 +379,19 @@ test("the operator may lower a cap and never raise one: not by a value, not by u
   tune("budget.default.dailyTurns", 400);
   assert.throws(() => tune("budget.default.dailyTurns", 500), /you may only lower it/);
   tune("budget.default.dailyUsd", 15);
+  ops.close();
+});
+
+test("a project the room registered can be capped by its operator before it spends anything", () => {
+  const fresh = "/work/fresh";
+  const { ops, policy } = rig({ registered: [fresh] });
+  readBudget(ops);
+  ops.act("hq-1", { do: "tune", path: `budget.projects[${fresh}].dailyUsd`, value: 100, ...GROUNDS });
+  assert.deepEqual((policy.budget as { projects: Record<string, unknown> }).projects[fresh], { dailyUsd: 100 });
+  assert.throws(
+    () => ops.act("hq-1", { do: "tune", path: "budget.projects[/work/unknown].dailyUsd", value: 3, ...GROUNDS }),
+    /no project \/work\/unknown/,
+  );
   ops.close();
 });
 

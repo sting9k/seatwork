@@ -24,6 +24,7 @@ interface BudgetDeps {
   raise(line: string, key: string): void;
   log(line: string): void;
   lifted(project: string): Promise<void>;
+  registered(project: string): boolean;
 }
 
 interface Cap {
@@ -155,9 +156,9 @@ export class Budget {
     return { usd: rounded(sums?.usd ?? 0), turns: sums?.turns ?? 0, byRole, cap: this.capOf(project) };
   }
 
-  /** Whether a project is one the room knows: it has a cap of its own, or it has spent. */
+  /** Whether a project is one the room knows: it is registered, has a cap of its own, or has spent. */
   knows(project: string): boolean {
-    return this.keyOf(project) !== null || this.deps.store.knowsProject(project);
+    return this.deps.registered(project) || this.keyOf(project) !== null || this.deps.store.knowsProject(project);
   }
 
   /** A seat is new: the first cost it reports counts whole. */

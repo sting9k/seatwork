@@ -150,7 +150,7 @@ export function reviewFindings(reviews: readonly ReviewMail[], head: string): { 
 
 /** The gaps between an ACCEPT and its turn, its hand-in, the reviews of its head and its waivers. */
 export function gapsOf(input: Acceptance): Gap[] {
-  const gaps = runGaps(input.wanted, input.events, "the accepting turn");
+  const gaps = runGaps(input.wanted, input.events, "the accepter's work since the hand-in");
   if (!input.handed?.head) gaps.push(gap("unhanded"));
   else if (input.now === null) gaps.push(gap("unreadWork"));
   else if (input.now !== input.handed.digest) gaps.push(gap("changed"));

@@ -12,7 +12,7 @@ import {
   type SeatUsage,
   type TurnEvent,
 } from "../host";
-import { latestTurn } from "./timeline";
+import { eventsSince, latestTurn } from "./timeline";
 import { PASEO_HOME, PASEO_SCHEDULES } from "../paths";
 import type { PaseoApi } from "./api";
 import { paseoCli } from "./cli";
@@ -279,10 +279,10 @@ export class PaseoHost implements Host {
     } else await paseoCli(["agent", "archive", agentId]);
   }
 
-  async turn(agentId: string, limit: number): Promise<TurnEvent[] | null> {
+  async turn(agentId: string, limit: number, since?: string): Promise<TurnEvent[] | null> {
     try {
       const page = await this.timeline(agentId, limit);
-      return latestTurn(page.entries);
+      return since === undefined ? latestTurn(page.entries) : eventsSince(page.entries, since);
     } catch {
       return null;
     }

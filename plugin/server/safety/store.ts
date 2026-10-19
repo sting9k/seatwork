@@ -39,11 +39,12 @@ interface SeatWork {
   verdictDigest: string | null;
 }
 
-/** The work a seat handed in: digest, HEAD (null when unread), and when. */
+/** The work a seat handed in: digest, HEAD (null when unread), when, and the folder it is in (null: where the seat started). */
 export interface HandedWork {
   digest: string;
   head: string | null;
   at: string;
+  cwd: string | null;
 }
 
 /** An ACCEPT the gate passed; `repo` is the git common folder, `base` the start. */
@@ -280,14 +281,15 @@ export class SafetyStore extends Sqlite {
     return this.row("SELECT cwd, start_head, started_at FROM seats WHERE agent_id = ?", agentId) ?? null;
   }
 
-  /** Keeps the work a seat hands in: digest, HEAD and time. */
-  noteHandIn(agentId: string, digest: string, head: string | null): void {
+  /** Keeps the work a seat hands in: digest, HEAD, time and the folder it is in. */
+  noteHandIn(agentId: string, digest: string, head: string | null, cwd: string | null = null): void {
     this.transaction("write", () =>
       this.run(
-        "UPDATE seats SET handed_digest = ?, handed_head = ?, handed_at = ? WHERE agent_id = ?",
+        "UPDATE seats SET handed_digest = ?, handed_head = ?, handed_at = ?, handed_cwd = ? WHERE agent_id = ?",
         digest,
         head,
         this.stamp(),
+        cwd,
         agentId,
       ),
     );
@@ -297,7 +299,7 @@ export class SafetyStore extends Sqlite {
   handedOf(agentId: string): HandedWork | null {
     return (
       this.row<HandedWork>(
-        "SELECT handed_digest AS digest, handed_head AS head, handed_at AS at FROM seats WHERE agent_id = ? AND handed_digest IS NOT NULL AND handed_at IS NOT NULL",
+        "SELECT handed_digest AS digest, handed_head AS head, handed_at AS at, handed_cwd AS cwd FROM seats WHERE agent_id = ? AND handed_digest IS NOT NULL AND handed_at IS NOT NULL",
         agentId,
       ) ?? null
     );

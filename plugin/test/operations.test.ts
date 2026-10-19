@@ -676,3 +676,27 @@ test("at most a batch of new incidents is asked in a minute, the oldest first", 
 test("the kinds an incident is read as are the labels the fork may answer, and no others", () => {
   assert.deepEqual(Object.keys(settings.incidentKinds), Object.keys(forkCatalog.forks.incident.question.criteria));
 });
+
+test("a minute that held the loop says how long its longest garbage collection took, and memory outside the heap is a measure of its own", async () => {
+  const MB = 1024 * 1024;
+  const vitals = new Vitals(
+    () => [],
+    () => ({}),
+    () => ({ heapUsed: 70 * MB, rss: 800 * MB, external: 610 * MB, arrayBuffers: 600 * MB }),
+    () => 286,
+  );
+  await new Promise((resolve) => setTimeout(resolve, 150));
+  for (const until = Date.now() + 400; Date.now() < until;);
+  await new Promise((resolve) => setTimeout(resolve, 150));
+  const [line] = vitals.minute();
+  vitals.close();
+  assert.match(
+    line,
+    /^room: the event loop was slow, held up to \d+ ms in the last minute; its longest garbage collection took 286 ms$/,
+  );
+  assert.notEqual(incidentOf(line), null);
+  const reading = vitals.reading() as { externalMb: number; buffersMb: number; trend: { name: string; now: number }[] };
+  assert.equal(reading.externalMb, 610);
+  assert.equal(reading.buffersMb, 600);
+  assert.ok(reading.trend.some((one) => one.name === "room external MB" && one.now === 610));
+});

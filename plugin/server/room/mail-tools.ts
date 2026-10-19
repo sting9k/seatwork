@@ -336,8 +336,12 @@ async function acceptanceGate(
   if (verdictOf(opening) !== "accepted" || traits(sender.role).briefs !== true) return null;
   const writers = [draft.to].flat().filter((seat) => room.engine.parentOf(seat) === sender.agentId);
   if (writers.length === 0) return null;
-  let read: Promise<readonly TurnEvent[] | null> | undefined;
-  const turn = (entries: number) => (read ??= room.host.turn(sender.agentId, entries));
+  const reads = new Map<string, Promise<readonly TurnEvent[] | null>>();
+  const turn = (entries: number, since?: string) => {
+    const key = `${entries}:${since ?? ""}`;
+    if (!reads.has(key)) reads.set(key, room.host.turn(sender.agentId, entries, since));
+    return reads.get(key)!;
+  };
   const text = `${draft.subject}\n${draft.body}`;
   const said: string[] = [];
   const up: string[] = [];

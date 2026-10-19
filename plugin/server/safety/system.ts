@@ -58,6 +58,37 @@ class Recent<T> {
 }
 
 const aliases = new Recent<string | null>(256, 60_000);
+const worktrees = new Map<string, { mtimeMs: number; trees: string[] }>();
+const WORKTREES_KEPT = 64;
+const WORKTREES_READ = 256;
+
+/** The other worktrees of a project's repository, as its `.git/worktrees/<name>/gitdir` files name them; read again when that folder changes. */
+export function worktreesOf(root: string | null): string[] {
+  if (!root) return [];
+  const dir = join(root, ".git", "worktrees");
+  let mtimeMs: number;
+  try {
+    mtimeMs = statSync(dir).mtimeMs;
+  } catch {
+    return [];
+  }
+  const known = worktrees.get(root);
+  if (known?.mtimeMs === mtimeMs) return known.trees;
+  const trees = readdirSync(dir)
+    .slice(0, WORKTREES_READ)
+    .flatMap((name) => {
+      try {
+        const gitdir = readFileSync(join(dir, name, "gitdir"), "utf8").trim();
+        return isAbsolute(gitdir) ? [dirname(gitdir)] : [];
+      } catch {
+        return [];
+      }
+    });
+  worktrees.delete(root);
+  if (worktrees.size >= WORKTREES_KEPT) worktrees.delete(worktrees.keys().next().value!);
+  worktrees.set(root, { mtimeMs, trees });
+  return trees;
+}
 const unchanged = new Recent<true>(256, 10_000);
 const commonDirs = new Recent<string | null>(256, 60_000);
 

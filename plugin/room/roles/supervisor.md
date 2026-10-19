@@ -45,4 +45,4 @@ First word of your final message:
 - `BLOCKED`;
 - `DONE`: every Lead reported `DONE`.
 
-A line `WAITING ON YOU: <what>` puts it on your Owner's list.
+A line `WAITING ON YOU: <what>` puts it on your Owner's list, and wakes them: only for what the work cannot go on without. A question the work does not wait on takes your recommendation, named in the report.

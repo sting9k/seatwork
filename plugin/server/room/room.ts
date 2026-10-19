@@ -18,6 +18,7 @@ import { enabledSeats, parseSeat } from "../orchestration/seats";
 import {
   CLAUDE_HOME,
   CODEX_HOME,
+  CONTROLS_DIR,
   JEV_DIR,
   KNOWLEDGE_DIR,
   OPENCODE_CONFIG_HOME,
@@ -180,6 +181,7 @@ function startSafety(
     guard: {
       paths: [ROOM_HOME, CLAUDE_HOME, CODEX_HOME, PI_HOME, OPENCODE_CONFIG_HOME, PASEO_HOME, ...pluginSource()],
       except: [SEAT_TMP_DIR, roomProjectDir()],
+      copies: [CONTROLS_DIR],
       secrets: secretsOf(PASEO_HOME, ROOM_HOME),
     },
     roomFolder: ROOM_FOLDER,

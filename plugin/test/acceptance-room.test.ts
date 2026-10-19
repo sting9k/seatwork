@@ -278,6 +278,27 @@ test("a DONE over an accepted file changed and left uncommitted says the task re
   assert.match(dones(sup)[0], /\[room\] done gate: task .* reopens: src\/parse\.js changed after its ACCEPT/);
 });
 
+test("a DONE over a task whose files a later ACCEPT changed holds both; an edit after the later ACCEPT still reopens it", async () => {
+  const { dir, sup, lead, peer } = await handedIn("done-later-accept");
+  history(lead, [shell("npm test", 0)]);
+  await accept(lead, peer);
+  const fixer = await seat("fixer-done-later-accept", "claude-peer", lead.agent.id, "[Peer] fix the constant", dir);
+  history(fixer, [{ item: { type: "user_message", text: BRIEF } }]);
+  await new Promise((resolve) => setTimeout(resolve, 300));
+  appendFileSync(join(dir, "src", "parse.js"), "const n10 = 10;\n");
+  git(dir, "commit", "-qam", "a fix the review asked for");
+  await handIn(fixer, "f1");
+  await handIn(fixer, "f2");
+  history(lead, [shell("npm test", 0)]);
+  await accept(lead, fixer);
+  appendFileSync(join(dir, "src", "parse.js"), "const n11 = 11;\n");
+  await turnOf(lead, "l1", [shell("npm test", 0).item], "DONE: two constants");
+  assert.match(dones(sup)[0], /reopens: src\/parse\.js changed after its ACCEPT/, "an edit after the later ACCEPT");
+  git(dir, "checkout", "-q", "--", "src/parse.js");
+  await turnOf(lead, "l2", [shell("npm test", 0).item], "DONE: two constants");
+  assert.doesNotMatch(dones(sup).at(-1)!, /reopens/, "the later ACCEPT holds the change");
+});
+
 test("a DONE over accepted work whose TEMPORARY line names no open issue says where, and one that names an open issue passes", async () => {
   const { dir, sup, lead, peer } = await briefed("done-temporary", {}, BRIEF, true);
   const issue = (

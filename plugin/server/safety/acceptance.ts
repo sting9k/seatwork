@@ -212,7 +212,7 @@ export async function doneGaps(
   const temporary = new Set<string>();
   for (let at = 0; at < open.length; at += PARALLEL)
     for (const found of await Promise.all(
-      open.slice(at, at + PARALLEL).map((accept) => heldIn(cwd, accept, head, backed)),
+      open.slice(at, at + PARALLEL).map((accept) => heldIn(cwd, accept, head, backed, open)),
     )) {
       if (found.gap) gaps.push(found.gap);
       for (const where of found.temporary) temporary.add(where);
@@ -221,19 +221,39 @@ export async function doneGaps(
   return { gaps, head };
 }
 
-/** What `head` holds of one accepted task: the gap when it lacks the accepted head or an accepted file changed, and the task's `TEMPORARY` lines still in it with no open issue, as `path:line`. */
+/** The newest accepted head after `accept`'s that holds it and that `head` holds: what its files are compared with, so a change a later ACCEPT covered is no reopen; its own head when none does. */
+async function latestHolding(
+  cwd: string,
+  accept: AcceptRow,
+  head: string,
+  open: readonly AcceptRow[],
+): Promise<string> {
+  const later = open.filter((other) => other.id > accept.id && other.head !== accept.head).sort((a, b) => b.id - a.id);
+  for (const other of later) {
+    const [holdsIt, inHead] = await Promise.all([
+      runGit(cwd, ["merge-base", "--is-ancestor", accept.head, other.head], GIT),
+      runGit(cwd, ["merge-base", "--is-ancestor", other.head, head], GIT),
+    ]);
+    if (holdsIt.code === 0 && inHead.code === 0) return other.head;
+  }
+  return accept.head;
+}
+
+/** What `head` holds of one accepted task: the gap when it lacks the accepted head or an accepted file changed since the newest ACCEPT that holds it, and the task's `TEMPORARY` lines still in it with no open issue, as `path:line`. */
 async function heldIn(
   cwd: string,
   accept: AcceptRow,
   head: string,
   backed: (line: string) => boolean,
+  open: readonly AcceptRow[],
 ): Promise<{ gap: Gap | null; temporary: string[] }> {
   const fill = { task: accept.task, head: accept.head.slice(0, 8) };
   const holds = await runGit(cwd, ["merge-base", "--is-ancestor", accept.head, head], GIT);
   if (holds.code !== 0) return { gap: gap(holds.code === 1 ? "missing" : "untold", fill), temporary: [] };
   const files = await changedBetween(cwd, accept.base, accept.head, []);
   const read = files?.slice(0, table.filesRead) ?? [];
-  const changed = files?.length ? await changedBetween(cwd, accept.head, null, read) : files;
+  const since = files?.length ? await latestHolding(cwd, accept, head, open) : accept.head;
+  const changed = files?.length ? await changedBetween(cwd, since, null, read) : files;
   const temporary = read.length ? ((await unbackedTemporary(cwd, accept.base, head, read, backed)) ?? []) : [];
   if (changed === null) return { gap: gap("untold", fill), temporary };
   return { gap: changed.length ? gap("altered", { ...fill, files: named(changed) }) : null, temporary };

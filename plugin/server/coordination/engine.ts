@@ -836,7 +836,7 @@ export class MailEngine implements Directory {
     };
   }
 
-  /** Mail for a seat that is gone is bounced, and each sender is told. */
+  /** Mail for a seat that is gone is bounced, and each sender that waited on an answer is told. */
   private async bounce(store: MailStore, agentId: string, queue: readonly Mail[]): Promise<void> {
     this.unsure.delete(agentId);
     this.spent.delete(agentId);
@@ -847,18 +847,16 @@ export class MailEngine implements Directory {
     );
     const who = this.seats.get(agentId);
     for (const mail of queue) {
-      if (mail.kind !== "to" || mail.senderRole === ROOM_SENDER.role || !this.seats.has(mail.sender)) continue;
-      // a sender that waited must learn no answer will come; one that asked nothing reads it later
-      const waited = mail.needs !== "nothing";
+      if (mail.kind !== "to" || mail.needs === "nothing" || mail.senderRole === ROOM_SENDER.role) continue;
+      if (!this.seats.has(mail.sender)) continue;
       await this.post({
         from: ROOM_SENDER,
         to: mail.sender,
-        priority: waited ? "action" : "fyi",
+        priority: "action",
         subject: `UNDELIVERABLE: #${mail.id} re: ${mail.subject}`.slice(0, config.subjectChars),
         body: `Your mail to ${who ? `${who.role} ${agentId}` : agentId} was not delivered: that seat is archived or gone. Nothing is waiting on it. If the work still matters, launch a new seat with the brief and what was tried.`,
         needs: "nothing",
         thread: mail.thread,
-        quiet: !waited,
       });
     }
   }

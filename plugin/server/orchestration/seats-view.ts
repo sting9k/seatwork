@@ -21,6 +21,27 @@ export interface SeatRow {
   rejected: number;
 }
 
+/** What the caller's project spent on the UTC day, in all and by role, beside its daily cap; a cap field left out is no cap. */
+export interface ProjectSpend {
+  usd: number;
+  turns: number;
+  byRole: { role: string; usd: number }[];
+  cap: { dailyUsd?: number; dailyTurns?: number } | null;
+}
+
+const turnsOf = (n: number) => `${n} turn${n === 1 ? "" : "s"}`;
+
+/** The line of what the caller's project spent today, beside its cap. */
+function spendLine(spend: ProjectSpend): string {
+  const caps = [
+    spend.cap?.dailyUsd !== undefined ? `$${spend.cap.dailyUsd.toFixed(2)}` : null,
+    spend.cap?.dailyTurns !== undefined ? turnsOf(spend.cap.dailyTurns) : null,
+  ].filter((cap) => cap !== null);
+  const roles = spend.byRole.map(({ role, usd }) => `${role} $${usd.toFixed(2)}`).join(", ");
+  const capped = caps.length ? `of a daily cap of ${caps.join(" and ")}` : "with no daily cap";
+  return `Your project spent $${spend.usd.toFixed(2)} over ${turnsOf(spend.turns)} today (UTC), ${capped}${roles ? `: ${roles}` : ""}.`;
+}
+
 const minutesSince = (at: string | null, now: number) =>
   at ? Math.max(0, Math.floor((now - Date.parse(at)) / 60_000)) : null;
 
@@ -38,9 +59,15 @@ function state(row: SeatRow, now: number): string {
   return rested === null ? "at rest" : `at rest for ${rested} min`;
 }
 
-/** One line per seat, nested by depth, under a head line that counts them. */
-export function describeSeats(rows: readonly SeatRow[], rotateAtTokens: number, now: number): string {
-  if (rows.length === 0) return "No seat you launched is open.";
+/** One line per seat, nested by depth, under a head line that counts them, and a last line of what the caller's project spent today. */
+export function describeSeats(
+  rows: readonly SeatRow[],
+  rotateAtTokens: number,
+  now: number,
+  spend: ProjectSpend | null = null,
+): string {
+  const spent = spend ? [spendLine(spend)] : [];
+  if (rows.length === 0) return ["No seat you launched is open.", ...spent].join("\n");
   const atWork = rows.filter((row) => row.status === "running" && !row.waiting).length;
   const lines = rows.map((row) => {
     const parts = [`${row.role} ${row.title ?? "(no title)"}`, row.agentId, state(row, now)];
@@ -71,5 +98,9 @@ export function describeSeats(rows: readonly SeatRow[], rotateAtTokens: number, 
       );
     return `${"  ".repeat(row.depth)}- ${parts.join(" · ")}`;
   });
-  return [`${rows.length} open seat${rows.length === 1 ? "" : "s"} under you, ${atWork} at work.`, ...lines].join("\n");
+  return [
+    `${rows.length} open seat${rows.length === 1 ? "" : "s"} under you, ${atWork} at work.`,
+    ...lines,
+    ...spent,
+  ].join("\n");
 }

@@ -14,6 +14,7 @@ const place: Place = {
   guard: {
     paths: ["/Users/u/.config/room"],
     except: ["/Users/u/.config/room/tmp"],
+    copies: ["/Users/u/.config/room/controls"],
     secrets: ["/Users/u/.paseo/local-credential", "/Users/u/.paseo/config.json", "/Users/u/.config/room/jev/"],
   },
   daemon: "127.0.0.1:6767",
@@ -68,7 +69,13 @@ const cases: [string, string[]][] = [
   ["git stash drop", ["discard:seat"]],
   ["git stash clear", ["discard:seat"]],
   ["git read-tree --reset -u HEAD", ["discard:seat"]],
-  ["git worktree remove --force ../wt", ["discard:seat"]],
+  ["git worktree remove --force .wt/a", ["discard:seat"]],
+  ["git worktree remove --force ../wt", ["discard:outside"]],
+  ["git worktree remove --force $TMPDIR/base", []],
+  ['git worktree remove --force "$TMPDIR/taskq-old"', []],
+  ["git worktree remove -f /Users/u/.config/room/tmp/abcd1234/review/head", []],
+  ['git -C "$TMPDIR/review" checkout ab4d37d -- .', []],
+  ["git -C $TMPDIR/review reset --hard", []],
   ["git branch -d old", []],
   ["git branch -D old", ["refs:seat"]],
   ["git branch -f main HEAD~3", ["refs:seat"]],
@@ -143,6 +150,9 @@ const cases: [string, string[]][] = [
   // the seat's own temporary folder is its to overwrite
   ["git show HEAD:src/parse.js > $TMPDIR/old_parse.js", []],
   ["echo x > /Users/u/.config/room/tmp/abcd1234/notes.txt", []],
+  ["C=/Users/u/.config/room/controls/20261019-031645/a1497241; mkdir -p $C/bench && cp bench/x.js $C/bench/", []],
+  ["rm -rf /Users/u/.config/room/controls/20261019-031645/a1497241-head/*", []],
+  ["rm -rf /Users/u/.config/room/controls", ["delete:room"]],
   ["echo x > /Users/u/.config/room/tmp/abcd1234/../../policy.json", ["overwrite:room"]],
   // a command word known only at run time is read as the rm it may be, behind a wrapper too
   ["env $CMD -rf /", ["delete:system"]],

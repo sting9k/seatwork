@@ -477,7 +477,7 @@
     },
     "seatwork_seats": {
       "callers": "spawners",
-      "description": "The open seats under you, one line each: role, title and id; its state and for how long; context held and cost; the signal its last turn ended with; the rejections of its task since its last ACCEPT; mail held for it and the answers it owes. A seat past {{rotate_k}}K tokens of context is marked for seatwork_rotate.",
+      "description": "The open seats under you, one line each: role, title and id; its state and for how long; context held and cost; the signal its last turn ended with; the rejections of its task since its last ACCEPT; mail held for it and the answers it owes; then what your project spent today, in all and by role, beside its daily cap. A seat past {{rotate_k}}K tokens of context is marked for seatwork_rotate.",
       "inputSchema": {
         "type": "object",
         "properties": {},

@@ -9,7 +9,8 @@ import assert from "node:assert/strict";
 import { before, test } from "node:test";
 import signals from "../shared/signals.json";
 import tools from "../shared/tools.json";
-import { ROLES } from "../shared/workflow";
+import { childrenOf, ROLES, routeOpen } from "../shared/workflow";
+import { asksOwner } from "../server/signals";
 import { HARNESSES, knownSpecs, rolePrompt } from "../server/orchestration/seats";
 import { loadPolicy } from "../server/policy";
 import { launch } from "../server/room/launch";
@@ -32,6 +33,17 @@ test("every role's prompt on every agent CLI is filled in and names only the roo
       assert.ok(known.has(name), `${role} on ${harness} names ${name}, which the room does not serve`);
       assert.equal(refusedCaller(name, role), null, `${role} is told of ${name}, which it may not call`);
     }
+  }
+});
+
+test("a role whose final message only a person reads is shown the line that puts a wait on that person's list", () => {
+  const readByPerson = (role: string) =>
+    ROLES.every((owner) => !childrenOf(owner).includes(role) || !routeOpen(role, owner));
+  for (const { role, harness, text } of prompts().filter(({ role }) => readByPerson(role))) {
+    const shown = [...text.matchAll(/`(WAITING ON YOU:[^`]*)`/g)].map((match) => match[1]);
+    assert.ok(shown.length > 0, `${role} on ${harness} is never shown the wait line`);
+    for (const line of shown)
+      assert.equal(asksOwner(`Report.\n${line.replace(/<[^>]*>/g, "the answer")}`), "WAITING ON YOU", line);
   }
 });
 

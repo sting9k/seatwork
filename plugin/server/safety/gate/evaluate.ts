@@ -5,7 +5,7 @@ import { languageOf } from "./embedded";
 import { Findings } from "./findings";
 import { baseName, invocationOf, valueWord, type Invocation } from "./normalize";
 import { absolute, homeOf, isTemp, substitution, valueOf, within } from "./paths";
-import { whereOfPath } from "./places";
+import { whereOf, whereOfPath } from "./places";
 import { SHELLS, stdinText } from "./programs";
 import { gitEffects, givesProgram, PROGRAM_VARIABLES, type GitTools } from "./rules/git";
 import { namesDriver, ATTRIBUTES_FILE } from "./rules/attributes";
@@ -661,9 +661,11 @@ class Walk implements Reader {
     if (name === "git" || name?.startsWith("git-")) {
       const outcome = await gitEffects(scene, this.tools);
       const repo = outcome.repo === null ? "outside" : whereOfPath(outcome.repo, this.place);
+      const inRepo = { ...this.known(state), cwd: outcome.repo };
       for (const hit of outcome.hits)
         if ("id" in hit) this.out.named(hit.id, scene.text, hit.detail);
-        else this.out.effect(hit.effect, repo, scene.text, hit.detail);
+        else
+          this.out.effect(hit.effect, hit.at ? whereOf(valueOf(hit.at, inRepo), inRepo) : repo, scene.text, hit.detail);
       for (const doubt of outcome.doubts) this.out.doubt(doubt, scene.text);
       if (outcome.changes) this.noteChange(null, { ...this.known(state), cwd: outcome.changes });
       if (

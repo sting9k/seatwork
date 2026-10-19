@@ -179,6 +179,89 @@ const JOINED_BRIEF = (issue) =>
     Output: "CANDIDATE with the commit",
   });
 
+/** A Peer under the seat hands in 1h30m committed on the base, twice as the room asks a first hand-in back, its turns carrying the brief `briefFor` writes for the issue. */
+async function handsInJoined(api, ctx, briefFor = () => "the brief") {
+  const lead = ctx.handle("seat");
+  ctx.issue = JSON.parse(
+    (
+      await lead.call("seatwork_work", {
+        do: "create",
+        title: "Accept 1h30m",
+        write_scope: "src/parse.js test/parse.test.js",
+        acceptance_criteria: "`npm test`",
+      })
+    ).text,
+  ).id;
+  const peer = await api.seat("peer", "claude-peer", "[Peer] joined durations", "seat");
+  await peer.call("seatwork_work", { do: "claim", id: ctx.issue });
+  fs.writeFileSync(`${ctx.project}/src/parse.js`, PARSE_JOINED);
+  fs.writeFileSync(`${ctx.project}/test/parse.test.js`, TESTS_JOINED);
+  const run = (command) =>
+    String(
+      require("node:child_process").execFileSync("/bin/sh", ["-c", command], {
+        cwd: ctx.project,
+        env: {
+          ...process.env,
+          GIT_AUTHOR_NAME: "p",
+          GIT_AUTHOR_EMAIL: "p@example.test",
+          GIT_COMMITTER_NAME: "p",
+          GIT_COMMITTER_EMAIL: "p@example.test",
+        },
+      }),
+    ).trim();
+  run("git add -A && git commit -qm 'Accept 1h30m'");
+  ctx.sha = run("git rev-parse --short HEAD");
+  for (let pass = 0; pass < 2; pass += 1)
+    await api.turnEnds(
+      "peer",
+      `CANDIDATE: parseDuration accepts 1h30m\ncommit ${ctx.sha} on the base; src/parse.js, test/parse.test.js\n\`npm test\`: 2 pass`,
+      [
+        { name: "Edit", input: { file_path: `${ctx.project}/src/parse.js` } },
+        { name: "Edit", input: { file_path: `${ctx.project}/test/parse.test.js` } },
+        { name: "Bash", input: { command: "npm test" } },
+        { name: "Bash", input: { command: "git add -A && git commit -qm 'Accept 1h30m'" } },
+      ],
+      briefFor(ctx.issue),
+    );
+}
+
+/** The Lead's answer to the joined-durations candidate: rerun the check, ACCEPT, close the issue. */
+const acceptsJoined = (ctx) => ({
+  steps: [
+    { shell: "npm test" },
+    {
+      tool: "seatwork_mail",
+      args: {
+        to: ctx.seats.peer,
+        subject: `ACCEPT ${ctx.sha}: npm test passes on the head`,
+        body: "Reran `npm test` on the head: 2 pass.",
+        needs: "nothing",
+      },
+    },
+    {
+      tool: "seatwork_work",
+      args: { do: "close", id: ctx.issue, reason: `accepted at ${ctx.sha}: npm test passes, 2 tests` },
+    },
+  ],
+  final: `DONE: joined durations accepted\n- joined durations: accepted at ${ctx.sha} — ACCEPTED\nEvidence: npm test passes on the integrated head`,
+});
+
+/** The joined-durations brief with each label alone on its line, as a heading or in bold, with no colon. */
+const HEADING_BRIEF = (issue) =>
+  [
+    "Outcome",
+    "parseDuration accepts hours and minutes together, such as 1h30m",
+    "",
+    "## Write scope",
+    "src/parse.js, test/parse.test.js",
+    "",
+    "**Acceptance evidence**",
+    "`npm test` passes with a test for 1h30m",
+    "",
+    "Output",
+    `CANDIDATE with the commit; issue ${issue}`,
+  ].join("\n");
+
 module.exports = [
   // ---- Peer
   {
@@ -876,61 +959,7 @@ module.exports = [
     rule: "room/roles/lead.md, Answer every Peer: a candidate whose check passes on its head is ACCEPT, and the Lead closes the issue",
     files: FILES,
     arrange: (api) => api.seat("supervisor", "claude-supervisor", "[Supervisor] durations"),
-    before: async (api, ctx) => {
-      const lead = ctx.handle("seat");
-      ctx.issue = JSON.parse(
-        (
-          await lead.call("seatwork_work", {
-            do: "create",
-            title: "Accept 1h30m",
-            write_scope: "src/parse.js test/parse.test.js",
-            acceptance_criteria: "`npm test`",
-          })
-        ).text,
-      ).id;
-      const peer = await api.seat("peer", "claude-peer", "[Peer] joined durations", "seat");
-      await peer.call("seatwork_work", { do: "claim", id: ctx.issue });
-      const fs = require("node:fs");
-      const { execFileSync } = require("node:child_process");
-      fs.writeFileSync(`${ctx.project}/src/parse.js`, PARSE_JOINED);
-      fs.writeFileSync(`${ctx.project}/test/parse.test.js`, TESTS_JOINED);
-      const run = (command) =>
-        String(
-          execFileSync("/bin/sh", ["-c", command], {
-            cwd: ctx.project,
-            env: {
-              ...process.env,
-              GIT_AUTHOR_NAME: "p",
-              GIT_AUTHOR_EMAIL: "p@example.test",
-              GIT_COMMITTER_NAME: "p",
-              GIT_COMMITTER_EMAIL: "p@example.test",
-            },
-          }),
-        ).trim();
-      run("git add -A && git commit -qm 'Accept 1h30m'");
-      ctx.sha = run("git rev-parse --short HEAD");
-      await api.turnEnds(
-        "peer",
-        `CANDIDATE: parseDuration accepts 1h30m\ncommit ${ctx.sha} on the base; src/parse.js, test/parse.test.js\n\`npm test\`: 2 pass`,
-        [
-          { name: "Edit", input: { file_path: `${ctx.project}/src/parse.js` } },
-          { name: "Edit", input: { file_path: `${ctx.project}/test/parse.test.js` } },
-          { name: "Bash", input: { command: "npm test" } },
-          { name: "Bash", input: { command: "git add -A && git commit -qm 'Accept 1h30m'" } },
-        ],
-      );
-      // the room hands a first hand-in back once for a pass with fresh eyes; the second goes up
-      await api.turnEnds(
-        "peer",
-        `CANDIDATE: parseDuration accepts 1h30m\ncommit ${ctx.sha} on the base; src/parse.js, test/parse.test.js\n\`npm test\`: 2 pass`,
-        [
-          { name: "Edit", input: { file_path: `${ctx.project}/src/parse.js` } },
-          { name: "Edit", input: { file_path: `${ctx.project}/test/parse.test.js` } },
-          { name: "Bash", input: { command: "npm test" } },
-          { name: "Bash", input: { command: "git add -A && git commit -qm 'Accept 1h30m'" } },
-        ],
-      );
-    },
+    before: (api, ctx) => handsInJoined(api, ctx),
     prompt: (ctx) => ctx.delivered(),
     grades: [
       g.ran(/npm (run )?test|node --test/, "reruns the acceptance check"),
@@ -948,25 +977,40 @@ module.exports = [
       ],
       final: "STATUS: seen the candidate",
     }),
-    script: (ctx) => ({
+    script: acceptsJoined,
+  },
+  {
+    name: "lead-accepts-a-heading-brief",
+    role: "lead",
+    title: "[Lead] joined durations",
+    owner: "supervisor",
+    rule: "plugin/server/orchestration/brief.ts: a brief whose labels stand alone as headings is read like one with colons, so the ACCEPT is checked by the command its acceptance evidence quotes",
+    files: FILES,
+    arrange: (api) => api.seat("supervisor", "claude-supervisor", "[Supervisor] durations"),
+    before: (api, ctx) => handsInJoined(api, ctx, HEADING_BRIEF),
+    prompt: (ctx) => ctx.delivered(),
+    grades: [
+      g.ran(/npm (run )?test|node --test/, "reruns the acceptance check"),
+      g.room("ACCEPT goes to the Peer", (room) => mailed(room, "seat", "peer", "ACCEPT")),
+      g.room("the room keeps the ACCEPT with the check the brief's heading names", (room) =>
+        room.accepts.some((one) => one.writer === room.seats.peer && one.commands.includes("npm test")),
+      ),
+    ],
+    wrong: (ctx) => ({
       steps: [
-        { shell: "npm test" },
         {
           tool: "seatwork_mail",
           args: {
             to: ctx.seats.peer,
-            subject: `ACCEPT ${ctx.sha}: npm test passes on the head`,
-            body: "Reran `npm test` on the head: 2 pass.",
+            subject: `ACCEPT ${ctx.sha}: looks right`,
+            body: "Read the diff.",
             needs: "nothing",
           },
         },
-        {
-          tool: "seatwork_work",
-          args: { do: "close", id: ctx.issue, reason: `accepted at ${ctx.sha}: npm test passes, 2 tests` },
-        },
       ],
-      final: `DONE: joined durations accepted\n- joined durations: accepted at ${ctx.sha} — ACCEPTED\nEvidence: npm test passes on the integrated head`,
+      final: `DONE: joined durations accepted at ${ctx.sha}`,
     }),
+    script: acceptsJoined,
   },
   {
     name: "lead-escalates-an-outside-effect",
@@ -1472,7 +1516,7 @@ module.exports = [
         { tool: "seatwork_room", args: { do: "log", district: "room", q: "guard failed" } },
       ],
       final:
-        "Opened a trace on the guard incident. The log shows one parse failure on a hook call; I will read it again before I change anything.\nhq: 1 incidents open, 1 traces open, 0 changes today, waiting on: nothing",
+        "Opened a trace on the guard incident. The log shows one parse failure on a hook call; I will read it again before I change anything.\nhq: 1 incidents open, 1 traces open, 0 changes today",
     }),
   },
   {
@@ -1514,7 +1558,7 @@ module.exports = [
     script: () => ({
       steps: [{ tool: "seatwork_room", args: { do: "skill", action: "list" } }],
       final:
-        "I have not added a skill. This is one failure, and a skill exists only for a failure the room has seen twice that code cannot prevent. If a second long report comes, tell me and I will add it then.\nhq: 0 incidents open, 0 traces open, 0 changes today, waiting on: you",
+        "I have not added a skill. This is one failure, and a skill exists only for a failure the room has seen twice that code cannot prevent. If a second long report comes, tell me and I will add it then.\nhq: 0 incidents open, 0 traces open, 0 changes today",
     }),
   },
 ];

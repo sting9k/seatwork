@@ -77,7 +77,7 @@ test("mail posted while a delivery waits for the recipient's status is not lost"
   assert.deepEqual(held(engine, id.lead), []);
 });
 
-test("mail to a seat the daemon no longer has is bounced, and a sender that waited is told", async () => {
+test("mail to a seat the daemon no longer has is bounced; a sender that waited is told, one that asked nothing is not", async () => {
   const id = names("lead", "peer", "gone");
   const lead = listener();
   const engine = engineOver({ [id.lead]: lead.handle });
@@ -88,11 +88,11 @@ test("mail to a seat the daemon no longer has is bounced, and a sender that wait
   );
   assert.equal(engine.storeOf(id.gone)!.deliveries(asked.id)[0].state, "bounced");
   assert.match(lead.got[0], new RegExp(`subject="UNDELIVERABLE: #${asked.id} re: ANSWER: use v2"`));
-  // one that asked nothing reads the notice with its next mail
-  await engine.post(mail(id.gone, "FYI: nothing to do", { from: { agentId: id.lead, role: "lead" } }));
+  // a mail that asks nothing loses nothing its sender waits on: it is kept as bounced, and no notice costs the sender's next turn
+  const noted = await engine.post(mail(id.gone, "NOTED: thanks", { from: { agentId: id.lead, role: "lead" } }));
+  assert.equal(engine.storeOf(id.gone)!.deliveries(noted.id)[0].state, "bounced");
   assert.equal(lead.got.length, 1);
-  assert.equal(held(engine, id.lead).length, 1);
-  assert.equal(held(engine, id.lead)[0].quiet, true);
+  assert.deepEqual(held(engine, id.lead), []);
 });
 
 test("a failed status read, or a seat still opening, holds the mail; any seat a message can start takes it", async () => {

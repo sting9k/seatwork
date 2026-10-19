@@ -697,6 +697,17 @@ export class Operations {
     }
   }
 
+  /** What the project of a seat spent today and its cap; null when the seat has no project or the store cannot be read. */
+  projectDay(seat: string): ReturnType<Budget["projectDay"]> | null {
+    const project = this.deps.projectOf?.(seat);
+    if (!project) return null;
+    try {
+      return this.budget.projectDay(project);
+    } catch {
+      return null;
+    }
+  }
+
   /** Why a project takes no new seat now, or null. */
   holdsProject(project: string | null): string | null {
     try {

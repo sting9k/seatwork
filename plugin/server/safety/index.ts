@@ -43,7 +43,7 @@ export interface SafetyDeps {
   projectOf(agentId: string): string | null;
   isAncestor(ancestor: string, agentId: string): boolean;
   tmpOf(agentId: string): string;
-  guard: { paths: string[]; except: string[]; secrets?: readonly string[] };
+  guard: { paths: string[]; except: string[]; copies?: readonly string[]; secrets?: readonly string[] };
   roomFolder: string;
   decider: Decider | null;
   log(message: string): void;

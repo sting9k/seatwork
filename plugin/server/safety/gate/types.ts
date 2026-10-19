@@ -22,13 +22,13 @@ export interface Doubt {
   text: string;
 }
 
-/** The machine around a command: the seat's temp and start folders, the room's files no seat writes (save `except`) and the secrets none reads, its folder in each project, and the daemon's address. */
+/** The machine around a command: the seat's temp and start folders, the room's files no seat writes (save `except`, and `copies`, the copies of a project it builds for any seat, where nothing is lost) and the secrets none reads, its folder in each project, and the daemon's address. */
 export interface Place {
   home: string;
   project: string | null;
   tmp: string | null;
   start: string | null;
-  guard: { paths: string[]; except: string[]; secrets?: readonly string[] } | null;
+  guard: { paths: string[]; except: string[]; copies?: readonly string[]; secrets?: readonly string[] } | null;
   roomFolder: string | null;
   daemon?: string | null;
 }

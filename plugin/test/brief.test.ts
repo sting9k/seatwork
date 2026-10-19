@@ -47,3 +47,40 @@ test("a brief label may carry a note in brackets, and a write scope ends at its 
   assert.equal(fields.nonGoals, "tables");
   assert.equal(fields.acceptance, "- `npm test`");
 });
+
+test("a brief whose labels stand alone on their lines, as headings with no colon, is read like one with colons", () => {
+  const fields = briefFields(
+    [
+      "Issue: sw-1ni.1 (claim it with seatwork_work).",
+      "",
+      "Outcome",
+      "src/ exports createQueue as SPEC.md states.",
+      "",
+      "Write scope",
+      "src/, test/lib/",
+      "",
+      "## Non-goals",
+      "The CLI; README edits.",
+      "",
+      "**Acceptance evidence**",
+      "- `npm test` exits 0 on your commit.",
+      "- A table mapping every rule to its test.",
+      "",
+      "Output",
+      "CANDIDATE with the commit",
+    ].join("\n"),
+  );
+  assert.equal(fields.outcome, "src/ exports createQueue as SPEC.md states.");
+  assert.equal(fields.writeScope, "src/, test/lib/");
+  assert.equal(fields.nonGoals, "The CLI; README edits.");
+  assert.equal(fields.acceptance, "- `npm test` exits 0 on your commit.\n- A table mapping every rule to its test.");
+  assert.equal(fields.output, "CANDIDATE with the commit");
+  assert.deepEqual(quotedCommands(fields.acceptance ?? ""), ["npm test"]);
+});
+
+test("a line that only names a label inside prose stays prose", () => {
+  const fields = briefFields(
+    ["Outcome: the parser accepts 1h30m", "The outcome of this is clear.", "Context matters here"].join("\n"),
+  );
+  assert.equal(fields.outcome, "the parser accepts 1h30m\nThe outcome of this is clear.\nContext matters here");
+});

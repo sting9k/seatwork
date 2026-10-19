@@ -105,7 +105,7 @@ function standInPaseo() {
       if (agents.has(id)) agents.get(id).archivedAt = at;
       return { archivedAt: at };
     },
-    timeline: { refetch: async () => ({ entries: [] }) },
+    timeline: { refetch: async () => ({ entries: (LIVE.get(id)?.() ?? []).map((item) => ({ item })) }) },
   });
   const paseo = {
     agents: {
@@ -145,7 +145,7 @@ function standInPaseo() {
   return { agents, sent, context: { paseo } };
 }
 
-/** What the room holds after the turn: its mail with who each went to, its issues and what each depends on, what Paseo was asked to send each agent, and the agents the seat created. */
+/** What the room holds after the turn: its mail with who each went to, its issues and what each depends on, the ACCEPTs it kept with the checks each named, what Paseo was asked to send each agent, and the agents the seat created. */
 function roomNow(stand, created, seats) {
   const rows = (file, sql) => {
     if (!fs.existsSync(file)) return [];
@@ -171,6 +171,10 @@ function roomNow(stand, created, seats) {
       join(PROJECT, ".seatwork", ".work", "work.db"),
       "SELECT issue_id, depends_on_id, type FROM dependencies ORDER BY issue_id, depends_on_id",
     ),
+    accepts: rows(
+      join(HOME, "safety", "safety.db"),
+      "SELECT accepter, writer, head, commands FROM accepts ORDER BY id",
+    ).map((one) => ({ ...one, commands: JSON.parse(one.commands) })),
     sent: Object.fromEntries([...stand.sent].map(([id, texts]) => [id, texts])),
     created,
   };
@@ -193,8 +197,11 @@ function projectNow(base) {
   };
 }
 
-/** Runs a harness's process in the project, its events kept line by line, cut at the run's time or once a dry run's endpoint has its first model call. */
-function harnessProcess(command, argv, env) {
+/** The turn under way of the seat under test, as its timeline reads now: the room reads it mid-turn, as it reads Paseo's. */
+const LIVE = new Map();
+
+/** Runs a harness's process in the project, its events kept line by line in `events`, cut at the run's time or once a dry run's endpoint has its first model call. */
+function harnessProcess(command, argv, env, events = []) {
   return new Promise((done) => {
     const child = spawn(command, argv, { cwd: PROJECT, env, stdio: ["ignore", "pipe", "pipe"], detached: true });
     const kill = () => {
@@ -205,7 +212,6 @@ function harnessProcess(command, argv, env) {
       }
     };
     if (dry) dry.stop = kill;
-    const events = [];
     let buffer = "";
     const out = fs.createWriteStream(join(outDir, "events.jsonl"));
     const err = fs.createWriteStream(join(outDir, "stderr.txt"));
@@ -280,20 +286,17 @@ async function runClaude(seat, prompt, paseoServer) {
     "--max-budget-usd",
     String(run.budget),
   ];
-  const { events, code } = await harnessProcess(
+  const events = [];
+  LIVE.set(seat.id, () => [{ type: "user_message", text: prompt }, ...claudeCalls(events).map(itemOf)]);
+  const { code } = await harnessProcess(
     "claude",
     argv,
     claudeEnv({ ...process.env, ...seat.env, ...(dry ? { ANTHROPIC_BASE_URL: dry.url } : {}) }),
+    events,
   );
-  const calls = [];
-  let result = null;
+  const calls = claudeCalls(events);
+  const result = events.findLast((event) => event.type === "result") ?? null;
   const init = events.find((event) => event.type === "system" && event.subtype === "init") ?? null;
-  for (const event of events) {
-    if (event.type === "assistant")
-      for (const block of event.message?.content ?? [])
-        if (block.type === "tool_use") calls.push({ name: block.name, input: block.input });
-    if (event.type === "result") result = event;
-  }
   return {
     finished: !!result && !result.is_error,
     exit: code,
@@ -309,6 +312,40 @@ async function runClaude(seat, prompt, paseoServer) {
       model: init.model,
     },
   };
+}
+
+/** The calls of a Claude turn from its stream so far; a shell run's exit is 1 when its result is an error, null while it runs. */
+function claudeCalls(events) {
+  const failed = new Map();
+  for (const event of events)
+    if (event.type === "user")
+      for (const block of event.message?.content ?? [])
+        if (block.type === "tool_result") failed.set(block.tool_use_id, block.is_error === true);
+  return events.flatMap((event) =>
+    event.type === "assistant"
+      ? (event.message?.content ?? [])
+          .filter((block) => block.type === "tool_use")
+          .map((block) => ({
+            name: block.name,
+            input: block.input,
+            exitCode: failed.has(block.id) ? Number(failed.get(block.id)) : null,
+          }))
+      : [],
+  );
+}
+
+/** The calls of a Codex turn from its stream so far, a shell run with its exit code. */
+function codexCalls(events) {
+  return events.flatMap((event) => {
+    const item = event.type === "item.completed" ? (event.item ?? {}) : {};
+    if (item.type === "mcp_tool_call")
+      return [{ name: `mcp__${item.server}__${item.tool}`, input: item.arguments ?? {} }];
+    if (item.type === "command_execution")
+      return [{ name: "Bash", input: { command: item.command }, exitCode: item.exit_code ?? null }];
+    if (item.type === "file_change")
+      return [{ name: "Edit", input: { file_path: (item.changes ?? []).map((one) => one.path).join(" ") } }];
+    return [];
+  });
 }
 
 /** The environment a Claude seat logs in with: on a spending run, as a real seat, the terminal's sign-in in the user's ~/.claude, so a token or key the run inherits is dropped (the seat keeps no session there: --no-session-persistence); on a dry run, a Claude folder of the run's own and a fake key, whose calls go nowhere. */
@@ -435,40 +472,38 @@ async function runCodex(seat, prompt, paseoServer) {
     prompt,
   ];
   write(join(outDir, "codex-argv.json"), JSON.stringify(argv, null, 2));
-  const { events, code } = await harnessProcess("codex", argv, { ...process.env, ...seat.env });
-  const calls = [];
+  const events = [];
+  LIVE.set(seat.id, () => [{ type: "user_message", text: prompt }, ...codexCalls(events).map(itemOf)]);
+  const { code } = await harnessProcess("codex", argv, { ...process.env, ...seat.env }, events);
+  const calls = codexCalls(events);
   let final = "";
   let usage = null;
   let failed = false;
   for (const event of events) {
     if (event.type === "turn.completed") usage = event.usage ?? null;
     if (event.type === "turn.failed") failed = true;
-    if (event.type !== "item.completed") continue;
-    const item = event.item ?? {};
-    if (item.type === "mcp_tool_call")
-      calls.push({ name: `mcp__${item.server}__${item.tool}`, input: item.arguments ?? {} });
-    else if (item.type === "command_execution") calls.push({ name: "Bash", input: { command: item.command } });
-    else if (item.type === "file_change")
-      calls.push({ name: "Edit", input: { file_path: (item.changes ?? []).map((one) => one.path).join(" ") } });
-    else if (item.type === "agent_message") final = String(item.text ?? "");
+    if (event.type === "item.completed" && event.item?.type === "agent_message") final = String(event.item.text ?? "");
   }
   const init = dry?.request ? { offered: offered(dry.request) } : null;
   return { finished: !!usage && !failed, exit: code, cost: null, calls, final, ...(init ? { init } : {}) };
 }
 
 /** A scripted seat, its right turn or its wrong one, run against the real room: a case is proved, its graders seen red, with no model. */
-async function runScript(seat, ctx, paseo) {
+async function runScript(seat, ctx, paseo, prompt) {
   const script = (run.harness === "wrong" ? c.wrong : c.script)?.(ctx);
   if (!script) throw new Error(`${c.name} has no ${run.harness} turn`);
   const calls = [];
+  LIVE.set(seat.id, () => [{ type: "user_message", text: prompt }, ...calls.map(itemOf)]);
   const state = { kept: {} };
   for (const step of script.steps) {
     if (step.shell) {
       const command = typeof step.shell === "function" ? step.shell(state) : step.shell;
-      calls.push({ name: "Bash", input: { command } });
+      const call = { name: "Bash", input: { command }, exitCode: 0 };
+      calls.push(call);
       try {
         execFileSync("/bin/sh", ["-c", command], { cwd: PROJECT, env: { ...process.env, ...GIT_ENV }, stdio: "pipe" });
       } catch (error) {
+        call.exitCode = error.status ?? 1;
         if (!step.mayFail) throw new Error(`script step failed: ${command}: ${error.stderr ?? error.message}`);
       }
     } else if (step.edit) {
@@ -489,13 +524,17 @@ async function runScript(seat, ctx, paseo) {
   return { finished: true, exit: 0, cost: 0, calls, final: script.final };
 }
 
-/** A timeline item for each call, as Paseo records a turn: shell runs, file changes, other tools by name. */
+/** A timeline item for each call, as Paseo records a turn: shell runs with their exit when known, file changes, other tools by name. */
 function itemOf(call) {
   if (call.name === "Bash")
     return {
       type: "tool_call",
-      status: "completed",
-      detail: { type: "shell", command: String(call.input?.command ?? "") },
+      status: call.exitCode === null ? "running" : "completed",
+      detail: {
+        type: "shell",
+        command: String(call.input?.command ?? ""),
+        ...(typeof call.exitCode === "number" ? { exitCode: call.exitCode } : {}),
+      },
     };
   if (/^(Edit|Write|MultiEdit)$/.test(call.name))
     return {
@@ -641,9 +680,9 @@ async function main() {
         return opened[name];
       },
       // a fixture seat's turn ends as Paseo tells the room: its prompt, its calls, its last words
-      turnEnds: async (name, final, calls = []) => {
+      turnEnds: async (name, final, calls = [], prompt = "the brief") => {
         const timeline = [
-          { type: "user_message", text: "the brief" },
+          { type: "user_message", text: prompt },
           ...calls.map(itemOf),
           { type: "assistant_message", text: final },
         ];
@@ -687,7 +726,7 @@ async function main() {
     // what the seat changed is read from the head it starts its turn on
     const turnBase = git("rev-parse", "HEAD");
     const done = scripted
-      ? await runScript(under, ctx, paseoTool)
+      ? await runScript(under, ctx, paseoTool, prompt)
       : run.harness === "codex"
         ? await runCodex(under, prompt, paseoServer)
         : await runClaude(under, prompt, paseoServer);

@@ -101,3 +101,23 @@ test("a worktree of a held project outside its folder starts no seat; a cap the 
   await call("before agent.create", createRequest("claude-peer", capped), context);
   await call("before agent.create", createRequest("claude-peer", outside), context);
 });
+
+test("an orchestrating seat reads what its project spent today, in all and by role, beside its daily cap", async () => {
+  const read = project("budget-read");
+  editPolicy((policy) => void (policy.budget.projects[read] = { dailyUsd: 50, dailyTurns: 400 }));
+  mock.timers.tick(60_000);
+  await settle();
+  const lead = await seat("lead-read", "claude-lead", null, "[Lead] read", read);
+  const peer = await seat("peer-read", "claude-peer", "lead-read", "[Peer] read", read);
+  const spend = async () => (await lead.call("seatwork_seats", {})).split("\n").at(-1);
+  assert.equal(
+    await spend(),
+    "Your project spent $0.00 over 0 turns today (UTC), of a daily cap of $50.00 and 400 turns.",
+  );
+  await peer.endsTurn("DONE: a pass.", 2.5);
+  await lead.endsTurn("DONE: the plan stands.", 0.75);
+  assert.equal(
+    await spend(),
+    "Your project spent $3.25 over 2 turns today (UTC), of a daily cap of $50.00 and 400 turns: peer $2.50, lead $0.75.",
+  );
+});

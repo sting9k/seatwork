@@ -1,7 +1,7 @@
 import "./support/room";
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { familyOf, fitSeat, type Models } from "../server/orchestration/models";
+import { familyOf, fitSeat, promptVars, type Models } from "../server/orchestration/models";
 
 test("a project's model table matches a model id whole, slashes included", () => {
   const seat = { provider: "claude-lead/opus", thinking: "high" };
@@ -43,4 +43,24 @@ test("a model's family is read from the parts of its id, and from its agent CLI 
   ];
   for (const [model, harness, family] of cases)
     assert.equal(familyOf(model, harness), family, `${model} on ${harness}`);
+});
+
+test("the models a seat creates from carry the mode each takes, since Paseo refuses a create with none before the room can set one", () => {
+  const table: Models = {
+    seats: {
+      hq: { provider: "claude-hq/opus", thinking: "high" },
+      supervisor: { provider: "claude-supervisor/opus", thinking: "high" },
+      lead: { provider: "claude-lead/opus", thinking: "high", alternatives: ["codex-lead/sol"] },
+    },
+    peer: {
+      tiers: {
+        default: { providers: ["claude-peer/sonnet", "pi-peer/glm"], thinking: "high", use: "work", never: "—" },
+      },
+    },
+    modes: { claude: "bypassPermissions", codex: "full-access", pi: null, opencode: "build" },
+  };
+  const vars = promptVars(table, { mailChars: 4000 });
+  assert.equal(vars.lead_mode, "`bypassPermissions`");
+  assert.equal(vars.lead_alternatives, "`codex-lead/sol` (`full-access`)");
+  assert.match(vars.peer_table, /`claude-peer\/sonnet` \(`bypassPermissions`\) · `pi-peer\/glm` \(no mode\)/);
 });

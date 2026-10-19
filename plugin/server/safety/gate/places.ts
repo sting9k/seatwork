@@ -45,7 +45,8 @@ function gitWhere(inside: string[]): Where {
 /** The place of an absolute path. */
 export function whereOfPath(path: string, place: Place): Where | null {
   const norm = posix.normalize(path).replace(/(.)\/+$/, "$1");
-  if (tempPath(norm) || (place.tmp !== null && norm !== place.tmp && within(norm, place.tmp))) return null;
+  const inside = (root: string) => norm !== root && within(norm, root);
+  if (tempPath(norm) || (place.tmp !== null && inside(place.tmp)) || place.guard?.copies?.some(inside)) return null;
   if (norm.startsWith("/dev/")) return DISK.test(norm) ? "device" : null;
   if (place.guard?.paths.some((g) => within(norm, g)) && !place.guard.except.some((e) => within(norm, e)))
     return "room";
@@ -146,7 +147,8 @@ const TESTS_KEPT = 512;
 /** The protected place a pattern may name: an entry it can match, or one inside a folder it can match; `cut` when the pattern goes on with anything. */
 function protectedReach(pattern: string, cut: boolean, place: Place): Where | null {
   const want = pattern.split("/").filter(Boolean);
-  const kept = place.guard?.except.some((e) => within(pattern.replace(/\/+$/, ""), e)) ?? false;
+  const bare = pattern.replace(/\/+$/, "");
+  const kept = [...(place.guard?.except ?? []), ...(place.guard?.copies ?? [])].some((e) => within(bare, e));
   for (const entry of entries(place)) {
     if (kept && entry.where === "room") continue;
     const folder = entry.path.endsWith("/");

@@ -51,20 +51,28 @@ export const tiersOf = (m: Models, role: string): TierGroup | undefined => {
   return group && typeof group === "object" && group.tiers ? group : undefined;
 };
 
+/** The session mode a provider's seat is created in, by the harness its name starts with; null when that harness has none. */
+const modeOf = (m: Models, provider: string): string | null =>
+  m.modes[provider.slice(0, provider.indexOf("-"))] ?? null;
+
+/** A provider as a creator passes it to `create_agent`, with the mode it takes. */
+const withMode = (m: Models, provider: string) => {
+  const mode = modeOf(m, provider);
+  return `\`${provider}\` (${mode ? `\`${mode}\`` : "no mode"})`;
+};
+
 /** A role's models as its Owner reads them: one row a tier, in the table's order. */
-function tierTable(tiers: Record<string, Tier>): string {
+function tierTable(m: Models, tiers: Record<string, Tier>): string {
   const rows = Object.entries(tiers).map(
     ([tier, t]) =>
-      `| ${tier} | ${t.providers.map((p) => `\`${p}\``).join(" · ")} | ${t.thinking} | ${t.use ?? "—"} | ${t.never ?? "—"} |`,
+      `| ${tier} | ${t.providers.map((p) => withMode(m, p)).join(" · ")} | ${t.thinking} | ${t.use ?? "—"} | ${t.never ?? "—"} |`,
   );
   return [
-    "| Tier | `provider` for `create_agent` | thinking | Use for | Never for |",
+    "| Tier | `provider` (`settings.modeId`) for `create_agent` | thinking | Use for | Never for |",
     "|---|---|---|---|---|",
     ...rows,
   ].join("\n");
 }
-
-const quoted = (entries: readonly string[] | undefined) => (entries ?? []).map((p) => `\`${p}\``).join(", ") || "none";
 const snake = (name: string) => name.replace(/[A-Z]/g, (letter) => `_${letter.toLowerCase()}`);
 
 /** A param as prompts quote it: `readBudgetTokens` is {{read_budget}}, shown as ~80k. */
@@ -81,15 +89,17 @@ export function promptVars(m: Models, params: RoomParams): Record<string, string
   for (const role of rolesWhere((role) => role.models === "one")) {
     const seat = m.seats[role];
     if (!seat) continue;
+    const mode = modeOf(m, seat.provider);
     vars[`${role}_provider`] = seat.provider;
+    vars[`${role}_mode`] = mode ? `\`${mode}\`` : "none (leave it out)";
     vars[`${role}_thinking`] = seat.thinking;
-    vars[`${role}_alternatives`] = quoted(seat.alternatives);
+    vars[`${role}_alternatives`] = (seat.alternatives ?? []).map((p) => withMode(m, p)).join(", ") || "none";
   }
   for (const role of rolesWhere((role) => role.models === "tiers")) {
     const group = tiersOf(m, role);
     if (!group) continue;
     const models = new Set(Object.values(group.tiers).flatMap((tier) => tier.providers)).size;
-    vars[`${role}_table`] = [tierTable(group.tiers), tableNote(role, models)].filter(Boolean).join("\n\n");
+    vars[`${role}_table`] = [tierTable(m, group.tiers), tableNote(role, models)].filter(Boolean).join("\n\n");
     for (const [word, value] of Object.entries(group)) if (typeof value === "string") vars[snake(word)] = value;
   }
   for (const [name, value] of Object.entries(params))
